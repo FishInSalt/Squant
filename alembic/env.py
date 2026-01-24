@@ -7,7 +7,7 @@ from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
 from squant.config import get_settings
-from squant.models.base import Base
+from squant.models import Base  # noqa: F401 - imports all models for autogenerate
 
 # Alembic Config object
 config = context.config
