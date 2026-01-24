@@ -1,31 +1,39 @@
 """FastAPI application entry point."""
 
+import logging
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from typing import AsyncGenerator
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from squant.config import get_settings
 from squant.api.router import api_router
+from squant.config import get_settings
+from squant.infra import close_db, close_redis, init_db, init_redis
+
+logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """Application lifespan manager."""
-    settings = get_settings()
-
     # Startup
-    # TODO: Initialize database connection pool
-    # TODO: Initialize Redis connection
+    logger.info("Starting application...")
+    await init_db()
+    logger.info("Database connection initialized")
+    await init_redis()
+    logger.info("Redis connection initialized")
     # TODO: Recover running strategies (NFR-013)
 
     yield
 
     # Shutdown
+    logger.info("Shutting down application...")
     # TODO: Gracefully stop all strategy processes
-    # TODO: Close database connections
-    # TODO: Close Redis connections
+    await close_redis()
+    logger.info("Redis connection closed")
+    await close_db()
+    logger.info("Database connection closed")
 
 
 def create_app() -> FastAPI:
