@@ -1,5 +1,4 @@
 {
-  "python.defaultInterpreterPath": "/home/li416/miniconda3/envs/squant/bin/python",
   "python.linting.enabled": true,
   "python.linting.mypyEnabled": true,
   "python.linting.ruffEnabled": true,

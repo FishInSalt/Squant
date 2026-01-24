@@ -13,9 +13,13 @@ class Settings(BaseSettings):
     # Database
     database_url: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/squant"
     test_database_url: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/squant_test"
+    postgres_user: str = "postgres"
+    postgres_password: str = "postgres"
+    postgres_db: str = "squant"
     
     # Redis
     redis_url: str = "redis://localhost:6379/0"
+    redis_password: str = ""
     
     # JWT
     jwt_secret_key: str = "your-jwt-secret-key"

@@ -5,15 +5,15 @@ services:
     image: postgres:15-alpine
     container_name: squant-postgres
     environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: squant
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-squant}
     ports:
       - "5432:5432"
     volumes:
       - postgres-data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres}"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -22,11 +22,14 @@ services:
     image: redis:7-alpine
     container_name: squant-redis
     ports:
-      - "6379:6379"
-    volumes:
-      - redis-data:/data
+      - "127.0.0.1:6379:6379"
+    environment:
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+    command: >
+      sh -c 'if [ -z "$REDIS_PASSWORD" ]; then redis-server; else redis-server --requirepass "$REDIS_PASSWORD"; fi'
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: >
+        ["CMD", "sh", "-c", "if [ -z \"$REDIS_PASSWORD\" ]; then redis-cli -h 127.0.0.1 ping; else redis-cli -h 127.0.0.1 -a \"$REDIS_PASSWORD\" ping; fi"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -39,8 +42,8 @@ services:
     ports:
       - "8000:8000"
     environment:
-      - DATABASE_URL=postgresql+asyncpg://postgres:postgres@postgres:5432/squant
-      - REDIS_URL=redis://redis:6379/0
+      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-squant}
+      - REDIS_URL=redis://:${REDIS_PASSWORD:-}@127.0.0.1:6379/0
     depends_on:
       postgres:
         condition: service_healthy
