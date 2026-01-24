@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Float, DateTime, Enum, ForeignKey
+from sqlalchemy import Column, Integer, String, Numeric, DateTime, Enum, ForeignKey
 from sqlalchemy.sql import func
 from app.db.database import Base
 import enum
@@ -32,8 +32,8 @@ class Order(Base):
     symbol = Column(String(50), nullable=False)
     side = Column(Enum(OrderSide), nullable=False)
     order_type = Column(Enum(OrderType), nullable=False)
-    quantity = Column(Float, nullable=False)
-    price = Column(Float)
+    quantity = Column(Numeric(20, 8), nullable=False)
+    price = Column(Numeric(20, 8))
     status = Column(Enum(OrderStatus), default=OrderStatus.PENDING)
     exchange_order_id = Column(String(100), unique=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())

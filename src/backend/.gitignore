@@ -35,7 +35,5 @@ htmlcov/
 *.sqlite3
 logs/
 *.log
-alembic/versions/*.py
-!alembic/versions/.gitkeep
 .DS_Store
 Thumbs.db

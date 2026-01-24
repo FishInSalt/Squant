@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, DateTime, Enum, ForeignKey
+from sqlalchemy import Column, Integer, String, Numeric, DateTime, Enum, ForeignKey
 from sqlalchemy.sql import func
 from app.db.database import Base
 import enum
@@ -28,7 +28,7 @@ class StrategyExecution(Base):
     status = Column(Enum(ExecutionStatus), default=ExecutionStatus.RUNNING)
     started_at = Column(DateTime(timezone=True), server_default=func.now())
     ended_at = Column(DateTime(timezone=True))
-    profit = Column(Integer, default=0)
+    profit = Column(Numeric(20, 8), default=0)
     trades_count = Column(Integer, default=0)
     error_message = Column(String(500))
     created_at = Column(DateTime(timezone=True), server_default=func.now())

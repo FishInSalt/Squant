@@ -7,6 +7,7 @@ class Settings(BaseSettings):
     app_name: str = "Squant"
     app_env: str = "development"
     debug: bool = True
+    secret_key: str = "your-secret-key-change-this-in-production"
     api_v1_prefix: str = "/api/v1"
     
     # Database
@@ -28,7 +29,10 @@ class Settings(BaseSettings):
     # Trading
     max_position_size: int = 10000
     max_daily_trades: int = 100
-    
+
+    # Encryption
+    encryption_key: str = ""  # 必须配置，否则应用无法启动
+
     class Config:
         env_file = ".env"
         case_sensitive = False
