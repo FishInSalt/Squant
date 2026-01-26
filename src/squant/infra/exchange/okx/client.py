@@ -187,6 +187,11 @@ class OKXClient:
         if code == "0":
             return data
 
+        # For order operations, OKX returns code "1" (partial) or "2" (all failed)
+        # with error details in data[0].sCode/sMsg - let adapter handle these
+        if code in ("1", "2") and data.get("data"):
+            return data
+
         # Rate limit error
         if code == "50011":
             raise ExchangeRateLimitError(
@@ -199,6 +204,15 @@ class OKXClient:
         if code in ("50100", "50101", "50102", "50103", "50104", "50105"):
             raise ExchangeAuthenticationError(
                 message=f"Authentication failed: {msg}",
+                exchange="okx",
+            )
+
+        # Order not found errors
+        if code in ("51603",) or "does not exist" in msg.lower():
+            from squant.infra.exchange.exceptions import OrderNotFoundError
+
+            raise OrderNotFoundError(
+                message=msg or "Order not found",
                 exchange="okx",
             )
 
@@ -246,10 +260,14 @@ class OKXClient:
         await self._apply_rate_limit()
 
         # Build request path with query string for signature
+        # Important: query string order must match exactly between signature and request
         request_path = path
+        query_string = ""
         if params:
-            query_string = "&".join(f"{k}={v}" for k, v in sorted(params.items()) if v is not None)
-            if query_string:
+            # Filter out None values and sort for consistent ordering
+            filtered_params = {k: v for k, v in params.items() if v is not None}
+            if filtered_params:
+                query_string = "&".join(f"{k}={v}" for k, v in sorted(filtered_params.items()))
                 request_path = f"{path}?{query_string}"
 
         # Prepare body
@@ -265,9 +283,11 @@ class OKXClient:
 
         try:
             if method.upper() == "GET":
-                response = await self._client.get(path, params=params, headers=headers)
+                # Use the exact same path with query string that we signed
+                response = await self._client.get(request_path, headers=headers)
             elif method.upper() == "POST":
-                response = await self._client.post(path, json=body, headers=headers)
+                # Use content=body_str to ensure exact JSON matches what we signed
+                response = await self._client.post(path, content=body_str, headers=headers)
             else:
                 raise ValueError(f"Unsupported HTTP method: {method}")
         except httpx.ConnectError as e:

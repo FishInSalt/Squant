@@ -101,3 +101,7 @@ asyncio_mode = "auto"
 testpaths = ["tests"]
 pythonpath = ["src"]
 addopts = "-v --cov=squant --cov-report=term-missing"
+markers = [
+    "integration: marks tests as integration tests (may require external services)",
+    "okx_private: marks tests that require OKX API credentials",
+]

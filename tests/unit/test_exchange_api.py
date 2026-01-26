@@ -1,4 +1,4 @@
-"""Unit tests for exchange API endpoints."""
+"""Unit tests for market and account API endpoints."""
 
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -15,18 +15,12 @@ from squant.infra.exchange import (
     Ticker,
     TimeFrame,
 )
-from squant.infra.exchange import (
-    OrderResponse as ExchangeOrderResponse,
-)
 from squant.infra.exchange.exceptions import (
     ExchangeAPIError,
     ExchangeAuthenticationError,
     ExchangeRateLimitError,
-    InvalidOrderError,
-    OrderNotFoundError,
 )
 from squant.main import app
-from squant.models.enums import OrderSide, OrderStatus, OrderType
 
 
 @pytest.fixture
@@ -43,8 +37,8 @@ def client(mock_exchange: AsyncMock) -> TestClient:
     app.dependency_overrides.clear()
 
 
-class TestBalanceEndpoints:
-    """Tests for balance endpoints."""
+class TestAccountBalanceEndpoints:
+    """Tests for account balance endpoints."""
 
     def test_get_balance(self, client: TestClient, mock_exchange: AsyncMock) -> None:
         """Test getting account balance."""
@@ -57,10 +51,13 @@ class TestBalanceEndpoints:
             timestamp=datetime(2024, 1, 15, 10, 30, 0, tzinfo=UTC),
         )
 
-        response = client.get("/api/v1/exchange/balance")
+        response = client.get("/api/v1/account/balance")
 
         assert response.status_code == 200
-        data = response.json()
+        json_resp = response.json()
+        assert json_resp["code"] == 0
+        assert json_resp["message"] == "success"
+        data = json_resp["data"]
         assert data["exchange"] == "okx"
         assert len(data["balances"]) == 2
         assert data["balances"][0]["currency"] == "BTC"
@@ -75,10 +72,12 @@ class TestBalanceEndpoints:
             frozen=Decimal("0.5"),
         )
 
-        response = client.get("/api/v1/exchange/balance/BTC")
+        response = client.get("/api/v1/account/balance/BTC")
 
         assert response.status_code == 200
-        data = response.json()
+        json_resp = response.json()
+        assert json_resp["code"] == 0
+        data = json_resp["data"]
         assert data["currency"] == "BTC"
         assert data["available"] == "1.5"
 
@@ -88,10 +87,12 @@ class TestBalanceEndpoints:
         """Test getting balance for non-existent currency."""
         mock_exchange.get_balance_currency.return_value = None
 
-        response = client.get("/api/v1/exchange/balance/XYZ")
+        response = client.get("/api/v1/account/balance/XYZ")
 
         assert response.status_code == 200
-        assert response.json() is None
+        json_resp = response.json()
+        assert json_resp["code"] == 0
+        assert json_resp["data"] is None
 
     def test_get_balance_auth_error(
         self, client: TestClient, mock_exchange: AsyncMock
@@ -101,13 +102,13 @@ class TestBalanceEndpoints:
             message="Invalid API key", exchange="okx"
         )
 
-        response = client.get("/api/v1/exchange/balance")
+        response = client.get("/api/v1/account/balance")
 
         assert response.status_code == 401
 
 
-class TestTickerEndpoints:
-    """Tests for ticker endpoints."""
+class TestMarketTickerEndpoints:
+    """Tests for market ticker endpoints."""
 
     def test_get_ticker(self, client: TestClient, mock_exchange: AsyncMock) -> None:
         """Test getting ticker data."""
@@ -122,10 +123,12 @@ class TestTickerEndpoints:
             timestamp=datetime(2024, 1, 15, 10, 30, 0, tzinfo=UTC),
         )
 
-        response = client.get("/api/v1/exchange/ticker/BTC/USDT")
+        response = client.get("/api/v1/market/ticker/BTC/USDT")
 
         assert response.status_code == 200
-        data = response.json()
+        json_resp = response.json()
+        assert json_resp["code"] == 0
+        data = json_resp["data"]
         assert data["symbol"] == "BTC/USDT"
         assert data["last"] == "42000.5"
         assert data["bid"] == "41999"
@@ -145,10 +148,12 @@ class TestTickerEndpoints:
             ),
         ]
 
-        response = client.get("/api/v1/exchange/tickers")
+        response = client.get("/api/v1/market/tickers")
 
         assert response.status_code == 200
-        data = response.json()
+        json_resp = response.json()
+        assert json_resp["code"] == 0
+        data = json_resp["data"]
         assert len(data) == 2
 
     def test_get_tickers_filtered(
@@ -163,14 +168,33 @@ class TestTickerEndpoints:
             ),
         ]
 
-        response = client.get("/api/v1/exchange/tickers?symbols=BTC/USDT")
+        response = client.get("/api/v1/market/tickers?symbols=BTC/USDT")
 
         assert response.status_code == 200
         mock_exchange.get_tickers.assert_called_once_with(["BTC/USDT"])
 
+    def test_get_tickers_empty_symbols_filtered(
+        self, client: TestClient, mock_exchange: AsyncMock
+    ) -> None:
+        """Test getting tickers with trailing comma filters empty strings."""
+        mock_exchange.get_tickers.return_value = [
+            Ticker(
+                symbol="BTC/USDT",
+                last=Decimal("42000"),
+                timestamp=datetime(2024, 1, 15, 10, 30, 0, tzinfo=UTC),
+            ),
+        ]
 
-class TestCandlestickEndpoints:
-    """Tests for candlestick endpoints."""
+        # Trailing comma should not produce empty string in list
+        response = client.get("/api/v1/market/tickers?symbols=BTC/USDT,")
+
+        assert response.status_code == 200
+        # Should filter out empty string
+        mock_exchange.get_tickers.assert_called_once_with(["BTC/USDT"])
+
+
+class TestMarketCandlestickEndpoints:
+    """Tests for market candlestick endpoints."""
 
     def test_get_candles(self, client: TestClient, mock_exchange: AsyncMock) -> None:
         """Test getting candlestick data."""
@@ -193,10 +217,12 @@ class TestCandlestickEndpoints:
             ),
         ]
 
-        response = client.get("/api/v1/exchange/candles/BTC/USDT?timeframe=1h&limit=2")
+        response = client.get("/api/v1/market/candles/BTC/USDT?timeframe=1h&limit=2")
 
         assert response.status_code == 200
-        data = response.json()
+        json_resp = response.json()
+        assert json_resp["code"] == 0
+        data = json_resp["data"]
         assert data["symbol"] == "BTC/USDT"
         assert data["timeframe"] == "1h"
         assert len(data["candles"]) == 2
@@ -208,183 +234,10 @@ class TestCandlestickEndpoints:
         self, client: TestClient, mock_exchange: AsyncMock
     ) -> None:
         """Test getting candles with invalid timeframe."""
-        response = client.get("/api/v1/exchange/candles/BTC/USDT?timeframe=invalid")
+        response = client.get("/api/v1/market/candles/BTC/USDT?timeframe=invalid")
 
         assert response.status_code == 400
         assert "Invalid timeframe" in response.json()["detail"]
-
-
-class TestOrderEndpoints:
-    """Tests for order endpoints."""
-
-    def test_place_order(self, client: TestClient, mock_exchange: AsyncMock) -> None:
-        """Test placing an order."""
-        mock_exchange.place_order.return_value = ExchangeOrderResponse(
-            order_id="123456",
-            client_order_id="my-order-1",
-            symbol="BTC/USDT",
-            side=OrderSide.BUY,
-            type=OrderType.LIMIT,
-            status=OrderStatus.SUBMITTED,
-            price=Decimal("42000"),
-            amount=Decimal("0.1"),
-            filled=Decimal("0"),
-            created_at=datetime(2024, 1, 15, 10, 30, 0, tzinfo=UTC),
-        )
-
-        response = client.post(
-            "/api/v1/exchange/orders",
-            json={
-                "symbol": "BTC/USDT",
-                "side": "buy",
-                "type": "limit",
-                "amount": "0.1",
-                "price": "42000",
-                "client_order_id": "my-order-1",
-            },
-        )
-
-        assert response.status_code == 201
-        data = response.json()
-        assert data["order_id"] == "123456"
-        assert data["status"] == "submitted"
-
-    def test_place_order_invalid(
-        self, client: TestClient, mock_exchange: AsyncMock
-    ) -> None:
-        """Test placing an invalid order."""
-        mock_exchange.place_order.side_effect = InvalidOrderError(
-            message="Insufficient balance", exchange="okx"
-        )
-
-        response = client.post(
-            "/api/v1/exchange/orders",
-            json={
-                "symbol": "BTC/USDT",
-                "side": "buy",
-                "type": "market",
-                "amount": "1000000",
-            },
-        )
-
-        assert response.status_code == 400
-
-    def test_cancel_order(self, client: TestClient, mock_exchange: AsyncMock) -> None:
-        """Test cancelling an order."""
-        mock_exchange.cancel_order.return_value = ExchangeOrderResponse(
-            order_id="123456",
-            symbol="BTC/USDT",
-            side=OrderSide.BUY,
-            type=OrderType.LIMIT,
-            status=OrderStatus.CANCELLED,
-            amount=Decimal("0.1"),
-            filled=Decimal("0"),
-        )
-
-        response = client.post(
-            "/api/v1/exchange/orders/cancel",
-            json={
-                "symbol": "BTC/USDT",
-                "order_id": "123456",
-            },
-        )
-
-        assert response.status_code == 200
-        assert response.json()["status"] == "cancelled"
-
-    def test_cancel_order_not_found(
-        self, client: TestClient, mock_exchange: AsyncMock
-    ) -> None:
-        """Test cancelling non-existent order."""
-        mock_exchange.cancel_order.side_effect = OrderNotFoundError(
-            message="Order not found", exchange="okx", order_id="invalid"
-        )
-
-        response = client.post(
-            "/api/v1/exchange/orders/cancel",
-            json={
-                "symbol": "BTC/USDT",
-                "order_id": "invalid",
-            },
-        )
-
-        assert response.status_code == 404
-
-    def test_cancel_order_missing_id(
-        self, client: TestClient, mock_exchange: AsyncMock
-    ) -> None:
-        """Test cancelling order without ID."""
-        response = client.post(
-            "/api/v1/exchange/orders/cancel",
-            json={
-                "symbol": "BTC/USDT",
-            },
-        )
-
-        assert response.status_code == 400
-
-    def test_get_order(self, client: TestClient, mock_exchange: AsyncMock) -> None:
-        """Test getting order details."""
-        mock_exchange.get_order.return_value = ExchangeOrderResponse(
-            order_id="123456",
-            symbol="BTC/USDT",
-            side=OrderSide.BUY,
-            type=OrderType.LIMIT,
-            status=OrderStatus.FILLED,
-            price=Decimal("42000"),
-            amount=Decimal("0.1"),
-            filled=Decimal("0.1"),
-            avg_price=Decimal("41999.5"),
-        )
-
-        response = client.get("/api/v1/exchange/orders/123456?symbol=BTC/USDT")
-
-        assert response.status_code == 200
-        data = response.json()
-        assert data["order_id"] == "123456"
-        assert data["status"] == "filled"
-        assert data["filled"] == "0.1"
-
-    def test_get_open_orders(self, client: TestClient, mock_exchange: AsyncMock) -> None:
-        """Test getting open orders."""
-        mock_exchange.get_open_orders.return_value = [
-            ExchangeOrderResponse(
-                order_id="order-1",
-                symbol="BTC/USDT",
-                side=OrderSide.BUY,
-                type=OrderType.LIMIT,
-                status=OrderStatus.SUBMITTED,
-                amount=Decimal("0.1"),
-                filled=Decimal("0"),
-            ),
-            ExchangeOrderResponse(
-                order_id="order-2",
-                symbol="ETH/USDT",
-                side=OrderSide.SELL,
-                type=OrderType.LIMIT,
-                status=OrderStatus.PARTIAL,
-                amount=Decimal("1"),
-                filled=Decimal("0.5"),
-            ),
-        ]
-
-        response = client.get("/api/v1/exchange/orders")
-
-        assert response.status_code == 200
-        data = response.json()
-        assert data["total"] == 2
-        assert len(data["orders"]) == 2
-
-    def test_get_open_orders_filtered(
-        self, client: TestClient, mock_exchange: AsyncMock
-    ) -> None:
-        """Test getting open orders with symbol filter."""
-        mock_exchange.get_open_orders.return_value = []
-
-        response = client.get("/api/v1/exchange/orders?symbol=BTC/USDT")
-
-        assert response.status_code == 200
-        mock_exchange.get_open_orders.assert_called_once_with("BTC/USDT")
 
 
 class TestErrorHandling:
@@ -398,7 +251,7 @@ class TestErrorHandling:
             message="Rate limit exceeded", exchange="okx", retry_after=5.0
         )
 
-        response = client.get("/api/v1/exchange/ticker/BTC/USDT")
+        response = client.get("/api/v1/market/ticker/BTC/USDT")
 
         assert response.status_code == 429
         assert response.headers.get("Retry-After") == "5"
@@ -409,6 +262,22 @@ class TestErrorHandling:
             message="Internal error", exchange="okx", code="50000"
         )
 
-        response = client.get("/api/v1/exchange/ticker/BTC/USDT")
+        response = client.get("/api/v1/market/ticker/BTC/USDT")
 
         assert response.status_code == 502
+
+    def test_internal_error_hides_details(
+        self, client: TestClient, mock_exchange: AsyncMock
+    ) -> None:
+        """Test that internal errors don't expose sensitive details."""
+        mock_exchange.get_ticker.side_effect = RuntimeError(
+            "Database connection failed: password=secret123"
+        )
+
+        response = client.get("/api/v1/market/ticker/BTC/USDT")
+
+        assert response.status_code == 500
+        # Should not expose internal error details
+        assert response.json()["detail"] == "Internal server error"
+        assert "secret123" not in response.text
+        assert "Database" not in response.text
