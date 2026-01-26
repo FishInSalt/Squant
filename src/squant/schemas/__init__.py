@@ -36,6 +36,18 @@ from squant.schemas.strategy import (
     ValidateCodeRequest,
     ValidationResultResponse,
 )
+from squant.schemas.backtest import (
+    AvailableSymbolResponse,
+    BacktestDetailResponse,
+    BacktestListItem,
+    BacktestRunResponse,
+    CheckDataRequest,
+    CreateBacktestRequest,
+    DataAvailabilityResponse,
+    EquityCurvePoint,
+    RunBacktestRequest,
+    TradeRecordResponse,
+)
 
 __all__ = [
     # Exchange schemas
@@ -70,4 +82,15 @@ __all__ = [
     "ToggleRiskRuleRequest",
     "RiskRuleResponse",
     "RiskRuleListItem",
+    # Backtest schemas
+    "RunBacktestRequest",
+    "CreateBacktestRequest",
+    "CheckDataRequest",
+    "BacktestRunResponse",
+    "BacktestListItem",
+    "BacktestDetailResponse",
+    "EquityCurvePoint",
+    "TradeRecordResponse",
+    "DataAvailabilityResponse",
+    "AvailableSymbolResponse",
 ]

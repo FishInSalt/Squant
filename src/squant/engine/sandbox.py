@@ -187,6 +187,25 @@ class DangerousBuiltinsValidator(ast.NodeVisitor):
         self.generic_visit(node)
 
 
+def _inplacevar_(op: str, x: Any, y: Any) -> Any:
+    """Handle in-place variable operations for RestrictedPython."""
+    ops = {
+        "+=": lambda a, b: a + b,
+        "-=": lambda a, b: a - b,
+        "*=": lambda a, b: a * b,
+        "/=": lambda a, b: a / b,
+        "//=": lambda a, b: a // b,
+        "%=": lambda a, b: a % b,
+        "**=": lambda a, b: a ** b,
+        "&=": lambda a, b: a & b,
+        "|=": lambda a, b: a | b,
+        "^=": lambda a, b: a ^ b,
+        ">>=": lambda a, b: a >> b,
+        "<<=": lambda a, b: a << b,
+    }
+    return ops[op](x, y)
+
+
 def _build_restricted_globals() -> dict[str, Any]:
     """Build the restricted globals dictionary for code execution."""
     # Start with safe_builtins from RestrictedPython
@@ -212,7 +231,22 @@ def _build_restricted_globals() -> dict[str, Any]:
         "_print_": print,
         "_getitem_": lambda obj, key: obj[key],
         "_write_": lambda x: x,
+        # Required for class definitions in RestrictedPython
+        "__metaclass__": type,
+        "__name__": "__strategy__",
+        # Required for in-place operations (+=, -=, etc.)
+        "_inplacevar_": _inplacevar_,
     }
+
+    # Inject Strategy base class and related types for backtest
+    from squant.engine.backtest.strategy_base import Strategy
+    from squant.engine.backtest.types import Bar, Position, OrderSide, OrderType
+
+    restricted_globals["Strategy"] = Strategy
+    restricted_globals["Bar"] = Bar
+    restricted_globals["Position"] = Position
+    restricted_globals["OrderSide"] = OrderSide
+    restricted_globals["OrderType"] = OrderType
 
     return restricted_globals
 
