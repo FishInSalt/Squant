@@ -168,6 +168,52 @@ class SessionManager:
         """
         return list(self._subscriptions.keys())
 
+    def get_sessions_needing_persistence(self) -> list[UUID]:
+        """Get run_ids of sessions that need snapshot persistence.
+
+        Returns:
+            List of run_ids with pending snapshots exceeding batch size.
+        """
+        return [
+            run_id
+            for run_id, engine in self._sessions.items()
+            if engine.should_persist_snapshots()
+        ]
+
+    async def check_health(self, timeout_seconds: int = 300) -> list[UUID]:
+        """Check health of all sessions and return unhealthy run_ids.
+
+        Args:
+            timeout_seconds: Maximum seconds since last activity.
+
+        Returns:
+            List of unhealthy session run_ids.
+        """
+        unhealthy: list[UUID] = []
+        async with self._lock:
+            for run_id, engine in self._sessions.items():
+                if not engine.is_healthy(timeout_seconds):
+                    unhealthy.append(run_id)
+        return unhealthy
+
+    async def cleanup_stale_sessions(self, timeout_seconds: int = 300) -> int:
+        """Stop and unregister stale sessions.
+
+        Args:
+            timeout_seconds: Maximum seconds since last activity.
+
+        Returns:
+            Number of sessions cleaned up.
+        """
+        unhealthy = await self.check_health(timeout_seconds)
+        for run_id in unhealthy:
+            engine = self._sessions.get(run_id)
+            if engine:
+                logger.warning(f"Cleaning up stale session {run_id}")
+                await engine.stop(error="Session timeout: no activity detected")
+                await self.unregister(run_id)
+        return len(unhealthy)
+
 
 # Global session manager instance
 _session_manager: SessionManager | None = None

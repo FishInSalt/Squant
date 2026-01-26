@@ -263,6 +263,136 @@ class TestListSessions:
         assert "ETH/USDT" in symbols
 
 
+class TestHealthCheck:
+    """Tests for health check functionality."""
+
+    @pytest.mark.asyncio
+    async def test_check_health_returns_unhealthy_sessions(self, session_manager):
+        """Test check_health returns list of unhealthy run_ids."""
+        healthy_engine = MagicMock()
+        healthy_engine.run_id = uuid4()
+        healthy_engine.symbol = "BTC/USDT"
+        healthy_engine.timeframe = "1m"
+        healthy_engine.is_healthy = MagicMock(return_value=True)
+
+        unhealthy_engine = MagicMock()
+        unhealthy_engine.run_id = uuid4()
+        unhealthy_engine.symbol = "ETH/USDT"
+        unhealthy_engine.timeframe = "1m"
+        unhealthy_engine.is_healthy = MagicMock(return_value=False)
+
+        await session_manager.register(healthy_engine)
+        await session_manager.register(unhealthy_engine)
+
+        unhealthy = await session_manager.check_health(timeout_seconds=300)
+
+        assert len(unhealthy) == 1
+        assert unhealthy[0] == unhealthy_engine.run_id
+
+    @pytest.mark.asyncio
+    async def test_check_health_empty_when_all_healthy(self, session_manager):
+        """Test check_health returns empty list when all healthy."""
+        engine = MagicMock()
+        engine.run_id = uuid4()
+        engine.symbol = "BTC/USDT"
+        engine.timeframe = "1m"
+        engine.is_healthy = MagicMock(return_value=True)
+
+        await session_manager.register(engine)
+
+        unhealthy = await session_manager.check_health(timeout_seconds=300)
+
+        assert len(unhealthy) == 0
+
+    @pytest.mark.asyncio
+    async def test_cleanup_stale_sessions(self, session_manager):
+        """Test cleanup_stale_sessions stops and unregisters stale sessions."""
+        healthy_engine = MagicMock()
+        healthy_engine.run_id = uuid4()
+        healthy_engine.symbol = "BTC/USDT"
+        healthy_engine.timeframe = "1m"
+        healthy_engine.is_healthy = MagicMock(return_value=True)
+
+        stale_engine = MagicMock()
+        stale_engine.run_id = uuid4()
+        stale_engine.symbol = "ETH/USDT"
+        stale_engine.timeframe = "1m"
+        stale_engine.is_healthy = MagicMock(return_value=False)
+        stale_engine.stop = AsyncMock()
+
+        await session_manager.register(healthy_engine)
+        await session_manager.register(stale_engine)
+
+        count = await session_manager.cleanup_stale_sessions(timeout_seconds=300)
+
+        assert count == 1
+        assert session_manager.session_count == 1
+        assert session_manager.get(healthy_engine.run_id) is not None
+        assert session_manager.get(stale_engine.run_id) is None
+        stale_engine.stop.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_cleanup_stale_sessions_no_stale(self, session_manager):
+        """Test cleanup_stale_sessions when no sessions are stale."""
+        engine = MagicMock()
+        engine.run_id = uuid4()
+        engine.symbol = "BTC/USDT"
+        engine.timeframe = "1m"
+        engine.is_healthy = MagicMock(return_value=True)
+
+        await session_manager.register(engine)
+
+        count = await session_manager.cleanup_stale_sessions(timeout_seconds=300)
+
+        assert count == 0
+        assert session_manager.session_count == 1
+
+
+class TestGetSessionsNeedingPersistence:
+    """Tests for get_sessions_needing_persistence method."""
+
+    @pytest.mark.asyncio
+    async def test_returns_sessions_needing_persistence(self, session_manager):
+        """Test that only sessions needing persistence are returned."""
+        engine1 = MagicMock()
+        engine1.run_id = uuid4()
+        engine1.symbol = "BTC/USDT"
+        engine1.timeframe = "1m"
+        engine1.should_persist_snapshots = MagicMock(return_value=True)
+
+        engine2 = MagicMock()
+        engine2.run_id = uuid4()
+        engine2.symbol = "ETH/USDT"
+        engine2.timeframe = "1m"
+        engine2.should_persist_snapshots = MagicMock(return_value=False)
+
+        await session_manager.register(engine1)
+        await session_manager.register(engine2)
+
+        result = session_manager.get_sessions_needing_persistence()
+
+        assert len(result) == 1
+        assert engine1.run_id in result
+        assert engine2.run_id not in result
+
+    @pytest.mark.asyncio
+    async def test_returns_empty_when_no_sessions_need_persistence(
+        self, session_manager
+    ):
+        """Test returns empty list when no sessions need persistence."""
+        engine = MagicMock()
+        engine.run_id = uuid4()
+        engine.symbol = "BTC/USDT"
+        engine.timeframe = "1m"
+        engine.should_persist_snapshots = MagicMock(return_value=False)
+
+        await session_manager.register(engine)
+
+        result = session_manager.get_sessions_needing_persistence()
+
+        assert result == []
+
+
 class TestSingleton:
     """Tests for singleton behavior."""
 

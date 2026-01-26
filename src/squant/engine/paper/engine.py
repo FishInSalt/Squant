@@ -61,12 +61,22 @@ class PaperTradingEngine:
         self._symbol = symbol
         self._timeframe = timeframe
 
-        # Initialize context (reused from backtest)
+        # Get settings dynamically (not at module level) for better testability
+        from squant.config import get_settings
+
+        settings = get_settings()
+
+        # Initialize context (reused from backtest) with memory limits from config
         self._context = BacktestContext(
             initial_capital=initial_capital,
             commission_rate=commission_rate,
             slippage=slippage,
             params=params,
+            max_equity_curve=settings.paper_max_equity_curve_size,
+            max_completed_orders=settings.paper_max_completed_orders,
+            max_fills=settings.paper_max_fills,
+            max_trades=settings.paper_max_trades,
+            max_logs=settings.paper_max_logs,
         )
 
         # Initialize matching engine (reused from backtest)
@@ -84,6 +94,7 @@ class PaperTradingEngine:
         self._stopped_at: datetime | None = None
         self._error_message: str | None = None
         self._bar_count = 0
+        self._last_active_at: datetime | None = None
 
         # Pending equity snapshots for batch persistence
         self._pending_snapshots: list[EquitySnapshot] = []
@@ -130,6 +141,27 @@ class PaperTradingEngine:
         return self._bar_count
 
     @property
+    def last_active_at(self) -> datetime | None:
+        """Get last activity timestamp."""
+        return self._last_active_at
+
+    def is_healthy(self, timeout_seconds: int = 300) -> bool:
+        """Check if engine is healthy (recently active).
+
+        Args:
+            timeout_seconds: Maximum seconds since last activity.
+
+        Returns:
+            True if healthy, False if stale or not running.
+        """
+        if not self._is_running:
+            return False
+        if self._last_active_at is None:
+            return True  # Just started, no candles processed yet
+        elapsed = (datetime.now(timezone.utc) - self._last_active_at).total_seconds()
+        return elapsed < timeout_seconds
+
+    @property
     def context(self) -> BacktestContext:
         """Get the backtest context."""
         return self._context
@@ -146,6 +178,7 @@ class PaperTradingEngine:
         logger.info(f"Starting paper trading engine {self._run_id}")
         self._is_running = True
         self._started_at = datetime.now(timezone.utc)
+        self._last_active_at = datetime.now(timezone.utc)
 
         try:
             # Call strategy initialization
@@ -215,6 +248,9 @@ class PaperTradingEngine:
             return
 
         try:
+            # Update last activity timestamp
+            self._last_active_at = datetime.now(timezone.utc)
+
             # Convert WSCandle to Bar
             bar = self._candle_to_bar(candle)
 

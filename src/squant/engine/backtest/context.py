@@ -9,6 +9,7 @@ The BacktestContext is injected into user strategies and provides:
 """
 
 from collections import deque
+from collections.abc import Sequence
 from datetime import datetime
 from decimal import Decimal
 from typing import Any
@@ -46,6 +47,11 @@ class BacktestContext:
         slippage: Decimal = Decimal("0"),
         params: dict[str, Any] | None = None,
         max_bar_history: int = 1000,
+        max_equity_curve: int = 10000,
+        max_completed_orders: int = 1000,
+        max_fills: int = 5000,
+        max_trades: int = 1000,
+        max_logs: int = 1000,
     ):
         """Initialize backtest context.
 
@@ -55,6 +61,11 @@ class BacktestContext:
             slippage: Slippage rate for market orders.
             params: Strategy parameters.
             max_bar_history: Maximum bars to keep in history buffer.
+            max_equity_curve: Maximum equity snapshots to keep.
+            max_completed_orders: Maximum completed orders to keep.
+            max_fills: Maximum fills to keep.
+            max_trades: Maximum trades to keep.
+            max_logs: Maximum log entries to keep.
         """
         self._initial_capital = initial_capital
         self._cash = initial_capital
@@ -68,12 +79,12 @@ class BacktestContext:
 
         # Order management
         self._pending_orders: list[SimulatedOrder] = []
-        self._completed_orders: list[SimulatedOrder] = []
+        self._completed_orders: deque[SimulatedOrder] = deque(maxlen=max_completed_orders)
         self._order_counter = 0
 
         # Fill and trade tracking
-        self._fills: list[Fill] = []
-        self._trades: list[TradeRecord] = []
+        self._fills: deque[Fill] = deque(maxlen=max_fills)
+        self._trades: deque[TradeRecord] = deque(maxlen=max_trades)
         self._open_trade: TradeRecord | None = None
 
         # Bar history (deque for efficient append/pop)
@@ -81,10 +92,10 @@ class BacktestContext:
         self._current_bar: Bar | None = None
 
         # Equity tracking
-        self._equity_curve: list[EquitySnapshot] = []
+        self._equity_curve: deque[EquitySnapshot] = deque(maxlen=max_equity_curve)
 
         # Logging
-        self._logs: list[str] = []
+        self._logs: deque[str] = deque(maxlen=max_logs)
 
         # Total fees paid
         self._total_fees = Decimal("0")

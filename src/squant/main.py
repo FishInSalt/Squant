@@ -26,12 +26,36 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     logger.info("Redis connection initialized")
     await init_stream_manager()
     logger.info("Stream manager initialized")
-    # TODO: Recover running strategies (NFR-013)
+
+    # Recover orphaned paper trading sessions (NFR-013)
+    from squant.infra.database import get_session_context
+    from squant.services.paper_trading import StrategyRunRepository
+
+    async with get_session_context() as session:
+        repo = StrategyRunRepository(session)
+        count = await repo.mark_orphaned_sessions()
+        if count > 0:
+            logger.warning(f"Marked {count} orphaned paper trading sessions as ERROR")
+
+    # Start background tasks for paper trading
+    from squant.services.background import get_task_manager
+
+    settings = get_settings()
+    task_manager = get_task_manager()
+    task_manager.start(
+        persist_interval=settings.paper_persist_interval_seconds,
+        health_check_interval=settings.paper_health_check_interval_seconds,
+    )
+    logger.info("Background tasks started")
 
     yield
 
     # Shutdown
     logger.info("Shutting down application...")
+
+    # Stop background tasks first
+    await task_manager.stop()
+    logger.info("Background tasks stopped")
 
     # Gracefully stop all paper trading sessions
     from squant.engine.paper.manager import get_session_manager

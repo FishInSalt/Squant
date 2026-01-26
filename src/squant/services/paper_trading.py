@@ -14,7 +14,7 @@ from decimal import Decimal
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from squant.engine.backtest.strategy_base import Strategy
@@ -94,6 +94,32 @@ class StrategyRunRepository(BaseRepository[StrategyRun]):
         if status:
             filters["status"] = status
         return await self.count(**filters)
+
+    async def mark_orphaned_sessions(self) -> int:
+        """Mark all RUNNING paper trading sessions as ERROR.
+
+        Called on startup to recover from unexpected shutdowns.
+        Sessions that were RUNNING when the application crashed are
+        orphaned and need to be marked as ERROR.
+
+        Returns:
+            Number of sessions marked as ERROR.
+        """
+        stmt = (
+            update(StrategyRun)
+            .where(
+                StrategyRun.mode == RunMode.PAPER,
+                StrategyRun.status == RunStatus.RUNNING,
+            )
+            .values(
+                status=RunStatus.ERROR,
+                error_message="Session terminated due to application restart",
+                stopped_at=datetime.now(timezone.utc),
+            )
+        )
+        result = await self.session.execute(stmt)
+        await self.session.commit()
+        return result.rowcount
 
 
 class EquityCurveRepository:

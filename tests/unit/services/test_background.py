@@ -1,0 +1,245 @@
+"""Unit tests for background task manager."""
+
+import asyncio
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+
+from squant.services.background import BackgroundTaskManager, get_task_manager
+
+
+class TestBackgroundTaskManagerInit:
+    """Tests for BackgroundTaskManager initialization."""
+
+    def test_initial_state(self) -> None:
+        """Test manager starts in correct initial state."""
+        manager = BackgroundTaskManager()
+
+        assert manager.is_running is False
+        assert len(manager._tasks) == 0
+
+    def test_singleton_pattern(self) -> None:
+        """Test get_task_manager returns singleton."""
+        # Reset singleton for test
+        import squant.services.background as bg_module
+        bg_module._task_manager = None
+
+        manager1 = get_task_manager()
+        manager2 = get_task_manager()
+
+        assert manager1 is manager2
+
+        # Cleanup
+        bg_module._task_manager = None
+
+
+class TestBackgroundTaskManagerLifecycle:
+    """Tests for BackgroundTaskManager start/stop lifecycle."""
+
+    @pytest.mark.asyncio
+    async def test_start_sets_running(self) -> None:
+        """Test that start sets running flag."""
+        manager = BackgroundTaskManager()
+
+        manager.start(persist_interval=10, health_check_interval=20)
+
+        assert manager.is_running is True
+        assert len(manager._tasks) == 2
+
+        # Cleanup
+        await manager.stop()
+
+    @pytest.mark.asyncio
+    async def test_double_start_no_duplicate_tasks(self) -> None:
+        """Test that starting twice doesn't create duplicate tasks."""
+        manager = BackgroundTaskManager()
+
+        manager.start(persist_interval=10, health_check_interval=20)
+        manager.start(persist_interval=10, health_check_interval=20)
+
+        assert len(manager._tasks) == 2
+
+        # Cleanup
+        await manager.stop()
+
+    @pytest.mark.asyncio
+    async def test_stop_clears_tasks(self) -> None:
+        """Test that stop clears all tasks."""
+        manager = BackgroundTaskManager()
+
+        manager.start(persist_interval=10, health_check_interval=20)
+        await manager.stop()
+
+        assert manager.is_running is False
+        assert len(manager._tasks) == 0
+
+    @pytest.mark.asyncio
+    async def test_stop_when_not_running(self) -> None:
+        """Test that stop works when not running."""
+        manager = BackgroundTaskManager()
+
+        await manager.stop()  # Should not raise
+
+        assert manager.is_running is False
+
+
+class TestPeriodicTaskExecution:
+    """Tests for periodic task execution."""
+
+    @pytest.mark.asyncio
+    async def test_persist_snapshots_called(self) -> None:
+        """Test that persist_snapshots is called periodically."""
+        manager = BackgroundTaskManager()
+
+        with patch.object(
+            manager, '_persist_snapshots', new_callable=AsyncMock
+        ) as mock_persist:
+            manager.start(persist_interval=1, health_check_interval=100)
+
+            # Wait enough time for the task to run
+            await asyncio.sleep(1.5)
+            await manager.stop()
+
+            mock_persist.assert_called()
+
+    @pytest.mark.asyncio
+    async def test_health_check_called(self) -> None:
+        """Test that health_check is called periodically."""
+        manager = BackgroundTaskManager()
+
+        with patch.object(
+            manager, '_health_check', new_callable=AsyncMock
+        ) as mock_health:
+            manager.start(persist_interval=100, health_check_interval=1)
+
+            # Wait enough time for the task to run
+            await asyncio.sleep(1.5)
+            await manager.stop()
+
+            mock_health.assert_called()
+
+    @pytest.mark.asyncio
+    async def test_periodic_task_handles_exception(self) -> None:
+        """Test that exceptions in periodic tasks don't stop the manager."""
+        manager = BackgroundTaskManager()
+
+        call_count = 0
+
+        async def failing_task():
+            nonlocal call_count
+            call_count += 1
+            if call_count < 3:
+                raise ValueError("Test error")
+
+        with patch.object(manager, '_persist_snapshots', failing_task):
+            with patch.object(manager, '_health_check', AsyncMock()):
+                manager.start(persist_interval=1, health_check_interval=100)
+                await asyncio.sleep(2.5)
+                await manager.stop()
+
+        # Should have been called multiple times despite exceptions
+        assert call_count >= 2
+
+
+class TestPersistSnapshots:
+    """Tests for _persist_snapshots method."""
+
+    @pytest.mark.asyncio
+    async def test_persist_snapshots_with_no_sessions(self) -> None:
+        """Test persist_snapshots with no active sessions."""
+        manager = BackgroundTaskManager()
+
+        mock_session_manager = MagicMock()
+        mock_session_manager.get_sessions_needing_persistence.return_value = []
+
+        with patch(
+            'squant.engine.paper.manager.get_session_manager',
+            return_value=mock_session_manager
+        ):
+            # Should not raise
+            await manager._persist_snapshots()
+
+    @pytest.mark.asyncio
+    async def test_persist_snapshots_filters_by_should_persist(self) -> None:
+        """Test that only sessions that should persist are processed."""
+        manager = BackgroundTaskManager()
+
+        mock_session_manager = MagicMock()
+        # Only 'run-1' needs persistence (via public API)
+        mock_session_manager.get_sessions_needing_persistence.return_value = ['run-1']
+
+        mock_service = MagicMock()
+        mock_service.persist_snapshots = AsyncMock(return_value=5)
+
+        mock_db_session = AsyncMock()
+
+        with patch(
+            'squant.engine.paper.manager.get_session_manager',
+            return_value=mock_session_manager
+        ):
+            with patch(
+                'squant.infra.database.get_session_context'
+            ) as mock_get_session:
+                mock_get_session.return_value.__aenter__.return_value = mock_db_session
+                with patch(
+                    'squant.services.paper_trading.PaperTradingService',
+                    return_value=mock_service
+                ):
+                    await manager._persist_snapshots()
+
+        # Only run-1 should be persisted
+        mock_service.persist_snapshots.assert_called_once_with('run-1')
+
+
+class TestHealthCheck:
+    """Tests for _health_check method."""
+
+    @pytest.mark.asyncio
+    async def test_health_check_calls_cleanup(self) -> None:
+        """Test that health_check calls cleanup_stale_sessions."""
+        manager = BackgroundTaskManager()
+
+        mock_session_manager = AsyncMock()
+        mock_session_manager.cleanup_stale_sessions = AsyncMock(return_value=0)
+
+        mock_settings = MagicMock()
+        mock_settings.paper_session_timeout_seconds = 300
+
+        with patch(
+            'squant.engine.paper.manager.get_session_manager',
+            return_value=mock_session_manager
+        ):
+            with patch(
+                'squant.config.get_settings',
+                return_value=mock_settings
+            ):
+                await manager._health_check()
+
+        mock_session_manager.cleanup_stale_sessions.assert_called_once_with(300)
+
+    @pytest.mark.asyncio
+    async def test_health_check_logs_cleanup_count(self) -> None:
+        """Test that health_check logs when sessions are cleaned up."""
+        manager = BackgroundTaskManager()
+
+        mock_session_manager = AsyncMock()
+        mock_session_manager.cleanup_stale_sessions = AsyncMock(return_value=2)
+
+        mock_settings = MagicMock()
+        mock_settings.paper_session_timeout_seconds = 300
+
+        with patch(
+            'squant.engine.paper.manager.get_session_manager',
+            return_value=mock_session_manager
+        ):
+            with patch(
+                'squant.config.get_settings',
+                return_value=mock_settings
+            ):
+                with patch(
+                    'squant.services.background.logger'
+                ) as mock_logger:
+                    await manager._health_check()
+
+                    mock_logger.warning.assert_called_once()
+                    assert '2' in mock_logger.warning.call_args[0][0]

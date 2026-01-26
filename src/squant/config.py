@@ -63,6 +63,20 @@ class Settings(BaseSettings):
     okx_passphrase: SecretStr | None = None
     okx_testnet: bool = False
 
+    # Paper Trading Memory Limits
+    paper_max_equity_curve_size: int = 10000
+    paper_max_completed_orders: int = 1000
+    paper_max_fills: int = 5000
+    paper_max_trades: int = 1000
+    paper_max_logs: int = 1000
+
+    # Paper Trading Health Check
+    paper_health_check_interval_seconds: int = 60
+    paper_session_timeout_seconds: int = 300  # 5 minutes inactivity = stale
+
+    # Paper Trading Auto Persistence
+    paper_persist_interval_seconds: int = 60  # Persist snapshots every minute
+
     @field_validator("secret_key")
     @classmethod
     def validate_secret_key(cls, v: SecretStr) -> SecretStr:

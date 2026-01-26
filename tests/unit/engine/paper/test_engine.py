@@ -362,3 +362,69 @@ class TestPendingSnapshots:
             await engine.process_candle(candle)
 
         assert engine.should_persist_snapshots() is True
+
+
+class TestHealthCheck:
+    """Tests for health check functionality."""
+
+    @pytest.mark.asyncio
+    async def test_last_active_at_set_on_start(self, engine):
+        """Test that last_active_at is set when engine starts."""
+        assert engine.last_active_at is None
+
+        await engine.start()
+
+        assert engine.last_active_at is not None
+
+    @pytest.mark.asyncio
+    async def test_last_active_at_updated_on_candle(self, engine):
+        """Test that last_active_at is updated when processing candles."""
+        await engine.start()
+        initial_time = engine.last_active_at
+
+        candle = WSCandle(
+            symbol="BTC/USDT",
+            timeframe="1m",
+            timestamp=datetime(2024, 1, 1, 12, 0, 0, tzinfo=timezone.utc),
+            open=Decimal("45000"),
+            high=Decimal("46000"),
+            low=Decimal("44000"),
+            close=Decimal("45500"),
+            volume=Decimal("100"),
+            is_closed=True,
+        )
+        await engine.process_candle(candle)
+
+        assert engine.last_active_at >= initial_time
+
+    @pytest.mark.asyncio
+    async def test_is_healthy_returns_true_when_active(self, engine):
+        """Test is_healthy returns True when recently active."""
+        await engine.start()
+
+        assert engine.is_healthy(timeout_seconds=300) is True
+
+    @pytest.mark.asyncio
+    async def test_is_healthy_returns_false_when_not_running(self, engine):
+        """Test is_healthy returns False when not running."""
+        # Engine not started
+        assert engine.is_healthy(timeout_seconds=300) is False
+
+    @pytest.mark.asyncio
+    async def test_is_healthy_returns_false_when_stopped(self, engine):
+        """Test is_healthy returns False after stop."""
+        await engine.start()
+        await engine.stop()
+
+        assert engine.is_healthy(timeout_seconds=300) is False
+
+    @pytest.mark.asyncio
+    async def test_is_healthy_with_zero_timeout(self, engine):
+        """Test is_healthy with very short timeout."""
+        await engine.start()
+
+        # With 0 second timeout, should be considered unhealthy
+        # since any elapsed time > 0
+        import asyncio
+        await asyncio.sleep(0.01)
+        assert engine.is_healthy(timeout_seconds=0) is False
