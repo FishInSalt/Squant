@@ -8,6 +8,15 @@ from redis.asyncio import Redis
 
 from squant.config import get_settings
 
+__all__ = [
+    "get_redis",
+    "get_redis_client",
+    "get_redis_context",
+    "get_redis_pool",
+    "init_redis",
+    "close_redis",
+]
+
 settings = get_settings()
 
 # Global Redis pool and client instances.
@@ -64,3 +73,21 @@ async def close_redis() -> None:
     if _redis_pool is not None:
         await _redis_pool.disconnect()
         _redis_pool = None
+
+
+def get_redis_client() -> Redis:
+    """Get the global Redis client directly.
+
+    Use this when you need to store a reference to the Redis client
+    for long-lived operations (e.g., StreamManager).
+
+    Returns:
+        Redis client instance.
+
+    Raises:
+        RuntimeError: If Redis is not initialized.
+    """
+    global _redis_client
+    if _redis_client is None:
+        raise RuntimeError("Redis not initialized. Call init_redis() first.")
+    return _redis_client

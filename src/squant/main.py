@@ -10,6 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from squant.api.router import api_router
 from squant.config import get_settings
 from squant.infra import close_db, close_redis, init_db, init_redis
+from squant.websocket import close_stream_manager, init_stream_manager
 
 logger = logging.getLogger(__name__)
 
@@ -23,6 +24,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     logger.info("Database connection initialized")
     await init_redis()
     logger.info("Redis connection initialized")
+    await init_stream_manager()
+    logger.info("Stream manager initialized")
     # TODO: Recover running strategies (NFR-013)
 
     yield
@@ -30,6 +33,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # Shutdown
     logger.info("Shutting down application...")
     # TODO: Gracefully stop all strategy processes
+    await close_stream_manager()
+    logger.info("Stream manager closed")
     await close_redis()
     logger.info("Redis connection closed")
     await close_db()
