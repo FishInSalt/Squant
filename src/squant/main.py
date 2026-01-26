@@ -32,7 +32,14 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     # Shutdown
     logger.info("Shutting down application...")
-    # TODO: Gracefully stop all strategy processes
+
+    # Gracefully stop all paper trading sessions
+    from squant.engine.paper.manager import get_session_manager
+
+    session_manager = get_session_manager()
+    await session_manager.stop_all(reason="application shutdown")
+    logger.info("Paper trading sessions stopped")
+
     await close_stream_manager()
     logger.info("Stream manager closed")
     await close_redis()

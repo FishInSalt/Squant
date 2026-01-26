@@ -2,7 +2,16 @@
 
 from fastapi import APIRouter
 
-from squant.api.v1 import account, backtest, health, market, orders, risk, strategies
+from squant.api.v1 import (
+    account,
+    backtest,
+    health,
+    market,
+    orders,
+    paper_trading,
+    risk,
+    strategies,
+)
 from squant.websocket.handlers import router as ws_router
 
 api_router = APIRouter()
@@ -24,6 +33,9 @@ api_router.include_router(strategies.router, prefix="/strategies", tags=["Strate
 
 # Backtest endpoints
 api_router.include_router(backtest.router, prefix="/backtest", tags=["Backtest"])
+
+# Paper trading endpoints
+api_router.include_router(paper_trading.router, prefix="/paper", tags=["Paper Trading"])
 
 # Risk rule management endpoints
 api_router.include_router(risk.router, prefix="/risk-rules", tags=["Risk"])

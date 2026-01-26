@@ -1,0 +1,341 @@
+"""Paper trading engine for real-time simulated trading.
+
+Uses WebSocket market data to drive strategy execution with local order matching.
+"""
+
+from __future__ import annotations
+
+import logging
+from datetime import datetime, timezone
+from decimal import Decimal
+from typing import Any
+from uuid import UUID
+
+from squant.engine.backtest.context import BacktestContext
+from squant.engine.backtest.matching import MatchingEngine
+from squant.engine.backtest.strategy_base import Strategy
+from squant.engine.backtest.types import Bar, EquitySnapshot
+from squant.infra.exchange.okx.ws_types import WSCandle
+
+logger = logging.getLogger(__name__)
+
+
+class PaperTradingEngine:
+    """Real-time paper trading engine.
+
+    Processes WebSocket candle data and drives strategy execution
+    with local order matching simulation.
+
+    Attributes:
+        run_id: Strategy run ID.
+        symbol: Trading symbol.
+        timeframe: Candle timeframe.
+        is_running: Whether the engine is currently running.
+    """
+
+    def __init__(
+        self,
+        run_id: UUID,
+        strategy: Strategy,
+        symbol: str,
+        timeframe: str,
+        initial_capital: Decimal,
+        commission_rate: Decimal = Decimal("0.001"),
+        slippage: Decimal = Decimal("0"),
+        params: dict[str, Any] | None = None,
+    ):
+        """Initialize paper trading engine.
+
+        Args:
+            run_id: Strategy run ID.
+            strategy: Strategy instance to execute.
+            symbol: Trading symbol (e.g., "BTC/USDT").
+            timeframe: Candle timeframe (e.g., "1m").
+            initial_capital: Starting capital.
+            commission_rate: Commission rate.
+            slippage: Slippage rate.
+            params: Strategy parameters.
+        """
+        self._run_id = run_id
+        self._strategy = strategy
+        self._symbol = symbol
+        self._timeframe = timeframe
+
+        # Initialize context (reused from backtest)
+        self._context = BacktestContext(
+            initial_capital=initial_capital,
+            commission_rate=commission_rate,
+            slippage=slippage,
+            params=params,
+        )
+
+        # Initialize matching engine (reused from backtest)
+        self._matching_engine = MatchingEngine(
+            commission_rate=commission_rate,
+            slippage=slippage,
+        )
+
+        # Inject context into strategy
+        self._strategy.ctx = self._context
+
+        # Engine state
+        self._is_running = False
+        self._started_at: datetime | None = None
+        self._stopped_at: datetime | None = None
+        self._error_message: str | None = None
+        self._bar_count = 0
+
+        # Pending equity snapshots for batch persistence
+        self._pending_snapshots: list[EquitySnapshot] = []
+        self._snapshot_batch_size = 10  # Persist every N bars
+
+    @property
+    def run_id(self) -> UUID:
+        """Get the strategy run ID."""
+        return self._run_id
+
+    @property
+    def symbol(self) -> str:
+        """Get the trading symbol."""
+        return self._symbol
+
+    @property
+    def timeframe(self) -> str:
+        """Get the candle timeframe."""
+        return self._timeframe
+
+    @property
+    def is_running(self) -> bool:
+        """Check if engine is currently running."""
+        return self._is_running
+
+    @property
+    def started_at(self) -> datetime | None:
+        """Get the start timestamp."""
+        return self._started_at
+
+    @property
+    def stopped_at(self) -> datetime | None:
+        """Get the stop timestamp."""
+        return self._stopped_at
+
+    @property
+    def error_message(self) -> str | None:
+        """Get error message if any."""
+        return self._error_message
+
+    @property
+    def bar_count(self) -> int:
+        """Get number of bars processed."""
+        return self._bar_count
+
+    @property
+    def context(self) -> BacktestContext:
+        """Get the backtest context."""
+        return self._context
+
+    async def start(self) -> None:
+        """Start the paper trading engine.
+
+        Calls strategy.on_init() and marks the engine as running.
+        """
+        if self._is_running:
+            logger.warning(f"Engine {self._run_id} already running")
+            return
+
+        logger.info(f"Starting paper trading engine {self._run_id}")
+        self._is_running = True
+        self._started_at = datetime.now(timezone.utc)
+
+        try:
+            # Call strategy initialization
+            self._strategy.on_init()
+            logger.info(f"Strategy initialized for run {self._run_id}")
+        except Exception as e:
+            logger.exception(f"Error in strategy on_init: {e}")
+            self._error_message = f"Strategy initialization failed: {e}"
+            self._is_running = False
+            raise
+
+    async def stop(self, error: str | None = None) -> None:
+        """Stop the paper trading engine.
+
+        Calls strategy.on_stop() and marks the engine as stopped.
+
+        Args:
+            error: Optional error message if stopping due to error.
+        """
+        if not self._is_running:
+            logger.warning(f"Engine {self._run_id} not running")
+            return
+
+        logger.info(f"Stopping paper trading engine {self._run_id}")
+
+        if error:
+            self._error_message = error
+
+        try:
+            # Call strategy cleanup
+            self._strategy.on_stop()
+            logger.info(f"Strategy stopped for run {self._run_id}")
+        except Exception as e:
+            logger.exception(f"Error in strategy on_stop: {e}")
+            if not self._error_message:
+                self._error_message = f"Strategy stop failed: {e}"
+
+        self._is_running = False
+        self._stopped_at = datetime.now(timezone.utc)
+
+    async def process_candle(self, candle: WSCandle) -> None:
+        """Process a WebSocket candle update.
+
+        Only processes closed candles. Execution flow:
+        1. Match pending orders against new bar
+        2. Process fills
+        3. Update current bar
+        4. Add to history
+        5. Call strategy.on_bar()
+        6. Record equity snapshot
+
+        Args:
+            candle: WebSocket candle data.
+        """
+        if not self._is_running:
+            return
+
+        # Only process closed candles
+        if not candle.is_closed:
+            return
+
+        # Verify symbol matches
+        if candle.symbol != self._symbol:
+            logger.warning(
+                f"Symbol mismatch: expected {self._symbol}, got {candle.symbol}"
+            )
+            return
+
+        try:
+            # Convert WSCandle to Bar
+            bar = self._candle_to_bar(candle)
+
+            # 1. Match pending orders
+            pending = self._context._get_pending_orders()
+            fills = self._matching_engine.process_bar(bar, pending)
+
+            # 2. Process fills
+            for fill in fills:
+                self._context._process_fill(fill)
+
+            # 3. Move completed orders
+            self._context._move_completed_orders()
+
+            # 4. Update current bar
+            self._context._set_current_bar(bar)
+
+            # 5. Add to history (for strategy lookback)
+            self._context._add_bar_to_history(bar)
+
+            # 6. Call strategy on_bar
+            self._strategy.on_bar(bar)
+
+            # 7. Record equity snapshot
+            self._context._record_equity_snapshot(bar.time)
+
+            # Track pending snapshot for persistence
+            if self._context.equity_curve:
+                self._pending_snapshots.append(self._context.equity_curve[-1])
+
+            self._bar_count += 1
+
+            logger.debug(
+                f"Processed bar {self._bar_count} at {bar.time}, "
+                f"equity={self._context.equity}"
+            )
+
+        except Exception as e:
+            logger.exception(f"Error processing candle in engine {self._run_id}: {e}")
+            await self.stop(error=f"Error processing candle: {e}")
+            raise
+
+    def _candle_to_bar(self, candle: WSCandle) -> Bar:
+        """Convert WSCandle to Bar.
+
+        Args:
+            candle: WebSocket candle.
+
+        Returns:
+            Bar instance.
+        """
+        return Bar(
+            time=candle.timestamp,
+            symbol=candle.symbol,
+            open=candle.open,
+            high=candle.high,
+            low=candle.low,
+            close=candle.close,
+            volume=candle.volume,
+        )
+
+    def get_pending_snapshots(self) -> list[EquitySnapshot]:
+        """Get and clear pending equity snapshots.
+
+        Returns:
+            List of pending snapshots for persistence.
+        """
+        snapshots = self._pending_snapshots.copy()
+        self._pending_snapshots.clear()
+        return snapshots
+
+    def should_persist_snapshots(self) -> bool:
+        """Check if snapshots should be persisted.
+
+        Returns:
+            True if pending snapshots exceed batch size.
+        """
+        return len(self._pending_snapshots) >= self._snapshot_batch_size
+
+    def get_state_snapshot(self) -> dict[str, Any]:
+        """Get current engine state snapshot.
+
+        Returns:
+            State dictionary for API responses.
+        """
+        positions = {}
+        for symbol, pos in self._context.positions.items():
+            if pos.is_open:
+                positions[symbol] = {
+                    "amount": str(pos.amount),
+                    "avg_entry_price": str(pos.avg_entry_price),
+                }
+
+        pending_orders = []
+        for order in self._context.pending_orders:
+            pending_orders.append({
+                "id": order.id,
+                "symbol": order.symbol,
+                "side": order.side.value,
+                "type": order.type.value,
+                "amount": str(order.amount),
+                "price": str(order.price) if order.price else None,
+                "status": order.status.value,
+                "created_at": order.created_at.isoformat() if order.created_at else None,
+            })
+
+        return {
+            "run_id": str(self._run_id),
+            "symbol": self._symbol,
+            "timeframe": self._timeframe,
+            "is_running": self._is_running,
+            "started_at": self._started_at.isoformat() if self._started_at else None,
+            "stopped_at": self._stopped_at.isoformat() if self._stopped_at else None,
+            "error_message": self._error_message,
+            "bar_count": self._bar_count,
+            "cash": str(self._context.cash),
+            "equity": str(self._context.equity),
+            "initial_capital": str(self._context.initial_capital),
+            "total_fees": str(self._context.total_fees),
+            "positions": positions,
+            "pending_orders": pending_orders,
+            "completed_orders_count": len(self._context.completed_orders),
+            "trades_count": len(self._context.trades),
+        }

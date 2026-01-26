@@ -1,0 +1,185 @@
+"""Session manager for paper trading engines.
+
+Manages all active paper trading sessions and handles candle distribution.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+from typing import TYPE_CHECKING
+from uuid import UUID
+
+if TYPE_CHECKING:
+    from squant.engine.paper.engine import PaperTradingEngine
+    from squant.infra.exchange.okx.ws_types import WSCandle
+
+logger = logging.getLogger(__name__)
+
+
+class SessionManager:
+    """Manages all active paper trading sessions.
+
+    This is a singleton that:
+    - Tracks all running paper trading engines
+    - Routes candle data to relevant engines
+    - Handles graceful shutdown of all sessions
+    """
+
+    def __init__(self) -> None:
+        """Initialize session manager."""
+        # Active sessions: run_id -> engine
+        self._sessions: dict[UUID, PaperTradingEngine] = {}
+
+        # Subscription tracking: (symbol, timeframe) -> set of run_ids
+        self._subscriptions: dict[tuple[str, str], set[UUID]] = {}
+
+        # Lock for thread-safe operations
+        self._lock = asyncio.Lock()
+
+    @property
+    def session_count(self) -> int:
+        """Get number of active sessions."""
+        return len(self._sessions)
+
+    async def register(self, engine: PaperTradingEngine) -> None:
+        """Register a new paper trading engine.
+
+        Args:
+            engine: Paper trading engine to register.
+        """
+        async with self._lock:
+            run_id = engine.run_id
+            key = (engine.symbol, engine.timeframe)
+
+            if run_id in self._sessions:
+                logger.warning(f"Engine {run_id} already registered")
+                return
+
+            self._sessions[run_id] = engine
+
+            # Track subscription
+            if key not in self._subscriptions:
+                self._subscriptions[key] = set()
+            self._subscriptions[key].add(run_id)
+
+            logger.info(
+                f"Registered engine {run_id} for {engine.symbol}:{engine.timeframe}, "
+                f"total sessions: {len(self._sessions)}"
+            )
+
+    async def unregister(self, run_id: UUID) -> None:
+        """Unregister a paper trading engine.
+
+        Args:
+            run_id: Run ID of the engine to unregister.
+        """
+        async with self._lock:
+            engine = self._sessions.pop(run_id, None)
+            if engine is None:
+                logger.warning(f"Engine {run_id} not found for unregistration")
+                return
+
+            # Remove from subscription tracking
+            key = (engine.symbol, engine.timeframe)
+            if key in self._subscriptions:
+                self._subscriptions[key].discard(run_id)
+                if not self._subscriptions[key]:
+                    del self._subscriptions[key]
+
+            logger.info(
+                f"Unregistered engine {run_id}, "
+                f"remaining sessions: {len(self._sessions)}"
+            )
+
+    def get(self, run_id: UUID) -> PaperTradingEngine | None:
+        """Get a paper trading engine by run ID.
+
+        Args:
+            run_id: Run ID to look up.
+
+        Returns:
+            Engine if found, None otherwise.
+        """
+        return self._sessions.get(run_id)
+
+    def list_sessions(self) -> list[dict]:
+        """List all active sessions.
+
+        Returns:
+            List of session state snapshots.
+        """
+        return [engine.get_state_snapshot() for engine in self._sessions.values()]
+
+    async def dispatch_candle(self, candle: WSCandle) -> None:
+        """Dispatch a candle to all subscribed engines.
+
+        Args:
+            candle: WebSocket candle data.
+        """
+        key = (candle.symbol, candle.timeframe)
+
+        # Get subscribed run IDs (snapshot to avoid holding lock during processing)
+        async with self._lock:
+            run_ids = self._subscriptions.get(key, set()).copy()
+
+        if not run_ids:
+            return
+
+        # Dispatch to each engine
+        for run_id in run_ids:
+            engine = self._sessions.get(run_id)
+            if engine and engine.is_running:
+                try:
+                    await engine.process_candle(candle)
+                except Exception as e:
+                    logger.exception(
+                        f"Error dispatching candle to engine {run_id}: {e}"
+                    )
+
+    async def stop_all(self, reason: str = "shutdown") -> None:
+        """Stop all active sessions.
+
+        Args:
+            reason: Reason for stopping (for logging/error message).
+        """
+        logger.info(f"Stopping all paper trading sessions: {reason}")
+
+        # Get all run IDs (snapshot)
+        async with self._lock:
+            run_ids = list(self._sessions.keys())
+
+        # Stop each session
+        for run_id in run_ids:
+            engine = self._sessions.get(run_id)
+            if engine and engine.is_running:
+                try:
+                    await engine.stop(error=f"Session stopped: {reason}")
+                except Exception as e:
+                    logger.exception(f"Error stopping engine {run_id}: {e}")
+
+        logger.info(f"Stopped {len(run_ids)} paper trading sessions")
+
+    def get_subscribed_symbols(self) -> list[tuple[str, str]]:
+        """Get list of (symbol, timeframe) pairs with active subscriptions.
+
+        Returns:
+            List of (symbol, timeframe) tuples.
+        """
+        return list(self._subscriptions.keys())
+
+
+# Global session manager instance
+_session_manager: SessionManager | None = None
+
+
+def get_session_manager() -> SessionManager:
+    """Get the global session manager instance.
+
+    Returns:
+        SessionManager singleton.
+    """
+    global _session_manager
+    if _session_manager is None:
+        _session_manager = SessionManager()
+    return _session_manager

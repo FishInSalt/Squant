@@ -385,11 +385,18 @@ class StreamManager:
                     is_closed=item[8] == "1",
                 )
 
+                # Publish to Redis for WebSocket clients
                 await self._publish(
                     WSMessageType.CANDLE,
                     f"candle:{symbol}:{timeframe}",
                     candle.model_dump(mode="json"),
                 )
+
+                # Dispatch to paper trading sessions
+                from squant.engine.paper.manager import get_session_manager
+
+                session_manager = get_session_manager()
+                await session_manager.dispatch_candle(candle)
 
     async def _process_trades(self, arg: dict, data: list) -> None:
         """Process trade data and publish to Redis."""
