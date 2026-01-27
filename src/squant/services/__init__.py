@@ -29,6 +29,15 @@ from squant.services.data_loader import (
     DataAvailability,
     DataLoader,
 )
+from squant.services.live_trading import (
+    ExchangeConnectionError,
+    LiveTradingError,
+    LiveTradingService,
+    RiskConfigurationError,
+    SessionAlreadyRunningError,
+    SessionNotFoundError as LiveSessionNotFoundError,
+    StrategyInstantiationError as LiveStrategyInstantiationError,
+)
 
 __all__ = [
     # Order services
@@ -55,4 +64,12 @@ __all__ = [
     "RiskRuleService",
     "RiskRuleRepository",
     "RiskRuleNotFoundError",
+    # Live trading services
+    "LiveTradingService",
+    "LiveTradingError",
+    "ExchangeConnectionError",
+    "RiskConfigurationError",
+    "SessionAlreadyRunningError",
+    "LiveSessionNotFoundError",
+    "LiveStrategyInstantiationError",
 ]

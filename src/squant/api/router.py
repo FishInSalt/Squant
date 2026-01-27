@@ -6,6 +6,7 @@ from squant.api.v1 import (
     account,
     backtest,
     health,
+    live_trading,
     market,
     orders,
     paper_trading,
@@ -36,6 +37,9 @@ api_router.include_router(backtest.router, prefix="/backtest", tags=["Backtest"]
 
 # Paper trading endpoints
 api_router.include_router(paper_trading.router, prefix="/paper", tags=["Paper Trading"])
+
+# Live trading endpoints
+api_router.include_router(live_trading.router, prefix="/live", tags=["Live Trading"])
 
 # Risk rule management endpoints
 api_router.include_router(risk.router, prefix="/risk-rules", tags=["Risk"])

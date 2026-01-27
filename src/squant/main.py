@@ -27,15 +27,23 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     await init_stream_manager()
     logger.info("Stream manager initialized")
 
-    # Recover orphaned paper trading sessions (NFR-013)
+    # Recover orphaned trading sessions (NFR-013)
     from squant.infra.database import get_session_context
     from squant.services.paper_trading import StrategyRunRepository
+    from squant.services.live_trading import LiveTradingService
 
     async with get_session_context() as session:
+        # Paper trading sessions
         repo = StrategyRunRepository(session)
-        count = await repo.mark_orphaned_sessions()
-        if count > 0:
-            logger.warning(f"Marked {count} orphaned paper trading sessions as ERROR")
+        paper_count = await repo.mark_orphaned_sessions()
+        if paper_count > 0:
+            logger.warning(f"Marked {paper_count} orphaned paper trading sessions as ERROR")
+
+        # Live trading sessions
+        live_service = LiveTradingService(session)
+        live_count = await live_service.mark_orphaned_sessions()
+        if live_count > 0:
+            logger.warning(f"Marked {live_count} orphaned live trading sessions as ERROR")
 
     # Start background tasks for paper trading
     from squant.services.background import get_task_manager
@@ -63,6 +71,13 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     session_manager = get_session_manager()
     await session_manager.stop_all(reason="application shutdown")
     logger.info("Paper trading sessions stopped")
+
+    # Gracefully stop all live trading sessions
+    from squant.engine.live.manager import get_live_session_manager
+
+    live_session_manager = get_live_session_manager()
+    await live_session_manager.stop_all(reason="application shutdown")
+    logger.info("Live trading sessions stopped")
 
     await close_stream_manager()
     logger.info("Stream manager closed")
