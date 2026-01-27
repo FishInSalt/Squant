@@ -1,0 +1,39 @@
+// SCSS 变量
+
+// 颜色
+$primary-color: #409eff;
+$success-color: #67c23a;
+$warning-color: #e6a23c;
+$danger-color: #f56c6c;
+$info-color: #909399;
+
+// 背景
+$bg-color: #f5f7fa;
+$bg-color-dark: #1a1a1a;
+
+// 边框
+$border-color: #e4e7ed;
+$border-color-light: #f2f6fc;
+
+// 文本
+$text-color-primary: #303133;
+$text-color-regular: #606266;
+$text-color-secondary: #909399;
+$text-color-placeholder: #c0c4cc;
+
+// 间距
+$spacing-xs: 4px;
+$spacing-sm: 8px;
+$spacing-md: 16px;
+$spacing-lg: 20px;
+$spacing-xl: 24px;
+
+// 圆角
+$border-radius-sm: 4px;
+$border-radius-md: 8px;
+$border-radius-lg: 12px;
+
+// 阴影
+$box-shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.1);
+$box-shadow-md: 0 4px 16px rgba(0, 0, 0, 0.15);
+$box-shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.2);
