@@ -5,6 +5,7 @@ from fastapi import APIRouter
 from squant.api.v1 import (
     account,
     backtest,
+    exchange_accounts,
     health,
     live_trading,
     market,
@@ -25,6 +26,11 @@ api_router.include_router(market.router, prefix="/market", tags=["Market"])
 
 # Account endpoints (balance)
 api_router.include_router(account.router, prefix="/account", tags=["Account"])
+
+# Exchange account configuration endpoints
+api_router.include_router(
+    exchange_accounts.router, prefix="/exchange-accounts", tags=["Exchange Accounts"]
+)
 
 # Order management endpoints (with persistence)
 api_router.include_router(orders.router, prefix="/orders", tags=["Orders"])

@@ -36,6 +36,13 @@ from squant.schemas.strategy import (
     ValidateCodeRequest,
     ValidationResultResponse,
 )
+from squant.schemas.account import (
+    ConnectionTestResponse,
+    CreateExchangeAccountRequest,
+    ExchangeAccountListItem,
+    ExchangeAccountResponse,
+    UpdateExchangeAccountRequest,
+)
 from squant.schemas.backtest import (
     AvailableSymbolResponse,
     BacktestDetailResponse,
@@ -50,6 +57,12 @@ from squant.schemas.backtest import (
 )
 
 __all__ = [
+    # Exchange account schemas
+    "CreateExchangeAccountRequest",
+    "UpdateExchangeAccountRequest",
+    "ExchangeAccountResponse",
+    "ExchangeAccountListItem",
+    "ConnectionTestResponse",
     # Exchange schemas
     "BalanceItem",
     "BalanceResponse",
