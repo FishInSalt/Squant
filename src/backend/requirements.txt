@@ -25,6 +25,9 @@ aiosignal>=1.4.0,<2.0.0
 # Middleware & Tools
 python-dotenv>=1.2.0,<2.0.0
 
+# Rate Limiting
+slowapi>=0.1.9,<1.0.0
+
 # Redis
 redis>=7.1.0,<8.0.0
 
