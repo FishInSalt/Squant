@@ -5,6 +5,7 @@ from fastapi import APIRouter
 from squant.api.v1 import (
     account,
     backtest,
+    circuit_breaker,
     exchange_accounts,
     health,
     live_trading,
@@ -12,6 +13,7 @@ from squant.api.v1 import (
     orders,
     paper_trading,
     risk,
+    risk_triggers,
     strategies,
 )
 from squant.websocket.handlers import router as ws_router
@@ -49,6 +51,16 @@ api_router.include_router(live_trading.router, prefix="/live", tags=["Live Tradi
 
 # Risk rule management endpoints
 api_router.include_router(risk.router, prefix="/risk-rules", tags=["Risk"])
+
+# Risk trigger audit endpoints
+api_router.include_router(
+    risk_triggers.router, prefix="/risk-triggers", tags=["Risk Triggers"]
+)
+
+# Circuit breaker endpoints
+api_router.include_router(
+    circuit_breaker.router, prefix="/circuit-breaker", tags=["Circuit Breaker"]
+)
 
 # WebSocket endpoints for real-time data
 api_router.include_router(ws_router, prefix="/ws", tags=["WebSocket"])

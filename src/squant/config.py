@@ -77,6 +77,10 @@ class Settings(BaseSettings):
     # Paper Trading Auto Persistence
     paper_persist_interval_seconds: int = 60  # Persist snapshots every minute
 
+    # Circuit Breaker Settings
+    circuit_breaker_cooldown_minutes: int = 60  # Default cooldown period
+    circuit_breaker_auto_enabled: bool = False  # Auto-trigger disabled by default
+
     @field_validator("secret_key")
     @classmethod
     def validate_secret_key(cls, v: SecretStr) -> SecretStr:

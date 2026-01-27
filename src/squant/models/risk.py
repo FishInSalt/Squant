@@ -64,3 +64,33 @@ class RiskTrigger(Base, UUIDMixin):
 
     def __repr__(self) -> str:
         return f"<RiskTrigger(id={self.id}, rule_id={self.rule_id}, type={self.trigger_type})>"
+
+
+class CircuitBreakerEvent(Base, UUIDMixin):
+    """Circuit breaker event record.
+
+    Tracks when the circuit breaker is triggered, including manual
+    and automatic triggers.
+    """
+
+    __tablename__ = "circuit_breaker_events"
+
+    time: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    trigger_type: Mapped[str] = mapped_column(
+        String(16), nullable=False
+    )  # manual / auto
+    trigger_source: Mapped[str] = mapped_column(
+        String(64), nullable=False
+    )  # api / rule:xxx
+    reason: Mapped[str] = mapped_column(String(256), nullable=False)
+    details: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    sessions_stopped: Mapped[int] = mapped_column(nullable=False, default=0)
+    positions_closed: Mapped[int] = mapped_column(nullable=False, default=0)
+
+    __table_args__ = (Index("idx_circuit_breaker_events_time", "time"),)
+
+    def __repr__(self) -> str:
+        return (
+            f"<CircuitBreakerEvent(id={self.id}, time={self.time}, "
+            f"type={self.trigger_type})>"
+        )

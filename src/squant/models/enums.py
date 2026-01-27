@@ -72,3 +72,10 @@ class StrategyStatus(str, enum.Enum):
 
     ACTIVE = "active"
     ARCHIVED = "archived"
+
+
+class CircuitBreakerTriggerType(str, enum.Enum):
+    """Circuit breaker trigger type."""
+
+    MANUAL = "manual"  # Manual trigger via API
+    AUTO = "auto"  # Automatic trigger by risk rules

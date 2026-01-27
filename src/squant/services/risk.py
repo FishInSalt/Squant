@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from squant.infra.repository import BaseRepository
-from squant.models.risk import RiskRule
+from squant.models.risk import RiskRule, RiskTrigger
 from squant.schemas.risk import CreateRiskRuleRequest, UpdateRiskRuleRequest
 
 
@@ -209,3 +210,147 @@ class RiskRuleService:
             List of enabled risk rules.
         """
         return await self.repository.list_enabled()
+
+
+# RSK-008: Risk Trigger Repository and Service
+
+
+class RiskTriggerRepository(BaseRepository[RiskTrigger]):
+    """Repository for RiskTrigger model with specialized queries."""
+
+    def __init__(self, session: AsyncSession) -> None:
+        super().__init__(RiskTrigger, session)
+
+    async def list_with_filters(
+        self,
+        *,
+        offset: int = 0,
+        limit: int = 20,
+        start_time: datetime | None = None,
+        end_time: datetime | None = None,
+        rule_id: UUID | None = None,
+        run_id: UUID | None = None,
+    ) -> list[RiskTrigger]:
+        """List risk triggers with filters.
+
+        Args:
+            offset: Number of records to skip.
+            limit: Maximum records to return.
+            start_time: Filter by minimum time.
+            end_time: Filter by maximum time.
+            rule_id: Filter by rule ID.
+            run_id: Filter by run ID.
+
+        Returns:
+            List of risk triggers.
+        """
+        stmt = select(RiskTrigger)
+
+        if start_time is not None:
+            stmt = stmt.where(RiskTrigger.time >= start_time)
+        if end_time is not None:
+            stmt = stmt.where(RiskTrigger.time <= end_time)
+        if rule_id is not None:
+            stmt = stmt.where(RiskTrigger.rule_id == str(rule_id))
+        if run_id is not None:
+            stmt = stmt.where(RiskTrigger.run_id == str(run_id))
+
+        stmt = stmt.order_by(RiskTrigger.time.desc()).offset(offset).limit(limit)
+        result = await self.session.execute(stmt)
+        return list(result.scalars().all())
+
+    async def count_with_filters(
+        self,
+        *,
+        start_time: datetime | None = None,
+        end_time: datetime | None = None,
+        rule_id: UUID | None = None,
+        run_id: UUID | None = None,
+    ) -> int:
+        """Count risk triggers with filters.
+
+        Args:
+            start_time: Filter by minimum time.
+            end_time: Filter by maximum time.
+            rule_id: Filter by rule ID.
+            run_id: Filter by run ID.
+
+        Returns:
+            Count of matching triggers.
+        """
+        stmt = select(func.count()).select_from(RiskTrigger)
+
+        if start_time is not None:
+            stmt = stmt.where(RiskTrigger.time >= start_time)
+        if end_time is not None:
+            stmt = stmt.where(RiskTrigger.time <= end_time)
+        if rule_id is not None:
+            stmt = stmt.where(RiskTrigger.rule_id == str(rule_id))
+        if run_id is not None:
+            stmt = stmt.where(RiskTrigger.run_id == str(run_id))
+
+        result = await self.session.execute(stmt)
+        return result.scalar_one()
+
+
+class RiskTriggerService:
+    """Service for risk trigger queries (RSK-008).
+
+    Provides read-only access to risk trigger records for audit
+    and monitoring purposes.
+    """
+
+    def __init__(self, session: AsyncSession) -> None:
+        self.session = session
+        self.repository = RiskTriggerRepository(session)
+
+    async def list_triggers(
+        self,
+        *,
+        page: int = 1,
+        page_size: int = 20,
+        start_time: datetime | None = None,
+        end_time: datetime | None = None,
+        rule_id: UUID | None = None,
+        run_id: UUID | None = None,
+    ) -> tuple[list[RiskTrigger], int]:
+        """List risk triggers with pagination and filters.
+
+        Args:
+            page: Page number (1-indexed).
+            page_size: Items per page.
+            start_time: Filter by minimum time.
+            end_time: Filter by maximum time.
+            rule_id: Filter by rule ID.
+            run_id: Filter by run ID.
+
+        Returns:
+            Tuple of (triggers, total_count).
+        """
+        offset = (page - 1) * page_size
+        triggers = await self.repository.list_with_filters(
+            offset=offset,
+            limit=page_size,
+            start_time=start_time,
+            end_time=end_time,
+            rule_id=rule_id,
+            run_id=run_id,
+        )
+        total = await self.repository.count_with_filters(
+            start_time=start_time,
+            end_time=end_time,
+            rule_id=rule_id,
+            run_id=run_id,
+        )
+        return triggers, total
+
+    async def get_trigger(self, trigger_id: UUID) -> RiskTrigger | None:
+        """Get a risk trigger by ID.
+
+        Args:
+            trigger_id: Trigger ID.
+
+        Returns:
+            Risk trigger or None if not found.
+        """
+        return await self.repository.get(trigger_id)
