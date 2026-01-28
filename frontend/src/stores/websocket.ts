@@ -71,6 +71,7 @@ export const useWebSocketStore = defineStore('websocket', () => {
   // State
   const socket = ref<WebSocket | null>(null)
   const connected = ref(false)
+  const connecting = ref(false)  // 正在连接中标志
   const reconnectAttempts = ref(0)
   const maxReconnectAttempts = 5
   const baseReconnectDelay = 1000
@@ -99,20 +100,31 @@ export const useWebSocketStore = defineStore('websocket', () => {
    * 连接 WebSocket 网关
    */
   function connect() {
-    if (socket.value?.readyState === WebSocket.OPEN) {
+    // 如果已连接或正在连接，不重复连接
+    if (connected.value || connecting.value) {
       return
     }
 
-    // 清理之前的连接
+    // 检查 socket 状态
+    if (socket.value?.readyState === WebSocket.OPEN ||
+        socket.value?.readyState === WebSocket.CONNECTING) {
+      return
+    }
+
+    // 设置连接中标志
+    connecting.value = true
+
+    // 清理之前的连接（已关闭或关闭中的）
     cleanup()
 
     const wsUrl = import.meta.env.VITE_WS_BASE_URL || 'ws://localhost:8000/api/v1/ws'
-    console.info(`Connecting to WebSocket: ${wsUrl}`)
+    console.debug(`Connecting to WebSocket: ${wsUrl}`)
 
     try {
       socket.value = new WebSocket(wsUrl)
     } catch (error) {
       console.error('Failed to create WebSocket:', error)
+      connecting.value = false
       scheduleReconnect()
       return
     }
@@ -120,6 +132,7 @@ export const useWebSocketStore = defineStore('websocket', () => {
     socket.value.onopen = () => {
       console.info('WebSocket connected')
       connected.value = true
+      connecting.value = false
       reconnectAttempts.value = 0
 
       // 启动心跳
@@ -148,8 +161,9 @@ export const useWebSocketStore = defineStore('websocket', () => {
     }
 
     socket.value.onclose = (event) => {
-      console.info(`WebSocket closed: code=${event.code}, reason=${event.reason}`)
+      console.debug(`WebSocket closed: code=${event.code}, reason=${event.reason}`)
       connected.value = false
+      connecting.value = false
       stopHeartbeat()
 
       // 4503 是后端返回的服务不可用代码，不需要重连
@@ -163,7 +177,8 @@ export const useWebSocketStore = defineStore('websocket', () => {
     }
 
     socket.value.onerror = (error) => {
-      console.error('WebSocket error:', error)
+      console.warn('WebSocket error:', error)
+      // 注意：onerror 后通常会触发 onclose，所以不需要在这里重置 connecting
     }
   }
 
@@ -171,6 +186,7 @@ export const useWebSocketStore = defineStore('websocket', () => {
    * 断开连接
    */
   function disconnect() {
+    connecting.value = false
     cleanup()
     subscribedChannels.value.clear()
     pendingSubscriptions.value.clear()
@@ -188,12 +204,16 @@ export const useWebSocketStore = defineStore('websocket', () => {
     }
 
     if (socket.value) {
+      socket.value.onopen = null
       socket.value.onclose = null // 防止触发重连
+      socket.value.onerror = null
+      socket.value.onmessage = null
       socket.value.close()
       socket.value = null
     }
 
     connected.value = false
+    // 注意：不在这里重置 connecting，由调用者决定
   }
 
   /**

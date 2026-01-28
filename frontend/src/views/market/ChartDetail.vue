@@ -47,6 +47,7 @@
             :change="ticker.change_24h"
             :decimals="2"
             show-sign
+            suffix="%"
           />
         </div>
       </div>
@@ -72,12 +73,12 @@
       <div class="chart-toolbar">
         <span class="toolbar-label">指标:</span>
         <el-checkbox-group v-model="selectedIndicators" @change="handleIndicatorChange">
-          <el-checkbox label="MA">MA</el-checkbox>
-          <el-checkbox label="EMA">EMA</el-checkbox>
-          <el-checkbox label="BOLL">BOLL</el-checkbox>
-          <el-checkbox label="MACD">MACD</el-checkbox>
-          <el-checkbox label="RSI">RSI</el-checkbox>
-          <el-checkbox label="KDJ">KDJ</el-checkbox>
+          <el-checkbox value="MA">MA</el-checkbox>
+          <el-checkbox value="EMA">EMA</el-checkbox>
+          <el-checkbox value="BOLL">BOLL</el-checkbox>
+          <el-checkbox value="MACD">MACD</el-checkbox>
+          <el-checkbox value="RSI">RSI</el-checkbox>
+          <el-checkbox value="KDJ">KDJ</el-checkbox>
         </el-checkbox-group>
         <span class="toolbar-spacer"></span>
         <span class="realtime-status" :class="{ active: lastCandleUpdate }">

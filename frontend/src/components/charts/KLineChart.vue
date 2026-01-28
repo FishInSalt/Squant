@@ -24,6 +24,7 @@ const emit = defineEmits<{
 
 const chartContainer = ref<HTMLDivElement | null>(null)
 let chart: Chart | null = null
+let indicatorsCreated = false  // 跟踪指标是否已创建
 
 const indicatorMapping: Record<string, { name: string; paneId?: string }> = {
   MA: { name: 'MA' },
@@ -33,6 +34,21 @@ const indicatorMapping: Record<string, { name: string; paneId?: string }> = {
   MACD: { name: 'MACD', paneId: 'macd' },
   RSI: { name: 'RSI', paneId: 'rsi' },
   KDJ: { name: 'KDJ', paneId: 'kdj' },
+}
+
+/**
+ * 根据价格计算合适的小数位数
+ * @param price 价格
+ * @returns 小数位数
+ */
+function calculatePricePrecision(price: number): number {
+  if (price >= 10000) return 2
+  if (price >= 1000) return 3
+  if (price >= 100) return 4
+  if (price >= 1) return 5
+  if (price >= 0.1) return 6
+  if (price >= 0.01) return 7
+  return 8
 }
 
 function initChart() {
@@ -142,18 +158,6 @@ function initChart() {
 
   chart = init(chartContainer.value, { styles })
 
-  // 添加默认指标
-  props.indicators.forEach((indicator) => {
-    const config = indicatorMapping[indicator]
-    if (config) {
-      if (config.paneId) {
-        chart?.createIndicator(config.name, false, { id: config.paneId })
-      } else {
-        chart?.createIndicator(config.name, true)
-      }
-    }
-  })
-
   // 监听十字线
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   chart?.subscribeAction('crosshair' as any, (data: any) => {
@@ -167,14 +171,28 @@ function initChart() {
     }
   })
 
-  // 加载数据
+  // 加载数据（指标计算依赖数据，所以先加载数据再创建指标）
   if (props.data.length > 0) {
     updateData(props.data)
+    // 数据加载后创建指标，确保 MA 等指标能正确计算
+    props.indicators.forEach((indicator) => {
+      addIndicator(indicator)
+    })
+    indicatorsCreated = true
   }
 }
 
 function updateData(candles: Candle[]) {
-  if (!chart) return
+  if (!chart || candles.length === 0) return
+
+  // 根据价格计算合适的精度
+  const latestPrice = candles[candles.length - 1].close
+  const pricePrecision = calculatePricePrecision(latestPrice)
+  // 成交量精度：根据成交量大小动态调整
+  const latestVolume = candles[candles.length - 1].volume
+  const volumePrecision = latestVolume >= 1 ? 2 : 6
+
+  chart.setPriceVolumePrecision(pricePrecision, volumePrecision)
 
   const klineData = candles.map((c) => ({
     timestamp: c.timestamp,
@@ -201,9 +219,11 @@ function addIndicator(name: string) {
   const config = indicatorMapping[name]
   if (chart && config) {
     if (config.paneId) {
+      // 副图指标：创建新的 pane
       chart.createIndicator(config.name, false, { id: config.paneId })
     } else {
-      chart.createIndicator(config.name, true)
+      // 主图指标：明确指定添加到 candle_pane（主图）
+      chart.createIndicator(config.name, false, { id: 'candle_pane' })
     }
   }
 }
@@ -217,7 +237,45 @@ function removeIndicator(paneId: string) {
 watch(() => props.data, (newData) => {
   if (newData.length > 0) {
     updateData(newData)
+    // 数据首次加载后创建指标
+    if (!indicatorsCreated && chart) {
+      props.indicators.forEach((indicator) => {
+        addIndicator(indicator)
+      })
+      indicatorsCreated = true
+    }
   }
+}, { deep: true })
+
+// 监听指标变化
+watch(() => props.indicators, (newIndicators, oldIndicators) => {
+  if (!chart) return
+
+  const oldSet = new Set(oldIndicators || [])
+  const newSet = new Set(newIndicators || [])
+
+  // 移除不再需要的指标
+  oldIndicators?.forEach((indicator) => {
+    if (!newSet.has(indicator)) {
+      const config = indicatorMapping[indicator]
+      if (config) {
+        if (config.paneId) {
+          // 副图指标：移除整个 pane
+          chart?.removeIndicator(config.paneId, config.name)
+        } else {
+          // 主图指标：从主图移除
+          chart?.removeIndicator('candle_pane', config.name)
+        }
+      }
+    }
+  })
+
+  // 添加新指标
+  newIndicators?.forEach((indicator) => {
+    if (!oldSet.has(indicator)) {
+      addIndicator(indicator)
+    }
+  })
 }, { deep: true })
 
 onMounted(() => {

@@ -1,7 +1,7 @@
 <template>
   <span :class="priceClass">
     <span v-if="showSign && change !== 0">{{ change > 0 ? '+' : '' }}</span>
-    {{ displayValue }}
+    {{ displayValue }}{{ suffix }}
     <span v-if="showPercent && percent !== undefined" class="percent">
       ({{ percentDisplay }})
     </span>
@@ -20,6 +20,7 @@ interface Props {
   showSign?: boolean
   showPercent?: boolean
   neutral?: boolean
+  suffix?: string
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -28,6 +29,7 @@ const props = withDefaults(defineProps<Props>(), {
   showSign: false,
   showPercent: false,
   neutral: false,
+  suffix: '',
 })
 
 const priceClass = computed(() => {

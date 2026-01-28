@@ -37,6 +37,7 @@
               :change="row.change_24h"
               :decimals="2"
               show-sign
+              suffix="%"
             />
           </template>
         </el-table-column>
