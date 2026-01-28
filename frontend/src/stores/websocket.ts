@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
+import { ElMessage } from 'element-plus'
 import type { Ticker } from '@/types'
 import { useMarketStore } from './market'
 
@@ -80,6 +81,9 @@ export const useWebSocketStore = defineStore('websocket', () => {
   const pendingSubscriptions = ref<Set<string>>(new Set())
   const serviceUnavailable = ref(false)  // 服务不可用标志（后端 WebSocket 连接失败）
   const serviceUnavailableMessage = ref('')  // 服务不可用消息
+  const exchangeSwitching = ref(false)  // 交易所切换中标志
+  const switchingFromExchange = ref('')  // 切换前的交易所
+  const switchingToExchange = ref('')  // 切换后的交易所
 
   // 心跳定时器
   let heartbeatTimer: ReturnType<typeof setInterval> | null = null
@@ -385,6 +389,23 @@ export const useWebSocketStore = defineStore('websocket', () => {
         // TODO: 处理账户更新
         break
 
+      case 'exchange_switching':
+        // 处理交易所切换状态
+        if (message.data) {
+          const switchData = message.data as { from: string; to: string; status: string }
+          switchingFromExchange.value = switchData.from
+          switchingToExchange.value = switchData.to
+          exchangeSwitching.value = switchData.status === 'switching'
+          console.info(`Exchange switching: ${switchData.from} -> ${switchData.to} (${switchData.status})`)
+          // Show notification
+          if (switchData.status === 'switching') {
+            ElMessage.info(`WebSocket 正在切换到 ${switchData.to.toUpperCase()}...`)
+          } else if (switchData.status === 'completed') {
+            ElMessage.success(`WebSocket 已切换到 ${switchData.to.toUpperCase()}`)
+          }
+        }
+        break
+
       default:
         console.debug('Unknown message type:', message.type)
     }
@@ -399,8 +420,11 @@ export const useWebSocketStore = defineStore('websocket', () => {
     const change_24h = last - open24h
     const change_percent_24h = open24h > 0 ? (change_24h / open24h) * 100 : 0
 
+    // Get current exchange from market store
+    const marketStore = useMarketStore()
+
     return {
-      exchange: 'okx',
+      exchange: marketStore.currentExchange,
       symbol: data.symbol,
       last_price: last,
       bid_price: parseFloat(data.bid || '0') || 0,
@@ -492,6 +516,9 @@ export const useWebSocketStore = defineStore('websocket', () => {
     subscribedChannels,
     serviceUnavailable,
     serviceUnavailableMessage,
+    exchangeSwitching,
+    switchingFromExchange,
+    switchingToExchange,
     // Getters
     isConnected,
     // Actions

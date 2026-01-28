@@ -50,6 +50,7 @@ class WSMessageType(str, Enum):
     ORDERBOOK = "orderbook"
     ORDER_UPDATE = "order_update"
     ACCOUNT_UPDATE = "account_update"
+    EXCHANGE_SWITCHING = "exchange_switching"  # Notify clients of exchange switch
 
 
 class WSTicker(BaseModel):

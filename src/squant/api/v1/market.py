@@ -1,24 +1,87 @@
 """Market data API endpoints."""
 
+import logging
 from typing import Annotated
 
 from fastapi import APIRouter, HTTPException, Path, Query
 
-from squant.api.deps import OKXExchange
+from squant.api.deps import Exchange
 from squant.api.utils import ApiResponse, handle_exchange_error
+from squant.config import get_settings
 from squant.infra.exchange import TimeFrame
+from squant.infra.exchange.ccxt.types import SUPPORTED_EXCHANGES
 from squant.schemas.exchange import (
     CandlestickItem,
     CandlestickResponse,
     TickerResponse,
 )
+from squant.websocket.manager import get_stream_manager
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+# Runtime storage for current exchange (single-user system)
+_current_exchange: str = get_settings().default_exchange
+
+
+def get_current_exchange() -> str:
+    """Get the current exchange ID."""
+    return _current_exchange
+
+
+@router.get("/exchange")
+async def get_exchange_config() -> ApiResponse[dict]:
+    """Get current data source exchange configuration.
+
+    Returns the currently active exchange and list of supported exchanges.
+    """
+    return ApiResponse(data={
+        "current": _current_exchange,
+        "supported": list(SUPPORTED_EXCHANGES),
+    })
+
+
+@router.put("/exchange/{exchange_id}")
+async def set_exchange(
+    exchange_id: Annotated[str, Path(description="Exchange ID (okx, binance, bybit)")],
+) -> ApiResponse[dict]:
+    """Switch data source exchange.
+
+    For single-user system, this dynamically switches the exchange for
+    both REST API and WebSocket data sources.
+    """
+    global _current_exchange
+
+    exchange_id = exchange_id.lower()
+    if exchange_id not in SUPPORTED_EXCHANGES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported exchange: {exchange_id}. Supported: {', '.join(SUPPORTED_EXCHANGES)}",
+        )
+
+    old_exchange = _current_exchange
+    _current_exchange = exchange_id
+
+    logger.info(f"Switching exchange from {old_exchange} to {exchange_id}")
+
+    # Notify WebSocket manager to switch exchange
+    try:
+        stream_manager = get_stream_manager()
+        await stream_manager.switch_exchange(exchange_id)
+    except Exception as e:
+        logger.warning(f"Failed to switch WebSocket exchange: {e}")
+        # Don't fail the request, REST API will still work
+
+    return ApiResponse(data={
+        "current": exchange_id,
+        "previous": old_exchange,
+    })
 
 
 @router.get("/ticker/{symbol:path}", response_model=ApiResponse[TickerResponse])
 async def get_ticker(
-    exchange: OKXExchange,
+    exchange: Exchange,
     symbol: Annotated[str, Path(description="Trading pair (e.g., BTC/USDT)")],
 ) -> ApiResponse[TickerResponse]:
     """Get ticker data for a trading pair.
@@ -47,7 +110,7 @@ async def get_ticker(
 
 @router.get("/tickers", response_model=ApiResponse[list[TickerResponse]])
 async def get_tickers(
-    exchange: OKXExchange,
+    exchange: Exchange,
     symbols: Annotated[
         str | None,
         Query(description="Comma-separated trading pairs (e.g., BTC/USDT,ETH/USDT)"),
@@ -116,7 +179,7 @@ async def get_tickers(
 
 @router.get("/candles/{symbol:path}", response_model=ApiResponse[CandlestickResponse])
 async def get_candles(
-    exchange: OKXExchange,
+    exchange: Exchange,
     symbol: Annotated[str, Path(description="Trading pair (e.g., BTC/USDT)")],
     timeframe: Annotated[
         str,

@@ -6,12 +6,14 @@ import { getWatchlist, saveWatchlist } from '@/utils/storage'
 
 export const useMarketStore = defineStore('market', () => {
   // State
-  const exchanges = ref<string[]>([])
-  const currentExchange = ref<string>('binance')
+  const exchanges = ref<string[]>(['okx', 'binance', 'bybit'])
+  const currentExchange = ref<string>('okx')
+  const supportedExchanges = ref<string[]>(['okx', 'binance', 'bybit'])
   const tickers = ref<Map<string, Ticker>>(new Map())
   const watchlist = ref<WatchlistItem[]>(getWatchlist())
   const timeframes = ref<Timeframe[]>(['1m', '5m', '15m', '30m', '1h', '4h', '1d'])
   const loading = ref(false)
+  const exchangeSwitching = ref(false)
 
   // Getters
   const tickerList = computed(() => Array.from(tickers.value.values()))
@@ -40,11 +42,47 @@ export const useMarketStore = defineStore('market', () => {
     try {
       const response = await marketApi.getExchanges()
       exchanges.value = response.data
+      supportedExchanges.value = response.data
       if (exchanges.value.length > 0 && !exchanges.value.includes(currentExchange.value)) {
         currentExchange.value = exchanges.value[0]
       }
     } catch (error) {
       console.error('Failed to load exchanges:', error)
+    }
+  }
+
+  async function loadCurrentExchange() {
+    try {
+      const response = await marketApi.getExchangeConfig()
+      currentExchange.value = response.data.current
+      supportedExchanges.value = response.data.supported
+      exchanges.value = response.data.supported
+    } catch (error) {
+      console.error('Failed to load current exchange:', error)
+    }
+  }
+
+  async function switchExchange(exchange: string) {
+    if (exchange === currentExchange.value) {
+      return
+    }
+
+    exchangeSwitching.value = true
+    try {
+      // Call backend to switch exchange
+      await marketApi.setExchange(exchange)
+      currentExchange.value = exchange
+
+      // Clear old ticker data
+      tickers.value.clear()
+
+      // Reload all tickers from new exchange
+      await loadAllTickers()
+    } catch (error) {
+      console.error('Failed to switch exchange:', error)
+      throw error
+    } finally {
+      exchangeSwitching.value = false
     }
   }
 
@@ -164,10 +202,12 @@ export const useMarketStore = defineStore('market', () => {
     // State
     exchanges,
     currentExchange,
+    supportedExchanges,
     tickers,
     watchlist,
     timeframes,
     loading,
+    exchangeSwitching,
     // Getters
     tickerList,
     watchlistTickers,
@@ -175,6 +215,7 @@ export const useMarketStore = defineStore('market', () => {
     getTicker,
     // Actions
     loadExchanges,
+    loadCurrentExchange,
     loadTickers,
     loadAllTickers,
     updateTicker,
@@ -183,6 +224,7 @@ export const useMarketStore = defineStore('market', () => {
     removeFromWatchlist,
     reorderWatchlist,
     setCurrentExchange,
+    switchExchange,
     loadTimeframes,
   }
 })

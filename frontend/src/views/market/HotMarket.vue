@@ -10,20 +10,25 @@
         >
           <el-tag type="warning" size="small">数据延迟</el-tag>
         </el-tooltip>
+        <el-tag v-else-if="wsExchangeSwitching" type="warning" size="small">
+          切换中...
+        </el-tag>
         <el-tag v-else :type="wsConnected ? 'success' : 'danger'" size="small">
           {{ wsConnected ? '实时' : '离线' }}
         </el-tag>
         <el-select
-          v-model="selectedExchange"
+          :model-value="selectedExchange"
           placeholder="选择交易所"
           style="width: 120px"
+          :disabled="exchangeSwitching"
+          :loading="exchangeSwitching"
           @change="handleExchangeChange"
         >
           <el-option
-            v-for="exchange in exchanges"
-            :key="exchange"
-            :label="formatExchangeName(exchange)"
-            :value="exchange"
+            v-for="ex in supportedExchanges"
+            :key="ex"
+            :label="formatExchangeName(ex)"
+            :value="ex"
           />
         </el-select>
         <el-input
@@ -129,6 +134,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
+import { ElMessage } from 'element-plus'
 import { useMarketStore } from '@/stores/market'
 import { useWebSocketStore } from '@/stores/websocket'
 import PriceCell from '@/components/common/PriceCell.vue'
@@ -140,7 +146,6 @@ const marketStore = useMarketStore()
 const wsStore = useWebSocketStore()
 
 const tableRef = ref()
-const selectedExchange = ref('okx')
 const searchQuery = ref('')
 const loading = ref(false)
 const sortProp = ref('quote_volume_24h')
@@ -151,8 +156,12 @@ const pageSize = ref(50)
 // WebSocket 连接状态
 const wsConnected = computed(() => wsStore.isConnected)
 const wsServiceUnavailable = computed(() => wsStore.serviceUnavailable)
+const wsExchangeSwitching = computed(() => wsStore.exchangeSwitching)
 
-const exchanges = computed(() => marketStore.exchanges.length > 0 ? marketStore.exchanges : ['okx'])
+// Exchange state from store (readonly - changes handled by @change event)
+const selectedExchange = computed(() => marketStore.currentExchange)
+const supportedExchanges = computed(() => marketStore.supportedExchanges)
+const exchangeSwitching = computed(() => marketStore.exchangeSwitching)
 const tickers = computed(() => marketStore.tickerList)
 const isInWatchlist = computed(() => marketStore.isInWatchlist)
 
@@ -245,9 +254,28 @@ async function loadData() {
   }
 }
 
-function handleExchangeChange() {
+async function handleExchangeChange(exchange: string | number | boolean | undefined) {
+  if (typeof exchange !== 'string') return
   currentPage.value = 1
-  loadData()
+  loading.value = true
+  try {
+    await marketStore.switchExchange(exchange)
+    // WebSocket will automatically reconnect to new exchange via backend
+    updateWsSubscriptions()
+    ElMessage.success(`已切换到 ${formatExchangeName(exchange)}`)
+  } catch (error: unknown) {
+    console.error('Failed to switch exchange:', error)
+    // Extract error message from axios error or generic Error
+    let errorMsg = '未知错误'
+    if (error && typeof error === 'object') {
+      const axiosError = error as { response?: { data?: { message?: string } }; message?: string }
+      errorMsg = axiosError.response?.data?.message || axiosError.message || '未知错误'
+    }
+    // Note: API interceptor already shows a generic error, this provides more context
+    ElMessage.error(`切换到 ${formatExchangeName(exchange)} 失败: ${errorMsg}`)
+  } finally {
+    loading.value = false
+  }
 }
 
 function handleSortChange({ prop, order }: { prop: string; order: 'ascending' | 'descending' | null }) {
@@ -314,6 +342,9 @@ watch(searchQuery, () => {
 })
 
 onMounted(async () => {
+  // 先加载当前交易所配置
+  await marketStore.loadCurrentExchange()
+
   // 加载初始数据
   await loadData()
 

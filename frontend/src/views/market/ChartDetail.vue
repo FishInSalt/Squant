@@ -5,7 +5,7 @@
         <el-button icon="ArrowLeft" @click="goBack">返回</el-button>
         <div class="symbol-info">
           <h1 class="symbol-name">{{ symbol }}</h1>
-          <el-tag size="small" type="info">{{ formatExchangeName(exchange) }}</el-tag>
+          <el-tag size="small" type="info">{{ formatExchangeName(currentExchange) }}</el-tag>
           <el-button
             :icon="isInWatchlist ? 'StarFilled' : 'Star'"
             :type="isInWatchlist ? 'warning' : 'default'"
@@ -157,6 +157,9 @@ const isInWatchlist = computed(() =>
   marketStore.isInWatchlist(props.exchange, props.symbol)
 )
 
+// Use current exchange from store (may differ from route param after switching)
+const currentExchange = computed(() => marketStore.currentExchange)
+
 async function loadCandles() {
   loading.value = true
   try {
@@ -272,6 +275,10 @@ function subscribeToCandles() {
 
 onMounted(async () => {
   addRecentSymbol(props.exchange, props.symbol)
+
+  // 先加载当前交易所配置，确保与热门行情页面一致
+  await marketStore.loadCurrentExchange()
+
   await Promise.all([loadCandles(), loadTicker()])
 
   // 连接 WebSocket

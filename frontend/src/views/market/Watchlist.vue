@@ -137,6 +137,9 @@ function goToHotMarket() {
 let unsubscribe: (() => void) | null = null
 
 onMounted(async () => {
+  // 先加载当前交易所配置
+  await marketStore.loadCurrentExchange()
+
   await loadWatchlistData()
 
   // 订阅 WebSocket 更新

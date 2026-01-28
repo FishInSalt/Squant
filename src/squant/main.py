@@ -4,12 +4,19 @@ import logging
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from squant.api.router import api_router
 from squant.config import get_settings
 from squant.infra import close_db, close_redis, init_db, init_redis
+from squant.infra.exchange.exceptions import (
+    ExchangeAPIError,
+    ExchangeAuthenticationError,
+    ExchangeConnectionError,
+    ExchangeRateLimitError,
+)
 from squant.websocket import close_stream_manager, init_stream_manager
 
 # Configure logging
@@ -44,8 +51,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     # Recover orphaned trading sessions (NFR-013)
     from squant.infra.database import get_session_context
-    from squant.services.paper_trading import StrategyRunRepository
     from squant.services.live_trading import LiveTradingService
+    from squant.services.paper_trading import StrategyRunRepository
 
     async with get_session_context() as session:
         # Paper trading sessions
@@ -96,6 +103,13 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     await close_stream_manager()
     logger.info("Stream manager closed")
+
+    # Clear exchange adapter cache
+    from squant.api.deps import clear_exchange_cache
+
+    await clear_exchange_cache()
+    logger.info("Exchange cache cleared")
+
     await close_redis()
     logger.info("Redis connection closed")
     await close_db()
@@ -127,6 +141,64 @@ def create_app() -> FastAPI:
 
     # Include API router
     app.include_router(api_router, prefix=settings.api_prefix)
+
+    # Exception handlers for exchange errors (caught in dependencies)
+    @app.exception_handler(ExchangeConnectionError)
+    async def exchange_connection_error_handler(
+        request: Request, exc: ExchangeConnectionError
+    ) -> JSONResponse:
+        logger.warning(f"Exchange connection error: {exc}")
+        return JSONResponse(
+            status_code=503,
+            content={
+                "code": 503,
+                "message": str(exc),
+                "data": None,
+            },
+        )
+
+    @app.exception_handler(ExchangeAuthenticationError)
+    async def exchange_auth_error_handler(
+        request: Request, exc: ExchangeAuthenticationError
+    ) -> JSONResponse:
+        logger.warning(f"Exchange authentication error: {exc}")
+        return JSONResponse(
+            status_code=401,
+            content={
+                "code": 401,
+                "message": str(exc),
+                "data": None,
+            },
+        )
+
+    @app.exception_handler(ExchangeRateLimitError)
+    async def exchange_rate_limit_handler(
+        request: Request, exc: ExchangeRateLimitError
+    ) -> JSONResponse:
+        logger.warning(f"Exchange rate limit error: {exc}")
+        return JSONResponse(
+            status_code=429,
+            content={
+                "code": 429,
+                "message": str(exc),
+                "data": None,
+            },
+            headers={"Retry-After": str(int(exc.retry_after or 1))},
+        )
+
+    @app.exception_handler(ExchangeAPIError)
+    async def exchange_api_error_handler(
+        request: Request, exc: ExchangeAPIError
+    ) -> JSONResponse:
+        logger.warning(f"Exchange API error: {exc}")
+        return JSONResponse(
+            status_code=502,
+            content={
+                "code": 502,
+                "message": str(exc),
+                "data": None,
+            },
+        )
 
     return app
 

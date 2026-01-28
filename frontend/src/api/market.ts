@@ -1,4 +1,4 @@
-import { get } from './index'
+import { get, put } from './index'
 import type { Ticker, TickerResponse, Candle, Timeframe } from '@/types'
 
 // 后端返回的原始 K 线类型（timestamp 是 ISO 字符串）
@@ -18,6 +18,18 @@ interface CandlestickResponse {
   candles: CandlestickItemResponse[]
 }
 
+// 交易所配置响应类型
+interface ExchangeConfigResponse {
+  current: string
+  supported: string[]
+}
+
+// 交易所切换响应类型
+interface ExchangeSwitchResponse {
+  current: string
+  previous: string
+}
+
 // 转换后端 Candle 响应为前端 Candle 类型
 function transformCandle(data: CandlestickItemResponse): Candle {
   return {
@@ -30,8 +42,8 @@ function transformCandle(data: CandlestickItemResponse): Candle {
   }
 }
 
-// 默认交易所（后端目前只支持 OKX）
-const DEFAULT_EXCHANGE = 'okx'
+// 当前交易所（从后端同步）
+let currentExchangeId = 'okx'
 
 // 转换后端 Ticker 响应为前端 Ticker 类型
 function transformTicker(data: TickerResponse): Ticker {
@@ -40,7 +52,7 @@ function transformTicker(data: TickerResponse): Ticker {
   const low = parseFloat(data.low_24h || '0') || last
 
   return {
-    exchange: DEFAULT_EXCHANGE,
+    exchange: currentExchangeId,
     symbol: data.symbol,
     last_price: last,
     bid_price: parseFloat(data.bid || '0') || 0,
@@ -55,14 +67,43 @@ function transformTicker(data: TickerResponse): Ticker {
   }
 }
 
-// 获取交易所列表
-// TODO: Replace with actual API call when backend supports multiple exchanges
-// Currently hardcoded as backend only supports OKX
-export const getExchanges = async () => ({
-  data: [DEFAULT_EXCHANGE],
-  code: 0,
-  message: 'success',
-})
+// 获取当前交易所配置
+export const getExchangeConfig = async () => {
+  const response = await get<ExchangeConfigResponse>('/market/exchange')
+  // Update local state
+  currentExchangeId = response.data.current
+  return response
+}
+
+// 切换交易所
+export const setExchange = async (exchangeId: string) => {
+  const response = await put<ExchangeSwitchResponse>(`/market/exchange/${exchangeId}`)
+  // Update local state
+  currentExchangeId = response.data.current
+  return response
+}
+
+// 获取当前交易所 ID
+export const getCurrentExchangeId = () => currentExchangeId
+
+// 获取交易所列表（从后端获取支持的交易所）
+export const getExchanges = async () => {
+  try {
+    const config = await getExchangeConfig()
+    return {
+      data: config.data.supported,
+      code: 0,
+      message: 'success',
+    }
+  } catch {
+    // Fallback if API not available
+    return {
+      data: ['okx', 'binance', 'bybit'],
+      code: 0,
+      message: 'success',
+    }
+  }
+}
 
 // 获取单个行情
 export const getTicker = async (symbol: string) => {

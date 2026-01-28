@@ -69,6 +69,13 @@ class WebSocketGateway:
                 self._redis = redis
                 self._pubsub = redis.pubsub()
 
+                # Auto-subscribe to system channel for broadcast messages
+                # (e.g., exchange_switching notifications)
+                system_channel = f"{self.REDIS_CHANNEL_PREFIX}system"
+                await self._pubsub.subscribe(system_channel)
+                self._subscribed_channels.add("system")
+                logger.info("Auto-subscribed to system channel")
+
                 # Create tasks for receiving from Redis and handling client messages
                 receive_task = asyncio.create_task(self._receive_from_redis())
                 client_task = asyncio.create_task(self._handle_client_messages())

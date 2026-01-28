@@ -140,6 +140,92 @@ class StreamManager:
 
         logger.info("Native OKX WebSocket clients started")
 
+    async def switch_exchange(self, exchange_id: str) -> None:
+        """Switch to a new exchange data source.
+
+        This method closes the current CCXT provider and creates a new one
+        for the specified exchange, then resubscribes to all active channels.
+
+        Args:
+            exchange_id: New exchange identifier (okx, binance, bybit).
+
+        Note:
+            This only works in CCXT provider mode. Native OKX mode does not
+            support exchange switching.
+        """
+        if not self._settings.use_ccxt_provider:
+            logger.warning("Exchange switching only supported in CCXT provider mode")
+            return
+
+        if not self._running:
+            logger.warning("Stream manager not running, cannot switch exchange")
+            return
+
+        current_exchange = self._ccxt_provider.exchange_id if self._ccxt_provider else "none"
+        if current_exchange == exchange_id:
+            logger.debug(f"Already connected to {exchange_id}, no switch needed")
+            return
+
+        logger.info(f"Switching exchange from {current_exchange} to {exchange_id}")
+
+        # Notify clients that exchange is switching
+        await self._publish_exchange_switching(current_exchange, exchange_id, "switching")
+
+        # Store current subscriptions before closing
+        ticker_subs = set(self._ticker_subscriptions)
+        candle_subs = set(self._candle_subscriptions)
+        trade_subs = set(self._trade_subscriptions)
+        orderbook_subs = set(self._orderbook_subscriptions)
+
+        # Close current CCXT provider
+        if self._ccxt_provider:
+            await self._ccxt_provider.close()
+            self._ccxt_provider = None
+
+        # Clear subscription tracking (will be rebuilt)
+        self._ticker_subscriptions.clear()
+        self._candle_subscriptions.clear()
+        self._trade_subscriptions.clear()
+        self._orderbook_subscriptions.clear()
+
+        # Create new CCXT provider for the new exchange
+        credentials = self._get_exchange_credentials(exchange_id)
+        self._ccxt_provider = CCXTStreamProvider(exchange_id, credentials)
+        self._ccxt_provider.add_handler(self._handle_ccxt_message)
+        await self._ccxt_provider.connect()
+
+        logger.info(f"Connected to {exchange_id}, resubscribing to {len(ticker_subs)} tickers, {len(candle_subs)} candles")
+
+        # Resubscribe to all previous channels on new exchange
+        for symbol in ticker_subs:
+            try:
+                await self.subscribe_ticker(symbol)
+            except Exception as e:
+                logger.warning(f"Failed to resubscribe ticker {symbol}: {e}")
+
+        for symbol, timeframe in candle_subs:
+            try:
+                await self.subscribe_candles(symbol, timeframe)
+            except Exception as e:
+                logger.warning(f"Failed to resubscribe candle {symbol} {timeframe}: {e}")
+
+        for symbol in trade_subs:
+            try:
+                await self.subscribe_trades(symbol)
+            except Exception as e:
+                logger.warning(f"Failed to resubscribe trades {symbol}: {e}")
+
+        for symbol in orderbook_subs:
+            try:
+                await self.subscribe_orderbook(symbol)
+            except Exception as e:
+                logger.warning(f"Failed to resubscribe orderbook {symbol}: {e}")
+
+        logger.info(f"Successfully switched to {exchange_id}")
+
+        # Notify clients that exchange switch is complete
+        await self._publish_exchange_switching(current_exchange, exchange_id, "completed")
+
     def _get_exchange_credentials(self, exchange_id: str) -> ExchangeCredentials | None:
         """Get credentials for the specified exchange.
 
@@ -778,6 +864,26 @@ class StreamManager:
             )
 
     # ==================== Helper Methods ====================
+
+    async def _publish_exchange_switching(
+        self, from_exchange: str, to_exchange: str, status: str
+    ) -> None:
+        """Publish exchange switching status to clients.
+
+        Args:
+            from_exchange: Previous exchange ID.
+            to_exchange: New exchange ID.
+            status: Switch status ('switching' or 'completed').
+        """
+        await self._publish(
+            WSMessageType.EXCHANGE_SWITCHING,
+            "system",
+            {
+                "from": from_exchange,
+                "to": to_exchange,
+                "status": status,
+            },
+        )
 
     async def _publish(self, msg_type: WSMessageType, channel: str, data: dict) -> None:
         """Queue message for batch publishing to Redis.

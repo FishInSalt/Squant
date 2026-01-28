@@ -23,6 +23,7 @@ Example:
 """
 
 from squant.infra.exchange.ccxt.provider import CCXTStreamProvider
+from squant.infra.exchange.ccxt.rest_adapter import CCXTRestAdapter
 from squant.infra.exchange.ccxt.transformer import CCXTDataTransformer
 from squant.infra.exchange.ccxt.types import (
     SUPPORTED_EXCHANGES,
@@ -32,6 +33,7 @@ from squant.infra.exchange.ccxt.types import (
 
 __all__ = [
     "CCXTStreamProvider",
+    "CCXTRestAdapter",
     "CCXTDataTransformer",
     "ExchangeCredentials",
     "SUPPORTED_EXCHANGES",
