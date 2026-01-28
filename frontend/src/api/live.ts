@@ -1,5 +1,5 @@
 import { get, post, del } from './index'
-import type { LiveSession, Position, RunLog, Trade, RiskConfig, PaginatedData } from '@/types'
+import type { LiveSession, Position, RunLog, Trade, RiskConfig, PaginatedData, EquityCurvePoint } from '@/types'
 
 // 启动实盘交易
 export const startLiveTrading = (config: {
@@ -8,15 +8,15 @@ export const startLiveTrading = (config: {
   exchange: string
   symbol: string
   timeframe: string
-  initial_capital: number
+  initial_equity: number
   params: Record<string, unknown>
   risk_config: RiskConfig
 }) =>
-  post<LiveSession>('/live/start', config)
+  post<LiveSession>('/live', config)
 
 // 停止实盘交易
-export const stopLiveTrading = (id: string, close_positions?: boolean) =>
-  post<void>(`/live/${id}/stop`, { close_positions })
+export const stopLiveTrading = (id: string, cancel_orders?: boolean) =>
+  post<void>(`/live/${id}/stop`, { cancel_orders })
 
 // 紧急平仓
 export const emergencyClosePositions = (id: string) =>
@@ -26,6 +26,10 @@ export const emergencyClosePositions = (id: string) =>
 export const getLiveSession = (id: string) =>
   get<LiveSession>(`/live/${id}`)
 
+// 获取会话实时状态
+export const getLiveSessionStatus = (id: string) =>
+  get<LiveSession>(`/live/${id}/status`)
+
 // 获取会话列表
 export const getLiveSessions = (params?: {
   page?: number
@@ -34,11 +38,11 @@ export const getLiveSessions = (params?: {
   account_id?: string
   status?: string
 }) =>
-  get<PaginatedData<LiveSession>>('/live/list', params)
+  get<PaginatedData<LiveSession>>('/live/runs', params)
 
 // 获取运行中的会话
 export const getRunningLiveSessions = () =>
-  get<LiveSession[]>('/live/running')
+  get<LiveSession[]>('/live')
 
 // 获取会话持仓
 export const getLivePositions = (id: string) =>
@@ -58,6 +62,10 @@ export const getLiveLogs = (id: string, params?: {
   after?: number
 }) =>
   get<RunLog[]>(`/live/${id}/logs`, params)
+
+// 获取收益曲线
+export const getLiveEquityCurve = (id: string) =>
+  get<EquityCurvePoint[]>(`/live/${id}/equity-curve`)
 
 // 更新风控配置
 export const updateLiveRiskConfig = (id: string, config: Partial<RiskConfig>) =>

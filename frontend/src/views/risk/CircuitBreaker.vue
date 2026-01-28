@@ -150,7 +150,7 @@ async function handleHalt() {
   if (!confirmed) return
 
   try {
-    await executeCircuitBreakerAction({ action: 'halt', reason: '手动触发熔断' })
+    await executeCircuitBreakerAction({ action: 'activate', reason: '手动触发熔断' })
     toastSuccess('系统已熔断')
     loadStatus()
   } catch (error) {
@@ -163,7 +163,7 @@ async function handleResume() {
   if (!confirmed) return
 
   try {
-    await executeCircuitBreakerAction({ action: 'resume' })
+    await executeCircuitBreakerAction({ action: 'deactivate' })
     toastSuccess('交易已恢复')
     loadStatus()
   } catch (error) {

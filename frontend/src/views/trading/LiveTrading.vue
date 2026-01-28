@@ -399,7 +399,7 @@ async function handleSubmit() {
       exchange: account.exchange,
       symbol: form.symbol,
       timeframe: form.timeframe,
-      initial_capital: form.initial_capital,
+      initial_equity: form.initial_capital,
       params: form.params,
       risk_config: form.risk_config,
     }

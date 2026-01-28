@@ -1,6 +1,13 @@
 import { get } from './index'
 import type { Ticker, Candle, Timeframe, MarketOverview } from '@/types'
 
+// K线响应类型
+interface CandlestickResponse {
+  symbol: string
+  timeframe: string
+  candles: Candle[]
+}
+
 // 获取交易所列表
 export const getExchanges = () =>
   get<string[]>('/market/exchanges')
@@ -9,34 +16,27 @@ export const getExchanges = () =>
 export const getSymbols = (exchange: string) =>
   get<string[]>('/market/symbols', { exchange })
 
-// 获取单个行情
-export const getTicker = (exchange: string, symbol: string) =>
-  get<Ticker>('/market/ticker', { exchange, symbol })
+// 获取单个行情 (symbol 作为路径参数)
+export const getTicker = (symbol: string) =>
+  get<Ticker>(`/market/ticker/${encodeURIComponent(symbol)}`)
 
 // 获取多个行情
-export const getTickers = (exchange: string, symbols?: string[]) =>
-  get<Ticker[]>('/market/tickers', { exchange, symbols: symbols?.join(',') })
+export const getTickers = (symbols?: string[]) =>
+  get<Ticker[]>('/market/tickers', { symbols: symbols?.join(',') })
 
 // 获取热门行情
 export const getHotTickers = (exchange?: string, limit?: number) =>
   get<Ticker[]>('/market/hot', { exchange, limit })
 
-// 获取K线数据
+// 获取K线数据 (symbol 作为路径参数)
 export const getCandles = (
-  exchange: string,
   symbol: string,
   timeframe: Timeframe,
-  limit?: number,
-  start?: number,
-  end?: number
+  limit?: number
 ) =>
-  get<Candle[]>('/market/candles', {
-    exchange,
-    symbol,
+  get<CandlestickResponse>(`/market/candles/${encodeURIComponent(symbol)}`, {
     timeframe,
     limit,
-    start,
-    end,
   })
 
 // 获取市场概览

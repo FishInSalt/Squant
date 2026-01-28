@@ -42,10 +42,10 @@ export const useMarketStore = defineStore('market', () => {
     }
   }
 
-  async function loadTickers(exchange: string) {
+  async function loadTickers(symbols?: string[]) {
     loading.value = true
     try {
-      const response = await marketApi.getTickers(exchange)
+      const response = await marketApi.getTickers(symbols)
       response.data.forEach((ticker) => {
         const key = `${ticker.exchange}:${ticker.symbol}`
         tickers.value.set(key, ticker)

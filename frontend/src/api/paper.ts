@@ -10,7 +10,7 @@ export const startPaperTrading = (config: {
   initial_capital: number
   params: Record<string, unknown>
 }) =>
-  post<PaperSession>('/paper/start', config)
+  post<PaperSession>('/paper', config)
 
 // 停止模拟交易
 export const stopPaperTrading = (id: string) =>
@@ -20,6 +20,10 @@ export const stopPaperTrading = (id: string) =>
 export const getPaperSession = (id: string) =>
   get<PaperSession>(`/paper/${id}`)
 
+// 获取会话实时状态
+export const getPaperSessionStatus = (id: string) =>
+  get<PaperSession>(`/paper/${id}/status`)
+
 // 获取会话列表
 export const getPaperSessions = (params?: {
   page?: number
@@ -27,11 +31,11 @@ export const getPaperSessions = (params?: {
   strategy_id?: string
   status?: string
 }) =>
-  get<PaginatedData<PaperSession>>('/paper/list', params)
+  get<PaginatedData<PaperSession>>('/paper/runs', params)
 
 // 获取运行中的会话
 export const getRunningPaperSessions = () =>
-  get<PaperSession[]>('/paper/running')
+  get<PaperSession[]>('/paper')
 
 // 获取会话持仓
 export const getPaperPositions = (id: string) =>

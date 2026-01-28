@@ -64,6 +64,14 @@ export interface EquityPoint {
   benchmark?: number
 }
 
+// 用于实盘交易的收益曲线点
+export interface EquityCurvePoint {
+  timestamp: string
+  equity: number
+  cash: number
+  unrealized_pnl?: number
+}
+
 export interface DrawdownPoint {
   timestamp: number
   drawdown: number

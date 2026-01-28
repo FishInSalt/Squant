@@ -191,7 +191,7 @@ async function loadRules() {
   loading.value = true
   try {
     const response = await getRiskRules()
-    rules.value = response.data
+    rules.value = response.data.items
   } catch (error) {
     console.error('Failed to load rules:', error)
   } finally {

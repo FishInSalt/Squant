@@ -106,18 +106,9 @@ async function loadWatchlistData() {
 
   loading.value = true
   try {
-    // 按交易所分组加载
-    const exchangeSymbols = new Map<string, string[]>()
-    watchlist.value.forEach((item) => {
-      if (!exchangeSymbols.has(item.exchange)) {
-        exchangeSymbols.set(item.exchange, [])
-      }
-      exchangeSymbols.get(item.exchange)!.push(item.symbol)
-    })
-
-    for (const [exchange, _symbols] of exchangeSymbols) {
-      await marketStore.loadTickers(exchange)
-    }
+    // 收集所有自选的交易对
+    const symbols = watchlist.value.map((item) => item.symbol)
+    await marketStore.loadTickers(symbols)
   } finally {
     loading.value = false
   }

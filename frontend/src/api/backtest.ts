@@ -1,17 +1,17 @@
 import { get, post, del } from './index'
 import type { BacktestConfig, BacktestRun, BacktestResult, PaginatedData } from '@/types'
 
-// 启动回测
+// 启动回测 (异步)
 export const startBacktest = (config: BacktestConfig) =>
-  post<BacktestRun>('/backtest/start', config)
+  post<BacktestRun>('/backtest/async', config)
 
 // 获取回测状态
 export const getBacktestStatus = (id: string) =>
   get<BacktestRun>(`/backtest/${id}`)
 
-// 获取回测结果
+// 获取回测结果详情
 export const getBacktestResult = (id: string) =>
-  get<BacktestResult>(`/backtest/${id}/result`)
+  get<BacktestResult>(`/backtest/${id}/detail`)
 
 // 获取回测列表
 export const getBacktests = (params?: {
@@ -20,7 +20,7 @@ export const getBacktests = (params?: {
   strategy_id?: string
   status?: string
 }) =>
-  get<PaginatedData<BacktestRun>>('/backtest/list', params)
+  get<PaginatedData<BacktestRun>>('/backtest/runs', params)
 
 // 删除回测记录
 export const deleteBacktest = (id: string) =>
@@ -32,7 +32,7 @@ export const exportBacktestResult = (id: string, format: 'csv' | 'json' = 'csv')
 
 // 获取正在运行的回测
 export const getRunningBacktests = () =>
-  get<BacktestRun[]>('/backtest/running')
+  get<BacktestRun[]>('/backtest/runs', { status: 'running' })
 
 // 停止回测
 export const stopBacktest = (id: string) =>

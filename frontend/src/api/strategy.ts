@@ -8,35 +8,35 @@ export const getStrategies = (params?: {
   search?: string
   is_valid?: boolean
 }) =>
-  get<PaginatedData<Strategy>>('/strategy/list', params)
+  get<PaginatedData<Strategy>>('/strategies', params)
 
 // 获取单个策略
 export const getStrategy = (id: string) =>
-  get<Strategy>(`/strategy/${id}`)
+  get<Strategy>(`/strategies/${id}`)
 
 // 上传策略文件
 export const uploadStrategy = (file: File, onProgress?: (percent: number) => void) =>
-  upload<StrategyUploadResponse>('/strategy/upload', file, onProgress)
+  upload<StrategyUploadResponse>('/strategies', file, onProgress)
 
 // 验证策略代码
 export const validateStrategy = (code: string) =>
-  post<ValidationResult>('/strategy/validate', { code })
+  post<ValidationResult>('/strategies/validate', { code })
 
 // 更新策略
 export const updateStrategy = (id: string, data: Partial<Strategy>) =>
-  put<Strategy>(`/strategy/${id}`, data)
+  put<Strategy>(`/strategies/${id}`, data)
 
 // 删除策略
 export const deleteStrategy = (id: string) =>
-  del<void>(`/strategy/${id}`)
+  del<void>(`/strategies/${id}`)
 
 // 获取策略代码
 export const getStrategyCode = (id: string) =>
-  get<{ code: string }>(`/strategy/${id}/code`)
+  get<{ code: string }>(`/strategies/${id}/code`)
 
 // 获取策略的回测历史
 export const getStrategyBacktests = (id: string, limit?: number) =>
   get<{ backtest_id: string; created_at: string; status: string }[]>(
-    `/strategy/${id}/backtests`,
+    `/strategies/${id}/backtests`,
     { limit }
   )

@@ -31,9 +31,20 @@ export interface OrderFilter {
   exchange?: string
   symbol?: string
   side?: OrderSide
-  status?: OrderStatus
+  status?: OrderStatus | OrderStatus[]
   strategy_id?: string
   session_id?: string
   start_date?: string
   end_date?: string
+}
+
+// 订单统计
+export interface OrderStats {
+  total: number
+  pending: number
+  submitted: number
+  partial: number
+  filled: number
+  cancelled: number
+  rejected: number
 }

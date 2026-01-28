@@ -151,12 +151,11 @@ async function loadCandles() {
   loading.value = true
   try {
     const response = await getCandles(
-      props.exchange,
       props.symbol,
       selectedTimeframe.value,
       500
     )
-    candles.value = response.data
+    candles.value = response.data.candles
   } catch (error) {
     console.error('Failed to load candles:', error)
   } finally {
@@ -166,7 +165,7 @@ async function loadCandles() {
 
 async function loadTicker() {
   try {
-    const response = await getTicker(props.exchange, props.symbol)
+    const response = await getTicker(props.symbol)
     ticker.value = response.data
   } catch (error) {
     console.error('Failed to load ticker:', error)
