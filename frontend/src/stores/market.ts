@@ -29,6 +29,12 @@ export const useMarketStore = defineStore('market', () => {
     return watchlist.value.some((item) => item.exchange === exchange && item.symbol === symbol)
   })
 
+  // 获取单个 ticker
+  function getTicker(exchange: string, symbol: string): Ticker | undefined {
+    const key = `${exchange}:${symbol}`
+    return tickers.value.get(key)
+  }
+
   // Actions
   async function loadExchanges() {
     try {
@@ -166,6 +172,7 @@ export const useMarketStore = defineStore('market', () => {
     tickerList,
     watchlistTickers,
     isInWatchlist,
+    getTicker,
     // Actions
     loadExchanges,
     loadTickers,

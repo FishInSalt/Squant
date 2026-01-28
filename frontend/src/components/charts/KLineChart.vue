@@ -188,6 +188,15 @@ function updateData(candles: Candle[]) {
   chart.applyNewData(klineData)
 }
 
+/**
+ * 实时更新单根 K 线
+ * @param candle K线数据
+ */
+function updateCandle(candle: { timestamp: number; open: number; high: number; low: number; close: number; volume: number }) {
+  if (!chart) return
+  chart.updateData(candle)
+}
+
 function addIndicator(name: string) {
   const config = indicatorMapping[name]
   if (chart && config) {
@@ -225,6 +234,7 @@ defineExpose({
   addIndicator,
   removeIndicator,
   updateData,
+  updateCandle,
 })
 </script>
 

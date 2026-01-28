@@ -37,10 +37,12 @@ class OKXWebSocketClient:
     # Public WebSocket endpoints
     PUBLIC_WS_URL = "wss://ws.okx.com:8443/ws/v5/public"
     PRIVATE_WS_URL = "wss://ws.okx.com:8443/ws/v5/private"
+    BUSINESS_WS_URL = "wss://ws.okx.com:8443/ws/v5/business"
 
     # Demo/Testnet endpoints
     DEMO_PUBLIC_WS_URL = "wss://wspap.okx.com:8443/ws/v5/public?brokerId=9999"
     DEMO_PRIVATE_WS_URL = "wss://wspap.okx.com:8443/ws/v5/private?brokerId=9999"
+    DEMO_BUSINESS_WS_URL = "wss://wspap.okx.com:8443/ws/v5/business?brokerId=9999"
 
     # Connection settings
     HEARTBEAT_INTERVAL = 25.0  # OKX requires ping within 30 seconds
@@ -57,6 +59,7 @@ class OKXWebSocketClient:
         passphrase: str | None = None,
         testnet: bool = False,
         private: bool = False,
+        business: bool = False,
     ) -> None:
         """Initialize OKX WebSocket client.
 
@@ -66,12 +69,14 @@ class OKXWebSocketClient:
             passphrase: OKX API passphrase (required for private channels).
             testnet: Whether to use testnet/demo trading.
             private: Whether this is for private channels.
+            business: Whether this is for business channels (candles, etc.).
         """
         self.api_key = api_key
         self.api_secret = api_secret
         self.passphrase = passphrase
         self.testnet = testnet
         self.private = private
+        self.business = business
 
         # Connection state
         self._ws: ClientConnection | None = None
@@ -101,6 +106,8 @@ class OKXWebSocketClient:
         """Get WebSocket URL based on configuration."""
         if self.private:
             return self.DEMO_PRIVATE_WS_URL if self.testnet else self.PRIVATE_WS_URL
+        if self.business:
+            return self.DEMO_BUSINESS_WS_URL if self.testnet else self.BUSINESS_WS_URL
         return self.DEMO_PUBLIC_WS_URL if self.testnet else self.PUBLIC_WS_URL
 
     @property

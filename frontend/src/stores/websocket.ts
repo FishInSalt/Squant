@@ -31,6 +31,42 @@ interface WSTickerData {
   timestamp: string
 }
 
+/**
+ * 后端 Candle 数据格式
+ */
+interface WSCandleData {
+  symbol: string
+  timeframe: string
+  timestamp: string
+  open: string
+  high: string
+  low: string
+  close: string
+  volume: string
+  is_closed: boolean  // Backend uses is_closed
+}
+
+/**
+ * 前端 Candle 数据格式
+ */
+export interface CandleUpdate {
+  symbol: string
+  timeframe: string
+  timestamp: number
+  open: number
+  high: number
+  low: number
+  close: number
+  volume: number
+  is_closed: boolean  // Whether the candle is finalized
+}
+
+// Candle 更新回调类型
+type CandleCallback = (candle: CandleUpdate) => void
+
+// 将 candleCallbacks 移到 store 外部，避免热更新时被重置
+const candleCallbacks = new Map<string, Set<CandleCallback>>()
+
 export const useWebSocketStore = defineStore('websocket', () => {
   // State
   const socket = ref<WebSocket | null>(null)
@@ -47,6 +83,8 @@ export const useWebSocketStore = defineStore('websocket', () => {
   // 心跳定时器
   let heartbeatTimer: ReturnType<typeof setInterval> | null = null
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null
+
+  // candleCallbacks 已移到 store 外部，避免热更新时被重置
 
   // 计算指数退避延迟
   function getReconnectDelay(): number {
@@ -300,7 +338,15 @@ export const useWebSocketStore = defineStore('websocket', () => {
         break
 
       case 'candle':
-        // TODO: 处理 K 线数据
+        if (message.data && message.channel) {
+          const candleData = message.data as unknown as WSCandleData
+          const candle = transformCandle(candleData)
+          // 通知所有订阅了该 channel 的回调
+          const callbacks = candleCallbacks.get(message.channel)
+          if (callbacks && callbacks.size > 0) {
+            callbacks.forEach((cb) => cb(candle))
+          }
+        }
         break
 
       case 'trade':
@@ -350,6 +396,50 @@ export const useWebSocketStore = defineStore('websocket', () => {
   }
 
   /**
+   * 转换后端 Candle 数据为前端格式
+   */
+  function transformCandle(data: WSCandleData): CandleUpdate {
+    return {
+      symbol: data.symbol,
+      timeframe: data.timeframe,
+      timestamp: new Date(data.timestamp).getTime(),
+      open: parseFloat(data.open) || 0,
+      high: parseFloat(data.high) || 0,
+      low: parseFloat(data.low) || 0,
+      close: parseFloat(data.close) || 0,
+      volume: parseFloat(data.volume) || 0,
+      is_closed: data.is_closed,
+    }
+  }
+
+  /**
+   * 注册 K 线更新回调
+   * @param channel K线频道 (candle:symbol:timeframe)
+   * @param callback 回调函数
+   */
+  function onCandle(channel: string, callback: CandleCallback): void {
+    if (!candleCallbacks.has(channel)) {
+      candleCallbacks.set(channel, new Set())
+    }
+    candleCallbacks.get(channel)!.add(callback)
+  }
+
+  /**
+   * 移除 K 线更新回调
+   * @param channel K线频道
+   * @param callback 回调函数
+   */
+  function offCandle(channel: string, callback: CandleCallback): void {
+    const callbacks = candleCallbacks.get(channel)
+    if (callbacks) {
+      callbacks.delete(callback)
+      if (callbacks.size === 0) {
+        candleCallbacks.delete(channel)
+      }
+    }
+  }
+
+  /**
    * 订阅多个 ticker
    * @returns 取消订阅函数
    */
@@ -391,5 +481,7 @@ export const useWebSocketStore = defineStore('websocket', () => {
     unsubscribe,
     subscribeToTickers,
     subscribeToCandles,
+    onCandle,
+    offCandle,
   }
 })

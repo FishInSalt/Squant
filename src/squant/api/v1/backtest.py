@@ -26,6 +26,7 @@ from squant.services.backtest import (
     BacktestService,
     InsufficientDataError,
 )
+from squant.services.data_loader import DataLoader
 from squant.services.strategy import StrategyNotFoundError
 
 logger = logging.getLogger(__name__)
@@ -356,8 +357,6 @@ async def list_available_symbols(
     Returns:
         List of available symbols with data info.
     """
-    from squant.services.data_loader import DataLoader
-
     loader = DataLoader(session)
     symbols = await loader.get_available_symbols(exchange=exchange, timeframe=timeframe)
 

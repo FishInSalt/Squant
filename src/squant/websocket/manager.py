@@ -48,6 +48,7 @@ class StreamManager:
     def __init__(self) -> None:
         """Initialize stream manager."""
         self._public_client: OKXWebSocketClient | None = None
+        self._business_client: OKXWebSocketClient | None = None  # For candles
         self._private_client: OKXWebSocketClient | None = None
         self._redis: Redis | None = None
         self._running = False
@@ -80,20 +81,30 @@ class StreamManager:
         # Get Redis client (initialized at app startup)
         self._redis = get_redis_client()
 
-        # Initialize public WebSocket client
+        # Initialize public WebSocket client (for tickers, trades, orderbook)
         self._public_client = OKXWebSocketClient(
             testnet=self._settings.okx_testnet,
             private=False,
         )
         self._public_client.add_handler(self._handle_public_message)
 
+        # Initialize business WebSocket client (for candles)
+        # OKX requires candle subscriptions on the /business endpoint since June 2023
+        self._business_client = OKXWebSocketClient(
+            testnet=self._settings.okx_testnet,
+            private=False,
+            business=True,
+        )
+        self._business_client.add_handler(self._handle_public_message)
+
         await self._public_client.connect()
+        await self._business_client.connect()
         self._running = True
 
         # Start the batch publishing flush task
         self._flush_task = asyncio.create_task(self._flush_loop())
 
-        logger.info("Stream manager started (public channels)")
+        logger.info("Stream manager started (public + business channels)")
 
     async def start_private(self) -> None:
         """Start the private WebSocket connection (requires credentials)."""
@@ -145,6 +156,10 @@ class StreamManager:
             await self._public_client.close()
             self._public_client = None
 
+        if self._business_client:
+            await self._business_client.close()
+            self._business_client = None
+
         if self._private_client:
             await self._private_client.close()
             self._private_client = None
@@ -191,10 +206,13 @@ class StreamManager:
     async def subscribe_candles(self, symbol: str, timeframe: str = "1m") -> None:
         """Subscribe to candlestick updates.
 
+        Note: OKX requires candle subscriptions on the /business endpoint (since June 2023).
+
         Args:
             symbol: Trading pair.
             timeframe: Candle timeframe (1m, 5m, 15m, 30m, 1h, 4h, 1d, 1w).
         """
+        logger.debug(f"subscribe_candles called: symbol={symbol}, timeframe={timeframe}")
         okx_symbol = self._to_okx_symbol(symbol)
         key = (okx_symbol, timeframe)
 
@@ -202,14 +220,18 @@ class StreamManager:
             logger.debug(f"Already subscribed to candles: {okx_symbol} {timeframe}")
             return
 
-        if not self._public_client:
-            raise RuntimeError("Public client not started. Call start() first.")
+        if not self._business_client:
+            logger.error("Business client not started!")
+            raise RuntimeError("Business client not started. Call start() first.")
 
         channel = CANDLE_CHANNELS.get(timeframe.lower())
         if not channel:
+            logger.error(f"Invalid timeframe: {timeframe}")
             raise ValueError(f"Invalid timeframe: {timeframe}")
 
-        await self._public_client.subscribe([
+        logger.info(f"Sending candle subscription to OKX business endpoint: channel={channel.value}, instId={okx_symbol}")
+
+        await self._business_client.subscribe([
             {"channel": channel.value, "instId": okx_symbol}
         ])
         self._candle_subscriptions.add(key)
@@ -223,10 +245,10 @@ class StreamManager:
         if key not in self._candle_subscriptions:
             return
 
-        if self._public_client:
+        if self._business_client:
             channel = CANDLE_CHANNELS.get(timeframe.lower())
             if channel:
-                await self._public_client.unsubscribe([
+                await self._business_client.unsubscribe([
                     {"channel": channel.value, "instId": okx_symbol}
                 ])
         self._candle_subscriptions.discard(key)
@@ -395,6 +417,7 @@ class StreamManager:
 
         # Extract timeframe from channel (e.g., "candle1m" -> "1m")
         timeframe = channel.replace("candle", "").lower()
+        logger.debug(f"Processing candle data: symbol={symbol}, timeframe={timeframe}, count={len(data)}")
 
         for item in data:
             # OKX candle format: [ts, o, h, l, c, vol, volCcy, volCcyQuote, confirm]

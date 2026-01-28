@@ -79,6 +79,13 @@
           <el-checkbox label="RSI">RSI</el-checkbox>
           <el-checkbox label="KDJ">KDJ</el-checkbox>
         </el-checkbox-group>
+        <span class="toolbar-spacer"></span>
+        <span class="realtime-status" :class="{ active: lastCandleUpdate }">
+          <el-icon v-if="wsStore.isConnected" color="#67C23A"><CircleCheckFilled /></el-icon>
+          <el-icon v-else color="#909399"><CircleCloseFilled /></el-icon>
+          <span v-if="lastCandleUpdate">最后更新: {{ lastCandleUpdate }}</span>
+          <span v-else>等待实时数据...</span>
+        </span>
       </div>
       <KLineChart
         ref="chartRef"
@@ -109,10 +116,11 @@
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useMarketStore } from '@/stores/market'
-import { useWebSocketStore } from '@/stores/websocket'
+import { useWebSocketStore, type CandleUpdate } from '@/stores/websocket'
 import KLineChart from '@/components/charts/KLineChart.vue'
 import PriceCell from '@/components/common/PriceCell.vue'
 import { formatPrice, formatVolume, formatLargeNumber, formatExchangeName } from '@/utils/format'
+import { CircleCheckFilled, CircleCloseFilled } from '@element-plus/icons-vue'
 import { getCandles, getTicker } from '@/api/market'
 import { addRecentSymbol } from '@/utils/storage'
 import type { Candle, Ticker, Timeframe } from '@/types'
@@ -133,6 +141,7 @@ const ticker = ref<Ticker | null>(null)
 const selectedTimeframe = ref<Timeframe>('1h')
 const selectedIndicators = ref(['MA', 'VOL'])
 const loading = ref(false)
+const lastCandleUpdate = ref<string>('')  // 调试：最近的 K 线更新时间
 
 const timeframeOptions = [
   { label: '1分', value: '1m' as Timeframe },
@@ -209,25 +218,82 @@ function goToLive() {
   })
 }
 
-watch(selectedTimeframe, () => {
+// 监听 market store 中的 ticker 更新 (使用标准格式 BTC/USDT)
+const storeTicker = computed(() => marketStore.getTicker(props.exchange, toStandardSymbol(props.symbol)))
+watch(storeTicker, (newTicker) => {
+  if (newTicker) {
+    ticker.value = newTicker
+  }
+}, { immediate: true })
+
+// 切换时间周期时重新加载数据并更新订阅
+watch(selectedTimeframe, (newTf, oldTf) => {
   loadCandles()
+  // 更新 K 线订阅
+  if (oldTf) {
+    const standardSymbol = toStandardSymbol(props.symbol)
+    const oldChannel = `candle:${standardSymbol}:${oldTf}`
+    wsStore.offCandle(oldChannel, handleCandleUpdate)
+    wsStore.unsubscribe(oldChannel)
+  }
+  subscribeToCandles()
 })
 
-let unsubscribe: (() => void) | null = null
+let unsubscribeTicker: (() => void) | null = null
+
+// 处理 K 线实时更新
+function handleCandleUpdate(candle: CandleUpdate) {
+  lastCandleUpdate.value = new Date().toLocaleTimeString()
+  if (chartRef.value) {
+    chartRef.value.updateCandle({
+      timestamp: candle.timestamp,
+      open: candle.open,
+      high: candle.high,
+      low: candle.low,
+      close: candle.close,
+      volume: candle.volume,
+    })
+  }
+}
+
+// 将 symbol 从 URL 格式 (BTC-USDT) 转换为标准格式 (BTC/USDT)
+function toStandardSymbol(symbol: string): string {
+  return symbol.replace('-', '/')
+}
+
+// 订阅 K 线数据
+function subscribeToCandles() {
+  const standardSymbol = toStandardSymbol(props.symbol)
+  const channel = `candle:${standardSymbol}:${selectedTimeframe.value}`
+  wsStore.subscribe(channel)
+  wsStore.onCandle(channel, handleCandleUpdate)
+}
 
 onMounted(async () => {
   addRecentSymbol(props.exchange, props.symbol)
   await Promise.all([loadCandles(), loadTicker()])
 
-  // 订阅 WebSocket
+  // 连接 WebSocket
   wsStore.connect()
-  unsubscribe = wsStore.subscribeToTickers([props.symbol])
+
+  // 订阅 Ticker 更新
+  unsubscribeTicker = wsStore.subscribeToTickers([toStandardSymbol(props.symbol)])
+
+  // 订阅 K 线实时更新
+  subscribeToCandles()
 })
 
 onUnmounted(() => {
-  if (unsubscribe) {
-    unsubscribe()
+  // 取消 Ticker 订阅
+  if (unsubscribeTicker) {
+    unsubscribeTicker()
   }
+
+  // 取消 K 线订阅
+  const standardSymbol = toStandardSymbol(props.symbol)
+  const channel = `candle:${standardSymbol}:${selectedTimeframe.value}`
+  wsStore.offCandle(channel, handleCandleUpdate)
+  wsStore.unsubscribe(channel)
 })
 </script>
 
@@ -313,6 +379,26 @@ onUnmounted(() => {
       .toolbar-label {
         color: #909399;
         font-size: 14px;
+      }
+
+      .toolbar-spacer {
+        flex: 1;
+      }
+
+      .realtime-status {
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        font-size: 12px;
+        color: #909399;
+
+        &.active {
+          color: #67C23A;
+        }
+
+        .el-icon {
+          font-size: 14px;
+        }
       }
     }
   }

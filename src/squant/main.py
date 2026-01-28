@@ -12,6 +12,15 @@ from squant.config import get_settings
 from squant.infra import close_db, close_redis, init_db, init_redis
 from squant.websocket import close_stream_manager, init_stream_manager
 
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
+# Set DEBUG level for squant modules to see more details
+logging.getLogger("squant").setLevel(logging.DEBUG)
+
 logger = logging.getLogger(__name__)
 
 

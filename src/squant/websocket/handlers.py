@@ -212,6 +212,7 @@ class WebSocketGateway:
         """
         parts = channel.split(":")
         channel_type = parts[0]
+        logger.debug(f"_subscribe_okx called: channel={channel}, parts={parts}")
 
         try:
             if channel_type == "ticker" and len(parts) >= 2:
@@ -221,6 +222,7 @@ class WebSocketGateway:
             elif channel_type == "candle" and len(parts) >= 3:
                 symbol = parts[1]
                 timeframe = parts[2]
+                logger.info(f"Subscribing to candle: symbol={symbol}, timeframe={timeframe}")
                 await self.stream_manager.subscribe_candles(symbol, timeframe)
 
             elif channel_type == "trade" and len(parts) >= 2:

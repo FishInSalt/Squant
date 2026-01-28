@@ -1,11 +1,33 @@
 import { get } from './index'
 import type { Ticker, TickerResponse, Candle, Timeframe } from '@/types'
 
+// 后端返回的原始 K 线类型（timestamp 是 ISO 字符串）
+interface CandlestickItemResponse {
+  timestamp: string  // ISO 字符串格式
+  open: number | string
+  high: number | string
+  low: number | string
+  close: number | string
+  volume: number | string
+}
+
 // K线响应类型
 interface CandlestickResponse {
   symbol: string
   timeframe: string
-  candles: Candle[]
+  candles: CandlestickItemResponse[]
+}
+
+// 转换后端 Candle 响应为前端 Candle 类型
+function transformCandle(data: CandlestickItemResponse): Candle {
+  return {
+    timestamp: new Date(data.timestamp).getTime(),  // 转换为毫秒时间戳
+    open: typeof data.open === 'string' ? parseFloat(data.open) : data.open,
+    high: typeof data.high === 'string' ? parseFloat(data.high) : data.high,
+    low: typeof data.low === 'string' ? parseFloat(data.low) : data.low,
+    close: typeof data.close === 'string' ? parseFloat(data.close) : data.close,
+    volume: typeof data.volume === 'string' ? parseFloat(data.volume) : data.volume,
+  }
 }
 
 // 默认交易所（后端目前只支持 OKX）
@@ -72,15 +94,23 @@ export const getAllTickers = async () => {
 }
 
 // 获取K线数据
-export const getCandles = (
+export const getCandles = async (
   symbol: string,
   timeframe: Timeframe,
   limit?: number
-) =>
-  get<CandlestickResponse>(`/market/candles/${encodeURIComponent(symbol)}`, {
+) => {
+  const response = await get<CandlestickResponse>(`/market/candles/${encodeURIComponent(symbol)}`, {
     timeframe,
     limit,
   })
+  return {
+    ...response,
+    data: {
+      ...response.data,
+      candles: response.data.candles.map(transformCandle),  // 转换 timestamp 格式
+    },
+  }
+}
 
 // 获取交易对列表（从 tickers 中提取）
 export const getSymbols = async (_exchange?: string) => {
