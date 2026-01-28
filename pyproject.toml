@@ -41,6 +41,9 @@ dependencies = [
 
     # WebSocket
     "websockets>=16.0",
+
+    # Multi-exchange support (CCXT Pro)
+    "ccxt>=4.0.0",
 ]
 
 [project.optional-dependencies]
@@ -94,6 +97,10 @@ plugins = ["pydantic.mypy"]
 
 [[tool.mypy.overrides]]
 module = ["RestrictedPython.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["ccxt.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

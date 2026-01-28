@@ -63,6 +63,15 @@ class Settings(BaseSettings):
     okx_passphrase: SecretStr | None = None
     okx_testnet: bool = False
 
+    # Bybit Exchange API (optional)
+    bybit_api_key: SecretStr | None = None
+    bybit_api_secret: SecretStr | None = None
+    bybit_testnet: bool = False
+
+    # Exchange streaming configuration
+    default_exchange: str = "okx"  # okx, binance, bybit
+    use_ccxt_provider: bool = True  # False to use native OKX implementation
+
     # Paper Trading Memory Limits
     paper_max_equity_curve_size: int = 10000
     paper_max_completed_orders: int = 1000

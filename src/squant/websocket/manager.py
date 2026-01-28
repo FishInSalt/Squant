@@ -1,6 +1,7 @@
 """Stream manager for WebSocket data distribution via Redis pub/sub."""
 
 import asyncio
+import contextlib
 import logging
 from collections import deque
 from datetime import UTC, datetime
@@ -10,6 +11,7 @@ from typing import Any
 from redis.asyncio import Redis
 
 from squant.config import get_settings
+from squant.infra.exchange.ccxt import CCXTStreamProvider, ExchangeCredentials
 from squant.infra.exchange.okx.ws_client import OKXWebSocketClient
 from squant.infra.exchange.okx.ws_types import (
     CANDLE_CHANNELS,
@@ -47,9 +49,14 @@ class StreamManager:
 
     def __init__(self) -> None:
         """Initialize stream manager."""
+        # Native OKX clients (kept as backup)
         self._public_client: OKXWebSocketClient | None = None
         self._business_client: OKXWebSocketClient | None = None  # For candles
         self._private_client: OKXWebSocketClient | None = None
+
+        # CCXT provider (primary when use_ccxt_provider=True)
+        self._ccxt_provider: CCXTStreamProvider | None = None
+
         self._redis: Redis | None = None
         self._running = False
         self._settings = get_settings()
@@ -81,6 +88,37 @@ class StreamManager:
         # Get Redis client (initialized at app startup)
         self._redis = get_redis_client()
 
+        if self._settings.use_ccxt_provider:
+            await self._start_ccxt_provider()
+        else:
+            await self._start_native_okx()
+
+        self._running = True
+
+        # Start the batch publishing flush task
+        self._flush_task = asyncio.create_task(self._flush_loop())
+
+        logger.info("Stream manager started")
+
+    async def _start_ccxt_provider(self) -> None:
+        """Start CCXT-based stream provider."""
+        exchange_id = self._settings.default_exchange.lower()
+        logger.info(f"Starting CCXT provider for {exchange_id}...")
+
+        # Build credentials based on exchange
+        credentials = self._get_exchange_credentials(exchange_id)
+
+        # Create and connect CCXT provider
+        self._ccxt_provider = CCXTStreamProvider(exchange_id, credentials)
+        self._ccxt_provider.add_handler(self._handle_ccxt_message)
+        await self._ccxt_provider.connect()
+
+        logger.info(f"CCXT provider started for {exchange_id}")
+
+    async def _start_native_okx(self) -> None:
+        """Start native OKX WebSocket clients (backup mode)."""
+        logger.info("Starting native OKX WebSocket clients...")
+
         # Initialize public WebSocket client (for tickers, trades, orderbook)
         self._public_client = OKXWebSocketClient(
             testnet=self._settings.okx_testnet,
@@ -99,15 +137,54 @@ class StreamManager:
 
         await self._public_client.connect()
         await self._business_client.connect()
-        self._running = True
 
-        # Start the batch publishing flush task
-        self._flush_task = asyncio.create_task(self._flush_loop())
+        logger.info("Native OKX WebSocket clients started")
 
-        logger.info("Stream manager started (public + business channels)")
+    def _get_exchange_credentials(self, exchange_id: str) -> ExchangeCredentials | None:
+        """Get credentials for the specified exchange.
+
+        Args:
+            exchange_id: Exchange identifier (okx, binance, bybit).
+
+        Returns:
+            ExchangeCredentials or None if not configured.
+        """
+        if exchange_id == "okx":
+            if self._settings.okx_api_key and self._settings.okx_api_secret:
+                return ExchangeCredentials(
+                    api_key=self._settings.okx_api_key.get_secret_value(),
+                    api_secret=self._settings.okx_api_secret.get_secret_value(),
+                    passphrase=self._settings.okx_passphrase.get_secret_value() if self._settings.okx_passphrase else None,
+                    sandbox=self._settings.okx_testnet,
+                )
+        elif exchange_id == "binance":
+            if self._settings.binance_api_key and self._settings.binance_api_secret:
+                return ExchangeCredentials(
+                    api_key=self._settings.binance_api_key.get_secret_value(),
+                    api_secret=self._settings.binance_api_secret.get_secret_value(),
+                    sandbox=self._settings.binance_testnet,
+                )
+        elif exchange_id == "bybit":
+            if self._settings.bybit_api_key and self._settings.bybit_api_secret:
+                return ExchangeCredentials(
+                    api_key=self._settings.bybit_api_key.get_secret_value(),
+                    api_secret=self._settings.bybit_api_secret.get_secret_value(),
+                    sandbox=self._settings.bybit_testnet,
+                )
+        return None
 
     async def start_private(self) -> None:
-        """Start the private WebSocket connection (requires credentials)."""
+        """Start the private WebSocket connection (requires credentials).
+
+        For CCXT provider mode, private channels are handled by the same provider.
+        For native OKX mode, a separate private client is used.
+        """
+        if self._settings.use_ccxt_provider and self._ccxt_provider:
+            # CCXT provider already handles private channels if credentials are provided
+            logger.info("CCXT provider already supports private channels")
+            return
+
+        # Native OKX mode
         if not all([
             self._settings.okx_api_key,
             self._settings.okx_api_secret,
@@ -143,15 +220,19 @@ class StreamManager:
         # Stop flush task first
         if self._flush_task:
             self._flush_task.cancel()
-            try:
+            with contextlib.suppress(asyncio.CancelledError):
                 await self._flush_task
-            except asyncio.CancelledError:
-                pass
             self._flush_task = None
 
         # Flush any remaining messages
         await self._flush_buffer()
 
+        # Close CCXT provider
+        if self._ccxt_provider:
+            await self._ccxt_provider.close()
+            self._ccxt_provider = None
+
+        # Close native OKX clients
         if self._public_client:
             await self._public_client.close()
             self._public_client = None
@@ -175,141 +256,192 @@ class StreamManager:
         Args:
             symbol: Trading pair (e.g., "BTC/USDT" or "BTC-USDT").
         """
-        okx_symbol = self._to_okx_symbol(symbol)
+        # Normalize symbol format (use "/" for internal tracking, CCXT uses "/")
+        normalized_symbol = self._normalize_symbol(symbol)
 
-        if okx_symbol in self._ticker_subscriptions:
-            logger.debug(f"Already subscribed to ticker: {okx_symbol}")
+        if normalized_symbol in self._ticker_subscriptions:
+            logger.debug(f"Already subscribed to ticker: {normalized_symbol}")
             return
 
-        if not self._public_client:
-            raise RuntimeError("Public client not started. Call start() first.")
+        if self._settings.use_ccxt_provider:
+            if not self._ccxt_provider:
+                raise RuntimeError("CCXT provider not started. Call start() first.")
+            await self._ccxt_provider.watch_ticker(normalized_symbol)
+        else:
+            if not self._public_client:
+                raise RuntimeError("Public client not started. Call start() first.")
+            okx_symbol = self._to_okx_symbol(symbol)
+            await self._public_client.subscribe([
+                {"channel": OKXChannel.TICKERS.value, "instId": okx_symbol}
+            ])
 
-        await self._public_client.subscribe([
-            {"channel": OKXChannel.TICKERS.value, "instId": okx_symbol}
-        ])
-        self._ticker_subscriptions.add(okx_symbol)
-        logger.info(f"Subscribed to ticker: {okx_symbol}")
+        self._ticker_subscriptions.add(normalized_symbol)
+        logger.info(f"Subscribed to ticker: {normalized_symbol}")
 
     async def unsubscribe_ticker(self, symbol: str) -> None:
         """Unsubscribe from ticker updates."""
-        okx_symbol = self._to_okx_symbol(symbol)
+        normalized_symbol = self._normalize_symbol(symbol)
 
-        if okx_symbol not in self._ticker_subscriptions:
+        if normalized_symbol not in self._ticker_subscriptions:
             return
 
-        if self._public_client:
-            await self._public_client.unsubscribe([
-                {"channel": OKXChannel.TICKERS.value, "instId": okx_symbol}
-            ])
-        self._ticker_subscriptions.discard(okx_symbol)
+        if self._settings.use_ccxt_provider:
+            if self._ccxt_provider:
+                await self._ccxt_provider.unwatch(f"ticker:{normalized_symbol}")
+        else:
+            if self._public_client:
+                okx_symbol = self._to_okx_symbol(symbol)
+                await self._public_client.unsubscribe([
+                    {"channel": OKXChannel.TICKERS.value, "instId": okx_symbol}
+                ])
+
+        self._ticker_subscriptions.discard(normalized_symbol)
 
     async def subscribe_candles(self, symbol: str, timeframe: str = "1m") -> None:
         """Subscribe to candlestick updates.
-
-        Note: OKX requires candle subscriptions on the /business endpoint (since June 2023).
 
         Args:
             symbol: Trading pair.
             timeframe: Candle timeframe (1m, 5m, 15m, 30m, 1h, 4h, 1d, 1w).
         """
         logger.debug(f"subscribe_candles called: symbol={symbol}, timeframe={timeframe}")
-        okx_symbol = self._to_okx_symbol(symbol)
-        key = (okx_symbol, timeframe)
+        normalized_symbol = self._normalize_symbol(symbol)
+        key = (normalized_symbol, timeframe)
 
         if key in self._candle_subscriptions:
-            logger.debug(f"Already subscribed to candles: {okx_symbol} {timeframe}")
+            logger.debug(f"Already subscribed to candles: {normalized_symbol} {timeframe}")
             return
 
-        if not self._business_client:
-            logger.error("Business client not started!")
-            raise RuntimeError("Business client not started. Call start() first.")
+        if self._settings.use_ccxt_provider:
+            if not self._ccxt_provider:
+                logger.error("CCXT provider not started!")
+                raise RuntimeError("CCXT provider not started. Call start() first.")
 
-        channel = CANDLE_CHANNELS.get(timeframe.lower())
-        if not channel:
-            logger.error(f"Invalid timeframe: {timeframe}")
-            raise ValueError(f"Invalid timeframe: {timeframe}")
+            logger.info(f"Subscribing to candles via CCXT: symbol={normalized_symbol}, timeframe={timeframe}")
+            await self._ccxt_provider.watch_ohlcv(normalized_symbol, timeframe)
+        else:
+            # Native OKX mode
+            if not self._business_client:
+                logger.error("Business client not started!")
+                raise RuntimeError("Business client not started. Call start() first.")
 
-        logger.info(f"Sending candle subscription to OKX business endpoint: channel={channel.value}, instId={okx_symbol}")
+            channel = CANDLE_CHANNELS.get(timeframe.lower())
+            if not channel:
+                logger.error(f"Invalid timeframe: {timeframe}")
+                raise ValueError(f"Invalid timeframe: {timeframe}")
 
-        await self._business_client.subscribe([
-            {"channel": channel.value, "instId": okx_symbol}
-        ])
+            okx_symbol = self._to_okx_symbol(symbol)
+            logger.info(f"Sending candle subscription to OKX business endpoint: channel={channel.value}, instId={okx_symbol}")
+            await self._business_client.subscribe([
+                {"channel": channel.value, "instId": okx_symbol}
+            ])
+
         self._candle_subscriptions.add(key)
-        logger.info(f"Subscribed to candles: {okx_symbol} {timeframe}")
+        logger.info(f"Subscribed to candles: {normalized_symbol} {timeframe}")
 
     async def unsubscribe_candles(self, symbol: str, timeframe: str = "1m") -> None:
         """Unsubscribe from candlestick updates."""
-        okx_symbol = self._to_okx_symbol(symbol)
-        key = (okx_symbol, timeframe)
+        normalized_symbol = self._normalize_symbol(symbol)
+        key = (normalized_symbol, timeframe)
 
         if key not in self._candle_subscriptions:
             return
 
-        if self._business_client:
-            channel = CANDLE_CHANNELS.get(timeframe.lower())
-            if channel:
-                await self._business_client.unsubscribe([
-                    {"channel": channel.value, "instId": okx_symbol}
-                ])
+        if self._settings.use_ccxt_provider:
+            if self._ccxt_provider:
+                await self._ccxt_provider.unwatch(f"ohlcv:{normalized_symbol}:{timeframe}")
+        else:
+            if self._business_client:
+                channel = CANDLE_CHANNELS.get(timeframe.lower())
+                if channel:
+                    okx_symbol = self._to_okx_symbol(symbol)
+                    await self._business_client.unsubscribe([
+                        {"channel": channel.value, "instId": okx_symbol}
+                    ])
+
         self._candle_subscriptions.discard(key)
 
     async def subscribe_trades(self, symbol: str) -> None:
         """Subscribe to trade updates for a symbol."""
-        okx_symbol = self._to_okx_symbol(symbol)
+        normalized_symbol = self._normalize_symbol(symbol)
 
-        if okx_symbol in self._trade_subscriptions:
+        if normalized_symbol in self._trade_subscriptions:
             return
 
-        if not self._public_client:
-            raise RuntimeError("Public client not started. Call start() first.")
+        if self._settings.use_ccxt_provider:
+            if not self._ccxt_provider:
+                raise RuntimeError("CCXT provider not started. Call start() first.")
+            await self._ccxt_provider.watch_trades(normalized_symbol)
+        else:
+            if not self._public_client:
+                raise RuntimeError("Public client not started. Call start() first.")
+            okx_symbol = self._to_okx_symbol(symbol)
+            await self._public_client.subscribe([
+                {"channel": OKXChannel.TRADES.value, "instId": okx_symbol}
+            ])
 
-        await self._public_client.subscribe([
-            {"channel": OKXChannel.TRADES.value, "instId": okx_symbol}
-        ])
-        self._trade_subscriptions.add(okx_symbol)
-        logger.info(f"Subscribed to trades: {okx_symbol}")
+        self._trade_subscriptions.add(normalized_symbol)
+        logger.info(f"Subscribed to trades: {normalized_symbol}")
 
     async def unsubscribe_trades(self, symbol: str) -> None:
         """Unsubscribe from trade updates."""
-        okx_symbol = self._to_okx_symbol(symbol)
+        normalized_symbol = self._normalize_symbol(symbol)
 
-        if okx_symbol not in self._trade_subscriptions:
+        if normalized_symbol not in self._trade_subscriptions:
             return
 
-        if self._public_client:
-            await self._public_client.unsubscribe([
-                {"channel": OKXChannel.TRADES.value, "instId": okx_symbol}
-            ])
-        self._trade_subscriptions.discard(okx_symbol)
+        if self._settings.use_ccxt_provider:
+            if self._ccxt_provider:
+                await self._ccxt_provider.unwatch(f"trades:{normalized_symbol}")
+        else:
+            if self._public_client:
+                okx_symbol = self._to_okx_symbol(symbol)
+                await self._public_client.unsubscribe([
+                    {"channel": OKXChannel.TRADES.value, "instId": okx_symbol}
+                ])
+
+        self._trade_subscriptions.discard(normalized_symbol)
 
     async def subscribe_orderbook(self, symbol: str) -> None:
         """Subscribe to order book updates (5-level depth)."""
-        okx_symbol = self._to_okx_symbol(symbol)
+        normalized_symbol = self._normalize_symbol(symbol)
 
-        if okx_symbol in self._orderbook_subscriptions:
+        if normalized_symbol in self._orderbook_subscriptions:
             return
 
-        if not self._public_client:
-            raise RuntimeError("Public client not started. Call start() first.")
+        if self._settings.use_ccxt_provider:
+            if not self._ccxt_provider:
+                raise RuntimeError("CCXT provider not started. Call start() first.")
+            await self._ccxt_provider.watch_order_book(normalized_symbol, limit=5)
+        else:
+            if not self._public_client:
+                raise RuntimeError("Public client not started. Call start() first.")
+            okx_symbol = self._to_okx_symbol(symbol)
+            await self._public_client.subscribe([
+                {"channel": OKXChannel.BOOKS5.value, "instId": okx_symbol}
+            ])
 
-        await self._public_client.subscribe([
-            {"channel": OKXChannel.BOOKS5.value, "instId": okx_symbol}
-        ])
-        self._orderbook_subscriptions.add(okx_symbol)
-        logger.info(f"Subscribed to orderbook: {okx_symbol}")
+        self._orderbook_subscriptions.add(normalized_symbol)
+        logger.info(f"Subscribed to orderbook: {normalized_symbol}")
 
     async def unsubscribe_orderbook(self, symbol: str) -> None:
         """Unsubscribe from order book updates."""
-        okx_symbol = self._to_okx_symbol(symbol)
+        normalized_symbol = self._normalize_symbol(symbol)
 
-        if okx_symbol not in self._orderbook_subscriptions:
+        if normalized_symbol not in self._orderbook_subscriptions:
             return
 
-        if self._public_client:
-            await self._public_client.unsubscribe([
-                {"channel": OKXChannel.BOOKS5.value, "instId": okx_symbol}
-            ])
-        self._orderbook_subscriptions.discard(okx_symbol)
+        if self._settings.use_ccxt_provider:
+            if self._ccxt_provider:
+                await self._ccxt_provider.unwatch(f"orderbook:{normalized_symbol}")
+        else:
+            if self._public_client:
+                okx_symbol = self._to_okx_symbol(symbol)
+                await self._public_client.unsubscribe([
+                    {"channel": OKXChannel.BOOKS5.value, "instId": okx_symbol}
+                ])
+
+        self._orderbook_subscriptions.discard(normalized_symbol)
 
     # ==================== Private Channel Subscriptions ====================
 
@@ -319,29 +451,42 @@ class StreamManager:
         Args:
             inst_type: Instrument type (SPOT, MARGIN, SWAP, FUTURES, OPTION).
         """
-        if not self._private_client:
-            await self.start_private()
+        if self._settings.use_ccxt_provider:
+            if not self._ccxt_provider:
+                raise RuntimeError("CCXT provider not started. Call start() first.")
+            # CCXT watches all orders by default
+            await self._ccxt_provider.watch_orders()
+            logger.info("Subscribed to orders via CCXT")
+        else:
+            if not self._private_client:
+                await self.start_private()
 
-        if not self._private_client:
-            raise RuntimeError("Private client not available (credentials missing)")
+            if not self._private_client:
+                raise RuntimeError("Private client not available (credentials missing)")
 
-        await self._private_client.subscribe([
-            {"channel": OKXChannel.ORDERS.value, "instType": inst_type}
-        ])
-        logger.info(f"Subscribed to orders: {inst_type}")
+            await self._private_client.subscribe([
+                {"channel": OKXChannel.ORDERS.value, "instType": inst_type}
+            ])
+            logger.info(f"Subscribed to orders: {inst_type}")
 
     async def subscribe_account(self) -> None:
         """Subscribe to account balance updates (private channel)."""
-        if not self._private_client:
-            await self.start_private()
+        if self._settings.use_ccxt_provider:
+            if not self._ccxt_provider:
+                raise RuntimeError("CCXT provider not started. Call start() first.")
+            await self._ccxt_provider.watch_balance()
+            logger.info("Subscribed to account updates via CCXT")
+        else:
+            if not self._private_client:
+                await self.start_private()
 
-        if not self._private_client:
-            raise RuntimeError("Private client not available (credentials missing)")
+            if not self._private_client:
+                raise RuntimeError("Private client not available (credentials missing)")
 
-        await self._private_client.subscribe([
-            {"channel": OKXChannel.ACCOUNT.value}
-        ])
-        logger.info("Subscribed to account updates")
+            await self._private_client.subscribe([
+                {"channel": OKXChannel.ACCOUNT.value}
+            ])
+            logger.info("Subscribed to account updates")
 
     # ==================== Message Handlers ====================
 
@@ -384,6 +529,83 @@ class StreamManager:
 
         except Exception as e:
             logger.exception(f"Error processing private message: {e}")
+
+    async def _handle_ccxt_message(self, msg: dict[str, Any]) -> None:
+        """Handle messages from CCXT provider.
+
+        CCXT provider sends messages in the format:
+        {"type": "ticker|candle|trade|orderbook|order|account", "data": <WS* model>}
+        """
+        try:
+            data_type = msg.get("type", "")
+            data = msg.get("data")
+
+            logger.debug(f"_handle_ccxt_message called: type={data_type}, data={data}")
+
+            if not data:
+                logger.warning(f"_handle_ccxt_message: no data for type={data_type}")
+                return
+
+            if data_type == "ticker":
+                ticker: WSTicker = data
+                await self._publish(
+                    WSMessageType.TICKER,
+                    f"ticker:{ticker.symbol}",
+                    ticker.model_dump(mode="json"),
+                )
+
+            elif data_type == "candle":
+                candle: WSCandle = data
+                logger.info(f"Processing candle from CCXT: symbol={candle.symbol}, timeframe={candle.timeframe}, close={candle.close}")
+                # Publish to Redis for WebSocket clients
+                channel = f"candle:{candle.symbol}:{candle.timeframe}"
+                logger.info(f"Publishing candle to Redis channel: {channel}")
+                await self._publish(
+                    WSMessageType.CANDLE,
+                    channel,
+                    candle.model_dump(mode="json"),
+                )
+
+                # Dispatch to paper trading sessions
+                from squant.engine.paper.manager import get_session_manager
+
+                session_manager = get_session_manager()
+                await session_manager.dispatch_candle(candle)
+
+            elif data_type == "trade":
+                trade: WSTrade = data
+                await self._publish(
+                    WSMessageType.TRADE,
+                    f"trade:{trade.symbol}",
+                    trade.model_dump(mode="json"),
+                )
+
+            elif data_type == "orderbook":
+                orderbook: WSOrderBook = data
+                await self._publish(
+                    WSMessageType.ORDERBOOK,
+                    f"orderbook:{orderbook.symbol}",
+                    orderbook.model_dump(mode="json"),
+                )
+
+            elif data_type == "order":
+                order: WSOrderUpdate = data
+                await self._publish(
+                    WSMessageType.ORDER_UPDATE,
+                    "orders",
+                    order.model_dump(mode="json"),
+                )
+
+            elif data_type == "account":
+                account: WSAccountUpdate = data
+                await self._publish(
+                    WSMessageType.ACCOUNT_UPDATE,
+                    "account",
+                    account.model_dump(mode="json"),
+                )
+
+        except Exception as e:
+            logger.exception(f"Error processing CCXT message: {e}")
 
     async def _process_ticker(self, arg: dict, data: list) -> None:
         """Process ticker data and publish to Redis."""
@@ -578,6 +800,8 @@ class StreamManager:
         redis_channel = f"{self.REDIS_CHANNEL_PREFIX}{channel}"
         message_json = message.model_dump_json()
 
+        logger.debug(f"Queueing message to Redis: channel={redis_channel}, type={msg_type}")
+
         # Add to buffer
         async with self._buffer_lock:
             self._publish_buffer.append((redis_channel, message_json))
@@ -627,7 +851,8 @@ class StreamManager:
             async with self._redis.pipeline(transaction=False) as pipe:
                 for channel, message_json in messages:
                     pipe.publish(channel, message_json)
-                await pipe.execute()
+                results = await pipe.execute()
+                logger.debug(f"Published {len(messages)} messages to Redis, results: {results}")
         except Exception as e:
             # Log dropped messages for monitoring, but don't retry
             # (stale market data is worse than no data)
@@ -649,6 +874,20 @@ class StreamManager:
 
         Args:
             symbol: OKX format (e.g., "BTC-USDT").
+
+        Returns:
+            Standard format (e.g., "BTC/USDT").
+        """
+        return symbol.replace("-", "/")
+
+    def _normalize_symbol(self, symbol: str) -> str:
+        """Normalize symbol to standard format (using '/').
+
+        CCXT uses '/' separator, OKX uses '-'. This method normalizes
+        both formats to the standard '/' format used internally.
+
+        Args:
+            symbol: Symbol in either format (e.g., "BTC/USDT" or "BTC-USDT").
 
         Returns:
             Standard format (e.g., "BTC/USDT").

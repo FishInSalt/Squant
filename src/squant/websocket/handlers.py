@@ -212,7 +212,7 @@ class WebSocketGateway:
         """
         parts = channel.split(":")
         channel_type = parts[0]
-        logger.debug(f"_subscribe_okx called: channel={channel}, parts={parts}")
+        logger.info(f"_subscribe_okx called: channel={channel}, parts={parts}, channel_type={channel_type}")
 
         try:
             if channel_type == "ticker" and len(parts) >= 2:
