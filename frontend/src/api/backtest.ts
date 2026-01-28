@@ -20,7 +20,7 @@ export const getBacktests = (params?: {
   strategy_id?: string
   status?: string
 }) =>
-  get<PaginatedData<BacktestRun>>('/backtest/runs', params)
+  get<PaginatedData<BacktestRun>>('/backtest', params)
 
 // 删除回测记录
 export const deleteBacktest = (id: string) =>
@@ -32,7 +32,7 @@ export const exportBacktestResult = (id: string, format: 'csv' | 'json' = 'csv')
 
 // 获取正在运行的回测
 export const getRunningBacktests = () =>
-  get<BacktestRun[]>('/backtest/runs', { status: 'running' })
+  get<PaginatedData<BacktestRun>>('/backtest', { status: 'running' })
 
 // 停止回测
 export const stopBacktest = (id: string) =>

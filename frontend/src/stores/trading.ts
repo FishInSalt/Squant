@@ -29,7 +29,7 @@ export const useTradingStore = defineStore('trading', () => {
   async function loadRunningBacktests() {
     try {
       const response = await backtestApi.getRunningBacktests()
-      runningBacktests.value = response.data
+      runningBacktests.value = response.data.items
     } catch (error) {
       console.error('Failed to load running backtests:', error)
     }
