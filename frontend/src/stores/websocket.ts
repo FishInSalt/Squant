@@ -1,10 +1,35 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import type { WebSocketMessage, Ticker, BacktestRun, PaperSession, LiveSession, RunLog } from '@/types'
+import type { Ticker } from '@/types'
 import { useMarketStore } from './market'
-import { useTradingStore } from './trading'
 
-type MessageHandler = (message: WebSocketMessage) => void
+/**
+ * WebSocket 消息类型
+ */
+interface WSMessage {
+  type: string
+  channel?: string
+  data?: Record<string, unknown>
+  message?: string
+}
+
+/**
+ * 后端 Ticker 数据格式
+ */
+interface WSTickerData {
+  symbol: string
+  last: string
+  bid: string | null
+  ask: string | null
+  bid_size: string | null
+  ask_size: string | null
+  high_24h: string | null
+  low_24h: string | null
+  volume_24h: string | null
+  volume_quote_24h: string | null
+  open_24h: string | null
+  timestamp: string
+}
 
 export const useWebSocketStore = defineStore('websocket', () => {
   // State
@@ -12,10 +37,16 @@ export const useWebSocketStore = defineStore('websocket', () => {
   const connected = ref(false)
   const reconnectAttempts = ref(0)
   const maxReconnectAttempts = 5
-  const baseReconnectDelay = 1000 // 初始重连延迟 1秒
-  const maxReconnectDelay = 30000 // 最大重连延迟 30秒
+  const baseReconnectDelay = 1000
+  const maxReconnectDelay = 30000
   const subscribedChannels = ref<Set<string>>(new Set())
-  const messageHandlers = ref<Map<string, MessageHandler[]>>(new Map())
+  const pendingSubscriptions = ref<Set<string>>(new Set())
+  const serviceUnavailable = ref(false)  // 服务不可用标志（后端 WebSocket 连接失败）
+  const serviceUnavailableMessage = ref('')  // 服务不可用消息
+
+  // 心跳定时器
+  let heartbeatTimer: ReturnType<typeof setInterval> | null = null
+  let reconnectTimer: ReturnType<typeof setTimeout> | null = null
 
   // 计算指数退避延迟
   function getReconnectDelay(): number {
@@ -26,47 +57,71 @@ export const useWebSocketStore = defineStore('websocket', () => {
   // Getters
   const isConnected = computed(() => connected.value)
 
-  // Actions
+  /**
+   * 连接 WebSocket 网关
+   */
   function connect() {
     if (socket.value?.readyState === WebSocket.OPEN) {
       return
     }
 
-    const wsUrl = import.meta.env.VITE_WS_BASE_URL || '/ws'
-    const fullUrl = wsUrl.startsWith('ws') ? wsUrl : `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}${wsUrl}`
+    // 清理之前的连接
+    cleanup()
 
-    socket.value = new WebSocket(fullUrl)
+    const wsUrl = import.meta.env.VITE_WS_BASE_URL || 'ws://localhost:8000/api/v1/ws'
+    console.info(`Connecting to WebSocket: ${wsUrl}`)
+
+    try {
+      socket.value = new WebSocket(wsUrl)
+    } catch (error) {
+      console.error('Failed to create WebSocket:', error)
+      scheduleReconnect()
+      return
+    }
 
     socket.value.onopen = () => {
+      console.info('WebSocket connected')
       connected.value = true
       reconnectAttempts.value = 0
 
-      // Resubscribe to channels
+      // 启动心跳
+      startHeartbeat()
+
+      // 重新订阅之前的频道
       subscribedChannels.value.forEach((channel) => {
-        send({ type: 'subscribe', channel })
+        sendSubscribe(channel)
       })
+
+      // 处理待订阅的频道
+      pendingSubscriptions.value.forEach((channel) => {
+        sendSubscribe(channel)
+        subscribedChannels.value.add(channel)
+      })
+      pendingSubscriptions.value.clear()
     }
 
     socket.value.onmessage = (event) => {
       try {
-        const message: WebSocketMessage = JSON.parse(event.data)
+        const message: WSMessage = JSON.parse(event.data)
         handleMessage(message)
       } catch (error) {
         console.error('Failed to parse WebSocket message:', error)
       }
     }
 
-    socket.value.onclose = () => {
+    socket.value.onclose = (event) => {
+      console.info(`WebSocket closed: code=${event.code}, reason=${event.reason}`)
       connected.value = false
+      stopHeartbeat()
 
-      // Attempt reconnect with exponential backoff
-      if (reconnectAttempts.value < maxReconnectAttempts) {
-        const delay = getReconnectDelay()
-        reconnectAttempts.value++
-        setTimeout(() => {
-          connect()
-        }, delay)
+      // 4503 是后端返回的服务不可用代码，不需要重连
+      if (event.code === 4503) {
+        serviceUnavailable.value = true
+        console.info('Service unavailable (code 4503), not reconnecting')
+        return
       }
+
+      scheduleReconnect()
     }
 
     socket.value.onerror = (error) => {
@@ -74,117 +129,249 @@ export const useWebSocketStore = defineStore('websocket', () => {
     }
   }
 
+  /**
+   * 断开连接
+   */
   function disconnect() {
+    cleanup()
+    subscribedChannels.value.clear()
+    pendingSubscriptions.value.clear()
+  }
+
+  /**
+   * 清理资源
+   */
+  function cleanup() {
+    stopHeartbeat()
+
+    if (reconnectTimer) {
+      clearTimeout(reconnectTimer)
+      reconnectTimer = null
+    }
+
     if (socket.value) {
+      socket.value.onclose = null // 防止触发重连
       socket.value.close()
       socket.value = null
     }
+
     connected.value = false
-    subscribedChannels.value.clear()
   }
 
+  /**
+   * 安排重连
+   */
+  function scheduleReconnect() {
+    // 如果服务不可用，不重连
+    if (serviceUnavailable.value) {
+      console.info('Service unavailable, not reconnecting')
+      return
+    }
+
+    if (reconnectAttempts.value >= maxReconnectAttempts) {
+      console.warn('Max reconnect attempts reached')
+      return
+    }
+
+    const delay = getReconnectDelay()
+    console.info(`Reconnecting in ${delay}ms (attempt ${reconnectAttempts.value + 1}/${maxReconnectAttempts})`)
+
+    reconnectTimer = setTimeout(() => {
+      reconnectAttempts.value++
+      connect()
+    }, delay)
+  }
+
+  /**
+   * 启动心跳
+   */
+  function startHeartbeat() {
+    stopHeartbeat()
+    heartbeatTimer = setInterval(() => {
+      if (socket.value?.readyState === WebSocket.OPEN) {
+        socket.value.send('ping')
+      }
+    }, 30000)
+  }
+
+  /**
+   * 停止心跳
+   */
+  function stopHeartbeat() {
+    if (heartbeatTimer) {
+      clearInterval(heartbeatTimer)
+      heartbeatTimer = null
+    }
+  }
+
+  /**
+   * 发送消息
+   */
   function send(data: Record<string, unknown>) {
     if (socket.value?.readyState === WebSocket.OPEN) {
       socket.value.send(JSON.stringify(data))
     }
   }
 
+  /**
+   * 发送订阅消息
+   */
+  function sendSubscribe(channel: string) {
+    send({ type: 'subscribe', channel })
+  }
+
+  /**
+   * 发送取消订阅消息
+   */
+  function sendUnsubscribe(channel: string) {
+    send({ type: 'unsubscribe', channel })
+  }
+
+  /**
+   * 订阅频道
+   */
   function subscribe(channel: string) {
-    subscribedChannels.value.add(channel)
+    if (subscribedChannels.value.has(channel)) {
+      return
+    }
+
     if (connected.value) {
-      send({ type: 'subscribe', channel })
+      sendSubscribe(channel)
+      subscribedChannels.value.add(channel)
+    } else {
+      // 连接未建立，加入待订阅列表
+      pendingSubscriptions.value.add(channel)
+      // 尝试连接
+      connect()
     }
   }
 
+  /**
+   * 取消订阅频道
+   */
   function unsubscribe(channel: string) {
-    subscribedChannels.value.delete(channel)
+    if (!subscribedChannels.value.has(channel)) {
+      pendingSubscriptions.value.delete(channel)
+      return
+    }
+
     if (connected.value) {
-      send({ type: 'unsubscribe', channel })
+      sendUnsubscribe(channel)
     }
+    subscribedChannels.value.delete(channel)
   }
 
-  function addMessageHandler(type: string, handler: MessageHandler) {
-    if (!messageHandlers.value.has(type)) {
-      messageHandlers.value.set(type, [])
-    }
-    messageHandlers.value.get(type)!.push(handler)
-  }
-
-  function removeMessageHandler(type: string, handler: MessageHandler) {
-    const handlers = messageHandlers.value.get(type)
-    if (handlers) {
-      const index = handlers.indexOf(handler)
-      if (index !== -1) {
-        handlers.splice(index, 1)
-      }
-    }
-  }
-
-  function handleMessage(message: WebSocketMessage) {
+  /**
+   * 处理收到的消息
+   */
+  function handleMessage(message: WSMessage) {
     const marketStore = useMarketStore()
-    const tradingStore = useTradingStore()
 
-    // Handle built-in message types
     switch (message.type) {
+      case 'pong':
+        // 心跳响应，忽略
+        break
+
+      case 'subscribed':
+        console.debug(`Subscribed to ${message.channel}`)
+        break
+
+      case 'unsubscribed':
+        console.debug(`Unsubscribed from ${message.channel}`)
+        break
+
+      case 'error':
+        console.warn(`WebSocket error: ${message.message}`)
+        // 检查是否是服务不可用错误
+        if ((message as { code?: string }).code === 'STREAM_UNAVAILABLE') {
+          serviceUnavailable.value = true
+          serviceUnavailableMessage.value = message.message || '实时数据服务不可用'
+          console.warn('Real-time data service unavailable, will not reconnect')
+        }
+        break
+
       case 'ticker':
-        marketStore.updateTicker(message.data as Ticker)
+        if (message.data) {
+          const tickerUpdate = transformTicker(message.data as unknown as WSTickerData)
+          // Only update price fields, preserve volume data from REST API
+          // WebSocket volume data from OKX appears to be unreliable
+          marketStore.updateTickerPrice(tickerUpdate)
+        }
         break
-      case 'backtest_update':
-        tradingStore.updateBacktest(message.data as BacktestRun)
-        break
-      case 'paper_update':
-        tradingStore.updatePaperSession(message.data as PaperSession)
-        break
-      case 'live_update':
-        tradingStore.updateLiveSession(message.data as LiveSession)
-        break
-      case 'log':
-        // Emit to registered handlers
-        break
-    }
 
-    // Call custom handlers
-    const handlers = messageHandlers.value.get(message.type)
-    if (handlers) {
-      handlers.forEach((handler) => handler(message))
-    }
+      case 'candle':
+        // TODO: 处理 K 线数据
+        break
 
-    // Call wildcard handlers
-    const wildcardHandlers = messageHandlers.value.get('*')
-    if (wildcardHandlers) {
-      wildcardHandlers.forEach((handler) => handler(message))
+      case 'trade':
+        // TODO: 处理成交数据
+        break
+
+      case 'orderbook':
+        // TODO: 处理订单簿数据
+        break
+
+      case 'order_update':
+        // TODO: 处理订单更新
+        break
+
+      case 'account_update':
+        // TODO: 处理账户更新
+        break
+
+      default:
+        console.debug('Unknown message type:', message.type)
     }
   }
 
-  // Subscribe to specific session logs
-  function subscribeToSessionLogs(sessionId: string, onLog: (log: RunLog) => void) {
-    const channel = `session:${sessionId}:logs`
-    subscribe(channel)
+  /**
+   * 转换后端 Ticker 数据为前端格式
+   */
+  function transformTicker(data: WSTickerData): Ticker {
+    const last = parseFloat(data.last) || 0
+    const open24h = parseFloat(data.open_24h || '0') || last
+    const change_24h = last - open24h
+    const change_percent_24h = open24h > 0 ? (change_24h / open24h) * 100 : 0
 
-    const handler: MessageHandler = (message) => {
-      if (message.channel === channel && message.type === 'log') {
-        onLog(message.data as RunLog)
-      }
+    return {
+      exchange: 'okx',
+      symbol: data.symbol,
+      last_price: last,
+      bid_price: parseFloat(data.bid || '0') || 0,
+      ask_price: parseFloat(data.ask || '0') || 0,
+      high_24h: parseFloat(data.high_24h || '0') || 0,
+      low_24h: parseFloat(data.low_24h || '0') || 0,
+      volume_24h: parseFloat(data.volume_24h || '0') || 0,
+      quote_volume_24h: parseFloat(data.volume_quote_24h || '0') || 0,
+      change_24h,
+      change_percent_24h,
+      timestamp: new Date(data.timestamp).getTime(),
     }
+  }
 
-    addMessageHandler('log', handler)
+  /**
+   * 订阅多个 ticker
+   * @returns 取消订阅函数
+   */
+  function subscribeToTickers(symbols: string[]): () => void {
+    const channels = symbols.map((symbol) => `ticker:${symbol}`)
+    channels.forEach((channel) => subscribe(channel))
+
+    return () => {
+      channels.forEach((channel) => unsubscribe(channel))
+    }
+  }
+
+  /**
+   * 订阅 K 线数据
+   * @returns 取消订阅函数
+   */
+  function subscribeToCandles(symbol: string, timeframe: string): () => void {
+    const channel = `candle:${symbol}:${timeframe}`
+    subscribe(channel)
 
     return () => {
       unsubscribe(channel)
-      removeMessageHandler('log', handler)
-    }
-  }
-
-  // Subscribe to ticker updates for specific symbols
-  function subscribeToTickers(exchange: string, symbols: string[]) {
-    symbols.forEach((symbol) => {
-      subscribe(`ticker:${exchange}:${symbol}`)
-    })
-
-    return () => {
-      symbols.forEach((symbol) => {
-        unsubscribe(`ticker:${exchange}:${symbol}`)
-      })
     }
   }
 
@@ -193,17 +380,16 @@ export const useWebSocketStore = defineStore('websocket', () => {
     connected,
     reconnectAttempts,
     subscribedChannels,
+    serviceUnavailable,
+    serviceUnavailableMessage,
     // Getters
     isConnected,
     // Actions
     connect,
     disconnect,
-    send,
     subscribe,
     unsubscribe,
-    addMessageHandler,
-    removeMessageHandler,
-    subscribeToSessionLogs,
     subscribeToTickers,
+    subscribeToCandles,
   }
 })

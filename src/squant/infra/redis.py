@@ -34,7 +34,7 @@ def get_redis_pool() -> redis.ConnectionPool:
         _redis_pool = redis.ConnectionPool.from_url(
             settings.redis_url.get_secret_value(),
             decode_responses=True,
-            max_connections=10,
+            max_connections=100,  # Increased for WebSocket pubsub connections
         )
     return _redis_pool
 

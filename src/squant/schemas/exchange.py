@@ -36,7 +36,10 @@ class TickerResponse(BaseModel):
     ask: Decimal | None = Field(None, description="Best ask price")
     high_24h: Decimal | None = Field(None, description="24h high")
     low_24h: Decimal | None = Field(None, description="24h low")
-    volume_24h: Decimal | None = Field(None, description="24h volume")
+    volume_24h: Decimal | None = Field(None, description="24h volume in base currency")
+    volume_quote_24h: Decimal | None = Field(None, description="24h volume in quote currency (USDT)")
+    change_24h: Decimal | None = Field(None, description="24h price change")
+    change_pct_24h: Decimal | None = Field(None, description="24h price change percentage")
     timestamp: datetime = Field(..., description="Response timestamp")
 
 

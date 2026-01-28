@@ -35,6 +35,9 @@ async def get_ticker(
             high_24h=ticker.high_24h,
             low_24h=ticker.low_24h,
             volume_24h=ticker.volume_24h,
+            volume_quote_24h=ticker.volume_quote_24h,
+            change_24h=ticker.change_24h,
+            change_pct_24h=ticker.change_pct_24h,
             timestamp=ticker.timestamp,
         )
         return ApiResponse(data=data)
@@ -49,10 +52,23 @@ async def get_tickers(
         str | None,
         Query(description="Comma-separated trading pairs (e.g., BTC/USDT,ETH/USDT)"),
     ] = None,
+    sort_by: Annotated[
+        str | None,
+        Query(description="Sort field: volume_quote_24h, volume_24h, change_pct_24h, last"),
+    ] = None,
+    order: Annotated[
+        str,
+        Query(description="Sort order: desc (default) or asc"),
+    ] = "desc",
+    limit: Annotated[
+        int | None,
+        Query(ge=1, le=500, description="Maximum number of tickers to return"),
+    ] = None,
 ) -> ApiResponse[list[TickerResponse]]:
     """Get ticker data for multiple trading pairs.
 
     If no symbols specified, returns all available tickers.
+    Use sort_by=volume_quote_24h to get hot/popular trading pairs by USDT trading volume.
     """
     try:
         # Filter empty strings from split result
@@ -60,6 +76,23 @@ async def get_tickers(
             [s.strip() for s in symbols.split(",") if s.strip()] if symbols else None
         )
         tickers = await exchange.get_tickers(symbol_list)
+
+        # Sort tickers if sort_by is specified
+        if sort_by:
+            sort_fields = {
+                "volume_quote_24h": lambda t: t.volume_quote_24h or 0,
+                "volume_24h": lambda t: t.volume_24h or 0,
+                "change_pct_24h": lambda t: t.change_pct_24h or 0,
+                "last": lambda t: t.last or 0,
+            }
+            if sort_by in sort_fields:
+                reverse = order.lower() != "asc"
+                tickers = sorted(tickers, key=sort_fields[sort_by], reverse=reverse)
+
+        # Limit results if specified
+        if limit:
+            tickers = tickers[:limit]
+
         data = [
             TickerResponse(
                 symbol=t.symbol,
@@ -69,6 +102,9 @@ async def get_tickers(
                 high_24h=t.high_24h,
                 low_24h=t.low_24h,
                 volume_24h=t.volume_24h,
+                volume_quote_24h=t.volume_quote_24h,
+                change_24h=t.change_24h,
+                change_pct_24h=t.change_pct_24h,
                 timestamp=t.timestamp,
             )
             for t in tickers

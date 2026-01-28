@@ -1,6 +1,8 @@
 """Stream manager for WebSocket data distribution via Redis pub/sub."""
 
+import asyncio
 import logging
+from collections import deque
 from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
@@ -39,6 +41,10 @@ class StreamManager:
 
     REDIS_CHANNEL_PREFIX = "squant:ws:"
 
+    # Batch publishing configuration
+    FLUSH_INTERVAL = 0.05  # 50ms - flush buffer every 50ms
+    MAX_BUFFER_SIZE = 500  # Force flush when buffer reaches this size
+
     def __init__(self) -> None:
         """Initialize stream manager."""
         self._public_client: OKXWebSocketClient | None = None
@@ -52,6 +58,11 @@ class StreamManager:
         self._candle_subscriptions: set[tuple[str, str]] = set()  # (symbol, timeframe)
         self._trade_subscriptions: set[str] = set()
         self._orderbook_subscriptions: set[str] = set()
+
+        # Batch publishing buffer
+        self._publish_buffer: deque[tuple[str, str]] = deque()  # (channel, message_json)
+        self._flush_task: asyncio.Task | None = None
+        self._buffer_lock = asyncio.Lock()
 
     @property
     def is_running(self) -> bool:
@@ -78,6 +89,10 @@ class StreamManager:
 
         await self._public_client.connect()
         self._running = True
+
+        # Start the batch publishing flush task
+        self._flush_task = asyncio.create_task(self._flush_loop())
+
         logger.info("Stream manager started (public channels)")
 
     async def start_private(self) -> None:
@@ -113,6 +128,18 @@ class StreamManager:
         """Stop all WebSocket connections."""
         logger.info("Stopping stream manager...")
         self._running = False
+
+        # Stop flush task first
+        if self._flush_task:
+            self._flush_task.cancel()
+            try:
+                await self._flush_task
+            except asyncio.CancelledError:
+                pass
+            self._flush_task = None
+
+        # Flush any remaining messages
+        await self._flush_buffer()
 
         if self._public_client:
             await self._public_client.close()
@@ -508,7 +535,7 @@ class StreamManager:
     # ==================== Helper Methods ====================
 
     async def _publish(self, msg_type: WSMessageType, channel: str, data: dict) -> None:
-        """Publish message to Redis pub/sub channel.
+        """Queue message for batch publishing to Redis.
 
         Args:
             msg_type: Message type.
@@ -526,7 +553,62 @@ class StreamManager:
         )
 
         redis_channel = f"{self.REDIS_CHANNEL_PREFIX}{channel}"
-        await self._redis.publish(redis_channel, message.model_dump_json())
+        message_json = message.model_dump_json()
+
+        # Add to buffer
+        async with self._buffer_lock:
+            self._publish_buffer.append((redis_channel, message_json))
+
+            # Force flush if buffer is too large
+            if len(self._publish_buffer) >= self.MAX_BUFFER_SIZE:
+                await self._flush_buffer_unsafe()
+
+    async def _flush_loop(self) -> None:
+        """Background task that periodically flushes the message buffer."""
+        while self._running:
+            try:
+                await asyncio.sleep(self.FLUSH_INTERVAL)
+                await self._flush_buffer()
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.exception(f"Error in flush loop: {e}")
+
+    async def _flush_buffer(self) -> None:
+        """Flush the message buffer using Redis pipeline."""
+        async with self._buffer_lock:
+            await self._flush_buffer_unsafe()
+
+    async def _flush_buffer_unsafe(self) -> None:
+        """Flush buffer without acquiring lock (caller must hold lock).
+
+        Note: If Redis publish fails, messages are dropped intentionally.
+        For real-time market data, this is the correct behavior because:
+        1. Stale market data is worse than no data
+        2. New data arrives within milliseconds
+        3. Buffering failed messages could cause memory issues if Redis is down
+        """
+        if not self._publish_buffer or not self._redis:
+            return
+
+        # Collect all messages from buffer
+        messages = []
+        while self._publish_buffer:
+            messages.append(self._publish_buffer.popleft())
+
+        if not messages:
+            return
+
+        # Use pipeline to batch publish all messages
+        try:
+            async with self._redis.pipeline(transaction=False) as pipe:
+                for channel, message_json in messages:
+                    pipe.publish(channel, message_json)
+                await pipe.execute()
+        except Exception as e:
+            # Log dropped messages for monitoring, but don't retry
+            # (stale market data is worse than no data)
+            logger.warning(f"Dropped {len(messages)} messages due to Redis error: {e}")
 
     def _to_okx_symbol(self, symbol: str) -> str:
         """Convert standard symbol to OKX format.

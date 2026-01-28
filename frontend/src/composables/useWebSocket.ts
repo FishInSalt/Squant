@@ -1,8 +1,9 @@
 import { onMounted, onUnmounted } from 'vue'
 import { useWebSocketStore } from '@/stores/websocket'
-import type { WebSocketMessage, RunLog } from '@/types'
 
-// WebSocket 连接管理
+/**
+ * WebSocket 连接管理
+ */
 export function useWebSocket() {
   const wsStore = useWebSocketStore()
 
@@ -10,23 +11,17 @@ export function useWebSocket() {
     wsStore.connect()
   })
 
-  onUnmounted(() => {
-    // 不在这里断开连接，因为可能有其他组件还在使用
-  })
-
   return {
     connected: wsStore.isConnected,
     subscribe: wsStore.subscribe,
     unsubscribe: wsStore.unsubscribe,
-    send: wsStore.send,
-    addMessageHandler: wsStore.addMessageHandler,
-    removeMessageHandler: wsStore.removeMessageHandler,
   }
 }
 
-// 订阅行情更新
+/**
+ * 订阅行情更新
+ */
 export function useTickerSubscription(
-  exchange: string,
   symbols: string | string[],
   autoConnect = true
 ) {
@@ -38,7 +33,7 @@ export function useTickerSubscription(
     if (autoConnect) {
       wsStore.connect()
     }
-    unsubscribe = wsStore.subscribeToTickers(exchange, symbolList)
+    unsubscribe = wsStore.subscribeToTickers(symbolList)
   })
 
   onUnmounted(() => {
@@ -52,10 +47,12 @@ export function useTickerSubscription(
   }
 }
 
-// 订阅会话日志
-export function useSessionLogs(
-  sessionId: string,
-  onLog: (log: RunLog) => void,
+/**
+ * 订阅 K 线数据
+ */
+export function useCandleSubscription(
+  symbol: string,
+  timeframe: string,
   autoConnect = true
 ) {
   const wsStore = useWebSocketStore()
@@ -65,37 +62,13 @@ export function useSessionLogs(
     if (autoConnect) {
       wsStore.connect()
     }
-    unsubscribe = wsStore.subscribeToSessionLogs(sessionId, onLog)
+    unsubscribe = wsStore.subscribeToCandles(symbol, timeframe)
   })
 
   onUnmounted(() => {
     if (unsubscribe) {
       unsubscribe()
     }
-  })
-
-  return {
-    connected: wsStore.isConnected,
-  }
-}
-
-// 自定义消息处理
-export function useWebSocketMessage(
-  type: string,
-  handler: (message: WebSocketMessage) => void,
-  autoConnect = true
-) {
-  const wsStore = useWebSocketStore()
-
-  onMounted(() => {
-    if (autoConnect) {
-      wsStore.connect()
-    }
-    wsStore.addMessageHandler(type, handler)
-  })
-
-  onUnmounted(() => {
-    wsStore.removeMessageHandler(type, handler)
   })
 
   return {

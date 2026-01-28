@@ -13,7 +13,7 @@ from decimal import Decimal
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import select, delete, and_
+from sqlalchemy import select, delete, and_, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from squant.engine.backtest.runner import BacktestRunner, BacktestError
@@ -76,6 +76,50 @@ class StrategyRunRepository(BaseRepository[StrategyRun]):
         if mode:
             filters["mode"] = mode
         return await self.count(**filters)
+
+    async def list_runs(
+        self,
+        *,
+        strategy_id: str | None = None,
+        mode: RunMode | None = None,
+        status: RunStatus | None = None,
+        offset: int = 0,
+        limit: int = 20,
+    ) -> list[StrategyRun]:
+        """List runs with optional filters."""
+        stmt = select(StrategyRun)
+
+        if strategy_id:
+            stmt = stmt.where(StrategyRun.strategy_id == strategy_id)
+        if mode:
+            stmt = stmt.where(StrategyRun.mode == mode)
+        if status:
+            stmt = stmt.where(StrategyRun.status == status)
+
+        stmt = stmt.order_by(StrategyRun.created_at.desc()).offset(offset).limit(limit)
+
+        result = await self.session.execute(stmt)
+        return list(result.scalars().all())
+
+    async def count_runs(
+        self,
+        *,
+        strategy_id: str | None = None,
+        mode: RunMode | None = None,
+        status: RunStatus | None = None,
+    ) -> int:
+        """Count runs with optional filters."""
+        stmt = select(func.count(StrategyRun.id))
+
+        if strategy_id:
+            stmt = stmt.where(StrategyRun.strategy_id == strategy_id)
+        if mode:
+            stmt = stmt.where(StrategyRun.mode == mode)
+        if status:
+            stmt = stmt.where(StrategyRun.status == status)
+
+        result = await self.session.execute(stmt)
+        return result.scalar() or 0
 
 
 class EquityCurveRepository:
@@ -402,6 +446,40 @@ class BacktestService:
             limit=page_size,
         )
         total = await self.run_repo.count_by_strategy(str(strategy_id), RunMode.BACKTEST)
+        return runs, total
+
+    async def list_runs(
+        self,
+        *,
+        strategy_id: UUID | None = None,
+        status: RunStatus | None = None,
+        page: int = 1,
+        page_size: int = 20,
+    ) -> tuple[list[StrategyRun], int]:
+        """List backtest runs with optional filters.
+
+        Args:
+            strategy_id: Optional strategy ID filter.
+            status: Optional status filter.
+            page: Page number (1-indexed).
+            page_size: Items per page.
+
+        Returns:
+            Tuple of (runs, total_count).
+        """
+        offset = (page - 1) * page_size
+        runs = await self.run_repo.list_runs(
+            strategy_id=str(strategy_id) if strategy_id else None,
+            mode=RunMode.BACKTEST,
+            status=status,
+            offset=offset,
+            limit=page_size,
+        )
+        total = await self.run_repo.count_runs(
+            strategy_id=str(strategy_id) if strategy_id else None,
+            mode=RunMode.BACKTEST,
+            status=status,
+        )
         return runs, total
 
     async def get_equity_curve(self, run_id: UUID) -> list[EquityCurve]:

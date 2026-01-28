@@ -20,6 +20,7 @@ from squant.schemas.backtest import (
     EquityCurvePoint,
     RunBacktestRequest,
 )
+from squant.models.enums import RunStatus
 from squant.services.backtest import (
     BacktestNotFoundError,
     BacktestService,
@@ -148,15 +149,17 @@ async def execute_backtest(
 
 @router.get("", response_model=ApiResponse[PaginatedData[BacktestListItem]])
 async def list_backtests(
-    strategy_id: UUID = Query(..., description="Strategy ID (required)"),
+    strategy_id: UUID | None = Query(None, description="Strategy ID (optional)"),
+    status: str | None = Query(None, description="Status filter: pending, running, completed, error"),
     page: int = Query(1, ge=1, description="Page number"),
     page_size: int = Query(20, ge=1, le=100, description="Page size"),
     session: AsyncSession = Depends(get_session),
 ) -> ApiResponse[PaginatedData[BacktestListItem]]:
-    """List backtest runs for a strategy with pagination.
+    """List backtest runs with optional filters and pagination.
 
     Args:
-        strategy_id: Strategy ID to filter by (required).
+        strategy_id: Optional strategy ID to filter by.
+        status: Optional status filter (pending, running, completed, error).
         page: Page number (1-indexed).
         page_size: Items per page.
         session: Database session.
@@ -164,10 +167,22 @@ async def list_backtests(
     Returns:
         Paginated list of backtest runs.
     """
+    # Parse status if provided
+    run_status = None
+    if status:
+        try:
+            run_status = RunStatus(status)
+        except ValueError:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid status: {status}. Valid values: pending, running, completed, error",
+            )
+
     service = BacktestService(session)
 
-    runs, total = await service.list_by_strategy(
-        strategy_id,
+    runs, total = await service.list_runs(
+        strategy_id=strategy_id,
+        status=run_status,
         page=page,
         page_size=page_size,
     )

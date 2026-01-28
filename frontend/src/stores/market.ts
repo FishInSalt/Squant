@@ -50,24 +50,29 @@ export const useMarketStore = defineStore('market', () => {
         const key = `${ticker.exchange}:${ticker.symbol}`
         tickers.value.set(key, ticker)
       })
+      return response.data
     } catch (error) {
       console.error('Failed to load tickers:', error)
+      return []
     } finally {
       loading.value = false
     }
   }
 
-  async function loadHotTickers(exchange?: string, limit?: number) {
+  async function loadAllTickers() {
     loading.value = true
     try {
-      const response = await marketApi.getHotTickers(exchange, limit)
+      // 获取全部行情数据，由前端进行排序和分页
+      const response = await marketApi.getAllTickers()
+      // 清空旧数据，重新填充
+      tickers.value.clear()
       response.data.forEach((ticker) => {
         const key = `${ticker.exchange}:${ticker.symbol}`
         tickers.value.set(key, ticker)
       })
       return response.data
     } catch (error) {
-      console.error('Failed to load hot tickers:', error)
+      console.error('Failed to load tickers:', error)
       return []
     } finally {
       loading.value = false
@@ -77,6 +82,36 @@ export const useMarketStore = defineStore('market', () => {
   function updateTicker(ticker: Ticker) {
     const key = `${ticker.exchange}:${ticker.symbol}`
     tickers.value.set(key, ticker)
+  }
+
+  /**
+   * Update only price-related fields from WebSocket, preserve volume data
+   * This is needed because OKX WebSocket volume data appears to be unreliable
+   */
+  function updateTickerPrice(ticker: Ticker) {
+    const key = `${ticker.exchange}:${ticker.symbol}`
+    const existing = tickers.value.get(key)
+
+    if (existing) {
+      // Only update price-related fields, preserve volume data from REST API
+      tickers.value.set(key, {
+        ...existing,
+        last_price: ticker.last_price,
+        bid_price: ticker.bid_price,
+        ask_price: ticker.ask_price,
+        high_24h: ticker.high_24h,
+        low_24h: ticker.low_24h,
+        change_24h: ticker.change_24h,
+        change_percent_24h: ticker.change_percent_24h,
+        timestamp: ticker.timestamp,
+        // Preserve volume fields from initial REST API load:
+        // volume_24h: existing.volume_24h,
+        // quote_volume_24h: existing.quote_volume_24h,
+      })
+    } else {
+      // If ticker doesn't exist, set it completely
+      tickers.value.set(key, ticker)
+    }
   }
 
   function addToWatchlist(exchange: string, symbol: string) {
@@ -134,8 +169,9 @@ export const useMarketStore = defineStore('market', () => {
     // Actions
     loadExchanges,
     loadTickers,
-    loadHotTickers,
+    loadAllTickers,
     updateTicker,
+    updateTickerPrice,
     addToWatchlist,
     removeFromWatchlist,
     reorderWatchlist,

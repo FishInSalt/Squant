@@ -2,6 +2,7 @@
 
 import asyncio
 import contextlib
+import json
 import logging
 from typing import Any
 
@@ -13,6 +14,331 @@ from squant.websocket.manager import StreamManager, get_stream_manager
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+# ==================== Unified WebSocket Gateway ====================
+
+
+class WebSocketGateway:
+    """Unified WebSocket gateway supporting multiple channel subscriptions.
+
+    This gateway allows clients to:
+    1. Connect once to /ws
+    2. Subscribe/unsubscribe to multiple channels via JSON messages
+    3. Receive real-time updates from all subscribed channels
+
+    Message Protocol:
+    - Subscribe: {"type": "subscribe", "channel": "ticker:BTC/USDT"}
+    - Unsubscribe: {"type": "unsubscribe", "channel": "ticker:BTC/USDT"}
+    - Ping: "ping" or {"type": "ping"}
+    - Pong response: {"type": "pong"}
+
+    Channel formats:
+    - ticker:{symbol} - e.g., ticker:BTC/USDT
+    - candle:{symbol}:{timeframe} - e.g., candle:BTC/USDT:1m
+    - trade:{symbol} - e.g., trade:BTC/USDT
+    - orderbook:{symbol} - e.g., orderbook:BTC/USDT
+    - orders - private order updates
+    - account - private account updates
+    """
+
+    REDIS_CHANNEL_PREFIX = "squant:ws:"
+
+    def __init__(self, websocket: WebSocket, stream_manager: StreamManager) -> None:
+        """Initialize gateway connection.
+
+        Args:
+            websocket: FastAPI WebSocket connection.
+            stream_manager: Stream manager for OKX subscriptions.
+        """
+        self.websocket = websocket
+        self.stream_manager = stream_manager
+        self._running = False
+        self._subscribed_channels: set[str] = set()
+        self._pubsub: Any = None
+        self._redis: Any = None
+
+    async def run(self) -> None:
+        """Run the gateway, handling client messages and forwarding data."""
+        await self.websocket.accept()
+        self._running = True
+        logger.info("WebSocket gateway client connected")
+
+        try:
+            async with get_redis_context() as redis:
+                self._redis = redis
+                self._pubsub = redis.pubsub()
+
+                # Create tasks for receiving from Redis and handling client messages
+                receive_task = asyncio.create_task(self._receive_from_redis())
+                client_task = asyncio.create_task(self._handle_client_messages())
+
+                # Wait for either task to complete
+                done, pending = await asyncio.wait(
+                    [receive_task, client_task],
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+
+                # Cancel pending tasks
+                for task in pending:
+                    task.cancel()
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await task
+
+        except WebSocketDisconnect:
+            logger.info("WebSocket gateway client disconnected")
+        except Exception as e:
+            logger.exception(f"WebSocket gateway error: {e}")
+        finally:
+            self._running = False
+            # Cleanup subscriptions
+            if self._pubsub and self._subscribed_channels:
+                for channel in list(self._subscribed_channels):
+                    await self._unsubscribe_redis(channel)
+            logger.info("WebSocket gateway connection closed")
+
+    async def _handle_client_messages(self) -> None:
+        """Handle incoming messages from the WebSocket client."""
+        try:
+            while self._running:
+                raw_message = await self.websocket.receive_text()
+
+                # Handle simple ping
+                if raw_message == "ping":
+                    await self.websocket.send_json({"type": "pong"})
+                    continue
+
+                # Parse JSON message
+                try:
+                    message = json.loads(raw_message)
+                except json.JSONDecodeError:
+                    await self._send_error("Invalid JSON format")
+                    continue
+
+                msg_type = message.get("type")
+
+                if msg_type == "ping":
+                    await self.websocket.send_json({"type": "pong"})
+
+                elif msg_type == "subscribe":
+                    channel = message.get("channel")
+                    if channel:
+                        await self._subscribe(channel)
+                    else:
+                        await self._send_error("Missing 'channel' field")
+
+                elif msg_type == "unsubscribe":
+                    channel = message.get("channel")
+                    if channel:
+                        await self._unsubscribe(channel)
+                    else:
+                        await self._send_error("Missing 'channel' field")
+
+                else:
+                    await self._send_error(f"Unknown message type: {msg_type}")
+
+        except WebSocketDisconnect:
+            self._running = False
+        except asyncio.CancelledError:
+            pass
+
+    async def _subscribe(self, channel: str) -> None:
+        """Subscribe to a channel.
+
+        Args:
+            channel: Channel name (e.g., "ticker:BTC/USDT").
+        """
+        if channel in self._subscribed_channels:
+            await self.websocket.send_json({
+                "type": "subscribed",
+                "channel": channel,
+                "message": "Already subscribed",
+            })
+            return
+
+        # Subscribe to Redis channel
+        redis_channel = f"{self.REDIS_CHANNEL_PREFIX}{channel}"
+        await self._pubsub.subscribe(redis_channel)
+        self._subscribed_channels.add(channel)
+
+        # Subscribe to OKX stream if needed
+        await self._subscribe_okx(channel)
+
+        await self.websocket.send_json({
+            "type": "subscribed",
+            "channel": channel,
+        })
+        logger.info(f"Client subscribed to {channel}")
+
+    async def _unsubscribe(self, channel: str) -> None:
+        """Unsubscribe from a channel.
+
+        Args:
+            channel: Channel name.
+
+        TODO: Implement reference counting for OKX subscriptions.
+        Currently, OKX subscriptions are not cancelled when clients unsubscribe.
+        This causes minimal resource waste (data flows to Redis but no consumer).
+        A proper solution would track subscriber count per channel and call
+        stream_manager.unsubscribe_* when count reaches zero.
+        """
+        if channel not in self._subscribed_channels:
+            await self.websocket.send_json({
+                "type": "unsubscribed",
+                "channel": channel,
+                "message": "Not subscribed",
+            })
+            return
+
+        await self._unsubscribe_redis(channel)
+
+        await self.websocket.send_json({
+            "type": "unsubscribed",
+            "channel": channel,
+        })
+        logger.info(f"Client unsubscribed from {channel}")
+
+    async def _unsubscribe_redis(self, channel: str) -> None:
+        """Unsubscribe from Redis channel."""
+        redis_channel = f"{self.REDIS_CHANNEL_PREFIX}{channel}"
+        await self._pubsub.unsubscribe(redis_channel)
+        self._subscribed_channels.discard(channel)
+
+    async def _subscribe_okx(self, channel: str) -> None:
+        """Subscribe to OKX stream based on channel type.
+
+        Args:
+            channel: Channel name (e.g., "ticker:BTC/USDT").
+        """
+        parts = channel.split(":")
+        channel_type = parts[0]
+
+        try:
+            if channel_type == "ticker" and len(parts) >= 2:
+                symbol = parts[1]
+                await self.stream_manager.subscribe_ticker(symbol)
+
+            elif channel_type == "candle" and len(parts) >= 3:
+                symbol = parts[1]
+                timeframe = parts[2]
+                await self.stream_manager.subscribe_candles(symbol, timeframe)
+
+            elif channel_type == "trade" and len(parts) >= 2:
+                symbol = parts[1]
+                await self.stream_manager.subscribe_trades(symbol)
+
+            elif channel_type == "orderbook" and len(parts) >= 2:
+                symbol = parts[1]
+                await self.stream_manager.subscribe_orderbook(symbol)
+
+            elif channel_type == "orders":
+                await self.stream_manager.subscribe_orders()
+
+            elif channel_type == "account":
+                await self.stream_manager.subscribe_account()
+
+        except Exception as e:
+            logger.warning(f"Failed to subscribe OKX stream for {channel}: {e}")
+
+    async def _receive_from_redis(self) -> None:
+        """Receive messages from Redis and forward to WebSocket client."""
+        try:
+            # Keep running while connection is active
+            while self._running:
+                # Wait for at least one subscription before calling get_message()
+                # Redis pubsub requires at least one subscription to initialize the connection
+                if not self._subscribed_channels:
+                    await asyncio.sleep(0.1)
+                    continue
+
+                try:
+                    # Use get_message with a timeout instead of listen()
+                    # This prevents the issue where listen() exits immediately with no subscriptions
+                    message = await self._pubsub.get_message(
+                        ignore_subscribe_messages=True,
+                        timeout=1.0
+                    )
+
+                    if message is None:
+                        # No message yet, continue waiting
+                        continue
+
+                    if message["type"] == "message":
+                        data = message["data"]
+                        if isinstance(data, bytes):
+                            data = data.decode("utf-8")
+                        await self.websocket.send_text(data)
+
+                except RuntimeError as e:
+                    # Handle "pubsub connection not set" error if subscriptions were cleared
+                    if "pubsub connection not set" in str(e):
+                        await asyncio.sleep(0.1)
+                        continue
+                    raise
+
+        except asyncio.CancelledError:
+            pass
+        except Exception as e:
+            logger.exception(f"Error receiving from Redis: {e}")
+
+    async def _send_error(self, message: str) -> None:
+        """Send error message to client."""
+        await self.websocket.send_json({
+            "type": "error",
+            "message": message,
+        })
+
+
+@router.websocket("")
+async def websocket_gateway(websocket: WebSocket) -> None:
+    """Unified WebSocket gateway endpoint.
+
+    This endpoint supports subscribing to multiple channels through a single connection.
+
+    Example usage:
+    ```javascript
+    const ws = new WebSocket('ws://localhost:8001/api/v1/ws')
+
+    ws.onopen = () => {
+        // Subscribe to channels
+        ws.send(JSON.stringify({ type: 'subscribe', channel: 'ticker:BTC/USDT' }))
+        ws.send(JSON.stringify({ type: 'subscribe', channel: 'ticker:ETH/USDT' }))
+        ws.send(JSON.stringify({ type: 'subscribe', channel: 'candle:BTC/USDT:1m' }))
+    }
+
+    ws.onmessage = (event) => {
+        const data = JSON.parse(event.data)
+        console.log('Received:', data.type, data.channel, data.data)
+    }
+    ```
+
+    Supported channels:
+    - ticker:{symbol} - Real-time ticker updates
+    - candle:{symbol}:{timeframe} - Candlestick updates (1m, 5m, 15m, 30m, 1h, 4h, 1d, 1w)
+    - trade:{symbol} - Trade updates
+    - orderbook:{symbol} - Order book updates (5-level depth)
+    - orders - Private order updates (requires API credentials)
+    - account - Private account balance updates (requires API credentials)
+    """
+    stream_manager = get_stream_manager()
+
+    # Check if stream manager is running (OKX WebSocket connected)
+    if not stream_manager.is_running:
+        await websocket.accept()
+        await websocket.send_json({
+            "type": "error",
+            "message": "Real-time data service unavailable. OKX WebSocket connection failed. "
+                       "Please check network connectivity or use REST API for data.",
+            "code": "STREAM_UNAVAILABLE",
+        })
+        await websocket.close(code=4503)  # Custom code for service unavailable
+        return
+
+    gateway = WebSocketGateway(websocket, stream_manager)
+    await gateway.run()
+
+
+# ==================== Legacy Single-Channel Endpoints ====================
 
 
 class WebSocketConnection:

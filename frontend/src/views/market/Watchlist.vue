@@ -89,7 +89,6 @@ import { useMarketStore } from '@/stores/market'
 import { useWebSocketStore } from '@/stores/websocket'
 import PriceCell from '@/components/common/PriceCell.vue'
 import { formatPrice, formatVolume, formatExchangeName } from '@/utils/format'
-import { getHotTickers } from '@/api/market'
 import type { Ticker } from '@/types'
 
 const router = useRouter()
@@ -134,29 +133,23 @@ function goToHotMarket() {
 }
 
 // 订阅行情更新
-let unsubscribes: (() => void)[] = []
+let unsubscribe: (() => void) | null = null
 
 onMounted(async () => {
   await loadWatchlistData()
 
   // 订阅 WebSocket 更新
   wsStore.connect()
-  const exchangeSymbols = new Map<string, string[]>()
-  watchlist.value.forEach((item) => {
-    if (!exchangeSymbols.has(item.exchange)) {
-      exchangeSymbols.set(item.exchange, [])
-    }
-    exchangeSymbols.get(item.exchange)!.push(item.symbol)
-  })
-
-  for (const [exchange, symbols] of exchangeSymbols) {
-    const unsub = wsStore.subscribeToTickers(exchange, symbols)
-    unsubscribes.push(unsub)
+  const symbols = watchlist.value.map((item) => item.symbol)
+  if (symbols.length > 0) {
+    unsubscribe = wsStore.subscribeToTickers(symbols)
   }
 })
 
 onUnmounted(() => {
-  unsubscribes.forEach((unsub) => unsub())
+  if (unsubscribe) {
+    unsubscribe()
+  }
 })
 </script>
 

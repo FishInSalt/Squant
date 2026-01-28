@@ -221,7 +221,7 @@ onMounted(async () => {
 
   // 订阅 WebSocket
   wsStore.connect()
-  unsubscribe = wsStore.subscribeToTickers(props.exchange, [props.symbol])
+  unsubscribe = wsStore.subscribeToTickers([props.symbol])
 })
 
 onUnmounted(() => {

@@ -185,6 +185,14 @@ class OKXAdapter(ExchangeAdapter):
                 return Decimal(value)
             return None
 
+        # Calculate price change and percentage
+        open_24h = parse_decimal(data.get("open24h"))
+        change_24h = None
+        change_pct_24h = None
+        if open_24h and open_24h != 0:
+            change_24h = last - open_24h
+            change_pct_24h = (change_24h / open_24h) * 100
+
         return Ticker(
             symbol=symbol,
             last=last,
@@ -194,8 +202,8 @@ class OKXAdapter(ExchangeAdapter):
             low_24h=parse_decimal(data.get("low24h")),
             volume_24h=parse_decimal(data.get("vol24h")),
             volume_quote_24h=parse_decimal(data.get("volCcy24h")),
-            change_24h=parse_decimal(data.get("open24h")),  # We compute from open
-            change_pct_24h=None,  # OKX doesn't provide this directly
+            change_24h=change_24h,
+            change_pct_24h=change_pct_24h,
             timestamp=datetime.now(UTC),
         )
 

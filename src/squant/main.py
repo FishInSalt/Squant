@@ -24,8 +24,14 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     logger.info("Database connection initialized")
     await init_redis()
     logger.info("Redis connection initialized")
-    await init_stream_manager()
-    logger.info("Stream manager initialized")
+
+    # WebSocket stream manager - optional, continues if connection fails
+    try:
+        await init_stream_manager()
+        logger.info("Stream manager initialized")
+    except Exception as e:
+        logger.warning(f"Failed to initialize stream manager: {e}. Real-time data will be unavailable.")
+        logger.warning("The application will continue without WebSocket connectivity.")
 
     # Recover orphaned trading sessions (NFR-013)
     from squant.infra.database import get_session_context

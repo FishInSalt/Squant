@@ -3,10 +3,20 @@
     <div class="page-header">
       <h1 class="page-title">热门行情</h1>
       <div class="header-actions">
+        <el-tooltip
+          v-if="wsServiceUnavailable"
+          content="后端无法连接交易所 WebSocket，实时数据不可用。数据通过 REST API 获取。"
+          placement="bottom"
+        >
+          <el-tag type="warning" size="small">数据延迟</el-tag>
+        </el-tooltip>
+        <el-tag v-else :type="wsConnected ? 'success' : 'danger'" size="small">
+          {{ wsConnected ? '实时' : '离线' }}
+        </el-tag>
         <el-select
           v-model="selectedExchange"
           placeholder="选择交易所"
-          style="width: 150px"
+          style="width: 120px"
           @change="handleExchangeChange"
         >
           <el-option
@@ -28,13 +38,16 @@
 
     <div class="card">
       <el-table
-        :data="filteredTickers"
+        ref="tableRef"
+        :data="paginatedTickers"
+        :row-key="(row: Ticker) => `${row.exchange}:${row.symbol}`"
         v-loading="loading"
         stripe
         style="width: 100%"
         @row-click="handleRowClick"
+        @sort-change="handleSortChange"
       >
-        <el-table-column prop="symbol" label="交易对" width="150" fixed>
+        <el-table-column prop="symbol" label="交易对" width="150" fixed sortable="custom">
           <template #default="{ row }">
             <div class="symbol-cell">
               <span class="symbol-name">{{ row.symbol }}</span>
@@ -48,7 +61,7 @@
           </template>
         </el-table-column>
 
-        <el-table-column prop="last_price" label="最新价" width="140" align="right">
+        <el-table-column prop="last_price" label="最新价" width="140" align="right" sortable="custom">
           <template #default="{ row }">
             <PriceCell
               :value="row.last_price"
@@ -57,42 +70,39 @@
           </template>
         </el-table-column>
 
-        <el-table-column prop="change_percent_24h" label="24h涨跌" width="120" align="right">
+        <el-table-column prop="change_percent_24h" label="24h涨跌" width="120" align="right" sortable="custom">
           <template #default="{ row }">
-            <PriceCell
-              :value="row.change_percent_24h"
-              :change="row.change_24h"
-              :decimals="2"
-              show-sign
-            />
+            <span :class="getChangeClass(row.change_percent_24h)">
+              {{ formatChangePercent(row.change_percent_24h) }}
+            </span>
           </template>
         </el-table-column>
 
-        <el-table-column prop="high_24h" label="24h最高" width="140" align="right">
+        <el-table-column prop="high_24h" label="24h最高" width="140" align="right" sortable="custom">
           <template #default="{ row }">
             {{ formatPrice(row.high_24h) }}
           </template>
         </el-table-column>
 
-        <el-table-column prop="low_24h" label="24h最低" width="140" align="right">
+        <el-table-column prop="low_24h" label="24h最低" width="140" align="right" sortable="custom">
           <template #default="{ row }">
             {{ formatPrice(row.low_24h) }}
           </template>
         </el-table-column>
 
-        <el-table-column prop="volume_24h" label="24h成交量" width="140" align="right">
+        <el-table-column prop="volume_24h" label="24h成交量" width="140" align="right" sortable="custom">
           <template #default="{ row }">
             {{ formatVolume(row.volume_24h) }}
           </template>
         </el-table-column>
 
-        <el-table-column prop="quote_volume_24h" label="24h成交额" width="140" align="right">
+        <el-table-column prop="quote_volume_24h" label="24h成交额" width="150" align="right" sortable="custom">
           <template #default="{ row }">
-            {{ formatLargeNumber(row.quote_volume_24h) }}
+            {{ formatQuoteVolume(row.quote_volume_24h) }}
           </template>
         </el-table-column>
 
-        <el-table-column label="操作" width="120" fixed="right">
+        <el-table-column label="操作" width="100" fixed="right">
           <template #default="{ row }">
             <el-button type="primary" link @click.stop="goToChart(row)">
               K线
@@ -100,54 +110,159 @@
           </template>
         </el-table-column>
       </el-table>
+
+      <div class="pagination-wrapper">
+        <el-pagination
+          v-model:current-page="currentPage"
+          v-model:page-size="pageSize"
+          :page-sizes="[20, 50, 100, 200]"
+          :total="filteredTickers.length"
+          layout="total, sizes, prev, pager, next, jumper"
+          @size-change="handleSizeChange"
+          @current-change="handleCurrentChange"
+        />
+      </div>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import { useMarketStore } from '@/stores/market'
 import { useWebSocketStore } from '@/stores/websocket'
 import PriceCell from '@/components/common/PriceCell.vue'
-import { formatPrice, formatVolume, formatLargeNumber, formatExchangeName } from '@/utils/format'
+import { formatPrice, formatVolume, formatExchangeName } from '@/utils/format'
 import type { Ticker } from '@/types'
 
 const router = useRouter()
 const marketStore = useMarketStore()
 const wsStore = useWebSocketStore()
 
-const selectedExchange = ref('binance')
+const tableRef = ref()
+const selectedExchange = ref('okx')
 const searchQuery = ref('')
 const loading = ref(false)
+const sortProp = ref('quote_volume_24h')
+const sortOrder = ref<'ascending' | 'descending'>('descending')
+const currentPage = ref(1)
+const pageSize = ref(50)
 
-const exchanges = computed(() => marketStore.exchanges)
+// WebSocket 连接状态
+const wsConnected = computed(() => wsStore.isConnected)
+const wsServiceUnavailable = computed(() => wsStore.serviceUnavailable)
+
+const exchanges = computed(() => marketStore.exchanges.length > 0 ? marketStore.exchanges : ['okx'])
 const tickers = computed(() => marketStore.tickerList)
 const isInWatchlist = computed(() => marketStore.isInWatchlist)
 
-const filteredTickers = computed(() => {
-  let result = tickers.value.filter((t) => t.exchange === selectedExchange.value)
+// 格式化涨跌幅
+function formatChangePercent(value: number): string {
+  if (value === 0 || isNaN(value)) return '0.00%'
+  const sign = value > 0 ? '+' : ''
+  return `${sign}${value.toFixed(2)}%`
+}
 
+// 格式化成交额
+function formatQuoteVolume(value: number | string | null | undefined): string {
+  const num = typeof value === 'string' ? parseFloat(value) : value
+  if (!num || isNaN(num) || num === 0) return '0'
+  if (num >= 1e9) return `${(num / 1e9).toFixed(2)}B`
+  if (num >= 1e6) return `${(num / 1e6).toFixed(2)}M`
+  if (num >= 1e3) return `${(num / 1e3).toFixed(2)}K`
+  return num.toFixed(2)
+}
+
+// 获取涨跌颜色类
+function getChangeClass(value: number): string {
+  if (value > 0) return 'price-up'
+  if (value < 0) return 'price-down'
+  return 'price-neutral'
+}
+
+// 判断是否为 USD 类计价货币
+function isUsdQuote(symbol: string): boolean {
+  const quote = symbol.split('/')[1]?.toUpperCase() || ''
+  return quote === 'USDT' || quote === 'USD' || quote === 'USDC'
+}
+
+// 过滤和排序后的数据
+const filteredTickers = computed(() => {
+  let result = [...tickers.value]
+
+  // 过滤：只保留 USD 类计价货币且成交额大于 0 的交易对
+  result = result.filter((t) => isUsdQuote(t.symbol) && t.quote_volume_24h > 0)
+
+  // 搜索过滤
   if (searchQuery.value) {
     const query = searchQuery.value.toUpperCase()
     result = result.filter((t) => t.symbol.toUpperCase().includes(query))
   }
 
-  // 按成交额排序
-  return result.sort((a, b) => b.quote_volume_24h - a.quote_volume_24h)
+  // 排序 - 始终按 sortProp 排序
+  const prop = sortProp.value as keyof Ticker
+  const isAsc = sortOrder.value === 'ascending'
+
+  result.sort((a, b) => {
+    const aVal = a[prop]
+    const bVal = b[prop]
+
+    // 字符串排序（交易对名称）
+    if (prop === 'symbol') {
+      const comparison = String(aVal).localeCompare(String(bVal))
+      return isAsc ? comparison : -comparison
+    }
+
+    // 数字排序 - 确保使用数字比较
+    const aNum = typeof aVal === 'number' ? aVal : (parseFloat(String(aVal)) || 0)
+    const bNum = typeof bVal === 'number' ? bVal : (parseFloat(String(bVal)) || 0)
+
+    // 降序：大的在前；升序：小的在前
+    return isAsc ? (aNum - bNum) : (bNum - aNum)
+  })
+
+  return result
+})
+
+// 分页后的数据
+const paginatedTickers = computed(() => {
+  const start = (currentPage.value - 1) * pageSize.value
+  const end = start + pageSize.value
+  return filteredTickers.value.slice(start, end)
+})
+
+// 当前页需要订阅的 symbols
+const subscribedSymbols = computed(() => {
+  return paginatedTickers.value.map((t) => t.symbol)
 })
 
 async function loadData() {
   loading.value = true
   try {
-    await marketStore.loadHotTickers(selectedExchange.value, 100)
+    await marketStore.loadAllTickers()
   } finally {
     loading.value = false
   }
 }
 
 function handleExchangeChange() {
+  currentPage.value = 1
   loadData()
+}
+
+function handleSortChange({ prop, order }: { prop: string; order: 'ascending' | 'descending' | null }) {
+  sortProp.value = prop || 'quote_volume_24h'
+  sortOrder.value = order || 'descending'
+  currentPage.value = 1
+}
+
+function handleSizeChange() {
+  currentPage.value = 1
+}
+
+function handleCurrentChange() {
+  // 页码变化时更新 WebSocket 订阅
+  updateWsSubscriptions()
 }
 
 function handleRowClick(row: Ticker) {
@@ -169,28 +284,55 @@ function toggleWatchlist(row: Ticker) {
   }
 }
 
-// 订阅行情更新
-let unsubscribe: (() => void) | null = null
+// WebSocket 订阅管理
+let unsubscribeWs: (() => void) | null = null
+
+function updateWsSubscriptions() {
+  // 取消之前的订阅
+  if (unsubscribeWs) {
+    unsubscribeWs()
+    unsubscribeWs = null
+  }
+
+  // 订阅当前页的 symbols
+  const symbols = subscribedSymbols.value
+  if (symbols.length > 0) {
+    unsubscribeWs = wsStore.subscribeToTickers(symbols)
+  }
+}
+
+// 监听当前页数据变化，更新订阅
+// Note: deep option is not needed here since subscribedSymbols is a computed
+// property that returns a new array reference when values change
+watch(subscribedSymbols, () => {
+  updateWsSubscriptions()
+})
+
+// 当搜索变化时，重置到第一页
+watch(searchQuery, () => {
+  currentPage.value = 1
+})
 
 onMounted(async () => {
-  if (exchanges.value.length === 0) {
-    await marketStore.loadExchanges()
-  }
-  if (exchanges.value.length > 0 && !exchanges.value.includes(selectedExchange.value)) {
-    selectedExchange.value = exchanges.value[0]
-  }
-
+  // 加载初始数据
   await loadData()
 
-  // 订阅 WebSocket 更新
+  // 等待下一个tick确保表格已渲染
+  await nextTick()
+
+  // 确保表格显示正确的排序状态
+  if (tableRef.value) {
+    tableRef.value.sort(sortProp.value, sortOrder.value)
+  }
+
+  // 连接 WebSocket 并订阅
   wsStore.connect()
-  const symbols = filteredTickers.value.slice(0, 50).map((t) => t.symbol)
-  unsubscribe = wsStore.subscribeToTickers(selectedExchange.value, symbols)
+  updateWsSubscriptions()
 })
 
 onUnmounted(() => {
-  if (unsubscribe) {
-    unsubscribe()
+  if (unsubscribeWs) {
+    unsubscribeWs()
   }
 })
 </script>
@@ -202,6 +344,8 @@ onUnmounted(() => {
     justify-content: space-between;
     align-items: center;
     margin-bottom: 16px;
+    flex-wrap: wrap;
+    gap: 12px;
   }
 
   .page-title {
@@ -212,6 +356,8 @@ onUnmounted(() => {
   .header-actions {
     display: flex;
     gap: 12px;
+    align-items: center;
+    flex-wrap: wrap;
   }
 
   .symbol-cell {
@@ -224,8 +370,47 @@ onUnmounted(() => {
     }
   }
 
+  .pagination-wrapper {
+    display: flex;
+    justify-content: flex-end;
+    margin-top: 16px;
+    padding-top: 16px;
+    border-top: 1px solid #ebeef5;
+  }
+
+  .price-up {
+    color: #00c853;
+    font-weight: 500;
+  }
+
+  .price-down {
+    color: #ff1744;
+    font-weight: 500;
+  }
+
+  .price-neutral {
+    color: #909399;
+  }
+
   :deep(.el-table__row) {
     cursor: pointer;
+  }
+
+  // 排序图标样式优化
+  :deep(.el-table .caret-wrapper) {
+    height: 24px;
+  }
+
+  :deep(.el-table .sort-caret) {
+    border-width: 4px;
+  }
+
+  :deep(.el-table .ascending .sort-caret.ascending) {
+    border-bottom-color: var(--el-color-primary);
+  }
+
+  :deep(.el-table .descending .sort-caret.descending) {
+    border-top-color: var(--el-color-primary);
   }
 }
 </style>

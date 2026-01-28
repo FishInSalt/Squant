@@ -1,4 +1,19 @@
-// 行情相关类型
+// 后端返回的原始 Ticker 类型
+export interface TickerResponse {
+  symbol: string
+  last: string
+  bid: string | null
+  ask: string | null
+  high_24h: string | null
+  low_24h: string | null
+  volume_24h: string | null
+  volume_quote_24h: string | null  // USDT 成交额
+  change_24h: string | null        // 24h 价格变化
+  change_pct_24h: string | null    // 24h 涨跌幅 (%)
+  timestamp: string
+}
+
+// 前端使用的 Ticker 类型（添加计算字段）
 export interface Ticker {
   exchange: string
   symbol: string
