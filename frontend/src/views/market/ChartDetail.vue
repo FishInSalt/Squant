@@ -153,7 +153,7 @@ async function loadCandles() {
     const response = await getCandles(
       props.symbol,
       selectedTimeframe.value,
-      500
+      300  // Backend limit is 300 max
     )
     candles.value = response.data.candles
   } catch (error) {
