@@ -1,12 +1,18 @@
 """Redis connection management."""
 
+import logging
+import socket
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
 import redis.asyncio as redis
 from redis.asyncio import Redis
+from redis.asyncio.retry import Retry
+from redis.backoff import ExponentialBackoff
 
 from squant.config import get_settings
+
+logger = logging.getLogger(__name__)
 
 __all__ = [
     "get_redis",
@@ -28,14 +34,52 @@ _redis_client: Redis | None = None
 
 
 def get_redis_pool() -> redis.ConnectionPool:
-    """Get or create Redis connection pool."""
+    """Get or create Redis connection pool.
+
+    The pool is configured for long-running connections (WebSocket pubsub):
+    - TCP keepalive to detect dead connections
+    - Health checks to verify connection validity
+    - Automatic retry with exponential backoff
+    """
     global _redis_pool
     if _redis_pool is None:
+        # TCP keepalive options to detect dead connections
+        # TCP_KEEPIDLE: Start keepalive after 60 seconds of idle
+        # TCP_KEEPINTVL: Send keepalive probes every 10 seconds
+        # TCP_KEEPCNT: Close connection after 3 failed probes
+        socket_keepalive_options = {}
+        try:
+            # These options are platform-specific (Linux)
+            socket_keepalive_options = {
+                socket.TCP_KEEPIDLE: 60,   # Start keepalive after 60s idle
+                socket.TCP_KEEPINTVL: 10,  # Send probe every 10s
+                socket.TCP_KEEPCNT: 3,     # Close after 3 failed probes
+            }
+        except AttributeError:
+            # Windows/macOS may not have these constants
+            logger.debug("TCP keepalive options not available on this platform")
+
+        # Retry configuration for transient failures
+        retry = Retry(
+            backoff=ExponentialBackoff(cap=10, base=0.1),  # Max 10s backoff
+            retries=3,  # Retry 3 times
+        )
+
         _redis_pool = redis.ConnectionPool.from_url(
             settings.redis_url.get_secret_value(),
             decode_responses=True,
-            max_connections=100,  # Increased for WebSocket pubsub connections
+            max_connections=100,  # For WebSocket pubsub connections
+            # Connection health and keepalive
+            health_check_interval=30,  # Check connection health every 30s
+            socket_keepalive=True,     # Enable TCP keepalive
+            socket_keepalive_options=socket_keepalive_options if socket_keepalive_options else None,
+            socket_timeout=5.0,        # Socket timeout for operations
+            socket_connect_timeout=5.0,  # Connection timeout
+            # Retry configuration
+            retry=retry,
+            retry_on_timeout=True,     # Retry on timeout errors
         )
+        logger.info("Redis connection pool created with keepalive and health checks")
     return _redis_pool
 
 

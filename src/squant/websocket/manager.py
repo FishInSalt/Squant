@@ -77,6 +77,26 @@ class StreamManager:
         """Check if stream manager is running."""
         return self._running
 
+    @property
+    def is_healthy(self) -> bool:
+        """Check if stream manager is running and connections are healthy.
+
+        This is a more thorough check than is_running - it verifies that
+        the underlying connections (CCXT provider or native clients) are
+        actually connected and operational.
+        """
+        if not self._running:
+            return False
+
+        if self._settings.use_ccxt_provider:
+            # Check if CCXT provider is connected
+            return self._ccxt_provider is not None and self._ccxt_provider.is_connected
+        else:
+            # Check if native OKX clients are connected
+            public_ok = self._public_client is not None and self._public_client.is_connected
+            business_ok = self._business_client is not None and self._business_client.is_connected
+            return public_ok and business_ok
+
     async def start(self) -> None:
         """Start the public WebSocket connection."""
         if self._running:

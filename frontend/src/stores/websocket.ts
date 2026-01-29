@@ -165,7 +165,8 @@ export const useWebSocketStore = defineStore('websocket', () => {
     }
 
     socket.value.onclose = (event) => {
-      console.debug(`WebSocket closed: code=${event.code}, reason=${event.reason}`)
+      // Use console.warn for visibility - helps debug connection issues
+      console.warn(`WebSocket closed: code=${event.code}, reason=${event.reason || 'no reason'}`)
       connected.value = false
       connecting.value = false
       stopHeartbeat()
@@ -174,6 +175,12 @@ export const useWebSocketStore = defineStore('websocket', () => {
       if (event.code === 4503) {
         serviceUnavailable.value = true
         console.info('Service unavailable (code 4503), not reconnecting')
+        return
+      }
+
+      // 1000 是正常关闭，1001 是页面离开
+      if (event.code === 1000 || event.code === 1001) {
+        console.info(`WebSocket closed normally (code ${event.code})`)
         return
       }
 

@@ -76,15 +76,38 @@ class WebSocketGateway:
                 self._subscribed_channels.add("system")
                 logger.info("Auto-subscribed to system channel")
 
-                # Create tasks for receiving from Redis and handling client messages
-                receive_task = asyncio.create_task(self._receive_from_redis())
-                client_task = asyncio.create_task(self._handle_client_messages())
+                # Create tasks for receiving from Redis, handling client messages,
+                # and keeping the Redis connection alive
+                receive_task = asyncio.create_task(
+                    self._receive_from_redis(), name="redis_receive"
+                )
+                client_task = asyncio.create_task(
+                    self._handle_client_messages(), name="client_messages"
+                )
+                heartbeat_task = asyncio.create_task(
+                    self._redis_heartbeat(), name="redis_heartbeat"
+                )
 
-                # Wait for either task to complete
+                # Wait for any task to complete (heartbeat should never complete normally)
                 done, pending = await asyncio.wait(
-                    [receive_task, client_task],
+                    [receive_task, client_task, heartbeat_task],
                     return_when=asyncio.FIRST_COMPLETED,
                 )
+
+                # Log which task completed and why
+                for task in done:
+                    task_name = task.get_name()
+                    try:
+                        # Check if task raised an exception
+                        exc = task.exception()
+                        if exc:
+                            logger.warning(
+                                f"Gateway task '{task_name}' failed with: {exc}"
+                            )
+                        else:
+                            logger.debug(f"Gateway task '{task_name}' completed normally")
+                    except asyncio.CancelledError:
+                        logger.debug(f"Gateway task '{task_name}' was cancelled")
 
                 # Cancel pending tasks
                 for task in pending:
@@ -103,6 +126,47 @@ class WebSocketGateway:
                 for channel in list(self._subscribed_channels):
                     await self._unsubscribe_redis(channel)
             logger.info("WebSocket gateway connection closed")
+
+    async def _redis_heartbeat(self) -> None:
+        """Periodically ping Redis to keep the pubsub connection alive.
+
+        This prevents idle connections from being closed by firewalls,
+        load balancers, or the Redis server itself.
+
+        Note: We ping via the pubsub connection specifically, as it's a separate
+        connection from the regular Redis client and is the one most likely to
+        become stale during long periods without messages.
+        """
+        heartbeat_interval = 30  # seconds
+        consecutive_failures = 0
+        max_failures = 3
+
+        try:
+            while self._running:
+                await asyncio.sleep(heartbeat_interval)
+
+                if not self._running:
+                    break
+
+                try:
+                    # Ping via pubsub connection to keep it alive
+                    # This sends a PING through the dedicated pubsub connection
+                    if self._pubsub:
+                        await self._pubsub.ping()
+                        consecutive_failures = 0
+                        logger.debug("Redis pubsub heartbeat OK")
+                except Exception as e:
+                    consecutive_failures += 1
+                    logger.warning(
+                        f"Redis pubsub heartbeat failed (attempt {consecutive_failures}/{max_failures}): {e}"
+                    )
+                    if consecutive_failures >= max_failures:
+                        logger.error("Redis pubsub heartbeat failed too many times, stopping gateway")
+                        self._running = False
+                        break
+
+        except asyncio.CancelledError:
+            pass
 
     async def _handle_client_messages(self) -> None:
         """Handle incoming messages from the WebSocket client."""
@@ -148,6 +212,10 @@ class WebSocketGateway:
             self._running = False
         except asyncio.CancelledError:
             pass
+        except Exception as e:
+            # Catch any unexpected exceptions to prevent task from dying
+            logger.exception(f"Unexpected error in client message handler: {e}")
+            self._running = False
 
     async def _subscribe(self, channel: str) -> None:
         """Subscribe to a channel.
@@ -163,19 +231,23 @@ class WebSocketGateway:
             })
             return
 
-        # Subscribe to Redis channel
-        redis_channel = f"{self.REDIS_CHANNEL_PREFIX}{channel}"
-        await self._pubsub.subscribe(redis_channel)
-        self._subscribed_channels.add(channel)
+        try:
+            # Subscribe to Redis channel
+            redis_channel = f"{self.REDIS_CHANNEL_PREFIX}{channel}"
+            await self._pubsub.subscribe(redis_channel)
+            self._subscribed_channels.add(channel)
 
-        # Subscribe to OKX stream if needed
-        await self._subscribe_okx(channel)
+            # Subscribe to OKX stream if needed
+            await self._subscribe_okx(channel)
 
-        await self.websocket.send_json({
-            "type": "subscribed",
-            "channel": channel,
-        })
-        logger.info(f"Client subscribed to {channel}")
+            await self.websocket.send_json({
+                "type": "subscribed",
+                "channel": channel,
+            })
+            logger.info(f"Client subscribed to {channel}")
+        except Exception as e:
+            logger.warning(f"Failed to subscribe to {channel}: {e}")
+            await self._send_error(f"Failed to subscribe to {channel}")
 
     async def _unsubscribe(self, channel: str) -> None:
         """Unsubscribe from a channel.
@@ -251,6 +323,9 @@ class WebSocketGateway:
 
     async def _receive_from_redis(self) -> None:
         """Receive messages from Redis and forward to WebSocket client."""
+        consecutive_errors = 0
+        max_consecutive_errors = 10  # After 10 consecutive errors, give up
+
         try:
             # Keep running while connection is active
             while self._running:
@@ -268,6 +343,9 @@ class WebSocketGateway:
                         timeout=1.0
                     )
 
+                    # Reset error counter on successful operation
+                    consecutive_errors = 0
+
                     if message is None:
                         # No message yet, continue waiting
                         continue
@@ -278,17 +356,42 @@ class WebSocketGateway:
                             data = data.decode("utf-8")
                         await self.websocket.send_text(data)
 
+                except asyncio.CancelledError:
+                    raise  # Re-raise cancellation
                 except RuntimeError as e:
                     # Handle "pubsub connection not set" error if subscriptions were cleared
                     if "pubsub connection not set" in str(e):
                         await asyncio.sleep(0.1)
                         continue
-                    raise
+                    # For other RuntimeErrors, log and retry
+                    consecutive_errors += 1
+                    logger.warning(f"Redis pubsub RuntimeError (attempt {consecutive_errors}): {e}")
+                    if consecutive_errors >= max_consecutive_errors:
+                        logger.error("Too many consecutive Redis errors, giving up")
+                        break
+                    await asyncio.sleep(0.5)
+                except (ConnectionError, TimeoutError, OSError) as e:
+                    # Handle connection-related errors (common after long idle periods)
+                    consecutive_errors += 1
+                    logger.warning(f"Redis connection error (attempt {consecutive_errors}): {e}")
+                    if consecutive_errors >= max_consecutive_errors:
+                        logger.error("Too many consecutive Redis connection errors, giving up")
+                        break
+                    # Wait longer for connection errors
+                    await asyncio.sleep(1.0)
+                except Exception as e:
+                    # Catch all other exceptions to prevent task from dying
+                    consecutive_errors += 1
+                    logger.warning(f"Unexpected error in Redis receive loop (attempt {consecutive_errors}): {e}")
+                    if consecutive_errors >= max_consecutive_errors:
+                        logger.error("Too many consecutive errors in Redis receive loop, giving up")
+                        break
+                    await asyncio.sleep(0.5)
 
         except asyncio.CancelledError:
             pass
         except Exception as e:
-            logger.exception(f"Error receiving from Redis: {e}")
+            logger.exception(f"Fatal error in Redis receive loop: {e}")
 
     async def _send_error(self, message: str) -> None:
         """Send error message to client."""
@@ -331,17 +434,26 @@ async def websocket_gateway(websocket: WebSocket) -> None:
     """
     stream_manager = get_stream_manager()
 
-    # Check if stream manager is running (OKX WebSocket connected)
+    # Check if stream manager is running (exchange WebSocket connected)
     if not stream_manager.is_running:
         await websocket.accept()
         await websocket.send_json({
             "type": "error",
-            "message": "Real-time data service unavailable. OKX WebSocket connection failed. "
+            "message": "Real-time data service unavailable. Exchange WebSocket connection failed. "
                        "Please check network connectivity or use REST API for data.",
             "code": "STREAM_UNAVAILABLE",
         })
         await websocket.close(code=4503)  # Custom code for service unavailable
         return
+
+    # Log a warning if stream manager is running but not healthy
+    # (e.g., CCXT provider lost connection after startup)
+    if not stream_manager.is_healthy:
+        logger.warning(
+            "Stream manager is running but not healthy - "
+            "exchange connection may have been lost"
+        )
+        # Continue anyway - the connection might recover
 
     gateway = WebSocketGateway(websocket, stream_manager)
     await gateway.run()
@@ -390,7 +502,7 @@ class WebSocketConnection:
                 client_task = asyncio.create_task(self._handle_client_messages())
 
                 # Wait for either task to complete (usually due to disconnect)
-                done, pending = await asyncio.wait(
+                _, pending = await asyncio.wait(
                     [receive_task, client_task],
                     return_when=asyncio.FIRST_COMPLETED,
                 )
