@@ -436,15 +436,20 @@ async def websocket_gateway(websocket: WebSocket) -> None:
 
     # Check if stream manager is running (exchange WebSocket connected)
     if not stream_manager.is_running:
-        await websocket.accept()
-        await websocket.send_json({
-            "type": "error",
-            "message": "Real-time data service unavailable. Exchange WebSocket connection failed. "
-                       "Please check network connectivity or use REST API for data.",
-            "code": "STREAM_UNAVAILABLE",
-        })
-        await websocket.close(code=4503)  # Custom code for service unavailable
-        return
+        # Attempt late initialization on first WebSocket connection
+        logger.info("Stream manager not running, attempting late initialization...")
+        if await stream_manager.try_start():
+            logger.info("Stream manager late initialization successful")
+        else:
+            await websocket.accept()
+            await websocket.send_json({
+                "type": "error",
+                "message": "Real-time data service unavailable. Exchange WebSocket connection failed. "
+                           "Please check network connectivity or use REST API for data.",
+                "code": "STREAM_UNAVAILABLE",
+            })
+            await websocket.close(code=4503)  # Custom code for service unavailable
+            return
 
     # Log a warning if stream manager is running but not healthy
     # (e.g., CCXT provider lost connection after startup)

@@ -141,25 +141,28 @@ class TestCCXTStreamProviderClose:
 
     @pytest.mark.asyncio
     async def test_close_cancels_tasks(self) -> None:
-        """Test that close cancels subscription tasks."""
+        """Test that close cancels subscription tasks and clears watched symbols."""
         provider = CCXTStreamProvider("okx")
 
         with patch("squant.infra.exchange.ccxt.provider.ccxtpro") as mock_ccxt:
             mock_exchange = MagicMock()
             mock_exchange.load_markets = AsyncMock()
             mock_exchange.close = AsyncMock()
-            mock_exchange.watch_ticker = AsyncMock(side_effect=Exception("Cancelled"))
+            mock_exchange.watch_tickers = AsyncMock(side_effect=Exception("Cancelled"))
+            mock_exchange.markets = {"BTC/USDT": {"symbol": "BTC/USDT"}}
             mock_ccxt.okx.return_value = mock_exchange
 
             await provider.connect()
 
-            # Start a subscription
+            # Start a ticker subscription (uses batch watching)
             await provider.watch_ticker("BTC/USDT")
-            assert len(provider._subscription_tasks) == 1
+            assert "BTC/USDT" in provider._watched_ticker_symbols
+            assert provider._tickers_task is not None
 
-            # Close should cancel the task
+            # Close should cancel the task and clear symbols
             await provider.close()
-            assert len(provider._subscription_tasks) == 0
+            assert len(provider._watched_ticker_symbols) == 0
+            assert provider._tickers_task is None
 
 
 class TestCCXTStreamProviderHandlers:
@@ -203,20 +206,24 @@ class TestCCXTStreamProviderSubscriptions:
 
     @pytest.mark.asyncio
     async def test_watch_ticker_creates_task(self) -> None:
-        """Test that watch_ticker creates a subscription task."""
+        """Test that watch_ticker adds symbol to batch watch list."""
         provider = CCXTStreamProvider("okx")
 
         with patch("squant.infra.exchange.ccxt.provider.ccxtpro") as mock_ccxt:
             mock_exchange = MagicMock()
             mock_exchange.load_markets = AsyncMock()
-            mock_exchange.watch_ticker = AsyncMock(return_value={"symbol": "BTC/USDT"})
+            mock_exchange.watch_tickers = AsyncMock(return_value={"BTC/USDT": {"symbol": "BTC/USDT"}})
             mock_exchange.close = AsyncMock()
+            mock_exchange.markets = {"BTC/USDT": {"symbol": "BTC/USDT"}}
             mock_ccxt.okx.return_value = mock_exchange
 
             await provider.connect()
             await provider.watch_ticker("BTC/USDT")
 
-            assert "ticker:BTC/USDT" in provider._subscription_tasks
+            # With batch ticker watching, symbol is added to _watched_ticker_symbols
+            assert "BTC/USDT" in provider._watched_ticker_symbols
+            # And a batch tickers task is created
+            assert provider._tickers_task is not None
 
             await provider.close()
 
@@ -276,24 +283,25 @@ class TestCCXTStreamProviderSubscriptions:
 
     @pytest.mark.asyncio
     async def test_unwatch_cancels_subscription(self) -> None:
-        """Test that unwatch cancels the subscription task."""
+        """Test that unwatch removes symbol from batch watch list."""
         provider = CCXTStreamProvider("okx")
 
         with patch("squant.infra.exchange.ccxt.provider.ccxtpro") as mock_ccxt:
             mock_exchange = MagicMock()
             mock_exchange.load_markets = AsyncMock()
-            mock_exchange.watch_ticker = AsyncMock(return_value={"symbol": "BTC/USDT"})
+            mock_exchange.watch_tickers = AsyncMock(return_value={"BTC/USDT": {"symbol": "BTC/USDT"}})
             mock_exchange.close = AsyncMock()
+            mock_exchange.markets = {"BTC/USDT": {"symbol": "BTC/USDT"}}
             mock_ccxt.okx.return_value = mock_exchange
 
             await provider.connect()
             await provider.watch_ticker("BTC/USDT")
 
-            assert "ticker:BTC/USDT" in provider._subscription_tasks
+            assert "BTC/USDT" in provider._watched_ticker_symbols
 
             await provider.unwatch("ticker:BTC/USDT")
 
-            assert "ticker:BTC/USDT" not in provider._subscription_tasks
+            assert "BTC/USDT" not in provider._watched_ticker_symbols
 
             await provider.close()
 

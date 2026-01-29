@@ -15,6 +15,10 @@ export const useMarketStore = defineStore('market', () => {
   const loading = ref(false)
   const exchangeSwitching = ref(false)
 
+  // REST API polling fallback for infrequent WebSocket updates
+  let pollingTimer: ReturnType<typeof setInterval> | null = null
+  const POLLING_INTERVAL = 10000  // 10 seconds - fallback refresh rate
+
   // Getters
   const tickerList = computed(() => Array.from(tickers.value.values()))
 
@@ -198,6 +202,47 @@ export const useMarketStore = defineStore('market', () => {
     }
   }
 
+  /**
+   * Start REST API polling as fallback for infrequent WebSocket updates.
+   * This ensures tickers are refreshed even when OKX doesn't send WebSocket updates.
+   */
+  function startPolling() {
+    if (pollingTimer) {
+      return  // Already polling
+    }
+    console.debug('Starting REST API polling fallback')
+    pollingTimer = setInterval(async () => {
+      try {
+        // Only refresh if we have tickers loaded
+        if (tickers.value.size > 0) {
+          const response = await marketApi.getAllTickers()
+          response.data.forEach((ticker) => {
+            const key = `${ticker.exchange}:${ticker.symbol}`
+            const existing = tickers.value.get(key)
+            // Only update if the REST data is newer
+            if (!existing || ticker.timestamp > existing.timestamp) {
+              tickers.value.set(key, ticker)
+            }
+          })
+        }
+      } catch (error) {
+        // Silent fail - WebSocket is primary, this is just fallback
+        console.debug('REST API polling refresh failed:', error)
+      }
+    }, POLLING_INTERVAL)
+  }
+
+  /**
+   * Stop REST API polling.
+   */
+  function stopPolling() {
+    if (pollingTimer) {
+      console.debug('Stopping REST API polling fallback')
+      clearInterval(pollingTimer)
+      pollingTimer = null
+    }
+  }
+
   return {
     // State
     exchanges,
@@ -226,5 +271,7 @@ export const useMarketStore = defineStore('market', () => {
     setCurrentExchange,
     switchExchange,
     loadTimeframes,
+    startPolling,
+    stopPolling,
   }
 })

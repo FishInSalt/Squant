@@ -169,6 +169,10 @@ async function loadCandles() {
       300  // Backend limit is 300 max
     )
     candles.value = response.data.candles
+    // Mark data as loaded - real-time updates may be slow for less active pairs
+    if (candles.value.length > 0) {
+      lastCandleUpdate.value = '数据已加载'
+    }
   } catch (error) {
     console.error('Failed to load candles:', error)
   } finally {
@@ -244,6 +248,7 @@ watch(selectedTimeframe, (newTf, oldTf) => {
 })
 
 let unsubscribeTicker: (() => void) | null = null
+let tickerRefreshTimer: ReturnType<typeof setInterval> | null = null
 
 // 处理 K 线实时更新
 function handleCandleUpdate(candle: CandleUpdate) {
@@ -289,12 +294,28 @@ onMounted(async () => {
 
   // 订阅 K 线实时更新
   subscribeToCandles()
+
+  // Start REST API polling as fallback for infrequent WebSocket updates
+  // OKX doesn't send frequent updates for less active pairs
+  tickerRefreshTimer = setInterval(async () => {
+    try {
+      await loadTicker()
+    } catch (error) {
+      // Silent fail - this is just a fallback
+    }
+  }, 10000)  // Refresh every 10 seconds
 })
 
 onUnmounted(() => {
   // 取消 Ticker 订阅
   if (unsubscribeTicker) {
     unsubscribeTicker()
+  }
+
+  // Stop ticker refresh timer
+  if (tickerRefreshTimer) {
+    clearInterval(tickerRefreshTimer)
+    tickerRefreshTimer = null
   }
 
   // 取消 K 线订阅

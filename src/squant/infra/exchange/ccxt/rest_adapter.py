@@ -95,6 +95,12 @@ class CCXTRestAdapter(ExchangeAdapter):
             # Build exchange configuration
             config: dict[str, Any] = {
                 "enableRateLimit": True,
+                # Only load spot markets to avoid timeout on OPTION/FUTURES APIs
+                "options": {
+                    "defaultType": "spot",
+                    # Limit which market types to fetch (reduces API calls)
+                    "fetchMarkets": ["spot"],
+                },
             }
 
             # Add credentials if provided

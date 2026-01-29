@@ -72,6 +72,16 @@ class StreamManager:
         self._flush_task: asyncio.Task | None = None
         self._buffer_lock = asyncio.Lock()
 
+        # Health check task
+        self._health_check_task: asyncio.Task | None = None
+        self._health_check_interval = 30.0  # Check every 30 seconds
+
+        # Connection retry configuration
+        self._start_attempted = False  # Has start() been called at least once?
+        self._retry_task: asyncio.Task | None = None
+        self._retry_interval = 30.0  # Retry every 30 seconds
+        self._max_startup_retries = 10  # Max retries for initial connection
+
     @property
     def is_running(self) -> bool:
         """Check if stream manager is running."""
@@ -89,8 +99,13 @@ class StreamManager:
             return False
 
         if self._settings.use_ccxt_provider:
-            # Check if CCXT provider is connected
-            return self._ccxt_provider is not None and self._ccxt_provider.is_connected
+            # Check if CCXT provider is connected and healthy
+            if self._ccxt_provider is None:
+                return False
+            # Use the detailed health check if available
+            if hasattr(self._ccxt_provider, "is_healthy"):
+                return self._ccxt_provider.is_healthy()
+            return self._ccxt_provider.is_connected
         else:
             # Check if native OKX clients are connected
             public_ok = self._public_client is not None and self._public_client.is_connected
@@ -103,6 +118,7 @@ class StreamManager:
             logger.debug("Stream manager already running")
             return
 
+        self._start_attempted = True
         logger.info("Starting stream manager...")
 
         # Get Redis client (initialized at app startup)
@@ -118,7 +134,65 @@ class StreamManager:
         # Start the batch publishing flush task
         self._flush_task = asyncio.create_task(self._flush_loop())
 
+        # Start the health check task
+        self._health_check_task = asyncio.create_task(self._health_check_loop())
+
         logger.info("Stream manager started")
+
+    async def try_start(self) -> bool:
+        """Attempt to start the stream manager without raising exceptions.
+
+        Returns:
+            True if the stream manager is now running, False otherwise.
+        """
+        if self._running:
+            return True
+
+        try:
+            await self.start()
+            return True
+        except Exception as e:
+            logger.warning(f"Failed to start stream manager: {e}")
+            return False
+
+    def start_retry_loop(self) -> None:
+        """Start a background task that periodically retries connection.
+
+        Call this after a failed start() to enable automatic retry.
+        The retry loop will stop once connection succeeds.
+        """
+        if self._retry_task and not self._retry_task.done():
+            logger.debug("Retry loop already running")
+            return
+
+        logger.info("Starting connection retry loop...")
+        self._retry_task = asyncio.create_task(self._retry_loop())
+
+    async def _retry_loop(self) -> None:
+        """Background task that periodically retries the connection."""
+        retry_count = 0
+
+        while not self._running and retry_count < self._max_startup_retries:
+            await asyncio.sleep(self._retry_interval)
+
+            if self._running:
+                break
+
+            retry_count += 1
+            logger.info(f"Retrying stream manager connection (attempt {retry_count}/{self._max_startup_retries})...")
+
+            try:
+                await self.start()
+                logger.info("Stream manager connected successfully after retry")
+                break
+            except Exception as e:
+                logger.warning(f"Retry {retry_count} failed: {e}")
+
+        if not self._running:
+            logger.error(
+                f"Stream manager failed to connect after {retry_count} retries. "
+                "WebSocket will remain unavailable until next restart."
+            )
 
     async def _start_ccxt_provider(self) -> None:
         """Start CCXT-based stream provider."""
@@ -323,7 +397,21 @@ class StreamManager:
         logger.info("Stopping stream manager...")
         self._running = False
 
-        # Stop flush task first
+        # Stop retry task if running
+        if self._retry_task and not self._retry_task.done():
+            self._retry_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._retry_task
+            self._retry_task = None
+
+        # Stop health check task
+        if self._health_check_task:
+            self._health_check_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._health_check_task
+            self._health_check_task = None
+
+        # Stop flush task
         if self._flush_task:
             self._flush_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
@@ -983,6 +1071,71 @@ class StreamManager:
             # Log dropped messages for monitoring, but don't retry
             # (stale market data is worse than no data)
             logger.warning(f"Dropped {len(messages)} messages due to Redis error: {e}")
+
+    async def _health_check_loop(self) -> None:
+        """Background task that periodically checks connection health.
+
+        If the connection is unhealthy, attempts to recover by triggering
+        reconnection in the CCXT provider.
+        """
+        consecutive_unhealthy = 0
+        max_unhealthy_before_action = 2  # Allow 2 unhealthy checks before action
+
+        while self._running:
+            try:
+                await asyncio.sleep(self._health_check_interval)
+
+                if not self._running:
+                    break
+
+                if self.is_healthy:
+                    consecutive_unhealthy = 0
+                    logger.debug("Stream manager health check: OK")
+                else:
+                    consecutive_unhealthy += 1
+                    logger.warning(
+                        f"Stream manager health check: UNHEALTHY "
+                        f"(consecutive: {consecutive_unhealthy})"
+                    )
+
+                    if consecutive_unhealthy >= max_unhealthy_before_action:
+                        logger.error(
+                            "Stream manager unhealthy for too long, "
+                            "attempting recovery..."
+                        )
+                        await self._attempt_recovery()
+                        consecutive_unhealthy = 0
+
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.exception(f"Error in health check loop: {e}")
+
+    async def _attempt_recovery(self) -> None:
+        """Attempt to recover from an unhealthy state.
+
+        For CCXT provider mode, triggers a reconnection attempt.
+        For native OKX mode, attempts to reconnect the clients.
+        """
+        if self._settings.use_ccxt_provider:
+            if self._ccxt_provider and hasattr(self._ccxt_provider, "reconnect"):
+                logger.info("Triggering CCXT provider reconnection...")
+                success = await self._ccxt_provider.reconnect()
+                if success:
+                    logger.info("CCXT provider reconnection successful")
+                else:
+                    logger.error("CCXT provider reconnection failed")
+        else:
+            # Native OKX mode - try to reconnect clients
+            logger.info("Attempting to reconnect native OKX clients...")
+            try:
+                if self._public_client and not self._public_client.is_connected:
+                    await self._public_client.connect()
+                if self._business_client and not self._business_client.is_connected:
+                    await self._business_client.connect()
+                logger.info("Native OKX clients reconnection attempted")
+            except Exception as e:
+                logger.exception(f"Failed to reconnect native OKX clients: {e}")
 
     def _to_okx_symbol(self, symbol: str) -> str:
         """Convert standard symbol to OKX format.

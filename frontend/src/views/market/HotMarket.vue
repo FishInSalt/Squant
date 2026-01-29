@@ -359,12 +359,18 @@ onMounted(async () => {
   // 连接 WebSocket 并订阅
   wsStore.connect()
   updateWsSubscriptions()
+
+  // Start REST API polling as fallback for infrequent WebSocket updates
+  // OKX doesn't send frequent updates for less active pairs
+  marketStore.startPolling()
 })
 
 onUnmounted(() => {
   if (unsubscribeWs) {
     unsubscribeWs()
   }
+  // Stop polling when leaving the page
+  marketStore.stopPolling()
 })
 </script>
 

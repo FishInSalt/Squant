@@ -48,6 +48,10 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     except Exception as e:
         logger.warning(f"Failed to initialize stream manager: {e}. Real-time data will be unavailable.")
         logger.warning("The application will continue without WebSocket connectivity.")
+        # Start retry loop to attempt reconnection in the background
+        from squant.websocket.manager import get_stream_manager
+        stream_manager = get_stream_manager()
+        stream_manager.start_retry_loop()
 
     # Recover orphaned trading sessions (NFR-013)
     from squant.infra.database import get_session_context
