@@ -19,14 +19,15 @@ from squant.infra.exchange.exceptions import (
 )
 from squant.websocket import close_stream_manager, init_stream_manager
 
-# Configure logging
+# Configure logging from settings
+_settings = get_settings()
+_log_level = getattr(logging, _settings.log_level.upper(), logging.INFO)
 logging.basicConfig(
-    level=logging.INFO,
+    level=_log_level,
     format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S",
 )
-# Set DEBUG level for squant modules to see more details
-logging.getLogger("squant").setLevel(logging.DEBUG)
+logging.getLogger("squant").setLevel(_log_level)
 
 logger = logging.getLogger(__name__)
 

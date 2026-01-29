@@ -750,10 +750,10 @@ class StreamManager:
 
             elif data_type == "candle":
                 candle: WSCandle = data
-                logger.info(f"Processing candle from CCXT: symbol={candle.symbol}, timeframe={candle.timeframe}, close={candle.close}")
+                logger.debug(f"Processing candle from CCXT: symbol={candle.symbol}, timeframe={candle.timeframe}, close={candle.close}")
                 # Publish to Redis for WebSocket clients
                 channel = f"candle:{candle.symbol}:{candle.timeframe}"
-                logger.info(f"Publishing candle to Redis channel: {channel}")
+                logger.debug(f"Publishing candle to Redis channel: {channel}")
                 await self._publish(
                     WSMessageType.CANDLE,
                     channel,

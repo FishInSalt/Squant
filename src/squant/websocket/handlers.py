@@ -244,7 +244,7 @@ class WebSocketGateway:
                 "type": "subscribed",
                 "channel": channel,
             })
-            logger.info(f"Client subscribed to {channel}")
+            logger.debug(f"Client subscribed to {channel}")
         except Exception as e:
             logger.warning(f"Failed to subscribe to {channel}: {e}")
             await self._send_error(f"Failed to subscribe to {channel}")
@@ -275,7 +275,7 @@ class WebSocketGateway:
             "type": "unsubscribed",
             "channel": channel,
         })
-        logger.info(f"Client unsubscribed from {channel}")
+        logger.debug(f"Client unsubscribed from {channel}")
 
     async def _unsubscribe_redis(self, channel: str) -> None:
         """Unsubscribe from Redis channel."""
@@ -291,7 +291,7 @@ class WebSocketGateway:
         """
         parts = channel.split(":")
         channel_type = parts[0]
-        logger.info(f"_subscribe_okx called: channel={channel}, parts={parts}, channel_type={channel_type}")
+        logger.debug(f"_subscribe_okx called: channel={channel}, parts={parts}, channel_type={channel_type}")
 
         try:
             if channel_type == "ticker" and len(parts) >= 2:
