@@ -10,7 +10,7 @@ from sqlalchemy import and_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from squant.infra.exchange import OKXAdapter
+from squant.infra.exchange import BinanceAdapter, OKXAdapter
 from squant.infra.exchange.exceptions import (
     ExchangeAPIError,
     ExchangeAuthenticationError,
@@ -409,8 +409,11 @@ class ExchangeAccountService:
                     testnet=account.testnet,
                 )
             elif account.exchange == "binance":
-                # TODO: Implement BinanceAdapter when available
-                raise ConnectionTestError("Binance adapter not yet implemented")
+                adapter = BinanceAdapter(
+                    api_key=credentials["api_key"],
+                    api_secret=credentials["api_secret"],
+                    testnet=account.testnet,
+                )
             else:
                 raise ConnectionTestError(f"Unknown exchange: {account.exchange}")
 

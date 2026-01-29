@@ -1,6 +1,7 @@
 """Exchange adapters for different cryptocurrency exchanges."""
 
 from .base import ExchangeAdapter
+from .binance import BinanceAdapter
 from .exceptions import (
     ExchangeAPIError,
     ExchangeAuthenticationError,
@@ -43,5 +44,6 @@ __all__ = [
     "CancelOrderRequest",
     "TimeFrame",
     # Adapters
+    "BinanceAdapter",
     "OKXAdapter",
 ]
