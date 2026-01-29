@@ -22,6 +22,22 @@ class TimeFrame(str, Enum):
     W1 = "1w"
 
 
+class WSMessageType(str, Enum):
+    """WebSocket message types for internal pub/sub routing.
+
+    Shared across all exchange implementations (OKX, Binance, etc.)
+    to provide consistent message type identification for Redis pub/sub.
+    """
+
+    TICKER = "ticker"
+    CANDLE = "candle"
+    TRADE = "trade"
+    ORDERBOOK = "orderbook"
+    ORDER_UPDATE = "order_update"
+    ACCOUNT_UPDATE = "account_update"
+    EXCHANGE_SWITCHING = "exchange_switching"  # Notify clients of exchange switch
+
+
 class Balance(BaseModel):
     """Single currency balance."""
 

@@ -7,6 +7,8 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from squant.infra.exchange.types import WSMessageType
+
 
 class OKXChannel(str, Enum):
     """OKX WebSocket channel types."""
@@ -40,17 +42,8 @@ CANDLE_CHANNELS = {
     "1w": OKXChannel.CANDLE_1W,
 }
 
-
-class WSMessageType(str, Enum):
-    """WebSocket message types for internal use."""
-
-    TICKER = "ticker"
-    CANDLE = "candle"
-    TRADE = "trade"
-    ORDERBOOK = "orderbook"
-    ORDER_UPDATE = "order_update"
-    ACCOUNT_UPDATE = "account_update"
-    EXCHANGE_SWITCHING = "exchange_switching"  # Notify clients of exchange switch
+# Re-export WSMessageType for backwards compatibility
+__all__ = ["WSMessageType"]
 
 
 class WSTicker(BaseModel):
