@@ -29,6 +29,10 @@ jobs:
         uv sync --all-extras
 
     - name: Run unit tests
+      env:
+        DATABASE_URL: postgresql+asyncpg://test:test@localhost:5432/test
+        REDIS_URL: redis://localhost:6379
+        SECRET_KEY: test-secret-key-min-32-chars-long-for-testing-only
       run: |
         uv run pytest tests/unit -v --cov=src/squant --cov-report=xml --cov-report=term
 
@@ -44,6 +48,10 @@ jobs:
 
     - name: Generate coverage report
       if: always()
+      env:
+        DATABASE_URL: postgresql+asyncpg://test:test@localhost:5432/test
+        REDIS_URL: redis://localhost:6379
+        SECRET_KEY: test-secret-key-min-32-chars-long-for-testing-only
       run: |
         uv run pytest tests/unit --cov=src/squant --cov-report=html
         echo "## Unit Test Coverage" >> $GITHUB_STEP_SUMMARY
