@@ -1,0 +1,87 @@
+name: Integration Tests
+
+on:
+  push:
+    branches: [ main, develop, cc/* ]
+  pull_request:
+    branches: [ main, develop ]
+
+jobs:
+  integration-tests:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: timescale/timescaledb:latest-pg16
+        env:
+          POSTGRES_USER: squant_test
+          POSTGRES_PASSWORD: squant_test
+          POSTGRES_DB: squant_test
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6380:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.12'
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v4
+      with:
+        version: "latest"
+
+    - name: Install dependencies
+      run: |
+        uv sync
+
+    - name: Run database migrations
+      env:
+        DATABASE_URL: postgresql+asyncpg://squant_test:squant_test@localhost:5433/squant_test
+      run: |
+        uv run alembic upgrade head
+
+    - name: Run integration tests
+      env:
+        DATABASE_URL: postgresql+asyncpg://squant_test:squant_test@localhost:5433/squant_test
+        REDIS_URL: redis://localhost:6380
+        SECRET_KEY: test-secret-key-min-32-chars-long-for-testing
+      run: |
+        uv run pytest tests/integration -v --cov=src/squant --cov-report=xml --cov-report=term
+
+    - name: Upload coverage to Codecov
+      uses: codecov/codecov-action@v4
+      with:
+        files: ./coverage.xml
+        flags: integration
+        name: codecov-integration
+        fail_ci_if_error: false
+      env:
+        CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+
+    - name: Generate test summary
+      if: always()
+      run: |
+        echo "## Integration Test Results" >> $GITHUB_STEP_SUMMARY
+        echo "- Database: PostgreSQL + TimescaleDB" >> $GITHUB_STEP_SUMMARY
+        echo "- Cache: Redis" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        uv run coverage report --format=markdown >> $GITHUB_STEP_SUMMARY
