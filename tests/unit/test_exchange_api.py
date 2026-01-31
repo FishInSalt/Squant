@@ -1,19 +1,18 @@
 """Unit tests for market and account API endpoints.
 
-NOTE: These tests have async mocking issues and hang in CI.
-The same endpoints are thoroughly tested in integration tests.
-Skipping in CI until mocking is fixed properly.
+These tests use httpx.AsyncClient with pytest-asyncio to properly test
+async endpoints with mocked async dependencies.
 """
 
-import os
+from collections.abc import AsyncGenerator
 from datetime import UTC, datetime
 from decimal import Decimal
 from unittest.mock import AsyncMock
 
 import pytest
-from fastapi.testclient import TestClient
+from httpx import ASGITransport, AsyncClient
 
-from squant.api.deps import get_okx_exchange
+from squant.api.deps import get_exchange, get_okx_exchange
 from squant.infra.exchange import (
     AccountBalance,
     Balance,
@@ -28,11 +27,6 @@ from squant.infra.exchange.exceptions import (
 )
 from squant.main import app
 
-pytestmark = pytest.mark.skipif(
-    os.getenv("CI") == "true",
-    reason="Async mock issues cause hangs in CI - covered by integration tests",
-)
-
 
 @pytest.fixture
 def mock_exchange() -> AsyncMock:
@@ -41,17 +35,38 @@ def mock_exchange() -> AsyncMock:
 
 
 @pytest.fixture
-def client(mock_exchange: AsyncMock) -> TestClient:
-    """Create test client with mocked exchange."""
-    app.dependency_overrides[get_okx_exchange] = lambda: mock_exchange
-    yield TestClient(app)
+async def client(mock_exchange: AsyncMock) -> AsyncGenerator[AsyncClient, None]:
+    """Create async test client with mocked exchange.
+
+    Properly overrides async generator dependencies using httpx.AsyncClient.
+    Overrides both get_okx_exchange and get_exchange to handle both account
+    and market endpoints.
+    """
+
+    async def override_get_okx_exchange() -> AsyncGenerator[AsyncMock, None]:
+        """Override dependency with async generator that yields the mock."""
+        yield mock_exchange
+
+    async def override_get_exchange() -> AsyncGenerator[AsyncMock, None]:
+        """Override dependency with async generator that yields the mock."""
+        yield mock_exchange
+
+    app.dependency_overrides[get_okx_exchange] = override_get_okx_exchange
+    app.dependency_overrides[get_exchange] = override_get_exchange
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        yield ac
+
     app.dependency_overrides.clear()
 
 
 class TestAccountBalanceEndpoints:
     """Tests for account balance endpoints."""
 
-    def test_get_balance(self, client: TestClient, mock_exchange: AsyncMock) -> None:
+    @pytest.mark.asyncio
+
+
+    async def test_get_balance(self, client: AsyncClient, mock_exchange: AsyncMock) -> None:
         """Test getting account balance."""
         mock_exchange.get_balance.return_value = AccountBalance(
             exchange="okx",
@@ -62,7 +77,7 @@ class TestAccountBalanceEndpoints:
             timestamp=datetime(2024, 1, 15, 10, 30, 0, tzinfo=UTC),
         )
 
-        response = client.get("/api/v1/account/balance")
+        response = await client.get("/api/v1/account/balance")
 
         assert response.status_code == 200
         json_resp = response.json()
@@ -75,7 +90,10 @@ class TestAccountBalanceEndpoints:
         assert data["balances"][0]["available"] == "1.5"
         assert Decimal(data["balances"][0]["total"]) == Decimal("2")
 
-    def test_get_balance_currency(self, client: TestClient, mock_exchange: AsyncMock) -> None:
+    @pytest.mark.asyncio
+
+
+    async def test_get_balance_currency(self, client: AsyncClient, mock_exchange: AsyncMock) -> None:
         """Test getting balance for specific currency."""
         mock_exchange.get_balance_currency.return_value = Balance(
             currency="BTC",
@@ -83,7 +101,7 @@ class TestAccountBalanceEndpoints:
             frozen=Decimal("0.5"),
         )
 
-        response = client.get("/api/v1/account/balance/BTC")
+        response = await client.get("/api/v1/account/balance/BTC")
 
         assert response.status_code == 200
         json_resp = response.json()
@@ -92,26 +110,30 @@ class TestAccountBalanceEndpoints:
         assert data["currency"] == "BTC"
         assert data["available"] == "1.5"
 
-    def test_get_balance_currency_not_found(
-        self, client: TestClient, mock_exchange: AsyncMock
+    @pytest.mark.asyncio
+    async def test_get_balance_currency_not_found(
+        self, client: AsyncClient, mock_exchange: AsyncMock
     ) -> None:
         """Test getting balance for non-existent currency."""
         mock_exchange.get_balance_currency.return_value = None
 
-        response = client.get("/api/v1/account/balance/XYZ")
+        response = await client.get("/api/v1/account/balance/XYZ")
 
         assert response.status_code == 200
         json_resp = response.json()
         assert json_resp["code"] == 0
         assert json_resp["data"] is None
 
-    def test_get_balance_auth_error(self, client: TestClient, mock_exchange: AsyncMock) -> None:
+    @pytest.mark.asyncio
+
+
+    async def test_get_balance_auth_error(self, client: AsyncClient, mock_exchange: AsyncMock) -> None:
         """Test balance endpoint with authentication error."""
         mock_exchange.get_balance.side_effect = ExchangeAuthenticationError(
             message="Invalid API key", exchange="okx"
         )
 
-        response = client.get("/api/v1/account/balance")
+        response = await client.get("/api/v1/account/balance")
 
         assert response.status_code == 401
 
@@ -119,7 +141,10 @@ class TestAccountBalanceEndpoints:
 class TestMarketTickerEndpoints:
     """Tests for market ticker endpoints."""
 
-    def test_get_ticker(self, client: TestClient, mock_exchange: AsyncMock) -> None:
+    @pytest.mark.asyncio
+
+
+    async def test_get_ticker(self, client: AsyncClient, mock_exchange: AsyncMock) -> None:
         """Test getting ticker data."""
         mock_exchange.get_ticker.return_value = Ticker(
             symbol="BTC/USDT",
@@ -132,7 +157,7 @@ class TestMarketTickerEndpoints:
             timestamp=datetime(2024, 1, 15, 10, 30, 0, tzinfo=UTC),
         )
 
-        response = client.get("/api/v1/market/ticker/BTC/USDT")
+        response = await client.get("/api/v1/market/ticker/BTC/USDT")
 
         assert response.status_code == 200
         json_resp = response.json()
@@ -142,7 +167,10 @@ class TestMarketTickerEndpoints:
         assert data["last"] == "42000.5"
         assert data["bid"] == "41999"
 
-    def test_get_tickers(self, client: TestClient, mock_exchange: AsyncMock) -> None:
+    @pytest.mark.asyncio
+
+
+    async def test_get_tickers(self, client: AsyncClient, mock_exchange: AsyncMock) -> None:
         """Test getting multiple tickers."""
         mock_exchange.get_tickers.return_value = [
             Ticker(
@@ -157,7 +185,7 @@ class TestMarketTickerEndpoints:
             ),
         ]
 
-        response = client.get("/api/v1/market/tickers")
+        response = await client.get("/api/v1/market/tickers")
 
         assert response.status_code == 200
         json_resp = response.json()
@@ -165,7 +193,10 @@ class TestMarketTickerEndpoints:
         data = json_resp["data"]
         assert len(data) == 2
 
-    def test_get_tickers_filtered(self, client: TestClient, mock_exchange: AsyncMock) -> None:
+    @pytest.mark.asyncio
+
+
+    async def test_get_tickers_filtered(self, client: AsyncClient, mock_exchange: AsyncMock) -> None:
         """Test getting tickers with filter."""
         mock_exchange.get_tickers.return_value = [
             Ticker(
@@ -175,13 +206,14 @@ class TestMarketTickerEndpoints:
             ),
         ]
 
-        response = client.get("/api/v1/market/tickers?symbols=BTC/USDT")
+        response = await client.get("/api/v1/market/tickers?symbols=BTC/USDT")
 
         assert response.status_code == 200
         mock_exchange.get_tickers.assert_called_once_with(["BTC/USDT"])
 
-    def test_get_tickers_empty_symbols_filtered(
-        self, client: TestClient, mock_exchange: AsyncMock
+    @pytest.mark.asyncio
+    async def test_get_tickers_empty_symbols_filtered(
+        self, client: AsyncClient, mock_exchange: AsyncMock
     ) -> None:
         """Test getting tickers with trailing comma filters empty strings."""
         mock_exchange.get_tickers.return_value = [
@@ -193,7 +225,7 @@ class TestMarketTickerEndpoints:
         ]
 
         # Trailing comma should not produce empty string in list
-        response = client.get("/api/v1/market/tickers?symbols=BTC/USDT,")
+        response = await client.get("/api/v1/market/tickers?symbols=BTC/USDT,")
 
         assert response.status_code == 200
         # Should filter out empty string
@@ -203,7 +235,10 @@ class TestMarketTickerEndpoints:
 class TestMarketCandlestickEndpoints:
     """Tests for market candlestick endpoints."""
 
-    def test_get_candles(self, client: TestClient, mock_exchange: AsyncMock) -> None:
+    @pytest.mark.asyncio
+
+
+    async def test_get_candles(self, client: AsyncClient, mock_exchange: AsyncMock) -> None:
         """Test getting candlestick data."""
         mock_exchange.get_candlesticks.return_value = [
             Candlestick(
@@ -224,7 +259,7 @@ class TestMarketCandlestickEndpoints:
             ),
         ]
 
-        response = client.get("/api/v1/market/candles/BTC/USDT?timeframe=1h&limit=2")
+        response = await client.get("/api/v1/market/candles/BTC/USDT?timeframe=1h&limit=2")
 
         assert response.status_code == 200
         json_resp = response.json()
@@ -235,11 +270,12 @@ class TestMarketCandlestickEndpoints:
         assert len(data["candles"]) == 2
         mock_exchange.get_candlesticks.assert_called_once_with("BTC/USDT", TimeFrame.H1, limit=2)
 
-    def test_get_candles_invalid_timeframe(
-        self, client: TestClient, mock_exchange: AsyncMock
+    @pytest.mark.asyncio
+    async def test_get_candles_invalid_timeframe(
+        self, client: AsyncClient, mock_exchange: AsyncMock
     ) -> None:
         """Test getting candles with invalid timeframe."""
-        response = client.get("/api/v1/market/candles/BTC/USDT?timeframe=invalid")
+        response = await client.get("/api/v1/market/candles/BTC/USDT?timeframe=invalid")
 
         assert response.status_code == 400
         assert "Invalid timeframe" in response.json()["detail"]
@@ -248,36 +284,43 @@ class TestMarketCandlestickEndpoints:
 class TestErrorHandling:
     """Tests for error handling."""
 
-    def test_rate_limit_error(self, client: TestClient, mock_exchange: AsyncMock) -> None:
+    @pytest.mark.asyncio
+
+
+    async def test_rate_limit_error(self, client: AsyncClient, mock_exchange: AsyncMock) -> None:
         """Test rate limit error response."""
         mock_exchange.get_ticker.side_effect = ExchangeRateLimitError(
             message="Rate limit exceeded", exchange="okx", retry_after=5.0
         )
 
-        response = client.get("/api/v1/market/ticker/BTC/USDT")
+        response = await client.get("/api/v1/market/ticker/BTC/USDT")
 
         assert response.status_code == 429
         assert response.headers.get("Retry-After") == "5"
 
-    def test_api_error(self, client: TestClient, mock_exchange: AsyncMock) -> None:
+    @pytest.mark.asyncio
+
+
+    async def test_api_error(self, client: AsyncClient, mock_exchange: AsyncMock) -> None:
         """Test API error response."""
         mock_exchange.get_ticker.side_effect = ExchangeAPIError(
             message="Internal error", exchange="okx", code="50000"
         )
 
-        response = client.get("/api/v1/market/ticker/BTC/USDT")
+        response = await client.get("/api/v1/market/ticker/BTC/USDT")
 
         assert response.status_code == 502
 
-    def test_internal_error_hides_details(
-        self, client: TestClient, mock_exchange: AsyncMock
+    @pytest.mark.asyncio
+    async def test_internal_error_hides_details(
+        self, client: AsyncClient, mock_exchange: AsyncMock
     ) -> None:
         """Test that internal errors don't expose sensitive details."""
         mock_exchange.get_ticker.side_effect = RuntimeError(
             "Database connection failed: password=secret123"
         )
 
-        response = client.get("/api/v1/market/ticker/BTC/USDT")
+        response = await client.get("/api/v1/market/ticker/BTC/USDT")
 
         assert response.status_code == 500
         # Should not expose internal error details
