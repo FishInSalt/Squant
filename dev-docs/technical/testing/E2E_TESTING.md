@@ -98,21 +98,34 @@ OKX_TESTNET=true
 ### Quick Start
 
 ```bash
-# Start E2E environment
+# 1. Start E2E environment
 docker compose -f docker-compose.test.yml --profile e2e up -d
 
-# Wait for services to be ready (30 seconds)
-sleep 30
+# 2. Wait for services to be ready (check API health)
+max_attempts=30
+attempt=0
+until curl -f http://localhost:8001/api/v1/health || [ $attempt -eq $max_attempts ]; do
+  echo "Waiting for API... (attempt $((attempt+1))/$max_attempts)"
+  sleep 2
+  attempt=$((attempt+1))
+done
 
-# Seed test data
+# 3. Seed test data (generates 7 days of BTC/USDT 1h klines)
+DATABASE_URL=postgresql+asyncpg://squant_test:squant_test@localhost:5433/squant_test \
+REDIS_URL=redis://localhost:6380 \
 uv run python tests/e2e/seed_data.py
 
-# Run E2E tests
+# 4. Run E2E tests
 uv run pytest tests/e2e -v
 
-# Stop environment
-docker compose -f docker-compose.test.yml --profile e2e down -v
+# 5. Stop environment (optional, use -v to remove volumes)
+docker compose -f docker-compose.test.yml --profile e2e down
 ```
+
+**Expected Results**:
+- 16 tests passed
+- 1 test skipped (test_cancel_running_backtest)
+- Overall code coverage: ~37%
 
 ### Using pytest-asyncio
 
@@ -323,35 +336,57 @@ async def authenticated_client(
 
 ### Seeding Data
 
-Before running E2E tests, seed the database with test data:
+Before running E2E tests, seed the database with historical market data:
 
 ```python
 # tests/e2e/seed_data.py
 import asyncio
+from decimal import Decimal
+from datetime import UTC, datetime, timedelta
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
-from squant.models import Strategy, StrategyRun
 
-async def seed_test_data():
-    """Seed database with test data for E2E tests."""
-    engine = create_async_engine("postgresql+asyncpg://...")
-    async with AsyncSession(engine) as session:
-        # Create test strategies
-        strategy = Strategy(
-            name="Test Strategy",
-            code="...",
-            version="1.0.0",
-        )
-        session.add(strategy)
-        await session.commit()
+async def generate_klines(
+    exchange: str, symbol: str, timeframe: str,
+    start_date: datetime, end_date: datetime,
+    base_price: Decimal = Decimal("50000.0"),
+) -> list[Kline]:
+    """Generate test kline data with random walk price simulation."""
+    # Generates realistic OHLCV data for backtesting
+    # Price follows random walk with mean reversion
+    ...
+
+async def seed_test_data(session: AsyncSession):
+    """Insert E2E test data - 7 days of BTC/USDT 1h klines."""
+    end_date = datetime.now(UTC)
+    start_date = end_date - timedelta(days=7)
+
+    klines = await generate_klines(
+        exchange="okx", symbol="BTC/USDT", timeframe="1h",
+        start_date=start_date, end_date=end_date,
+    )
+
+    session.add_all(klines)
+    await session.commit()
+    print(f"✅ Successfully inserted {len(klines)} klines")
 
 if __name__ == "__main__":
-    asyncio.run(seed_test_data())
+    asyncio.run(main())
 ```
 
-Run before E2E tests:
+Run before E2E tests with correct environment variables:
 
 ```bash
+DATABASE_URL=postgresql+asyncpg://squant_test:squant_test@localhost:5433/squant_test \
+REDIS_URL=redis://localhost:6380 \
 uv run python tests/e2e/seed_data.py
+```
+
+**Output**:
+```
+生成测试K线数据: okx:BTC/USDT:1h
+时间范围: 2026-01-24 to 2026-01-31
+生成了 168 条K线数据
+✅ 成功插入 168 条K线数据
 ```
 
 ### Cleanup Between Tests
@@ -498,9 +533,31 @@ done
 
 ### Database Migrations Not Applied
 
-**Symptom**: Relation does not exist errors
+**Symptom**: Relation does not exist errors (e.g., "relation 'strategies' does not exist")
 
-**Solution**: Ensure migrations run on container startup
+**Root Cause**: Alembic version table exists but actual migrations weren't applied (database state inconsistency)
+
+**Solution 1** - Reset alembic version and re-apply migrations:
+
+```bash
+# Connect to E2E test database
+docker exec -it squant-postgres-test psql -U squant_test -d squant_test
+
+# Delete stale alembic version
+DELETE FROM alembic_version;
+
+# Exit psql
+\q
+
+# Re-apply migrations from container
+docker exec squant-app-test alembic upgrade head
+
+# Verify tables created
+docker exec -it squant-postgres-test psql -U squant_test -d squant_test -c "\dt"
+# Should show 14 tables: strategies, backtest_runs, orders, klines, etc.
+```
+
+**Solution 2** - Ensure migrations run on container startup:
 
 The `docker-entrypoint.sh` script automatically runs migrations:
 
@@ -513,6 +570,12 @@ alembic upgrade head
 
 echo "Starting Squant application..."
 exec uvicorn squant.main:app --host 0.0.0.0 --port 8000
+```
+
+If migrations still don't apply, check container logs:
+
+```bash
+docker logs squant-app-test
 ```
 
 ### Test Data Conflicts

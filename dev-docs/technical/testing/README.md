@@ -239,13 +239,16 @@ Commands:
 
 按优先级排序：
 
-1. **完善集成测试** (进行中)
+1. **完善E2E测试** ✅ (已完成)
+   - 完整backtest工作流测试（创建策略 → 配置回测 → 运行 → 查看结果）
+   - Paper trading工作流测试（启动 → 监控 → 停止 → 查看结果）
+   - 16个E2E测试通过，1个跳过
+   - 数据库seeding机制（7天BTC/USDT 1h klines）
+   - GitHub Actions E2E workflow集成
+
+2. **完善集成测试** (进行中)
    - WebSocket集成测试
    - 交易所API集成测试（使用测试网）
-
-2. **端到端测试框架**
-   - 完整业务流程测试
-   - 真实场景验证
 
 3. **持续改进**
    - 测试性能优化
@@ -299,6 +302,12 @@ Commands:
 - ✅ 完成Phase 4: E2E测试和CI/CD集成
   - 创建 GitHub Actions CI/CD workflows（ci.yml, unit-tests.yml, integration-tests.yml, e2e-tests.yml, docker-build.yml）
   - 创建 E2E_TESTING.md 端到端测试指南
+  - **E2E测试框架完成**（16个测试通过，1个跳过）
+    - Backtest完整工作流测试（创建策略 → 配置 → 运行 → 结果分析）
+    - Paper trading工作流测试（启动 → 监控 → 停止 → 查看结果）
+    - 测试数据seed脚本（生成7天历史K线数据）
+    - 修复数据库迁移状态不一致问题
+    - E2E环境健康检查和自动重试机制
   - 修复13个挂起的单元测试（test_exchange_api.py）
     - 从 TestClient 迁移到 httpx.AsyncClient
     - 正确处理异步生成器依赖覆盖
