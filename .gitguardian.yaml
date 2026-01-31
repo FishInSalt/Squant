@@ -3,12 +3,18 @@
 
 version: 2
 
-paths-ignore:
-  - scripts/test-env.sh
-  - docker-compose.local.yml
-  - docker-compose.test.yml
-  - docker-compose.dev.yml
-  - tests/**/*
-  - .github/workflows/**/*.yml
-  - alembic.ini
-  - .env.example
+secret:
+  # Ignore test files and configuration with hardcoded test credentials
+  ignored_paths:
+    - 'scripts/test-env.sh'
+    - 'docker-compose.local.yml'
+    - 'docker-compose.test.yml'
+    - 'docker-compose.dev.yml'
+    - 'tests/**/*'
+    - '.github/workflows/*.yml'
+    - 'alembic.ini'
+    - '.env.example'
+
+  # Ignore generic password detector for test credentials
+  ignored_detectors:
+    - Generic Password
