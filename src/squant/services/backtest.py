@@ -8,20 +8,20 @@ Provides high-level operations for:
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import select, delete, and_, func
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from squant.engine.backtest.runner import BacktestRunner, BacktestError
-from squant.engine.backtest.types import BacktestResult, EquitySnapshot, TradeRecord
+from squant.engine.backtest.runner import BacktestError, BacktestRunner
+from squant.engine.backtest.types import BacktestResult
 from squant.infra.repository import BaseRepository
 from squant.models.enums import RunMode, RunStatus
 from squant.models.metrics import EquityCurve
-from squant.models.strategy import Strategy, StrategyRun
+from squant.models.strategy import StrategyRun
 from squant.services.data_loader import DataLoader
 
 
@@ -140,18 +140,14 @@ class EquityCurveRepository:
     async def get_by_run(self, run_id: str) -> list[EquityCurve]:
         """Get equity curve for a run."""
         stmt = (
-            select(EquityCurve)
-            .where(EquityCurve.run_id == run_id)
-            .order_by(EquityCurve.time.asc())
+            select(EquityCurve).where(EquityCurve.run_id == run_id).order_by(EquityCurve.time.asc())
         )
         result = await self.session.execute(stmt)
         return list(result.scalars().all())
 
     async def delete_by_run(self, run_id: str) -> None:
         """Delete equity curve records for a run."""
-        await self.session.execute(
-            delete(EquityCurve).where(EquityCurve.run_id == run_id)
-        )
+        await self.session.execute(delete(EquityCurve).where(EquityCurve.run_id == run_id))
 
 
 class BacktestService:
@@ -221,7 +217,7 @@ class BacktestService:
                 run.id,
                 status=RunStatus.ERROR,
                 error_message=str(e),
-                stopped_at=datetime.now(timezone.utc),
+                stopped_at=datetime.now(UTC),
             )
             await self.session.commit()
             raise
@@ -332,7 +328,7 @@ class BacktestService:
         await self.run_repo.update(
             run.id,
             status=RunStatus.RUNNING,
-            started_at=datetime.now(timezone.utc),
+            started_at=datetime.now(UTC),
         )
         await self.session.commit()
 
@@ -367,7 +363,7 @@ class BacktestService:
                 run.id,
                 status=RunStatus.COMPLETED,
                 result=result.metrics,
-                stopped_at=datetime.now(timezone.utc),
+                stopped_at=datetime.now(UTC),
             )
             await self.session.commit()
 
@@ -378,7 +374,7 @@ class BacktestService:
                 run.id,
                 status=RunStatus.ERROR,
                 error_message=str(e),
-                stopped_at=datetime.now(timezone.utc),
+                stopped_at=datetime.now(UTC),
             )
             await self.session.commit()
             raise BacktestError(f"Backtest execution failed: {e}") from e

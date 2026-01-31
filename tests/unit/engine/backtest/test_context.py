@@ -1,6 +1,6 @@
 """Unit tests for backtest context."""
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from decimal import Decimal
 
 import pytest
@@ -29,7 +29,7 @@ def context() -> BacktestContext:
 def sample_bar() -> Bar:
     """Create a sample bar."""
     return Bar(
-        time=datetime(2024, 1, 1, 12, 0, 0, tzinfo=timezone.utc),
+        time=datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC),
         symbol="BTC/USDT",
         open=Decimal("42000"),
         high=Decimal("43000"),
@@ -96,13 +96,11 @@ class TestOrderPlacement:
         assert order.side == OrderSide.SELL
         assert order.amount == Decimal("0.5")
 
-    def test_limit_buy_order(
-        self, context: BacktestContext, sample_bar: Bar
-    ) -> None:
+    def test_limit_buy_order(self, context: BacktestContext, sample_bar: Bar) -> None:
         """Test limit buy order placement."""
         context._set_current_bar(sample_bar)
 
-        order_id = context.buy("BTC/USDT", Decimal("1"), price=Decimal("41000"))
+        context.buy("BTC/USDT", Decimal("1"), price=Decimal("41000"))
 
         order = context.pending_orders[0]
         assert order.type == OrderType.LIMIT
@@ -122,9 +120,7 @@ class TestOrderPlacement:
 class TestOrderCancellation:
     """Tests for order cancellation."""
 
-    def test_cancel_pending_order(
-        self, context: BacktestContext, sample_bar: Bar
-    ) -> None:
+    def test_cancel_pending_order(self, context: BacktestContext, sample_bar: Bar) -> None:
         """Test cancelling a pending order."""
         context._set_current_bar(sample_bar)
         order_id = context.buy("BTC/USDT", Decimal("1"))
@@ -144,9 +140,7 @@ class TestOrderCancellation:
 class TestFillProcessing:
     """Tests for fill processing."""
 
-    def test_buy_fill_updates_cash(
-        self, context: BacktestContext, sample_bar: Bar
-    ) -> None:
+    def test_buy_fill_updates_cash(self, context: BacktestContext, sample_bar: Bar) -> None:
         """Test that buy fill decreases cash."""
         context._set_current_bar(sample_bar)
         context._add_bar_to_history(sample_bar)
@@ -168,9 +162,7 @@ class TestFillProcessing:
         expected_cash = Decimal("100000") - Decimal("42000") - Decimal("42")
         assert context.cash == expected_cash
 
-    def test_sell_fill_updates_cash(
-        self, context: BacktestContext, sample_bar: Bar
-    ) -> None:
+    def test_sell_fill_updates_cash(self, context: BacktestContext, sample_bar: Bar) -> None:
         """Test that sell fill increases cash."""
         context._set_current_bar(sample_bar)
         context._add_bar_to_history(sample_bar)
@@ -178,9 +170,8 @@ class TestFillProcessing:
         # First buy to have a position
         context._positions["BTC/USDT"] = context._positions.get("BTC/USDT", None)
         from squant.engine.backtest.types import Position
-        context._positions["BTC/USDT"] = Position(
-            "BTC/USDT", Decimal("1"), Decimal("40000")
-        )
+
+        context._positions["BTC/USDT"] = Position("BTC/USDT", Decimal("1"), Decimal("40000"))
 
         fill = Fill(
             order_id="test-order",
@@ -197,9 +188,7 @@ class TestFillProcessing:
         # 100000 + (42000 * 1 - 42) = 100000 + 41958 = 141958
         assert context.cash == Decimal("141958")
 
-    def test_buy_fill_creates_position(
-        self, context: BacktestContext, sample_bar: Bar
-    ) -> None:
+    def test_buy_fill_creates_position(self, context: BacktestContext, sample_bar: Bar) -> None:
         """Test that buy fill creates/updates position."""
         context._set_current_bar(sample_bar)
         context._add_bar_to_history(sample_bar)
@@ -229,7 +218,7 @@ class TestMarketDataAccess:
         """Test getting close prices."""
         bars = [
             Bar(
-                time=datetime(2024, 1, 1, i, tzinfo=timezone.utc),
+                time=datetime(2024, 1, 1, i, tzinfo=UTC),
                 symbol="BTC/USDT",
                 open=Decimal("42000"),
                 high=Decimal("43000"),
@@ -251,7 +240,7 @@ class TestMarketDataAccess:
         """Test getting bar objects."""
         bars = [
             Bar(
-                time=datetime(2024, 1, 1, i, tzinfo=timezone.utc),
+                time=datetime(2024, 1, 1, i, tzinfo=UTC),
                 symbol="BTC/USDT",
                 open=Decimal("42000"),
                 high=Decimal("43000"),
@@ -283,9 +272,7 @@ class TestMarketDataAccess:
 class TestLogging:
     """Tests for logging functionality."""
 
-    def test_log_message(
-        self, context: BacktestContext, sample_bar: Bar
-    ) -> None:
+    def test_log_message(self, context: BacktestContext, sample_bar: Bar) -> None:
         """Test logging a message."""
         context._set_current_bar(sample_bar)
 
@@ -294,9 +281,7 @@ class TestLogging:
         assert len(context.logs) == 1
         assert "Test message" in context.logs[0]
 
-    def test_log_includes_timestamp(
-        self, context: BacktestContext, sample_bar: Bar
-    ) -> None:
+    def test_log_includes_timestamp(self, context: BacktestContext, sample_bar: Bar) -> None:
         """Test that log includes timestamp."""
         context._set_current_bar(sample_bar)
 
@@ -308,9 +293,7 @@ class TestLogging:
 class TestEquitySnapshot:
     """Tests for equity snapshot recording."""
 
-    def test_record_equity_snapshot(
-        self, context: BacktestContext, sample_bar: Bar
-    ) -> None:
+    def test_record_equity_snapshot(self, context: BacktestContext, sample_bar: Bar) -> None:
         """Test recording equity snapshot."""
         context._set_current_bar(sample_bar)
 

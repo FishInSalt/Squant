@@ -120,9 +120,7 @@ class TestStartPaperTrading:
         """Test starting paper trading with general error."""
         with patch("squant.api.v1.paper_trading.PaperTradingService") as mock_service_class:
             mock_service = MagicMock()
-            mock_service.start = AsyncMock(
-                side_effect=PaperTradingError("General error")
-            )
+            mock_service.start = AsyncMock(side_effect=PaperTradingError("General error"))
             mock_service_class.return_value = mock_service
 
             response = client.post("/api/v1/paper", json=valid_start_request)
@@ -142,9 +140,7 @@ class TestStartPaperTrading:
 class TestStopPaperTrading:
     """Tests for POST /api/v1/paper-trading/{run_id}/stop endpoint."""
 
-    def test_stop_paper_trading_success(
-        self, client: TestClient, mock_run
-    ) -> None:
+    def test_stop_paper_trading_success(self, client: TestClient, mock_run) -> None:
         """Test successful paper trading stop."""
         mock_run.status = RunStatus.STOPPED.value
         mock_run.stopped_at = datetime.now(UTC)
@@ -166,9 +162,7 @@ class TestStopPaperTrading:
 
         with patch("squant.api.v1.paper_trading.PaperTradingService") as mock_service_class:
             mock_service = MagicMock()
-            mock_service.stop = AsyncMock(
-                side_effect=SessionNotFoundError(str(run_id))
-            )
+            mock_service.stop = AsyncMock(side_effect=SessionNotFoundError(str(run_id)))
             mock_service_class.return_value = mock_service
 
             response = client.post(f"/api/v1/paper/{run_id}/stop")
@@ -200,9 +194,7 @@ class TestGetPaperTradingStatus:
             "equity": "10500",
             "initial_capital": "10000",
             "total_fees": "5.5",
-            "positions": {
-                "BTC/USDT": {"amount": "0.1", "avg_entry_price": "50000"}
-            },
+            "positions": {"BTC/USDT": {"amount": "0.1", "avg_entry_price": "50000"}},
             "pending_orders": [],
             "completed_orders_count": 5,
             "trades_count": 10,
@@ -226,9 +218,7 @@ class TestGetPaperTradingStatus:
 
         with patch("squant.api.v1.paper_trading.PaperTradingService") as mock_service_class:
             mock_service = MagicMock()
-            mock_service.get_status = AsyncMock(
-                side_effect=SessionNotFoundError(str(run_id))
-            )
+            mock_service.get_status = AsyncMock(side_effect=SessionNotFoundError(str(run_id)))
             mock_service_class.return_value = mock_service
 
             response = client.get(f"/api/v1/paper/{run_id}/status")
@@ -239,9 +229,7 @@ class TestGetPaperTradingStatus:
 class TestListActiveSessions:
     """Tests for GET /api/v1/paper-trading endpoint."""
 
-    def test_list_active_sessions_success(
-        self, client: TestClient, mock_run
-    ) -> None:
+    def test_list_active_sessions_success(self, client: TestClient, mock_run) -> None:
         """Test listing active paper trading sessions."""
         mock_sessions = [
             {
@@ -300,9 +288,7 @@ class TestListPaperTradingRuns:
             assert data["data"]["total"] == 1
             assert len(data["data"]["items"]) == 1
 
-    def test_list_runs_with_pagination(
-        self, client: TestClient, mock_run
-    ) -> None:
+    def test_list_runs_with_pagination(self, client: TestClient, mock_run) -> None:
         """Test listing runs with pagination params."""
         with patch("squant.api.v1.paper_trading.PaperTradingService") as mock_service_class:
             mock_service = MagicMock()
@@ -316,9 +302,7 @@ class TestListPaperTradingRuns:
             assert data["data"]["page"] == 2
             assert data["data"]["page_size"] == 10
 
-    def test_list_runs_with_status_filter(
-        self, client: TestClient, mock_run
-    ) -> None:
+    def test_list_runs_with_status_filter(self, client: TestClient, mock_run) -> None:
         """Test listing runs with status filter."""
         with patch("squant.api.v1.paper_trading.PaperTradingService") as mock_service_class:
             mock_service = MagicMock()
@@ -362,9 +346,7 @@ class TestGetPaperTradingRun:
 
         with patch("squant.api.v1.paper_trading.PaperTradingService") as mock_service_class:
             mock_service = MagicMock()
-            mock_service.get_run = AsyncMock(
-                side_effect=SessionNotFoundError(str(run_id))
-            )
+            mock_service.get_run = AsyncMock(side_effect=SessionNotFoundError(str(run_id)))
             mock_service_class.return_value = mock_service
 
             response = client.get(f"/api/v1/paper/{run_id}")
@@ -400,9 +382,7 @@ class TestGetEquityCurve:
 
         with patch("squant.api.v1.paper_trading.PaperTradingService") as mock_service_class:
             mock_service = MagicMock()
-            mock_service.get_equity_curve = AsyncMock(
-                side_effect=SessionNotFoundError(str(run_id))
-            )
+            mock_service.get_equity_curve = AsyncMock(side_effect=SessionNotFoundError(str(run_id)))
             mock_service_class.return_value = mock_service
 
             response = client.get(f"/api/v1/paper/{run_id}/equity-curve")

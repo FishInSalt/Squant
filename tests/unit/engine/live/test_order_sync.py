@@ -1,6 +1,6 @@
 """Unit tests for order synchronization utilities."""
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from decimal import Decimal
 
 import pytest
@@ -27,7 +27,7 @@ class TestOrderStateChange:
             old_filled=Decimal("0"),
             new_filled=Decimal("0.5"),
             fill_delta=Decimal("0.5"),
-            timestamp=datetime.now(timezone.utc),
+            timestamp=datetime.now(UTC),
         )
 
         assert change.has_new_fill is True
@@ -41,7 +41,7 @@ class TestOrderStateChange:
             old_filled=Decimal("0"),
             new_filled=Decimal("0"),
             fill_delta=Decimal("0"),
-            timestamp=datetime.now(timezone.utc),
+            timestamp=datetime.now(UTC),
         )
 
         assert change.has_new_fill is False
@@ -55,7 +55,7 @@ class TestOrderStateChange:
             old_filled=Decimal("0"),
             new_filled=Decimal("1.0"),
             fill_delta=Decimal("1.0"),
-            timestamp=datetime.now(timezone.utc),
+            timestamp=datetime.now(UTC),
         )
 
         assert change.is_status_change is True
@@ -69,7 +69,7 @@ class TestOrderStateChange:
             old_filled=Decimal("0.3"),
             new_filled=Decimal("0.5"),
             fill_delta=Decimal("0.2"),
-            timestamp=datetime.now(timezone.utc),
+            timestamp=datetime.now(UTC),
         )
 
         assert change.is_status_change is False

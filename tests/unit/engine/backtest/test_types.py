@@ -1,13 +1,12 @@
 """Unit tests for backtest engine types."""
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from decimal import Decimal
 
 import pytest
 
 from squant.engine.backtest.types import (
     Bar,
-    Fill,
     OrderSide,
     OrderStatus,
     OrderType,
@@ -23,7 +22,7 @@ class TestBar:
     def test_create_valid_bar(self) -> None:
         """Test creating a valid bar."""
         bar = Bar(
-            time=datetime(2024, 1, 1, tzinfo=timezone.utc),
+            time=datetime(2024, 1, 1, tzinfo=UTC),
             symbol="BTC/USDT",
             open=Decimal("42000"),
             high=Decimal("43000"),
@@ -37,7 +36,7 @@ class TestBar:
     def test_bar_is_immutable(self) -> None:
         """Test that bar is immutable (frozen dataclass)."""
         bar = Bar(
-            time=datetime(2024, 1, 1, tzinfo=timezone.utc),
+            time=datetime(2024, 1, 1, tzinfo=UTC),
             symbol="BTC/USDT",
             open=Decimal("42000"),
             high=Decimal("43000"),
@@ -52,7 +51,7 @@ class TestBar:
         """Test that high cannot be less than low."""
         with pytest.raises(ValueError, match="High cannot be less than low"):
             Bar(
-                time=datetime(2024, 1, 1, tzinfo=timezone.utc),
+                time=datetime(2024, 1, 1, tzinfo=UTC),
                 symbol="BTC/USDT",
                 open=Decimal("42000"),
                 high=Decimal("40000"),  # Invalid: less than low
@@ -65,7 +64,7 @@ class TestBar:
         """Test that open must be between low and high."""
         with pytest.raises(ValueError, match="Open must be between"):
             Bar(
-                time=datetime(2024, 1, 1, tzinfo=timezone.utc),
+                time=datetime(2024, 1, 1, tzinfo=UTC),
                 symbol="BTC/USDT",
                 open=Decimal("44000"),  # Invalid: greater than high
                 high=Decimal("43000"),
@@ -78,7 +77,7 @@ class TestBar:
         """Test that close must be between low and high."""
         with pytest.raises(ValueError, match="Close must be between"):
             Bar(
-                time=datetime(2024, 1, 1, tzinfo=timezone.utc),
+                time=datetime(2024, 1, 1, tzinfo=UTC),
                 symbol="BTC/USDT",
                 open=Decimal("42000"),
                 high=Decimal("43000"),
@@ -228,7 +227,7 @@ class TestTradeRecord:
         trade = TradeRecord(
             symbol="BTC/USDT",
             side=OrderSide.BUY,
-            entry_time=datetime(2024, 1, 1, tzinfo=timezone.utc),
+            entry_time=datetime(2024, 1, 1, tzinfo=UTC),
             entry_price=Decimal("42000"),
             amount=Decimal("1"),
         )
@@ -239,9 +238,9 @@ class TestTradeRecord:
         trade = TradeRecord(
             symbol="BTC/USDT",
             side=OrderSide.BUY,
-            entry_time=datetime(2024, 1, 1, tzinfo=timezone.utc),
+            entry_time=datetime(2024, 1, 1, tzinfo=UTC),
             entry_price=Decimal("42000"),
-            exit_time=datetime(2024, 1, 2, tzinfo=timezone.utc),
+            exit_time=datetime(2024, 1, 2, tzinfo=UTC),
             exit_price=Decimal("44000"),
             amount=Decimal("1"),
             pnl=Decimal("2000"),

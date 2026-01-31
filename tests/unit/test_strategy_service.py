@@ -5,7 +5,6 @@ from uuid import uuid4
 
 import pytest
 
-from squant.models.enums import StrategyStatus
 from squant.models.strategy import Strategy
 from squant.schemas.strategy import CreateStrategyRequest, UpdateStrategyRequest
 from squant.services.strategy import (
@@ -15,7 +14,6 @@ from squant.services.strategy import (
     StrategyService,
     StrategyValidationError,
 )
-
 
 # Valid strategy code for tests
 VALID_STRATEGY_CODE = '''
@@ -27,20 +25,20 @@ class TestStrategy(Strategy):
 '''
 
 # Invalid strategy code (missing on_bar)
-INVALID_STRATEGY_CODE = '''
+INVALID_STRATEGY_CODE = """
 class TestStrategy(Strategy):
     def do_something(self):
         pass
-'''
+"""
 
 # Malicious strategy code
-MALICIOUS_CODE = '''
+MALICIOUS_CODE = """
 import os
 
 class TestStrategy(Strategy):
     def on_bar(self, bar):
         os.system("rm -rf /")
-'''
+"""
 
 
 class TestStrategyRepository:
@@ -107,9 +105,7 @@ class TestStrategyService:
         return StrategyService(mock_session)
 
     @pytest.mark.asyncio
-    async def test_create_success(
-        self, service: StrategyService, mock_session: AsyncMock
-    ) -> None:
+    async def test_create_success(self, service: StrategyService, mock_session: AsyncMock) -> None:
         """Test successful strategy creation."""
         request = CreateStrategyRequest(
             name="TestStrategy",
@@ -127,9 +123,7 @@ class TestStrategyService:
         ) as mock_get_by_name:
             mock_get_by_name.return_value = None
 
-            with patch.object(
-                service.repository, "create", new_callable=AsyncMock
-            ) as mock_create:
+            with patch.object(service.repository, "create", new_callable=AsyncMock) as mock_create:
                 mock_create.return_value = mock_strategy
 
                 result = await service.create(request)
@@ -137,9 +131,7 @@ class TestStrategyService:
                 mock_session.commit.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_create_name_exists(
-        self, service: StrategyService
-    ) -> None:
+    async def test_create_name_exists(self, service: StrategyService) -> None:
         """Test that duplicate name raises error."""
         request = CreateStrategyRequest(
             name="ExistingStrategy",
@@ -155,9 +147,7 @@ class TestStrategyService:
                 await service.create(request)
 
     @pytest.mark.asyncio
-    async def test_create_validation_error(
-        self, service: StrategyService
-    ) -> None:
+    async def test_create_validation_error(self, service: StrategyService) -> None:
         """Test that invalid code raises validation error."""
         request = CreateStrategyRequest(
             name="BadStrategy",
@@ -181,9 +171,7 @@ class TestStrategyService:
         mock_strategy = MagicMock(spec=Strategy)
         mock_strategy.id = str(strategy_id)
 
-        with patch.object(
-            service.repository, "get", new_callable=AsyncMock
-        ) as mock_get:
+        with patch.object(service.repository, "get", new_callable=AsyncMock) as mock_get:
             mock_get.return_value = mock_strategy
 
             result = await service.get(strategy_id)
@@ -194,29 +182,21 @@ class TestStrategyService:
         """Test getting a strategy that doesn't exist."""
         strategy_id = uuid4()
 
-        with patch.object(
-            service.repository, "get", new_callable=AsyncMock
-        ) as mock_get:
+        with patch.object(service.repository, "get", new_callable=AsyncMock) as mock_get:
             mock_get.return_value = None
 
             with pytest.raises(StrategyNotFoundError):
                 await service.get(strategy_id)
 
     @pytest.mark.asyncio
-    async def test_delete_success(
-        self, service: StrategyService, mock_session: AsyncMock
-    ) -> None:
+    async def test_delete_success(self, service: StrategyService, mock_session: AsyncMock) -> None:
         """Test successful strategy deletion."""
         strategy_id = uuid4()
 
-        with patch.object(
-            service.repository, "exists", new_callable=AsyncMock
-        ) as mock_exists:
+        with patch.object(service.repository, "exists", new_callable=AsyncMock) as mock_exists:
             mock_exists.return_value = True
 
-            with patch.object(
-                service.repository, "delete", new_callable=AsyncMock
-            ) as mock_delete:
+            with patch.object(service.repository, "delete", new_callable=AsyncMock) as mock_delete:
                 mock_delete.return_value = True
 
                 await service.delete(strategy_id)
@@ -228,18 +208,14 @@ class TestStrategyService:
         """Test deleting a strategy that doesn't exist."""
         strategy_id = uuid4()
 
-        with patch.object(
-            service.repository, "exists", new_callable=AsyncMock
-        ) as mock_exists:
+        with patch.object(service.repository, "exists", new_callable=AsyncMock) as mock_exists:
             mock_exists.return_value = False
 
             with pytest.raises(StrategyNotFoundError):
                 await service.delete(strategy_id)
 
     @pytest.mark.asyncio
-    async def test_update_success(
-        self, service: StrategyService, mock_session: AsyncMock
-    ) -> None:
+    async def test_update_success(self, service: StrategyService, mock_session: AsyncMock) -> None:
         """Test successful strategy update."""
         strategy_id = uuid4()
         mock_strategy = MagicMock(spec=Strategy)
@@ -249,9 +225,7 @@ class TestStrategyService:
 
         request = UpdateStrategyRequest(name="NewName")
 
-        with patch.object(
-            service.repository, "get", new_callable=AsyncMock
-        ) as mock_get:
+        with patch.object(service.repository, "get", new_callable=AsyncMock) as mock_get:
             mock_get.return_value = mock_strategy
 
             with patch.object(
@@ -280,14 +254,10 @@ class TestStrategyService:
 
         request = UpdateStrategyRequest(code=VALID_STRATEGY_CODE)
 
-        with patch.object(
-            service.repository, "get", new_callable=AsyncMock
-        ) as mock_get:
+        with patch.object(service.repository, "get", new_callable=AsyncMock) as mock_get:
             mock_get.return_value = mock_strategy
 
-            with patch.object(
-                service.repository, "update", new_callable=AsyncMock
-            ) as mock_update:
+            with patch.object(service.repository, "update", new_callable=AsyncMock) as mock_update:
                 mock_update.return_value = mock_strategy
 
                 await service.update(strategy_id, request)

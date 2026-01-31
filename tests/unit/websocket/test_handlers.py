@@ -1,7 +1,5 @@
 """Unit tests for WebSocket handlers."""
 
-import asyncio
-import contextlib
 import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -133,10 +131,12 @@ class TestWebSocketGatewayClientMessages:
 
         await gateway._handle_client_messages()
 
-        mock_websocket.send_json.assert_called_once_with({
-            "type": "error",
-            "message": "Invalid JSON format",
-        })
+        mock_websocket.send_json.assert_called_once_with(
+            {
+                "type": "error",
+                "message": "Invalid JSON format",
+            }
+        )
 
     @pytest.mark.asyncio
     async def test_handle_unknown_message_type(self, mock_websocket, mock_stream_manager):
@@ -157,10 +157,12 @@ class TestWebSocketGatewayClientMessages:
 
         await gateway._handle_client_messages()
 
-        mock_websocket.send_json.assert_called_once_with({
-            "type": "error",
-            "message": "Unknown message type: unknown",
-        })
+        mock_websocket.send_json.assert_called_once_with(
+            {
+                "type": "error",
+                "message": "Unknown message type: unknown",
+            }
+        )
 
 
 class TestWebSocketGatewaySubscriptions:
@@ -186,10 +188,12 @@ class TestWebSocketGatewaySubscriptions:
         mock_stream_manager.subscribe_ticker.assert_called_once_with("BTC/USDT")
 
         # Verify response sent
-        mock_websocket.send_json.assert_called_once_with({
-            "type": "subscribed",
-            "channel": "ticker:BTC/USDT",
-        })
+        mock_websocket.send_json.assert_called_once_with(
+            {
+                "type": "subscribed",
+                "channel": "ticker:BTC/USDT",
+            }
+        )
 
         # Verify channel tracked
         assert "ticker:BTC/USDT" in gateway._subscribed_channels
@@ -204,11 +208,13 @@ class TestWebSocketGatewaySubscriptions:
         await gateway._subscribe("ticker:BTC/USDT")
 
         # Verify "already subscribed" message
-        mock_websocket.send_json.assert_called_once_with({
-            "type": "subscribed",
-            "channel": "ticker:BTC/USDT",
-            "message": "Already subscribed",
-        })
+        mock_websocket.send_json.assert_called_once_with(
+            {
+                "type": "subscribed",
+                "channel": "ticker:BTC/USDT",
+                "message": "Already subscribed",
+            }
+        )
 
     @pytest.mark.asyncio
     async def test_subscribe_candles(self, mock_websocket, mock_stream_manager):
@@ -297,10 +303,12 @@ class TestWebSocketGatewaySubscriptions:
         pubsub.unsubscribe.assert_called_once_with("squant:ws:ticker:BTC/USDT")
 
         # Verify response
-        mock_websocket.send_json.assert_called_once_with({
-            "type": "unsubscribed",
-            "channel": "ticker:BTC/USDT",
-        })
+        mock_websocket.send_json.assert_called_once_with(
+            {
+                "type": "unsubscribed",
+                "channel": "ticker:BTC/USDT",
+            }
+        )
 
         # Verify channel removed
         assert "ticker:BTC/USDT" not in gateway._subscribed_channels
@@ -313,11 +321,13 @@ class TestWebSocketGatewaySubscriptions:
 
         await gateway._unsubscribe("ticker:BTC/USDT")
 
-        mock_websocket.send_json.assert_called_once_with({
-            "type": "unsubscribed",
-            "channel": "ticker:BTC/USDT",
-            "message": "Not subscribed",
-        })
+        mock_websocket.send_json.assert_called_once_with(
+            {
+                "type": "unsubscribed",
+                "channel": "ticker:BTC/USDT",
+                "message": "Not subscribed",
+            }
+        )
 
 
 class TestWebSocketGatewayRedisHeartbeat:
@@ -526,10 +536,12 @@ class TestWebSocketGatewaySendError:
 
         await gateway._send_error("Test error message")
 
-        mock_websocket.send_json.assert_called_once_with({
-            "type": "error",
-            "message": "Test error message",
-        })
+        mock_websocket.send_json.assert_called_once_with(
+            {
+                "type": "error",
+                "message": "Test error message",
+            }
+        )
 
 
 class TestWebSocketGatewaySubscribeOKX:
@@ -593,9 +605,7 @@ class TestWebSocketGatewaySubscribeOKX:
     async def test_subscribe_okx_handles_error(self, mock_websocket, mock_stream_manager):
         """Test _subscribe_okx handles errors gracefully."""
         gateway = WebSocketGateway(mock_websocket, mock_stream_manager)
-        mock_stream_manager.subscribe_ticker = AsyncMock(
-            side_effect=Exception("Connection failed")
-        )
+        mock_stream_manager.subscribe_ticker = AsyncMock(side_effect=Exception("Connection failed"))
 
         # Should not raise
         await gateway._subscribe_okx("ticker:BTC/USDT")
@@ -626,9 +636,7 @@ class TestWebSocketGatewayErrorHandling:
     """Test WebSocketGateway error handling."""
 
     @pytest.mark.asyncio
-    async def test_handle_subscribe_missing_channel(
-        self, mock_websocket, mock_stream_manager
-    ):
+    async def test_handle_subscribe_missing_channel(self, mock_websocket, mock_stream_manager):
         """Test subscribing with missing channel field."""
         gateway = WebSocketGateway(mock_websocket, mock_stream_manager)
         gateway._running = True
@@ -646,15 +654,15 @@ class TestWebSocketGatewayErrorHandling:
 
         await gateway._handle_client_messages()
 
-        mock_websocket.send_json.assert_called_once_with({
-            "type": "error",
-            "message": "Missing 'channel' field",
-        })
+        mock_websocket.send_json.assert_called_once_with(
+            {
+                "type": "error",
+                "message": "Missing 'channel' field",
+            }
+        )
 
     @pytest.mark.asyncio
-    async def test_handle_unsubscribe_missing_channel(
-        self, mock_websocket, mock_stream_manager
-    ):
+    async def test_handle_unsubscribe_missing_channel(self, mock_websocket, mock_stream_manager):
         """Test unsubscribing with missing channel field."""
         gateway = WebSocketGateway(mock_websocket, mock_stream_manager)
         gateway._running = True
@@ -672,22 +680,20 @@ class TestWebSocketGatewayErrorHandling:
 
         await gateway._handle_client_messages()
 
-        mock_websocket.send_json.assert_called_once_with({
-            "type": "error",
-            "message": "Missing 'channel' field",
-        })
+        mock_websocket.send_json.assert_called_once_with(
+            {
+                "type": "error",
+                "message": "Missing 'channel' field",
+            }
+        )
 
     @pytest.mark.asyncio
-    async def test_handle_unexpected_exception(
-        self, mock_websocket, mock_stream_manager
-    ):
+    async def test_handle_unexpected_exception(self, mock_websocket, mock_stream_manager):
         """Test handling of unexpected exceptions in client messages."""
         gateway = WebSocketGateway(mock_websocket, mock_stream_manager)
         gateway._running = True
 
-        mock_websocket.receive_text = AsyncMock(
-            side_effect=RuntimeError("Unexpected error")
-        )
+        mock_websocket.receive_text = AsyncMock(side_effect=RuntimeError("Unexpected error"))
 
         await gateway._handle_client_messages()
 
@@ -695,9 +701,7 @@ class TestWebSocketGatewayErrorHandling:
         assert gateway._running is False
 
     @pytest.mark.asyncio
-    async def test_subscribe_failure_sends_error(
-        self, mock_websocket, mock_stream_manager
-    ):
+    async def test_subscribe_failure_sends_error(self, mock_websocket, mock_stream_manager):
         """Test that subscription failure sends error to client."""
         gateway = WebSocketGateway(mock_websocket, mock_stream_manager)
         gateway._running = True
@@ -710,7 +714,9 @@ class TestWebSocketGatewayErrorHandling:
         await gateway._subscribe("ticker:BTC/USDT")
 
         # Should send error message
-        mock_websocket.send_json.assert_called_with({
-            "type": "error",
-            "message": "Failed to subscribe to ticker:BTC/USDT",
-        })
+        mock_websocket.send_json.assert_called_with(
+            {
+                "type": "error",
+                "message": "Failed to subscribe to ticker:BTC/USDT",
+            }
+        )

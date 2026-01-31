@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from uuid import uuid4
 
 import pytest
@@ -178,7 +178,7 @@ class TestExchangeAccountResponse:
 
     def test_full_response(self):
         """Test creating full response."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         response = ExchangeAccountResponse(
             id=uuid4(),
             exchange="okx",
@@ -210,7 +210,7 @@ class TestExchangeAccountListItem:
 
     def test_list_item(self):
         """Test creating list item."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         item = ExchangeAccountListItem(
             id=uuid4(),
             exchange="binance",

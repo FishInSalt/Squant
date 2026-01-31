@@ -53,9 +53,7 @@ api_router.include_router(live_trading.router, prefix="/live", tags=["Live Tradi
 api_router.include_router(risk.router, prefix="/risk-rules", tags=["Risk"])
 
 # Risk trigger audit endpoints
-api_router.include_router(
-    risk_triggers.router, prefix="/risk-triggers", tags=["Risk Triggers"]
-)
+api_router.include_router(risk_triggers.router, prefix="/risk-triggers", tags=["Risk Triggers"])
 
 # Circuit breaker endpoints
 api_router.include_router(

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
@@ -94,7 +94,7 @@ class TestStrategyRepository:
         strategy.name = "Test Strategy"
         strategy.code = "class Strategy: pass"
         strategy.status = StrategyStatus.ACTIVE
-        strategy.created_at = datetime.now(timezone.utc)
+        strategy.created_at = datetime.now(UTC)
         return strategy
 
     @pytest.mark.asyncio
@@ -148,7 +148,9 @@ class TestStrategyRepository:
         assert len(result) == 1
 
     @pytest.mark.asyncio
-    async def test_list_with_pagination_and_status_filter(self, repository, mock_session, sample_strategy):
+    async def test_list_with_pagination_and_status_filter(
+        self, repository, mock_session, sample_strategy
+    ):
         """Test listing with status filter."""
         mock_scalars = MagicMock()
         mock_scalars.all.return_value = [sample_strategy]
@@ -210,7 +212,7 @@ class TestStrategyService:
         strategy.code = "class Strategy:\n    def init(self): pass\n    def next(self): pass"
         strategy.version = "1.0.0"
         strategy.status = StrategyStatus.ACTIVE
-        strategy.created_at = datetime.now(timezone.utc)
+        strategy.created_at = datetime.now(UTC)
         return strategy
 
     @pytest.mark.asyncio
@@ -392,9 +394,7 @@ class TestStrategyService:
         service.repository.list_with_pagination = AsyncMock(return_value=[sample_strategy])
         service.repository.count_by_status = AsyncMock(return_value=1)
 
-        strategies, total = await service.list(
-            page=2, page_size=10, status=StrategyStatus.ACTIVE
-        )
+        strategies, total = await service.list(page=2, page_size=10, status=StrategyStatus.ACTIVE)
 
         service.repository.list_with_pagination.assert_called_once_with(
             offset=10, limit=10, status=StrategyStatus.ACTIVE

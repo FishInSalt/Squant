@@ -87,6 +87,7 @@ def _get_current_exchange_id() -> str:
     """
     # Import here to avoid circular import
     from squant.api.v1.market import get_current_exchange
+
     return get_current_exchange()
 
 
@@ -106,7 +107,9 @@ def _get_exchange_credentials(exchange_id: str) -> ExchangeCredentials | None:
             return ExchangeCredentials(
                 api_key=settings.okx_api_key.get_secret_value(),
                 api_secret=settings.okx_api_secret.get_secret_value(),
-                passphrase=settings.okx_passphrase.get_secret_value() if settings.okx_passphrase else None,
+                passphrase=settings.okx_passphrase.get_secret_value()
+                if settings.okx_passphrase
+                else None,
                 sandbox=settings.okx_testnet,
             )
     elif exchange_id == "binance":
@@ -116,13 +119,12 @@ def _get_exchange_credentials(exchange_id: str) -> ExchangeCredentials | None:
                 api_secret=settings.binance_api_secret.get_secret_value(),
                 sandbox=settings.binance_testnet,
             )
-    elif exchange_id == "bybit":
-        if settings.bybit_api_key and settings.bybit_api_secret:
-            return ExchangeCredentials(
-                api_key=settings.bybit_api_key.get_secret_value(),
-                api_secret=settings.bybit_api_secret.get_secret_value(),
-                sandbox=settings.bybit_testnet,
-            )
+    elif exchange_id == "bybit" and settings.bybit_api_key and settings.bybit_api_secret:
+        return ExchangeCredentials(
+            api_key=settings.bybit_api_key.get_secret_value(),
+            api_secret=settings.bybit_api_secret.get_secret_value(),
+            sandbox=settings.bybit_testnet,
+        )
     return None
 
 

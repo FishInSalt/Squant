@@ -36,10 +36,12 @@ async def get_exchange_config() -> ApiResponse[dict]:
 
     Returns the currently active exchange and list of supported exchanges.
     """
-    return ApiResponse(data={
-        "current": _current_exchange,
-        "supported": list(SUPPORTED_EXCHANGES),
-    })
+    return ApiResponse(
+        data={
+            "current": _current_exchange,
+            "supported": list(SUPPORTED_EXCHANGES),
+        }
+    )
 
 
 @router.put("/exchange/{exchange_id}")
@@ -73,10 +75,12 @@ async def set_exchange(
         logger.warning(f"Failed to switch WebSocket exchange: {e}")
         # Don't fail the request, REST API will still work
 
-    return ApiResponse(data={
-        "current": exchange_id,
-        "previous": old_exchange,
-    })
+    return ApiResponse(
+        data={
+            "current": exchange_id,
+            "previous": old_exchange,
+        }
+    )
 
 
 @router.get("/ticker/{symbol:path}", response_model=ApiResponse[TickerResponse])
@@ -135,9 +139,7 @@ async def get_tickers(
     """
     try:
         # Filter empty strings from split result
-        symbol_list = (
-            [s.strip() for s in symbols.split(",") if s.strip()] if symbols else None
-        )
+        symbol_list = [s.strip() for s in symbols.split(",") if s.strip()] if symbols else None
         tickers = await exchange.get_tickers(symbol_list)
 
         # Sort tickers if sort_by is specified

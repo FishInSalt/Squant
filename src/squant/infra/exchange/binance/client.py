@@ -299,7 +299,9 @@ class BinanceClient:
         Returns:
             Parsed response data (dict for most endpoints, list for batch operations).
         """
-        return await self.request("POST", path, params=params, body=body, authenticated=authenticated)
+        return await self.request(
+            "POST", path, params=params, body=body, authenticated=authenticated
+        )
 
     async def delete(
         self,

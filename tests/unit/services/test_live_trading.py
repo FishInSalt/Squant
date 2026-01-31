@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from decimal import Decimal
-from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
-from uuid import UUID, uuid4
+from uuid import uuid4
 
 import pytest
 
@@ -24,7 +23,6 @@ from squant.services.live_trading import (
     SessionNotFoundError,
     StrategyInstantiationError,
 )
-
 
 # --- Error Tests ---
 
@@ -132,9 +130,7 @@ class TestLiveStrategyRunRepository:
         repo.session.execute.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_list_by_mode_with_pagination(
-        self, repo: LiveStrategyRunRepository
-    ) -> None:
+    async def test_list_by_mode_with_pagination(self, repo: LiveStrategyRunRepository) -> None:
         """Test listing runs with pagination."""
         mock_scalars = MagicMock()
         mock_scalars.all.return_value = []
@@ -158,9 +154,7 @@ class TestLiveStrategyRunRepository:
             mock_count.assert_called_once_with(mode=RunMode.LIVE)
 
     @pytest.mark.asyncio
-    async def test_count_by_mode_with_status(
-        self, repo: LiveStrategyRunRepository
-    ) -> None:
+    async def test_count_by_mode_with_status(self, repo: LiveStrategyRunRepository) -> None:
         """Test counting runs with status filter."""
         with patch.object(repo, "count", new_callable=AsyncMock) as mock_count:
             mock_count.return_value = 2
@@ -171,9 +165,7 @@ class TestLiveStrategyRunRepository:
             mock_count.assert_called_once_with(mode=RunMode.LIVE, status=RunStatus.RUNNING)
 
     @pytest.mark.asyncio
-    async def test_mark_orphaned_sessions(
-        self, repo: LiveStrategyRunRepository
-    ) -> None:
+    async def test_mark_orphaned_sessions(self, repo: LiveStrategyRunRepository) -> None:
         """Test marking orphaned sessions as ERROR."""
         repo.session.execute.return_value.rowcount = 3
 
@@ -210,13 +202,11 @@ class TestLiveEquityCurveRepository:
         repo.session.flush.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_bulk_create_with_records(
-        self, repo: LiveEquityCurveRepository
-    ) -> None:
+    async def test_bulk_create_with_records(self, repo: LiveEquityCurveRepository) -> None:
         """Test bulk_create with records."""
         records = [
             {
-                "time": datetime.now(timezone.utc),
+                "time": datetime.now(UTC),
                 "run_id": str(uuid4()),
                 "equity": Decimal("10000"),
                 "cash": Decimal("5000"),
@@ -283,9 +273,7 @@ class TestRiskConfigValidation:
         # Should not raise
         service._validate_risk_config(config)
 
-    def test_validate_invalid_max_position_size(
-        self, service: LiveTradingService
-    ) -> None:
+    def test_validate_invalid_max_position_size(self, service: LiveTradingService) -> None:
         """Test validation fails for invalid max_position_size."""
         config = RiskConfig(
             max_position_size=Decimal("0"),
@@ -299,9 +287,7 @@ class TestRiskConfigValidation:
 
         assert "max_position_size" in str(exc_info.value)
 
-    def test_validate_negative_max_position_size(
-        self, service: LiveTradingService
-    ) -> None:
+    def test_validate_negative_max_position_size(self, service: LiveTradingService) -> None:
         """Test validation fails for negative max_position_size."""
         config = RiskConfig(
             max_position_size=Decimal("-0.5"),
@@ -315,9 +301,7 @@ class TestRiskConfigValidation:
 
         assert "max_position_size" in str(exc_info.value)
 
-    def test_validate_invalid_max_order_size(
-        self, service: LiveTradingService
-    ) -> None:
+    def test_validate_invalid_max_order_size(self, service: LiveTradingService) -> None:
         """Test validation fails for invalid max_order_size."""
         config = RiskConfig(
             max_position_size=Decimal("0.5"),
@@ -331,9 +315,7 @@ class TestRiskConfigValidation:
 
         assert "max_order_size" in str(exc_info.value)
 
-    def test_validate_invalid_daily_trade_limit(
-        self, service: LiveTradingService
-    ) -> None:
+    def test_validate_invalid_daily_trade_limit(self, service: LiveTradingService) -> None:
         """Test validation fails for invalid daily_trade_limit."""
         config = RiskConfig(
             max_position_size=Decimal("0.5"),
@@ -347,9 +329,7 @@ class TestRiskConfigValidation:
 
         assert "daily_trade_limit" in str(exc_info.value)
 
-    def test_validate_invalid_daily_loss_limit(
-        self, service: LiveTradingService
-    ) -> None:
+    def test_validate_invalid_daily_loss_limit(self, service: LiveTradingService) -> None:
         """Test validation fails for invalid daily_loss_limit."""
         config = RiskConfig(
             max_position_size=Decimal("0.5"),
@@ -384,9 +364,7 @@ class TestCreateAdapter:
             assert adapter == mock_adapter
             mock_adapter_class.assert_called_once()
 
-    def test_create_okx_adapter_case_insensitive(
-        self, service: LiveTradingService
-    ) -> None:
+    def test_create_okx_adapter_case_insensitive(self, service: LiveTradingService) -> None:
         """Test creating OKX adapter is case insensitive."""
         with patch("squant.services.live_trading.OKXAdapter") as mock_adapter_class:
             mock_adapter = MagicMock()
@@ -415,11 +393,6 @@ class TestInstantiateStrategy:
 
     def test_instantiate_valid_strategy(self, service: LiveTradingService) -> None:
         """Test instantiating a valid strategy."""
-        valid_code = """
-class MyStrategy(Strategy):
-    def on_candle(self, ctx, bar):
-        pass
-"""
         with patch("squant.services.live_trading.compile_strategy") as mock_compile:
             mock_compiled = MagicMock()
             mock_compiled.code_object = compile(
@@ -450,18 +423,15 @@ class MyStrategy(Strategy):
                     mock_class.__bases__ = (mock_strategy_base,)
                     locals_dict["MyStrategy"] = mock_class
 
-                with patch("builtins.exec", patched_exec):
-                    with patch(
-                        "squant.services.live_trading.issubclass",
-                        return_value=True,
-                    ):
-                        # This test is complex due to exec and type checking
-                        # Just verify the method doesn't crash with valid setup
-                        pass
+                with patch("builtins.exec", patched_exec), patch(
+                    "squant.services.live_trading.issubclass",
+                    return_value=True,
+                ):
+                    # This test is complex due to exec and type checking
+                    # Just verify the method doesn't crash with valid setup
+                    pass
 
-    def test_instantiate_invalid_strategy_no_subclass(
-        self, service: LiveTradingService
-    ) -> None:
+    def test_instantiate_invalid_strategy_no_subclass(self, service: LiveTradingService) -> None:
         """Test error when strategy code has no Strategy subclass."""
         invalid_code = """
 class NotAStrategy:
@@ -483,9 +453,7 @@ class NotAStrategy:
 
             assert "No Strategy subclass found" in str(exc_info.value)
 
-    def test_instantiate_strategy_compilation_error(
-        self, service: LiveTradingService
-    ) -> None:
+    def test_instantiate_strategy_compilation_error(self, service: LiveTradingService) -> None:
         """Test error when strategy code fails compilation."""
         with patch("squant.services.live_trading.compile_strategy") as mock_compile:
             mock_compile.side_effect = ValueError("Invalid syntax")
@@ -528,9 +496,7 @@ class TestStartSession:
         """Test error when strategy not found."""
         strategy_id = uuid4()
 
-        with patch(
-            "squant.services.strategy.StrategyRepository"
-        ) as mock_repo_class:
+        with patch("squant.services.strategy.StrategyRepository") as mock_repo_class:
             mock_repo = MagicMock()
             mock_repo.get = AsyncMock(return_value=None)
             mock_repo_class.return_value = mock_repo
@@ -547,9 +513,7 @@ class TestStartSession:
                 )
 
     @pytest.mark.asyncio
-    async def test_start_invalid_risk_config(
-        self, service: LiveTradingService
-    ) -> None:
+    async def test_start_invalid_risk_config(self, service: LiveTradingService) -> None:
         """Test error with invalid risk configuration."""
         invalid_config = RiskConfig(
             max_position_size=Decimal("0"),  # Invalid
@@ -574,9 +538,7 @@ class TestStartSession:
         """Test error when exchange connection fails."""
         strategy_id = uuid4()
 
-        with patch(
-            "squant.services.strategy.StrategyRepository"
-        ) as mock_repo_class:
+        with patch("squant.services.strategy.StrategyRepository") as mock_repo_class:
             mock_repo = MagicMock()
             mock_strategy = MagicMock()
             mock_strategy.code = "class MyStrategy(Strategy): pass"
@@ -585,9 +547,7 @@ class TestStartSession:
 
             with patch("squant.services.live_trading.OKXAdapter") as mock_adapter_class:
                 mock_adapter = MagicMock()
-                mock_adapter.connect = AsyncMock(
-                    side_effect=Exception("Connection refused")
-                )
+                mock_adapter.connect = AsyncMock(side_effect=Exception("Connection refused"))
                 mock_adapter_class.return_value = mock_adapter
 
                 with pytest.raises(ExchangeConnectionError) as exc_info:
@@ -618,9 +578,7 @@ class TestStopSession:
         return LiveTradingService(mock_session)
 
     @pytest.mark.asyncio
-    async def test_stop_session_not_found(
-        self, service: LiveTradingService
-    ) -> None:
+    async def test_stop_session_not_found(self, service: LiveTradingService) -> None:
         """Test error when session not found."""
         run_id = uuid4()
 
@@ -631,9 +589,7 @@ class TestStopSession:
                 await service.stop(run_id)
 
     @pytest.mark.asyncio
-    async def test_stop_inactive_session(
-        self, service: LiveTradingService
-    ) -> None:
+    async def test_stop_inactive_session(self, service: LiveTradingService) -> None:
         """Test stopping an inactive session (not in session manager)."""
         run_id = uuid4()
         mock_run = MagicMock()
@@ -642,9 +598,7 @@ class TestStopSession:
         with patch.object(service.run_repo, "get", new_callable=AsyncMock) as mock_get:
             mock_get.return_value = mock_run
 
-            with patch(
-                "squant.services.live_trading.get_live_session_manager"
-            ) as mock_get_manager:
+            with patch("squant.services.live_trading.get_live_session_manager") as mock_get_manager:
                 mock_manager = MagicMock()
                 mock_manager.get.return_value = None
                 mock_get_manager.return_value = mock_manager
@@ -660,9 +614,7 @@ class TestStopSession:
                     mock_update.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_stop_active_session(
-        self, service: LiveTradingService
-    ) -> None:
+    async def test_stop_active_session(self, service: LiveTradingService) -> None:
         """Test stopping an active session."""
         run_id = uuid4()
         mock_run = MagicMock()
@@ -679,9 +631,7 @@ class TestStopSession:
             mock_engine.get_pending_snapshots.return_value = []
             mock_engine.stop = AsyncMock()
 
-            with patch(
-                "squant.services.live_trading.get_live_session_manager"
-            ) as mock_get_manager:
+            with patch("squant.services.live_trading.get_live_session_manager") as mock_get_manager:
                 mock_manager = MagicMock()
                 mock_manager.get.return_value = mock_engine
                 mock_manager.unregister = AsyncMock()
@@ -723,9 +673,7 @@ class TestEmergencyClose:
         return LiveTradingService(mock_session)
 
     @pytest.mark.asyncio
-    async def test_emergency_close_session_not_found(
-        self, service: LiveTradingService
-    ) -> None:
+    async def test_emergency_close_session_not_found(self, service: LiveTradingService) -> None:
         """Test error when session not found."""
         run_id = uuid4()
 
@@ -736,9 +684,7 @@ class TestEmergencyClose:
                 await service.emergency_close(run_id)
 
     @pytest.mark.asyncio
-    async def test_emergency_close_inactive_session(
-        self, service: LiveTradingService
-    ) -> None:
+    async def test_emergency_close_inactive_session(self, service: LiveTradingService) -> None:
         """Test emergency close on inactive session."""
         run_id = uuid4()
         mock_run = MagicMock()
@@ -747,9 +693,7 @@ class TestEmergencyClose:
         with patch.object(service.run_repo, "get", new_callable=AsyncMock) as mock_get:
             mock_get.return_value = mock_run
 
-            with patch(
-                "squant.services.live_trading.get_live_session_manager"
-            ) as mock_get_manager:
+            with patch("squant.services.live_trading.get_live_session_manager") as mock_get_manager:
                 mock_manager = MagicMock()
                 mock_manager.get.return_value = None  # Not active
                 mock_get_manager.return_value = mock_manager
@@ -760,9 +704,7 @@ class TestEmergencyClose:
                 assert "not currently running" in result["message"]
 
     @pytest.mark.asyncio
-    async def test_emergency_close_active_session(
-        self, service: LiveTradingService
-    ) -> None:
+    async def test_emergency_close_active_session(self, service: LiveTradingService) -> None:
         """Test emergency close on active session."""
         run_id = uuid4()
         mock_run = MagicMock()
@@ -779,18 +721,14 @@ class TestEmergencyClose:
                 return_value={"orders_cancelled": 2, "positions_closed": 1}
             )
 
-            with patch(
-                "squant.services.live_trading.get_live_session_manager"
-            ) as mock_get_manager:
+            with patch("squant.services.live_trading.get_live_session_manager") as mock_get_manager:
                 mock_manager = MagicMock()
                 mock_manager.get.return_value = mock_engine
                 mock_manager.unregister = AsyncMock()
                 mock_manager.get_subscribed_symbols.return_value = set()
                 mock_get_manager.return_value = mock_manager
 
-                with patch.object(
-                    service.run_repo, "update", new_callable=AsyncMock
-                ):
+                with patch.object(service.run_repo, "update", new_callable=AsyncMock):
                     with patch(
                         "squant.websocket.manager.get_stream_manager"
                     ) as mock_stream_manager:
@@ -820,9 +758,7 @@ class TestGetStatus:
         return LiveTradingService(mock_session)
 
     @pytest.mark.asyncio
-    async def test_get_status_not_found(
-        self, service: LiveTradingService
-    ) -> None:
+    async def test_get_status_not_found(self, service: LiveTradingService) -> None:
         """Test error when session not found."""
         run_id = uuid4()
 
@@ -833,9 +769,7 @@ class TestGetStatus:
                 await service.get_status(run_id)
 
     @pytest.mark.asyncio
-    async def test_get_status_active_session(
-        self, service: LiveTradingService
-    ) -> None:
+    async def test_get_status_active_session(self, service: LiveTradingService) -> None:
         """Test getting status of active session."""
         run_id = uuid4()
         strategy_id = str(uuid4())
@@ -854,9 +788,7 @@ class TestGetStatus:
                 "equity": "10500",
             }
 
-            with patch(
-                "squant.services.live_trading.get_live_session_manager"
-            ) as mock_get_manager:
+            with patch("squant.services.live_trading.get_live_session_manager") as mock_get_manager:
                 mock_manager = MagicMock()
                 mock_manager.get.return_value = mock_engine
                 mock_get_manager.return_value = mock_manager
@@ -867,9 +799,7 @@ class TestGetStatus:
                 assert result["is_running"] is True
 
     @pytest.mark.asyncio
-    async def test_get_status_inactive_session(
-        self, service: LiveTradingService
-    ) -> None:
+    async def test_get_status_inactive_session(self, service: LiveTradingService) -> None:
         """Test getting status of inactive session from database."""
         run_id = uuid4()
         strategy_id = str(uuid4())
@@ -880,16 +810,14 @@ class TestGetStatus:
         mock_run.symbol = "BTC/USDT"
         mock_run.timeframe = "1m"
         mock_run.initial_capital = Decimal("10000")
-        mock_run.started_at = datetime.now(timezone.utc)
+        mock_run.started_at = datetime.now(UTC)
         mock_run.stopped_at = None
         mock_run.error_message = None
 
         with patch.object(service.run_repo, "get", new_callable=AsyncMock) as mock_get:
             mock_get.return_value = mock_run
 
-            with patch(
-                "squant.services.live_trading.get_live_session_manager"
-            ) as mock_get_manager:
+            with patch("squant.services.live_trading.get_live_session_manager") as mock_get_manager:
                 mock_manager = MagicMock()
                 mock_manager.get.return_value = None  # Not active
                 mock_get_manager.return_value = mock_manager
@@ -912,9 +840,7 @@ class TestListActive:
 
     def test_list_active_empty(self, service: LiveTradingService) -> None:
         """Test listing active sessions when none exist."""
-        with patch(
-            "squant.services.live_trading.get_live_session_manager"
-        ) as mock_get_manager:
+        with patch("squant.services.live_trading.get_live_session_manager") as mock_get_manager:
             mock_manager = MagicMock()
             mock_manager.list_sessions.return_value = []
             mock_get_manager.return_value = mock_manager
@@ -930,9 +856,7 @@ class TestListActive:
             {"run_id": str(uuid4()), "symbol": "ETH/USDT"},
         ]
 
-        with patch(
-            "squant.services.live_trading.get_live_session_manager"
-        ) as mock_get_manager:
+        with patch("squant.services.live_trading.get_live_session_manager") as mock_get_manager:
             mock_manager = MagicMock()
             mock_manager.list_sessions.return_value = sessions
             mock_get_manager.return_value = mock_manager
@@ -957,15 +881,11 @@ class TestListRuns:
         return LiveTradingService(mock_session)
 
     @pytest.mark.asyncio
-    async def test_list_runs_default_pagination(
-        self, service: LiveTradingService
-    ) -> None:
+    async def test_list_runs_default_pagination(self, service: LiveTradingService) -> None:
         """Test listing runs with default pagination."""
         mock_runs = [MagicMock(), MagicMock()]
 
-        with patch.object(
-            service.run_repo, "list_by_mode", new_callable=AsyncMock
-        ) as mock_list:
+        with patch.object(service.run_repo, "list_by_mode", new_callable=AsyncMock) as mock_list:
             mock_list.return_value = mock_runs
 
             with patch.object(
@@ -977,18 +897,12 @@ class TestListRuns:
 
                 assert len(runs) == 2
                 assert total == 2
-                mock_list.assert_called_once_with(
-                    RunMode.LIVE, status=None, offset=0, limit=20
-                )
+                mock_list.assert_called_once_with(RunMode.LIVE, status=None, offset=0, limit=20)
 
     @pytest.mark.asyncio
-    async def test_list_runs_with_pagination(
-        self, service: LiveTradingService
-    ) -> None:
+    async def test_list_runs_with_pagination(self, service: LiveTradingService) -> None:
         """Test listing runs with custom pagination."""
-        with patch.object(
-            service.run_repo, "list_by_mode", new_callable=AsyncMock
-        ) as mock_list:
+        with patch.object(service.run_repo, "list_by_mode", new_callable=AsyncMock) as mock_list:
             mock_list.return_value = []
 
             with patch.object(
@@ -999,18 +913,12 @@ class TestListRuns:
                 _, total = await service.list_runs(page=3, page_size=10)
 
                 assert total == 50
-                mock_list.assert_called_once_with(
-                    RunMode.LIVE, status=None, offset=20, limit=10
-                )
+                mock_list.assert_called_once_with(RunMode.LIVE, status=None, offset=20, limit=10)
 
     @pytest.mark.asyncio
-    async def test_list_runs_with_status_filter(
-        self, service: LiveTradingService
-    ) -> None:
+    async def test_list_runs_with_status_filter(self, service: LiveTradingService) -> None:
         """Test listing runs with status filter."""
-        with patch.object(
-            service.run_repo, "list_by_mode", new_callable=AsyncMock
-        ) as mock_list:
+        with patch.object(service.run_repo, "list_by_mode", new_callable=AsyncMock) as mock_list:
             mock_list.return_value = []
 
             with patch.object(
@@ -1076,15 +984,11 @@ class TestPersistSnapshots:
         return LiveTradingService(mock_session)
 
     @pytest.mark.asyncio
-    async def test_persist_snapshots_no_engine(
-        self, service: LiveTradingService
-    ) -> None:
+    async def test_persist_snapshots_no_engine(self, service: LiveTradingService) -> None:
         """Test persisting snapshots when engine not found."""
         run_id = uuid4()
 
-        with patch(
-            "squant.services.live_trading.get_live_session_manager"
-        ) as mock_get_manager:
+        with patch("squant.services.live_trading.get_live_session_manager") as mock_get_manager:
             mock_manager = MagicMock()
             mock_manager.get.return_value = None
             mock_get_manager.return_value = mock_manager
@@ -1094,17 +998,13 @@ class TestPersistSnapshots:
             assert result == 0
 
     @pytest.mark.asyncio
-    async def test_persist_snapshots_no_snapshots(
-        self, service: LiveTradingService
-    ) -> None:
+    async def test_persist_snapshots_no_snapshots(self, service: LiveTradingService) -> None:
         """Test persisting when no pending snapshots."""
         run_id = uuid4()
         mock_engine = MagicMock()
         mock_engine.get_pending_snapshots.return_value = []
 
-        with patch(
-            "squant.services.live_trading.get_live_session_manager"
-        ) as mock_get_manager:
+        with patch("squant.services.live_trading.get_live_session_manager") as mock_get_manager:
             mock_manager = MagicMock()
             mock_manager.get.return_value = mock_engine
             mock_get_manager.return_value = mock_manager
@@ -1114,23 +1014,21 @@ class TestPersistSnapshots:
             assert result == 0
 
     @pytest.mark.asyncio
-    async def test_persist_snapshots_with_data(
-        self, service: LiveTradingService
-    ) -> None:
+    async def test_persist_snapshots_with_data(self, service: LiveTradingService) -> None:
         """Test persisting snapshots with data."""
         from squant.engine.backtest.types import EquitySnapshot
 
         run_id = uuid4()
         snapshots = [
             EquitySnapshot(
-                time=datetime.now(timezone.utc),
+                time=datetime.now(UTC),
                 equity=Decimal("10000"),
                 cash=Decimal("5000"),
                 position_value=Decimal("5000"),
                 unrealized_pnl=Decimal("0"),
             ),
             EquitySnapshot(
-                time=datetime.now(timezone.utc),
+                time=datetime.now(UTC),
                 equity=Decimal("10100"),
                 cash=Decimal("5000"),
                 position_value=Decimal("5100"),
@@ -1141,9 +1039,7 @@ class TestPersistSnapshots:
         mock_engine = MagicMock()
         mock_engine.get_pending_snapshots.return_value = snapshots
 
-        with patch(
-            "squant.services.live_trading.get_live_session_manager"
-        ) as mock_get_manager:
+        with patch("squant.services.live_trading.get_live_session_manager") as mock_get_manager:
             mock_manager = MagicMock()
             mock_manager.get.return_value = mock_engine
             mock_get_manager.return_value = mock_manager
@@ -1172,9 +1068,7 @@ class TestMarkOrphanedSessions:
         return LiveTradingService(mock_session)
 
     @pytest.mark.asyncio
-    async def test_mark_orphaned_sessions(
-        self, service: LiveTradingService
-    ) -> None:
+    async def test_mark_orphaned_sessions(self, service: LiveTradingService) -> None:
         """Test marking orphaned sessions."""
         with patch.object(
             service.run_repo, "mark_orphaned_sessions", new_callable=AsyncMock
@@ -1197,20 +1091,14 @@ class TestCheckUnsubscribe:
         return LiveTradingService(mock_session)
 
     @pytest.mark.asyncio
-    async def test_unsubscribe_when_no_other_sessions(
-        self, service: LiveTradingService
-    ) -> None:
+    async def test_unsubscribe_when_no_other_sessions(self, service: LiveTradingService) -> None:
         """Test unsubscribing when no other sessions need the feed."""
-        with patch(
-            "squant.services.live_trading.get_live_session_manager"
-        ) as mock_get_manager:
+        with patch("squant.services.live_trading.get_live_session_manager") as mock_get_manager:
             mock_manager = MagicMock()
             mock_manager.get_subscribed_symbols.return_value = set()  # No other sessions
             mock_get_manager.return_value = mock_manager
 
-            with patch(
-                "squant.websocket.manager.get_stream_manager"
-            ) as mock_stream_mgr:
+            with patch("squant.websocket.manager.get_stream_manager") as mock_stream_mgr:
                 mock_stream = MagicMock()
                 mock_stream.unsubscribe_candles = AsyncMock()
                 mock_stream_mgr.return_value = mock_stream
@@ -1224,17 +1112,13 @@ class TestCheckUnsubscribe:
         self, service: LiveTradingService
     ) -> None:
         """Test not unsubscribing when other sessions need the feed."""
-        with patch(
-            "squant.services.live_trading.get_live_session_manager"
-        ) as mock_get_manager:
+        with patch("squant.services.live_trading.get_live_session_manager") as mock_get_manager:
             mock_manager = MagicMock()
             # Other session still needs this feed
             mock_manager.get_subscribed_symbols.return_value = {("BTC/USDT", "1m")}
             mock_get_manager.return_value = mock_manager
 
-            with patch(
-                "squant.websocket.manager.get_stream_manager"
-            ) as mock_stream_mgr:
+            with patch("squant.websocket.manager.get_stream_manager") as mock_stream_mgr:
                 mock_stream = MagicMock()
                 mock_stream.unsubscribe_candles = AsyncMock()
                 mock_stream_mgr.return_value = mock_stream

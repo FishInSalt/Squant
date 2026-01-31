@@ -212,7 +212,9 @@ class TestCCXTStreamProviderSubscriptions:
         with patch("squant.infra.exchange.ccxt.provider.ccxtpro") as mock_ccxt:
             mock_exchange = MagicMock()
             mock_exchange.load_markets = AsyncMock()
-            mock_exchange.watch_tickers = AsyncMock(return_value={"BTC/USDT": {"symbol": "BTC/USDT"}})
+            mock_exchange.watch_tickers = AsyncMock(
+                return_value={"BTC/USDT": {"symbol": "BTC/USDT"}}
+            )
             mock_exchange.close = AsyncMock()
             mock_exchange.markets = {"BTC/USDT": {"symbol": "BTC/USDT"}}
             mock_ccxt.okx.return_value = mock_exchange
@@ -289,7 +291,9 @@ class TestCCXTStreamProviderSubscriptions:
         with patch("squant.infra.exchange.ccxt.provider.ccxtpro") as mock_ccxt:
             mock_exchange = MagicMock()
             mock_exchange.load_markets = AsyncMock()
-            mock_exchange.watch_tickers = AsyncMock(return_value={"BTC/USDT": {"symbol": "BTC/USDT"}})
+            mock_exchange.watch_tickers = AsyncMock(
+                return_value={"BTC/USDT": {"symbol": "BTC/USDT"}}
+            )
             mock_exchange.close = AsyncMock()
             mock_exchange.markets = {"BTC/USDT": {"symbol": "BTC/USDT"}}
             mock_ccxt.okx.return_value = mock_exchange

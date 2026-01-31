@@ -21,9 +21,7 @@ class Watchlist(Base, UUIDMixin):
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
 
-    __table_args__ = (
-        UniqueConstraint("exchange", "symbol", name="uq_watchlist_exchange_symbol"),
-    )
+    __table_args__ = (UniqueConstraint("exchange", "symbol", name="uq_watchlist_exchange_symbol"),)
 
     def __repr__(self) -> str:
         return f"<Watchlist(exchange={self.exchange}, symbol={self.symbol})>"
@@ -47,9 +45,7 @@ class Kline(Base):
     close: Mapped[Decimal] = mapped_column(Numeric(20, 8), nullable=False)
     volume: Mapped[Decimal] = mapped_column(Numeric(30, 8), nullable=False)
 
-    __table_args__ = (
-        Index("idx_klines_symbol_time", "exchange", "symbol", "timeframe", "time"),
-    )
+    __table_args__ = (Index("idx_klines_symbol_time", "exchange", "symbol", "timeframe", "time"),)
 
     def __repr__(self) -> str:
         return f"<Kline({self.exchange}:{self.symbol}:{self.timeframe} @ {self.time})>"

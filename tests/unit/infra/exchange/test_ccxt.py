@@ -11,18 +11,15 @@ import pytest
 from squant.infra.exchange.ccxt.rest_adapter import CCXTRestAdapter
 from squant.infra.exchange.ccxt.transformer import CCXTDataTransformer
 from squant.infra.exchange.ccxt.types import (
-    ExchangeCredentials,
     SUPPORTED_EXCHANGES,
     TIMEFRAME_MAP,
+    ExchangeCredentials,
 )
 from squant.infra.exchange.exceptions import (
-    ExchangeAPIError,
     ExchangeAuthenticationError,
     ExchangeConnectionError,
-    InvalidOrderError,
-    OrderNotFoundError,
 )
-from squant.infra.exchange.types import OrderRequest, CancelOrderRequest, TimeFrame
+from squant.infra.exchange.types import CancelOrderRequest, OrderRequest, TimeFrame
 from squant.models.enums import OrderSide, OrderType
 
 
@@ -138,9 +135,7 @@ class TestCCXTDataTransformer:
         """Test converting OHLCV to WSCandle."""
         ohlcv = [1704067200000, 50000.0, 51000.0, 49000.0, 50500.0, 100.0]
 
-        result = CCXTDataTransformer.ohlcv_to_ws_candle(
-            ohlcv, symbol="BTC/USDT", timeframe="1h"
-        )
+        result = CCXTDataTransformer.ohlcv_to_ws_candle(ohlcv, symbol="BTC/USDT", timeframe="1h")
 
         assert result.symbol == "BTC/USDT"
         assert result.timeframe == "1h"
@@ -155,9 +150,7 @@ class TestCCXTDataTransformer:
         ohlcv = [1704067200000, 50000.0]  # Too short
 
         with pytest.raises(ValueError, match="Invalid OHLCV array length"):
-            CCXTDataTransformer.ohlcv_to_ws_candle(
-                ohlcv, symbol="BTC/USDT", timeframe="1h"
-            )
+            CCXTDataTransformer.ohlcv_to_ws_candle(ohlcv, symbol="BTC/USDT", timeframe="1h")
 
     def test_ohlcv_to_ws_candle_with_is_closed(self):
         """Test OHLCV with is_closed flag."""
@@ -476,9 +469,7 @@ class TestCCXTRestAdapterMarketData:
             ]
         )
 
-        result = await connected_adapter.get_candlesticks(
-            "BTC/USDT", TimeFrame.H1, limit=2
-        )
+        result = await connected_adapter.get_candlesticks("BTC/USDT", TimeFrame.H1, limit=2)
 
         assert len(result) == 2
         assert result[0].open == Decimal("50000.0")

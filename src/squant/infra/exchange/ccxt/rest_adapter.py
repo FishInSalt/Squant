@@ -64,8 +64,7 @@ class CCXTRestAdapter(ExchangeAdapter):
         """
         if exchange_id.lower() not in SUPPORTED_EXCHANGES:
             raise ValueError(
-                f"Unsupported exchange: {exchange_id}. "
-                f"Supported: {', '.join(SUPPORTED_EXCHANGES)}"
+                f"Unsupported exchange: {exchange_id}. Supported: {', '.join(SUPPORTED_EXCHANGES)}"
             )
 
         self._exchange_id = exchange_id.lower()
@@ -467,8 +466,12 @@ class CCXTRestAdapter(ExchangeAdapter):
             ask=Decimal(str(ticker["ask"])) if ticker.get("ask") is not None else None,
             high_24h=Decimal(str(ticker["high"])) if ticker.get("high") is not None else None,
             low_24h=Decimal(str(ticker["low"])) if ticker.get("low") is not None else None,
-            volume_24h=Decimal(str(ticker["baseVolume"])) if ticker.get("baseVolume") is not None else None,
-            volume_quote_24h=Decimal(str(ticker["quoteVolume"])) if ticker.get("quoteVolume") is not None else None,
+            volume_24h=Decimal(str(ticker["baseVolume"]))
+            if ticker.get("baseVolume") is not None
+            else None,
+            volume_quote_24h=Decimal(str(ticker["quoteVolume"]))
+            if ticker.get("quoteVolume") is not None
+            else None,
             change_24h=Decimal(str(change_24h)) if change_24h is not None else None,
             change_pct_24h=Decimal(str(change_pct_24h)) if change_pct_24h is not None else None,
             timestamp=self._parse_timestamp(ticker.get("timestamp")),
@@ -482,8 +485,8 @@ class CCXTRestAdapter(ExchangeAdapter):
             order_id=str(order.get("id", "")),
             client_order_id=order.get("clientOrderId"),
             symbol=order.get("symbol", ""),
-            side=OrderSide(order.get("side", "buy").upper()),
-            type=OrderType(order.get("type", "market").upper()),
+            side=OrderSide(order.get("side", "buy")),
+            type=OrderType(order.get("type", "market")),
             status=self._map_order_status(order.get("status", "")),
             price=Decimal(str(order["price"])) if order.get("price") is not None else None,
             amount=Decimal(str(order.get("amount", 0))),

@@ -91,16 +91,14 @@ class TestOHLCVTransformation:
         """Test converting CCXT OHLCV array to WSCandle."""
         ohlcv = [
             1704067200000,  # timestamp
-            42000.0,        # open
-            43000.0,        # high
-            41500.0,        # low
-            42500.0,        # close
-            1000.0,         # volume
+            42000.0,  # open
+            43000.0,  # high
+            41500.0,  # low
+            42500.0,  # close
+            1000.0,  # volume
         ]
 
-        result = CCXTDataTransformer.ohlcv_to_ws_candle(
-            ohlcv, "BTC/USDT", "1h", is_closed=True
-        )
+        result = CCXTDataTransformer.ohlcv_to_ws_candle(ohlcv, "BTC/USDT", "1h", is_closed=True)
 
         assert result.symbol == "BTC/USDT"
         assert result.timeframe == "1h"
@@ -116,9 +114,7 @@ class TestOHLCVTransformation:
         """Test converting an unclosed candle."""
         ohlcv = [1704067200000, 100.0, 105.0, 98.0, 102.0, 500.0]
 
-        result = CCXTDataTransformer.ohlcv_to_ws_candle(
-            ohlcv, "ETH/USDT", "5m", is_closed=False
-        )
+        result = CCXTDataTransformer.ohlcv_to_ws_candle(ohlcv, "ETH/USDT", "5m", is_closed=False)
 
         assert result.is_closed is False
         assert result.timeframe == "5m"
@@ -127,9 +123,7 @@ class TestOHLCVTransformation:
         """Test handling None volume value."""
         ohlcv = [1704067200000, 100.0, 105.0, 98.0, 102.0, None]
 
-        result = CCXTDataTransformer.ohlcv_to_ws_candle(
-            ohlcv, "SOL/USDT", "1m", is_closed=False
-        )
+        result = CCXTDataTransformer.ohlcv_to_ws_candle(ohlcv, "SOL/USDT", "1m", is_closed=False)
 
         assert result.volume == Decimal("0")
 
@@ -138,16 +132,12 @@ class TestOHLCVTransformation:
         ohlcv_short = [1704067200000, 100.0, 105.0]  # Only 3 elements
 
         with pytest.raises(ValueError, match="Invalid OHLCV array length"):
-            CCXTDataTransformer.ohlcv_to_ws_candle(
-                ohlcv_short, "BTC/USDT", "1h", is_closed=False
-            )
+            CCXTDataTransformer.ohlcv_to_ws_candle(ohlcv_short, "BTC/USDT", "1h", is_closed=False)
 
     def test_ohlcv_to_ws_candle_empty_array(self) -> None:
         """Test that empty OHLCV array raises ValueError."""
         with pytest.raises(ValueError, match="Invalid OHLCV array length"):
-            CCXTDataTransformer.ohlcv_to_ws_candle(
-                [], "BTC/USDT", "1h", is_closed=False
-            )
+            CCXTDataTransformer.ohlcv_to_ws_candle([], "BTC/USDT", "1h", is_closed=False)
 
 
 class TestTradeTransformation:
@@ -209,9 +199,7 @@ class TestOrderBookTransformation:
             ],
         }
 
-        result = CCXTDataTransformer.orderbook_to_ws_orderbook(
-            ccxt_orderbook, "BTC/USDT", limit=3
-        )
+        result = CCXTDataTransformer.orderbook_to_ws_orderbook(ccxt_orderbook, "BTC/USDT", limit=3)
 
         assert result.symbol == "BTC/USDT"
         assert len(result.bids) == 3
@@ -230,9 +218,7 @@ class TestOrderBookTransformation:
             "asks": [[42001.0 + i, 1.0] for i in range(10)],
         }
 
-        result = CCXTDataTransformer.orderbook_to_ws_orderbook(
-            ccxt_orderbook, "BTC/USDT", limit=5
-        )
+        result = CCXTDataTransformer.orderbook_to_ws_orderbook(ccxt_orderbook, "BTC/USDT", limit=5)
 
         assert len(result.bids) == 5
         assert len(result.asks) == 5

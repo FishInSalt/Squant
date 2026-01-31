@@ -51,9 +51,9 @@ def get_redis_pool() -> redis.ConnectionPool:
         try:
             # These options are platform-specific (Linux)
             socket_keepalive_options = {
-                socket.TCP_KEEPIDLE: 60,   # Start keepalive after 60s idle
+                socket.TCP_KEEPIDLE: 60,  # Start keepalive after 60s idle
                 socket.TCP_KEEPINTVL: 10,  # Send probe every 10s
-                socket.TCP_KEEPCNT: 3,     # Close after 3 failed probes
+                socket.TCP_KEEPCNT: 3,  # Close after 3 failed probes
             }
         except AttributeError:
             # Windows/macOS may not have these constants
@@ -71,13 +71,13 @@ def get_redis_pool() -> redis.ConnectionPool:
             max_connections=100,  # For WebSocket pubsub connections
             # Connection health and keepalive
             health_check_interval=30,  # Check connection health every 30s
-            socket_keepalive=True,     # Enable TCP keepalive
+            socket_keepalive=True,  # Enable TCP keepalive
             socket_keepalive_options=socket_keepalive_options if socket_keepalive_options else None,
-            socket_timeout=5.0,        # Socket timeout for operations
+            socket_timeout=5.0,  # Socket timeout for operations
             socket_connect_timeout=5.0,  # Connection timeout
             # Retry configuration
             retry=retry,
-            retry_on_timeout=True,     # Retry on timeout errors
+            retry_on_timeout=True,  # Retry on timeout errors
         )
         logger.info("Redis connection pool created with keepalive and health checks")
     return _redis_pool

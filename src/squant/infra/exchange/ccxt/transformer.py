@@ -53,15 +53,25 @@ class CCXTDataTransformer:
         """
         return WSTicker(
             symbol=ticker.get("symbol", ""),
-            last=Decimal(str(ticker.get("last", 0))) if ticker.get("last") is not None else Decimal("0"),
+            last=Decimal(str(ticker.get("last", 0)))
+            if ticker.get("last") is not None
+            else Decimal("0"),
             bid=Decimal(str(ticker["bid"])) if ticker.get("bid") is not None else None,
             ask=Decimal(str(ticker["ask"])) if ticker.get("ask") is not None else None,
-            bid_size=Decimal(str(ticker["bidVolume"])) if ticker.get("bidVolume") is not None else None,
-            ask_size=Decimal(str(ticker["askVolume"])) if ticker.get("askVolume") is not None else None,
+            bid_size=Decimal(str(ticker["bidVolume"]))
+            if ticker.get("bidVolume") is not None
+            else None,
+            ask_size=Decimal(str(ticker["askVolume"]))
+            if ticker.get("askVolume") is not None
+            else None,
             high_24h=Decimal(str(ticker["high"])) if ticker.get("high") is not None else None,
             low_24h=Decimal(str(ticker["low"])) if ticker.get("low") is not None else None,
-            volume_24h=Decimal(str(ticker["baseVolume"])) if ticker.get("baseVolume") is not None else None,
-            volume_quote_24h=Decimal(str(ticker["quoteVolume"])) if ticker.get("quoteVolume") is not None else None,
+            volume_24h=Decimal(str(ticker["baseVolume"]))
+            if ticker.get("baseVolume") is not None
+            else None,
+            volume_quote_24h=Decimal(str(ticker["quoteVolume"]))
+            if ticker.get("quoteVolume") is not None
+            else None,
             open_24h=Decimal(str(ticker["open"])) if ticker.get("open") is not None else None,
             timestamp=CCXTDataTransformer._parse_timestamp(ticker.get("timestamp")),
         )

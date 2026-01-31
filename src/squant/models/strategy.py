@@ -1,6 +1,6 @@
 """Strategy and StrategyRun models."""
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from decimal import Decimal
 from typing import TYPE_CHECKING
 
@@ -40,9 +40,7 @@ class Strategy(Base, UUIDMixin, TimestampMixin):
     )
 
     # Relationships
-    runs: Mapped[list["StrategyRun"]] = relationship(
-        back_populates="strategy", lazy="selectin"
-    )
+    runs: Mapped[list["StrategyRun"]] = relationship(back_populates="strategy", lazy="selectin")
 
     __table_args__ = (Index("idx_strategies_status", "status"),)
 
@@ -68,26 +66,16 @@ class StrategyRun(Base, UUIDMixin):
     params: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
 
     # Backtest specific
-    backtest_start: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
-    backtest_end: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
-    initial_capital: Mapped[Decimal | None] = mapped_column(
-        Numeric(20, 8), nullable=True
-    )
+    backtest_start: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    backtest_end: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    initial_capital: Mapped[Decimal | None] = mapped_column(Numeric(20, 8), nullable=True)
     commission_rate: Mapped[Decimal] = mapped_column(
         Numeric(10, 8), default=Decimal("0.001"), nullable=False
     )
-    slippage: Mapped[Decimal | None] = mapped_column(
-        Numeric(10, 8), nullable=True
-    )
+    slippage: Mapped[Decimal | None] = mapped_column(Numeric(10, 8), nullable=True)
 
     # Run state
-    status: Mapped[RunStatus] = mapped_column(
-        String(16), default=RunStatus.PENDING, nullable=False
-    )
+    status: Mapped[RunStatus] = mapped_column(String(16), default=RunStatus.PENDING, nullable=False)
     process_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
 
@@ -95,34 +83,26 @@ class StrategyRun(Base, UUIDMixin):
     result: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
 
     # Timestamps
-    started_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
-    stopped_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    stopped_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
-        default=lambda: datetime.now(timezone.utc),
+        default=lambda: datetime.now(UTC),
         server_default=func.now(),
         nullable=False,
     )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
-        default=lambda: datetime.now(timezone.utc),
+        default=lambda: datetime.now(UTC),
         server_default=func.now(),
-        onupdate=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(UTC),
         nullable=False,
     )
 
     # Relationships
     strategy: Mapped["Strategy"] = relationship(back_populates="runs")
-    account: Mapped["ExchangeAccount | None"] = relationship(
-        back_populates="strategy_runs"
-    )
-    orders: Mapped[list["Order"]] = relationship(
-        back_populates="run", lazy="selectin"
-    )
+    account: Mapped["ExchangeAccount | None"] = relationship(back_populates="strategy_runs")
+    orders: Mapped[list["Order"]] = relationship(back_populates="run", lazy="selectin")
 
     __table_args__ = (
         Index("idx_strategy_runs_strategy", "strategy_id"),

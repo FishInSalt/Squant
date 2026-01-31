@@ -6,7 +6,7 @@ Drives strategy execution with actual order placement via exchange adapter.
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
@@ -14,7 +14,7 @@ from uuid import UUID
 from squant.engine.backtest.context import BacktestContext
 from squant.engine.backtest.strategy_base import Strategy
 from squant.engine.backtest.types import Bar, EquitySnapshot, Fill
-from squant.engine.risk import RiskCheckResult, RiskConfig, RiskManager
+from squant.engine.risk import RiskConfig, RiskManager
 from squant.infra.exchange.types import CancelOrderRequest, OrderRequest, OrderResponse
 from squant.models.enums import OrderSide, OrderStatus
 
@@ -242,7 +242,7 @@ class LiveTradingEngine:
             return False
         if self._last_active_at is None:
             return True
-        elapsed = (datetime.now(timezone.utc) - self._last_active_at).total_seconds()
+        elapsed = (datetime.now(UTC) - self._last_active_at).total_seconds()
         return elapsed < timeout_seconds
 
     async def start(self) -> None:
@@ -264,8 +264,8 @@ class LiveTradingEngine:
             await self._sync_balance()
 
             self._is_running = True
-            self._started_at = datetime.now(timezone.utc)
-            self._last_active_at = datetime.now(timezone.utc)
+            self._started_at = datetime.now(UTC)
+            self._last_active_at = datetime.now(UTC)
 
             # Call strategy initialization
             self._strategy.on_init()
@@ -307,7 +307,7 @@ class LiveTradingEngine:
                 self._error_message = f"Strategy stop failed: {e}"
 
         self._is_running = False
-        self._stopped_at = datetime.now(timezone.utc)
+        self._stopped_at = datetime.now(UTC)
 
     async def emergency_close(self) -> dict[str, Any]:
         """Emergency close all positions at market price.
@@ -340,16 +340,20 @@ class LiveTradingEngine:
                         amount=abs(position.amount),
                     )
 
-                    response = await self._adapter.place_order(order_request)
+                    await self._adapter.place_order(order_request)
                     results["positions_closed"] += 1
-                    logger.info(f"Emergency close order placed: {symbol} {side.value} {abs(position.amount)}")
+                    logger.info(
+                        f"Emergency close order placed: {symbol} {side.value} {abs(position.amount)}"
+                    )
 
                 except Exception as e:
                     logger.exception(f"Error closing position for {symbol}: {e}")
-                    results["errors"].append({
-                        "symbol": symbol,
-                        "error": str(e),
-                    })
+                    results["errors"].append(
+                        {
+                            "symbol": symbol,
+                            "error": str(e),
+                        }
+                    )
 
         # Stop the engine
         await self.stop(error="Emergency close executed", cancel_orders=False)
@@ -384,7 +388,7 @@ class LiveTradingEngine:
 
         try:
             # Update last activity timestamp
-            self._last_active_at = datetime.now(timezone.utc)
+            self._last_active_at = datetime.now(UTC)
 
             # Update current price
             self._current_price = candle.close
@@ -419,8 +423,7 @@ class LiveTradingEngine:
             self._bar_count += 1
 
             logger.debug(
-                f"Processed bar {self._bar_count} at {bar.time}, "
-                f"equity={self._context.equity}"
+                f"Processed bar {self._bar_count} at {bar.time}, equity={self._context.equity}"
             )
 
         except Exception as e:
@@ -458,7 +461,7 @@ class LiveTradingEngine:
         live_order.avg_fill_price = update.avg_price
         live_order.fee = update.fee or Decimal("0")
         live_order.fee_currency = update.fee_currency
-        live_order.updated_at = datetime.now(timezone.utc)
+        live_order.updated_at = datetime.now(UTC)
 
         logger.info(
             f"Order {internal_id} updated: {old_status.value} -> {new_status.value}, "
@@ -502,7 +505,8 @@ class LiveTradingEngine:
     async def _sync_pending_orders(self) -> None:
         """Sync pending order status from exchange."""
         pending_internal_ids = [
-            oid for oid, order in self._live_orders.items()
+            oid
+            for oid, order in self._live_orders.items()
             if not order.is_complete and order.exchange_order_id
         ]
 
@@ -525,7 +529,7 @@ class LiveTradingEngine:
         live_order.avg_fill_price = response.avg_price
         live_order.fee = response.fee or Decimal("0")
         live_order.fee_currency = response.fee_currency
-        live_order.updated_at = datetime.now(timezone.utc)
+        live_order.updated_at = datetime.now(UTC)
 
         # Process new fills
         if response.filled > old_filled:
@@ -545,7 +549,7 @@ class LiveTradingEngine:
             price=update.avg_price,
             amount=update.filled_size,
             fee=update.fee or Decimal("0"),
-            timestamp=datetime.now(timezone.utc),
+            timestamp=datetime.now(UTC),
         )
 
         # Process in context
@@ -569,7 +573,7 @@ class LiveTradingEngine:
             price=response.avg_price,
             amount=fill_amount,
             fee=response.fee or Decimal("0"),
-            timestamp=datetime.now(timezone.utc),
+            timestamp=datetime.now(UTC),
         )
 
         self._context._process_fill(fill)
@@ -606,9 +610,7 @@ class LiveTradingEngine:
             )
 
             if not risk_result.passed:
-                logger.warning(
-                    f"Order rejected by risk manager: {risk_result.reason}"
-                )
+                logger.warning(f"Order rejected by risk manager: {risk_result.reason}")
                 # Mark as rejected in context
                 order.status = OrderStatus.REJECTED
                 self._context._completed_orders.append(order)
@@ -647,7 +649,7 @@ class LiveTradingEngine:
                 price=order.price,
                 status=response.status,
             )
-            live_order.created_at = datetime.now(timezone.utc)
+            live_order.created_at = datetime.now(UTC)
 
             self._live_orders[order.id] = live_order
             self._exchange_order_map[response.order_id] = order.id
@@ -718,30 +720,34 @@ class LiveTradingEngine:
 
         pending_orders = []
         for order in self._context.pending_orders:
-            pending_orders.append({
-                "id": order.id,
-                "symbol": order.symbol,
-                "side": order.side.value,
-                "type": order.type.value,
-                "amount": str(order.amount),
-                "price": str(order.price) if order.price else None,
-                "status": order.status.value,
-                "created_at": order.created_at.isoformat() if order.created_at else None,
-            })
+            pending_orders.append(
+                {
+                    "id": order.id,
+                    "symbol": order.symbol,
+                    "side": order.side.value,
+                    "type": order.type.value,
+                    "amount": str(order.amount),
+                    "price": str(order.price) if order.price else None,
+                    "status": order.status.value,
+                    "created_at": order.created_at.isoformat() if order.created_at else None,
+                }
+            )
 
         # Get live order details
         live_orders = []
-        for oid, lo in self._live_orders.items():
+        for _oid, lo in self._live_orders.items():
             if not lo.is_complete:
-                live_orders.append({
-                    "internal_id": lo.internal_id,
-                    "exchange_id": lo.exchange_order_id,
-                    "symbol": lo.symbol,
-                    "side": lo.side.value,
-                    "amount": str(lo.amount),
-                    "filled": str(lo.filled_amount),
-                    "status": lo.status.value,
-                })
+                live_orders.append(
+                    {
+                        "internal_id": lo.internal_id,
+                        "exchange_id": lo.exchange_order_id,
+                        "symbol": lo.symbol,
+                        "side": lo.side.value,
+                        "amount": str(lo.amount),
+                        "filled": str(lo.filled_amount),
+                        "status": lo.status.value,
+                    }
+                )
 
         return {
             "run_id": str(self._run_id),

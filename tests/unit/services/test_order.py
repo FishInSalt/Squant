@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from decimal import Decimal
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
 import pytest
@@ -80,7 +80,7 @@ class TestOrderRepository:
         order.amount = Decimal("0.1")
         order.price = Decimal("50000")
         order.status = OrderStatus.PENDING
-        order.created_at = datetime.now(timezone.utc)
+        order.created_at = datetime.now(UTC)
         return order
 
     @pytest.mark.asyncio
@@ -127,7 +127,7 @@ class TestOrderRepository:
         mock_result.scalars.return_value = mock_scalars
         mock_session.execute.return_value = mock_result
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         result = await repository.list_by_account(
             sample_order.account_id,
             status=OrderStatus.PENDING,
@@ -231,7 +231,7 @@ class TestTradeRepository:
         trade.order_id = str(uuid4())
         trade.price = Decimal("50000")
         trade.amount = Decimal("0.1")
-        trade.timestamp = datetime.now(timezone.utc)
+        trade.timestamp = datetime.now(UTC)
         return trade
 
     @pytest.mark.asyncio
@@ -297,7 +297,7 @@ class TestOrderService:
         order.amount = Decimal("0.1")
         order.price = Decimal("50000")
         order.status = OrderStatus.PENDING
-        order.created_at = datetime.now(timezone.utc)
+        order.created_at = datetime.now(UTC)
         return order
 
     @pytest.fixture
@@ -424,7 +424,7 @@ class TestOrderService:
         service.order_repo.get = AsyncMock(return_value=sample_order)
         service.order_repo.update = AsyncMock(return_value=sample_order)
 
-        result = await service.cancel_order(sample_order.id)
+        await service.cancel_order(sample_order.id)
 
         # Should just mark as cancelled without calling exchange
         service.exchange.cancel_order.assert_not_called()
@@ -502,7 +502,7 @@ class TestOrderService:
         service.order_repo.update = AsyncMock(return_value=sample_order)
         service.exchange.get_order.side_effect = ExchangeOrderNotFound("exc-123")
 
-        result = await service.sync_order(sample_order.id)
+        await service.sync_order(sample_order.id)
 
         # Should mark as rejected
         service.order_repo.update.assert_called_once()

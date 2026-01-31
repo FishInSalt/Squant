@@ -68,6 +68,7 @@ packages = ["src/squant"]
 target-version = "py312"
 line-length = 100
 src = ["src"]
+extend-exclude = ["tests/templates/"]
 
 [tool.ruff.lint]
 select = [

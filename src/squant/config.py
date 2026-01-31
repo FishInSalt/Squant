@@ -9,7 +9,6 @@ from functools import cached_property, lru_cache
 from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-
 # =============================================================================
 # Nested Configuration Classes
 # =============================================================================
@@ -66,7 +65,9 @@ class LoggingSettings(BaseSettings):
         extra="ignore",
     )
 
-    level: str = Field(default="INFO", description="Log level: DEBUG, INFO, WARNING, ERROR, CRITICAL")
+    level: str = Field(
+        default="INFO", description="Log level: DEBUG, INFO, WARNING, ERROR, CRITICAL"
+    )
     format: str = Field(default="text", description="Log format: json or text")
     file: str | None = Field(default=None, description="Log file path (optional)")
 
@@ -103,7 +104,9 @@ class SecuritySettings(BaseSettings):
     secret_key: SecretStr = Field(description="Application secret key (min 32 chars)")
     encryption_key: SecretStr = Field(description="Key for encrypting stored API keys")
     jwt_algorithm: str = Field(default="HS256", description="JWT signing algorithm")
-    jwt_access_token_expire_minutes: int = Field(default=30, ge=1, description="JWT token expiry in minutes")
+    jwt_access_token_expire_minutes: int = Field(
+        default=30, ge=1, description="JWT token expiry in minutes"
+    )
 
     @field_validator("secret_key")
     @classmethod
@@ -165,8 +168,12 @@ class ExchangeStreamSettings(BaseSettings):
         extra="ignore",
     )
 
-    default_exchange: str = Field(default="okx", description="Default exchange: okx, binance, bybit")
-    use_ccxt_provider: bool = Field(default=True, description="Use CCXT for WebSocket (False = native OKX)")
+    default_exchange: str = Field(
+        default="okx", description="Default exchange: okx, binance, bybit"
+    )
+    use_ccxt_provider: bool = Field(
+        default=True, description="Use CCXT for WebSocket (False = native OKX)"
+    )
 
     @field_validator("default_exchange")
     @classmethod
@@ -186,9 +193,13 @@ class StrategySettings(BaseSettings):
         extra="ignore",
     )
 
-    max_processes: int = Field(default=5, ge=1, le=20, description="Max concurrent strategy processes")
+    max_processes: int = Field(
+        default=5, ge=1, le=20, description="Max concurrent strategy processes"
+    )
     memory_limit_mb: int = Field(default=512, ge=64, description="Memory limit per strategy (MB)")
-    cpu_limit_seconds: int = Field(default=60, ge=1, description="CPU time limit per execution (seconds)")
+    cpu_limit_seconds: int = Field(
+        default=60, ge=1, description="CPU time limit per execution (seconds)"
+    )
     sandbox_enabled: bool = Field(default=True, description="Enable RestrictedPython sandbox")
 
 
@@ -201,9 +212,15 @@ class RiskSettings(BaseSettings):
         extra="ignore",
     )
 
-    max_position_ratio: float = Field(default=0.3, ge=0.01, le=1.0, description="Max position as ratio of portfolio")
-    max_daily_loss_ratio: float = Field(default=0.05, ge=0.01, le=0.5, description="Max daily loss as ratio of portfolio")
-    max_orders_per_minute: int = Field(default=10, ge=1, description="Rate limit: orders per minute")
+    max_position_ratio: float = Field(
+        default=0.3, ge=0.01, le=1.0, description="Max position as ratio of portfolio"
+    )
+    max_daily_loss_ratio: float = Field(
+        default=0.05, ge=0.01, le=0.5, description="Max daily loss as ratio of portfolio"
+    )
+    max_orders_per_minute: int = Field(
+        default=10, ge=1, description="Rate limit: orders per minute"
+    )
 
 
 class PaperTradingSettings(BaseSettings):
@@ -215,14 +232,24 @@ class PaperTradingSettings(BaseSettings):
         extra="ignore",
     )
 
-    max_equity_curve_size: int = Field(default=10000, ge=100, description="Max equity curve data points")
-    max_completed_orders: int = Field(default=1000, ge=100, description="Max completed orders to keep")
+    max_equity_curve_size: int = Field(
+        default=10000, ge=100, description="Max equity curve data points"
+    )
+    max_completed_orders: int = Field(
+        default=1000, ge=100, description="Max completed orders to keep"
+    )
     max_fills: int = Field(default=5000, ge=100, description="Max order fills to keep")
     max_trades: int = Field(default=1000, ge=100, description="Max trades to keep")
     max_logs: int = Field(default=1000, ge=100, description="Max strategy logs to keep")
-    health_check_interval_seconds: int = Field(default=60, ge=10, description="Health check interval (seconds)")
-    session_timeout_seconds: int = Field(default=300, ge=60, description="Session timeout for stale detection")
-    persist_interval_seconds: int = Field(default=60, ge=10, description="Auto-persist interval (seconds)")
+    health_check_interval_seconds: int = Field(
+        default=60, ge=10, description="Health check interval (seconds)"
+    )
+    session_timeout_seconds: int = Field(
+        default=300, ge=60, description="Session timeout for stale detection"
+    )
+    persist_interval_seconds: int = Field(
+        default=60, ge=10, description="Auto-persist interval (seconds)"
+    )
 
 
 class CircuitBreakerSettings(BaseSettings):
@@ -234,8 +261,12 @@ class CircuitBreakerSettings(BaseSettings):
         extra="ignore",
     )
 
-    cooldown_minutes: int = Field(default=60, ge=1, description="Cooldown period after trigger (minutes)")
-    auto_enabled: bool = Field(default=False, description="Enable automatic circuit breaker triggers")
+    cooldown_minutes: int = Field(
+        default=60, ge=1, description="Cooldown period after trigger (minutes)"
+    )
+    auto_enabled: bool = Field(
+        default=False, description="Enable automatic circuit breaker triggers"
+    )
 
 
 # =============================================================================
@@ -261,7 +292,9 @@ class Settings(BaseSettings):
     # Application Settings
     # -------------------------------------------------------------------------
     app_name: str = Field(default="Squant", description="Application name")
-    app_env: str = Field(default="production", description="Environment: development, staging, production")
+    app_env: str = Field(
+        default="production", description="Environment: development, staging, production"
+    )
     debug: bool = Field(default=False, description="Enable debug mode")
     api_prefix: str = Field(default="/api/v1", description="API route prefix")
     allowed_origins: list[str] = Field(

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
@@ -63,7 +63,7 @@ class TestRiskRuleRepository:
         rule.type = RiskRuleType.POSITION_LIMIT
         rule.params = {"max_position": 10.0}
         rule.enabled = True
-        rule.created_at = datetime.now(timezone.utc)
+        rule.created_at = datetime.now(UTC)
         return rule
 
     @pytest.mark.asyncio
@@ -154,7 +154,7 @@ class TestRiskRuleService:
         rule.type = RiskRuleType.POSITION_LIMIT
         rule.params = {"max_position": 10.0}
         rule.enabled = True
-        rule.created_at = datetime.now(timezone.utc)
+        rule.created_at = datetime.now(UTC)
         return rule
 
     @pytest.mark.asyncio
@@ -187,7 +187,7 @@ class TestRiskRuleService:
             enabled=False,
         )
 
-        result = await service.create(request)
+        await service.create(request)
 
         call_kwargs = service.repository.create.call_args[1]
         assert call_kwargs["enabled"] is False
@@ -319,7 +319,7 @@ class TestRiskRuleService:
         service.repository.get = AsyncMock(return_value=sample_rule)
         service.repository.update = AsyncMock(return_value=sample_rule)
 
-        result = await service.toggle(sample_rule.id, enabled=True)
+        await service.toggle(sample_rule.id, enabled=True)
 
         service.repository.update.assert_called_once_with(sample_rule.id, enabled=True)
         service.session.commit.assert_called_once()
@@ -373,7 +373,7 @@ class TestRiskTriggerRepository:
         """Create sample risk trigger model."""
         trigger = MagicMock(spec=RiskTrigger)
         trigger.id = uuid4()
-        trigger.time = datetime.now(timezone.utc)
+        trigger.time = datetime.now(UTC)
         trigger.rule_id = str(uuid4())
         trigger.run_id = str(uuid4())
         trigger.trigger_type = "auto"
@@ -402,7 +402,7 @@ class TestRiskTriggerRepository:
         mock_result.scalars.return_value = mock_scalars
         mock_session.execute.return_value = mock_result
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         result = await repository.list_with_filters(
             offset=0, limit=10, start_time=now, end_time=now
         )
@@ -467,7 +467,7 @@ class TestRiskTriggerService:
         """Create sample risk trigger model."""
         trigger = MagicMock(spec=RiskTrigger)
         trigger.id = uuid4()
-        trigger.time = datetime.now(timezone.utc)
+        trigger.time = datetime.now(UTC)
         trigger.rule_id = str(uuid4())
         trigger.run_id = str(uuid4())
         trigger.trigger_type = "auto"
@@ -493,7 +493,7 @@ class TestRiskTriggerService:
 
         rule_id = uuid4()
         run_id = uuid4()
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
 
         triggers, total = await service.list_triggers(
             page=2,

@@ -70,9 +70,7 @@ class ExchangeAccountRepository(BaseRepository[ExchangeAccount]):
     def __init__(self, session: AsyncSession):
         super().__init__(ExchangeAccount, session)
 
-    async def get_by_exchange_and_name(
-        self, exchange: str, name: str
-    ) -> ExchangeAccount | None:
+    async def get_by_exchange_and_name(self, exchange: str, name: str) -> ExchangeAccount | None:
         """Get account by exchange and name combination.
 
         Args:
@@ -119,9 +117,7 @@ class ExchangeAccountRepository(BaseRepository[ExchangeAccount]):
         result = await self.session.execute(stmt)
         return list(result.scalars().all())
 
-    async def list_all(
-        self, exchange: str | None = None
-    ) -> list[ExchangeAccount]:
+    async def list_all(self, exchange: str | None = None) -> list[ExchangeAccount]:
         """List all accounts with optional exchange filter.
 
         Args:
@@ -160,9 +156,7 @@ class ExchangeAccountService:
             AccountNameExistsError: If name already exists for this exchange.
         """
         # Check name uniqueness for this exchange
-        existing = await self.repository.get_by_exchange_and_name(
-            request.exchange, request.name
-        )
+        existing = await self.repository.get_by_exchange_and_name(request.exchange, request.name)
         if existing:
             raise AccountNameExistsError(request.exchange, request.name)
 
@@ -261,9 +255,7 @@ class ExchangeAccountService:
             existing_creds = self.get_decrypted_credentials(account)
 
             api_key = (
-                request.api_key.get_secret_value()
-                if request.api_key
-                else existing_creds["api_key"]
+                request.api_key.get_secret_value() if request.api_key else existing_creds["api_key"]
             )
             api_secret = (
                 request.api_secret.get_secret_value()
@@ -301,9 +293,7 @@ class ExchangeAccountService:
             await self.session.rollback()
             # Handle unique constraint violation (race condition)
             if "uq_exchange_account_name" in str(e).lower():
-                raise AccountNameExistsError(
-                    account.exchange, request.name or account.name
-                ) from e
+                raise AccountNameExistsError(account.exchange, request.name or account.name) from e
             raise
 
         # Refresh to get updated data

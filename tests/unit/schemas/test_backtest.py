@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from decimal import Decimal
 from uuid import uuid4
 
@@ -28,8 +28,8 @@ class TestRunBacktestRequest:
 
     def test_valid_minimal_request(self):
         """Test creating request with required fields."""
-        start = datetime(2024, 1, 1, tzinfo=timezone.utc)
-        end = datetime(2024, 6, 1, tzinfo=timezone.utc)
+        start = datetime(2024, 1, 1, tzinfo=UTC)
+        end = datetime(2024, 6, 1, tzinfo=UTC)
 
         request = RunBacktestRequest(
             strategy_id=uuid4(),
@@ -49,8 +49,8 @@ class TestRunBacktestRequest:
 
     def test_full_request(self):
         """Test creating request with all fields."""
-        start = datetime(2024, 1, 1, tzinfo=timezone.utc)
-        end = datetime(2024, 6, 1, tzinfo=timezone.utc)
+        start = datetime(2024, 1, 1, tzinfo=UTC)
+        end = datetime(2024, 6, 1, tzinfo=UTC)
 
         request = RunBacktestRequest(
             strategy_id=uuid4(),
@@ -71,8 +71,8 @@ class TestRunBacktestRequest:
 
     def test_initial_capital_must_be_positive(self):
         """Test initial capital must be greater than 0."""
-        start = datetime(2024, 1, 1, tzinfo=timezone.utc)
-        end = datetime(2024, 6, 1, tzinfo=timezone.utc)
+        start = datetime(2024, 1, 1, tzinfo=UTC)
+        end = datetime(2024, 6, 1, tzinfo=UTC)
 
         with pytest.raises(ValidationError):
             RunBacktestRequest(
@@ -87,8 +87,8 @@ class TestRunBacktestRequest:
 
     def test_commission_rate_range(self):
         """Test commission rate must be between 0 and 1."""
-        start = datetime(2024, 1, 1, tzinfo=timezone.utc)
-        end = datetime(2024, 6, 1, tzinfo=timezone.utc)
+        start = datetime(2024, 1, 1, tzinfo=UTC)
+        end = datetime(2024, 6, 1, tzinfo=UTC)
 
         # Negative should fail
         with pytest.raises(ValidationError):
@@ -118,8 +118,8 @@ class TestRunBacktestRequest:
 
     def test_symbol_validation(self):
         """Test symbol field validation."""
-        start = datetime(2024, 1, 1, tzinfo=timezone.utc)
-        end = datetime(2024, 6, 1, tzinfo=timezone.utc)
+        start = datetime(2024, 1, 1, tzinfo=UTC)
+        end = datetime(2024, 6, 1, tzinfo=UTC)
 
         with pytest.raises(ValidationError):
             RunBacktestRequest(
@@ -138,8 +138,8 @@ class TestCreateBacktestRequest:
 
     def test_valid_request(self):
         """Test creating valid request."""
-        start = datetime(2024, 1, 1, tzinfo=timezone.utc)
-        end = datetime(2024, 6, 1, tzinfo=timezone.utc)
+        start = datetime(2024, 1, 1, tzinfo=UTC)
+        end = datetime(2024, 6, 1, tzinfo=UTC)
 
         request = CreateBacktestRequest(
             strategy_id=uuid4(),
@@ -156,8 +156,8 @@ class TestCreateBacktestRequest:
 
     def test_same_validation_as_run_request(self):
         """Test has same validation as RunBacktestRequest."""
-        start = datetime(2024, 1, 1, tzinfo=timezone.utc)
-        end = datetime(2024, 6, 1, tzinfo=timezone.utc)
+        start = datetime(2024, 1, 1, tzinfo=UTC)
+        end = datetime(2024, 6, 1, tzinfo=UTC)
 
         with pytest.raises(ValidationError):
             CreateBacktestRequest(
@@ -176,8 +176,8 @@ class TestCheckDataRequest:
 
     def test_valid_request(self):
         """Test creating valid request."""
-        start = datetime(2024, 1, 1, tzinfo=timezone.utc)
-        end = datetime(2024, 6, 1, tzinfo=timezone.utc)
+        start = datetime(2024, 1, 1, tzinfo=UTC)
+        end = datetime(2024, 6, 1, tzinfo=UTC)
 
         request = CheckDataRequest(
             exchange="okx",
@@ -201,7 +201,7 @@ class TestBacktestRunResponse:
 
     def test_full_response(self):
         """Test creating full response."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         response = BacktestRunResponse(
             id=uuid4(),
             strategy_id=uuid4(),
@@ -229,7 +229,7 @@ class TestBacktestRunResponse:
 
     def test_pending_response(self):
         """Test response for pending backtest."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         response = BacktestRunResponse(
             id=uuid4(),
             strategy_id=uuid4(),
@@ -265,7 +265,7 @@ class TestBacktestListItem:
 
     def test_list_item(self):
         """Test creating list item."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         item = BacktestListItem(
             id=uuid4(),
             strategy_id=uuid4(),
@@ -289,7 +289,7 @@ class TestEquityCurvePoint:
 
     def test_equity_point(self):
         """Test creating equity curve point."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         point = EquityCurvePoint(
             time=now,
             equity=Decimal("10500"),
@@ -312,8 +312,8 @@ class TestTradeRecordResponse:
 
     def test_closed_trade(self):
         """Test creating closed trade record."""
-        entry_time = datetime(2024, 1, 1, 10, 0, tzinfo=timezone.utc)
-        exit_time = datetime(2024, 1, 1, 14, 0, tzinfo=timezone.utc)
+        entry_time = datetime(2024, 1, 1, 10, 0, tzinfo=UTC)
+        exit_time = datetime(2024, 1, 1, 14, 0, tzinfo=UTC)
 
         trade = TradeRecordResponse(
             symbol="BTC/USDT",
@@ -333,7 +333,7 @@ class TestTradeRecordResponse:
 
     def test_open_trade(self):
         """Test creating open trade record (no exit)."""
-        entry_time = datetime(2024, 1, 1, 10, 0, tzinfo=timezone.utc)
+        entry_time = datetime(2024, 1, 1, 10, 0, tzinfo=UTC)
 
         trade = TradeRecordResponse(
             symbol="BTC/USDT",
@@ -357,7 +357,7 @@ class TestBacktestDetailResponse:
 
     def test_detail_response(self):
         """Test creating detail response."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         run = BacktestRunResponse(
             id=uuid4(),
             strategy_id=uuid4(),
@@ -402,7 +402,7 @@ class TestBacktestDetailResponse:
 
     def test_total_bars_optional(self):
         """Test total_bars is optional."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         run = BacktestRunResponse(
             id=uuid4(),
             strategy_id=uuid4(),
@@ -435,7 +435,7 @@ class TestDataAvailabilityResponse:
 
     def test_data_available(self):
         """Test response when data is available."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         response = DataAvailabilityResponse(
             exchange="okx",
             symbol="BTC/USDT",
@@ -455,7 +455,7 @@ class TestDataAvailabilityResponse:
 
     def test_no_data(self):
         """Test response when no data available."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         response = DataAvailabilityResponse(
             exchange="okx",
             symbol="NEW/USDT",
@@ -478,7 +478,7 @@ class TestAvailableSymbolResponse:
 
     def test_available_symbol(self):
         """Test available symbol response."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         response = AvailableSymbolResponse(
             exchange="okx",
             symbol="BTC/USDT",

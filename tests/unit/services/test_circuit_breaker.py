@@ -100,9 +100,7 @@ class TestCircuitBreakerService:
         return redis
 
     @pytest.fixture
-    def service(
-        self, mock_session: MagicMock, mock_redis: MagicMock
-    ) -> CircuitBreakerService:
+    def service(self, mock_session: MagicMock, mock_redis: MagicMock) -> CircuitBreakerService:
         """Create service with mocks."""
         return CircuitBreakerService(mock_session, mock_redis)
 
@@ -132,9 +130,7 @@ class TestCircuitBreakerService:
         assert state.trigger_type == "manual"
 
     @pytest.mark.asyncio
-    async def test_get_state_invalid_json(
-        self, service: CircuitBreakerService
-    ) -> None:
+    async def test_get_state_invalid_json(self, service: CircuitBreakerService) -> None:
         """Test getting state with invalid JSON."""
         service.redis.get = AsyncMock(return_value="invalid json")
 
@@ -145,17 +141,13 @@ class TestCircuitBreakerService:
     @pytest.mark.asyncio
     async def test_trigger_success(self, service: CircuitBreakerService) -> None:
         """Test successful circuit breaker trigger."""
-        with patch(
-            "squant.services.circuit_breaker.get_live_session_manager"
-        ) as mock_live_mgr:
+        with patch("squant.services.circuit_breaker.get_live_session_manager") as mock_live_mgr:
             mock_live = MagicMock()
             mock_live.session_count = 2
             mock_live.stop_all = AsyncMock()
             mock_live_mgr.return_value = mock_live
 
-            with patch(
-                "squant.services.circuit_breaker.get_session_manager"
-            ) as mock_paper_mgr:
+            with patch("squant.services.circuit_breaker.get_session_manager") as mock_paper_mgr:
                 mock_paper = MagicMock()
                 mock_paper.session_count = 3
                 mock_paper.stop_all = AsyncMock()
@@ -175,9 +167,7 @@ class TestCircuitBreakerService:
                 mock_paper.stop_all.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_trigger_already_active(
-        self, service: CircuitBreakerService
-    ) -> None:
+    async def test_trigger_already_active(self, service: CircuitBreakerService) -> None:
         """Test trigger when already active."""
         state_data = {
             "is_active": True,
@@ -192,9 +182,7 @@ class TestCircuitBreakerService:
             await service.trigger(reason="Test")
 
     @pytest.mark.asyncio
-    async def test_trigger_lock_conflict(
-        self, service: CircuitBreakerService
-    ) -> None:
+    async def test_trigger_lock_conflict(self, service: CircuitBreakerService) -> None:
         """Test trigger when lock cannot be acquired."""
         service.redis.set = AsyncMock(return_value=False)  # Lock not acquired
 
@@ -202,21 +190,15 @@ class TestCircuitBreakerService:
             await service.trigger(reason="Test")
 
     @pytest.mark.asyncio
-    async def test_trigger_with_errors(
-        self, service: CircuitBreakerService
-    ) -> None:
+    async def test_trigger_with_errors(self, service: CircuitBreakerService) -> None:
         """Test trigger when sessions fail to stop."""
-        with patch(
-            "squant.services.circuit_breaker.get_live_session_manager"
-        ) as mock_live_mgr:
+        with patch("squant.services.circuit_breaker.get_live_session_manager") as mock_live_mgr:
             mock_live = MagicMock()
             mock_live.session_count = 1
             mock_live.stop_all = AsyncMock(side_effect=Exception("Live error"))
             mock_live_mgr.return_value = mock_live
 
-            with patch(
-                "squant.services.circuit_breaker.get_session_manager"
-            ) as mock_paper_mgr:
+            with patch("squant.services.circuit_breaker.get_session_manager") as mock_paper_mgr:
                 mock_paper = MagicMock()
                 mock_paper.session_count = 1
                 mock_paper.stop_all = AsyncMock()
@@ -228,17 +210,13 @@ class TestCircuitBreakerService:
                 assert "Live sessions" in result["errors"][0]
 
     @pytest.mark.asyncio
-    async def test_close_all_positions(
-        self, service: CircuitBreakerService
-    ) -> None:
+    async def test_close_all_positions(self, service: CircuitBreakerService) -> None:
         """Test close all positions."""
         from uuid import uuid4
 
         test_run_id = str(uuid4())
 
-        with patch(
-            "squant.services.circuit_breaker.get_live_session_manager"
-        ) as mock_live_mgr:
+        with patch("squant.services.circuit_breaker.get_live_session_manager") as mock_live_mgr:
             mock_engine = MagicMock()
             mock_engine.is_running = True
             mock_engine.emergency_close = AsyncMock(
@@ -250,9 +228,7 @@ class TestCircuitBreakerService:
             mock_live.get.return_value = mock_engine
             mock_live_mgr.return_value = mock_live
 
-            with patch(
-                "squant.services.circuit_breaker.get_session_manager"
-            ) as mock_paper_mgr:
+            with patch("squant.services.circuit_breaker.get_session_manager") as mock_paper_mgr:
                 mock_paper = MagicMock()
                 mock_paper.session_count = 2
                 mock_paper.stop_all = AsyncMock()
@@ -265,31 +241,23 @@ class TestCircuitBreakerService:
                 assert result["paper_positions_reset"] == 2
 
     @pytest.mark.asyncio
-    async def test_close_all_positions_with_errors(
-        self, service: CircuitBreakerService
-    ) -> None:
+    async def test_close_all_positions_with_errors(self, service: CircuitBreakerService) -> None:
         """Test close all positions with errors."""
         from uuid import uuid4
 
         test_run_id = str(uuid4())
 
-        with patch(
-            "squant.services.circuit_breaker.get_live_session_manager"
-        ) as mock_live_mgr:
+        with patch("squant.services.circuit_breaker.get_live_session_manager") as mock_live_mgr:
             mock_engine = MagicMock()
             mock_engine.is_running = True
-            mock_engine.emergency_close = AsyncMock(
-                side_effect=Exception("Close failed")
-            )
+            mock_engine.emergency_close = AsyncMock(side_effect=Exception("Close failed"))
 
             mock_live = MagicMock()
             mock_live.list_sessions.return_value = [{"run_id": test_run_id}]
             mock_live.get.return_value = mock_engine
             mock_live_mgr.return_value = mock_live
 
-            with patch(
-                "squant.services.circuit_breaker.get_session_manager"
-            ) as mock_paper_mgr:
+            with patch("squant.services.circuit_breaker.get_session_manager") as mock_paper_mgr:
                 mock_paper = MagicMock()
                 mock_paper.session_count = 0
                 mock_paper.stop_all = AsyncMock()
@@ -366,16 +334,12 @@ class TestCircuitBreakerService:
     @pytest.mark.asyncio
     async def test_get_status(self, service: CircuitBreakerService) -> None:
         """Test getting status."""
-        with patch(
-            "squant.services.circuit_breaker.get_live_session_manager"
-        ) as mock_live_mgr:
+        with patch("squant.services.circuit_breaker.get_live_session_manager") as mock_live_mgr:
             mock_live = MagicMock()
             mock_live.session_count = 5
             mock_live_mgr.return_value = mock_live
 
-            with patch(
-                "squant.services.circuit_breaker.get_session_manager"
-            ) as mock_paper_mgr:
+            with patch("squant.services.circuit_breaker.get_session_manager") as mock_paper_mgr:
                 mock_paper = MagicMock()
                 mock_paper.session_count = 3
                 mock_paper_mgr.return_value = mock_paper

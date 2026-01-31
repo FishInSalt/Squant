@@ -41,9 +41,7 @@ class TestCryptoManager:
         with pytest.raises(ValueError, match="32 bytes"):
             CryptoManager(os.urandom(64))
 
-    def test_encrypt_returns_ciphertext_and_nonce(
-        self, crypto_manager: CryptoManager
-    ) -> None:
+    def test_encrypt_returns_ciphertext_and_nonce(self, crypto_manager: CryptoManager) -> None:
         """Test that encrypt returns ciphertext and nonce."""
         plaintext = "secret_api_key_12345"
         ciphertext, nonce = crypto_manager.encrypt(plaintext)
@@ -54,16 +52,12 @@ class TestCryptoManager:
         assert len(ciphertext) > 0
         assert ciphertext != plaintext.encode()
 
-    def test_encrypt_empty_string_raises_error(
-        self, crypto_manager: CryptoManager
-    ) -> None:
+    def test_encrypt_empty_string_raises_error(self, crypto_manager: CryptoManager) -> None:
         """Test that encrypting empty string raises error."""
         with pytest.raises(EncryptionError, match="empty"):
             crypto_manager.encrypt("")
 
-    def test_decrypt_recovers_plaintext(
-        self, crypto_manager: CryptoManager
-    ) -> None:
+    def test_decrypt_recovers_plaintext(self, crypto_manager: CryptoManager) -> None:
         """Test that decrypt recovers original plaintext."""
         plaintext = "my_secret_api_key_xyz123"
         ciphertext, nonce = crypto_manager.encrypt(plaintext)
@@ -82,9 +76,7 @@ class TestCryptoManager:
         with pytest.raises(DecryptionError):
             manager2.decrypt(ciphertext, nonce)
 
-    def test_decrypt_with_wrong_nonce_fails(
-        self, crypto_manager: CryptoManager
-    ) -> None:
+    def test_decrypt_with_wrong_nonce_fails(self, crypto_manager: CryptoManager) -> None:
         """Test that decrypt fails with wrong nonce."""
         plaintext = "secret_data"
         ciphertext, _ = crypto_manager.encrypt(plaintext)
@@ -93,9 +85,7 @@ class TestCryptoManager:
         with pytest.raises(DecryptionError):
             crypto_manager.decrypt(ciphertext, wrong_nonce)
 
-    def test_decrypt_with_tampered_ciphertext_fails(
-        self, crypto_manager: CryptoManager
-    ) -> None:
+    def test_decrypt_with_tampered_ciphertext_fails(self, crypto_manager: CryptoManager) -> None:
         """Test that decrypt fails if ciphertext is tampered."""
         plaintext = "secret_data"
         ciphertext, nonce = crypto_manager.encrypt(plaintext)
@@ -108,9 +98,7 @@ class TestCryptoManager:
         with pytest.raises(DecryptionError):
             crypto_manager.decrypt(tampered, nonce)
 
-    def test_decrypt_empty_inputs_raises_error(
-        self, crypto_manager: CryptoManager
-    ) -> None:
+    def test_decrypt_empty_inputs_raises_error(self, crypto_manager: CryptoManager) -> None:
         """Test that decrypt with empty inputs raises error."""
         with pytest.raises(DecryptionError, match="missing"):
             crypto_manager.decrypt(b"", b"nonce_here")
@@ -118,9 +106,7 @@ class TestCryptoManager:
         with pytest.raises(DecryptionError, match="missing"):
             crypto_manager.decrypt(b"ciphertext", b"")
 
-    def test_unique_nonces_for_each_encryption(
-        self, crypto_manager: CryptoManager
-    ) -> None:
+    def test_unique_nonces_for_each_encryption(self, crypto_manager: CryptoManager) -> None:
         """Test that each encryption uses a unique nonce."""
         plaintext = "same_plaintext"
         results = [crypto_manager.encrypt(plaintext) for _ in range(10)]
@@ -134,9 +120,7 @@ class TestCryptoManager:
         # All ciphertexts should be unique (due to unique nonces)
         assert len(set(ciphertexts)) == len(ciphertexts)
 
-    def test_encrypt_unicode_characters(
-        self, crypto_manager: CryptoManager
-    ) -> None:
+    def test_encrypt_unicode_characters(self, crypto_manager: CryptoManager) -> None:
         """Test encryption/decryption of unicode text."""
         plaintext = "api_key_with_special_chars_\u00e9\u00e8\u00ea"
         ciphertext, nonce = crypto_manager.encrypt(plaintext)
@@ -161,9 +145,7 @@ class TestCryptoManagerDerivedNonce:
         """Create a CryptoManager with random key."""
         return CryptoManager(os.urandom(32))
 
-    def test_derive_nonce_creates_unique_nonces(
-        self, crypto_manager: CryptoManager
-    ) -> None:
+    def test_derive_nonce_creates_unique_nonces(self, crypto_manager: CryptoManager) -> None:
         """Test that derived nonces are unique for different indices."""
         base_nonce = os.urandom(CryptoManager.NONCE_SIZE)
 
@@ -172,9 +154,7 @@ class TestCryptoManagerDerivedNonce:
         # All derived nonces should be unique
         assert len(set(nonces)) == len(nonces)
 
-    def test_derive_nonce_is_deterministic(
-        self, crypto_manager: CryptoManager
-    ) -> None:
+    def test_derive_nonce_is_deterministic(self, crypto_manager: CryptoManager) -> None:
         """Test that same base + index always produces same derived nonce."""
         base_nonce = os.urandom(CryptoManager.NONCE_SIZE)
 
@@ -183,9 +163,7 @@ class TestCryptoManagerDerivedNonce:
 
         assert nonce1 == nonce2
 
-    def test_encrypt_decrypt_with_derived_nonce(
-        self, crypto_manager: CryptoManager
-    ) -> None:
+    def test_encrypt_decrypt_with_derived_nonce(self, crypto_manager: CryptoManager) -> None:
         """Test encrypt/decrypt roundtrip with derived nonces."""
         base_nonce = os.urandom(CryptoManager.NONCE_SIZE)
 
@@ -203,9 +181,7 @@ class TestCryptoManagerDerivedNonce:
         assert crypto_manager.decrypt_with_derived_nonce(ct2, base_nonce, 1) == plaintext2
         assert crypto_manager.decrypt_with_derived_nonce(ct3, base_nonce, 2) == plaintext3
 
-    def test_decrypt_with_wrong_index_fails(
-        self, crypto_manager: CryptoManager
-    ) -> None:
+    def test_decrypt_with_wrong_index_fails(self, crypto_manager: CryptoManager) -> None:
         """Test that decryption fails with wrong index."""
         base_nonce = os.urandom(CryptoManager.NONCE_SIZE)
 
@@ -216,16 +192,12 @@ class TestCryptoManagerDerivedNonce:
         with pytest.raises(DecryptionError):
             crypto_manager.decrypt_with_derived_nonce(ciphertext, base_nonce, 1)
 
-    def test_derive_nonce_invalid_base_nonce(
-        self, crypto_manager: CryptoManager
-    ) -> None:
+    def test_derive_nonce_invalid_base_nonce(self, crypto_manager: CryptoManager) -> None:
         """Test that invalid base nonce raises error."""
         with pytest.raises(ValueError, match="12 bytes"):
             crypto_manager.derive_nonce(b"short", 0)
 
-    def test_derive_nonce_negative_index(
-        self, crypto_manager: CryptoManager
-    ) -> None:
+    def test_derive_nonce_negative_index(self, crypto_manager: CryptoManager) -> None:
         """Test that negative index raises error."""
         base_nonce = os.urandom(CryptoManager.NONCE_SIZE)
         with pytest.raises(ValueError, match="non-negative"):

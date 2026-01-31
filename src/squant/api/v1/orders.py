@@ -15,14 +15,6 @@ from fastapi import APIRouter, Depends, HTTPException, Path, Query
 
 from squant.api.deps import DbSession, OKXExchange
 from squant.api.utils import ApiResponse, handle_exchange_error, paginate_params
-from squant.infra.exchange.exceptions import (
-    ExchangeAPIError,
-    ExchangeAuthenticationError,
-    ExchangeConnectionError,
-    ExchangeRateLimitError,
-    InvalidOrderError,
-    OrderNotFoundError as ExchangeOrderNotFound,
-)
 from squant.models.enums import OrderSide, OrderStatus
 from squant.models.exchange import ExchangeAccount
 from squant.schemas.order import (

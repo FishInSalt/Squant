@@ -168,9 +168,7 @@ class TestCreateBacktestAsync:
 class TestExecuteBacktest:
     """Tests for POST /api/v1/backtest/{run_id}/run endpoint."""
 
-    def test_execute_backtest_success(
-        self, client: TestClient, mock_backtest_run
-    ) -> None:
+    def test_execute_backtest_success(self, client: TestClient, mock_backtest_run) -> None:
         """Test successful backtest execution."""
         with patch("squant.api.v1.backtest.BacktestService") as mock_service_class:
             mock_service = MagicMock()
@@ -187,24 +185,18 @@ class TestExecuteBacktest:
 
         with patch("squant.api.v1.backtest.BacktestService") as mock_service_class:
             mock_service = MagicMock()
-            mock_service.run = AsyncMock(
-                side_effect=BacktestNotFoundError(str(run_id))
-            )
+            mock_service.run = AsyncMock(side_effect=BacktestNotFoundError(str(run_id)))
             mock_service_class.return_value = mock_service
 
             response = client.post(f"/api/v1/backtest/{run_id}/run")
 
             assert response.status_code == 404
 
-    def test_execute_backtest_error(
-        self, client: TestClient, mock_backtest_run
-    ) -> None:
+    def test_execute_backtest_error(self, client: TestClient, mock_backtest_run) -> None:
         """Test backtest execution failure."""
         with patch("squant.api.v1.backtest.BacktestService") as mock_service_class:
             mock_service = MagicMock()
-            mock_service.run = AsyncMock(
-                side_effect=BacktestError("Execution failed")
-            )
+            mock_service.run = AsyncMock(side_effect=BacktestError("Execution failed"))
             mock_service_class.return_value = mock_service
 
             response = client.post(f"/api/v1/backtest/{mock_backtest_run.id}/run")
@@ -215,9 +207,7 @@ class TestExecuteBacktest:
 class TestListBacktests:
     """Tests for GET /api/v1/backtest endpoint."""
 
-    def test_list_backtests_success(
-        self, client: TestClient, mock_backtest_run
-    ) -> None:
+    def test_list_backtests_success(self, client: TestClient, mock_backtest_run) -> None:
         """Test listing backtests."""
         with patch("squant.api.v1.backtest.BacktestService") as mock_service_class:
             mock_service = MagicMock()
@@ -232,9 +222,7 @@ class TestListBacktests:
             assert data["data"]["total"] == 1
             assert len(data["data"]["items"]) == 1
 
-    def test_list_backtests_with_pagination(
-        self, client: TestClient, mock_backtest_run
-    ) -> None:
+    def test_list_backtests_with_pagination(self, client: TestClient, mock_backtest_run) -> None:
         """Test listing backtests with pagination."""
         with patch("squant.api.v1.backtest.BacktestService") as mock_service_class:
             mock_service = MagicMock()
@@ -248,9 +236,7 @@ class TestListBacktests:
             assert data["data"]["page"] == 2
             assert data["data"]["page_size"] == 10
 
-    def test_list_backtests_with_status_filter(
-        self, client: TestClient, mock_backtest_run
-    ) -> None:
+    def test_list_backtests_with_status_filter(self, client: TestClient, mock_backtest_run) -> None:
         """Test listing backtests with status filter."""
         with patch("squant.api.v1.backtest.BacktestService") as mock_service_class:
             mock_service = MagicMock()
@@ -300,9 +286,7 @@ class TestListBacktests:
 class TestGetBacktest:
     """Tests for GET /api/v1/backtest/{run_id} endpoint."""
 
-    def test_get_backtest_success(
-        self, client: TestClient, mock_backtest_run
-    ) -> None:
+    def test_get_backtest_success(self, client: TestClient, mock_backtest_run) -> None:
         """Test getting a backtest by ID."""
         with patch("squant.api.v1.backtest.BacktestService") as mock_service_class:
             mock_service = MagicMock()
@@ -321,9 +305,7 @@ class TestGetBacktest:
 
         with patch("squant.api.v1.backtest.BacktestService") as mock_service_class:
             mock_service = MagicMock()
-            mock_service.get = AsyncMock(
-                side_effect=BacktestNotFoundError(str(run_id))
-            )
+            mock_service.get = AsyncMock(side_effect=BacktestNotFoundError(str(run_id)))
             mock_service_class.return_value = mock_service
 
             response = client.get(f"/api/v1/backtest/{run_id}")
@@ -334,9 +316,7 @@ class TestGetBacktest:
 class TestGetBacktestDetail:
     """Tests for GET /api/v1/backtest/{run_id}/detail endpoint."""
 
-    def test_get_backtest_detail_success(
-        self, client: TestClient, mock_backtest_run
-    ) -> None:
+    def test_get_backtest_detail_success(self, client: TestClient, mock_backtest_run) -> None:
         """Test getting backtest detail."""
         mock_equity_point = MagicMock()
         mock_equity_point.time = datetime.now(UTC)
@@ -365,9 +345,7 @@ class TestGetBacktestDetail:
 
         with patch("squant.api.v1.backtest.BacktestService") as mock_service_class:
             mock_service = MagicMock()
-            mock_service.get = AsyncMock(
-                side_effect=BacktestNotFoundError(str(run_id))
-            )
+            mock_service.get = AsyncMock(side_effect=BacktestNotFoundError(str(run_id)))
             mock_service_class.return_value = mock_service
 
             response = client.get(f"/api/v1/backtest/{run_id}/detail")
@@ -378,9 +356,7 @@ class TestGetBacktestDetail:
 class TestGetEquityCurve:
     """Tests for GET /api/v1/backtest/{run_id}/equity-curve endpoint."""
 
-    def test_get_equity_curve_success(
-        self, client: TestClient, mock_backtest_run
-    ) -> None:
+    def test_get_equity_curve_success(self, client: TestClient, mock_backtest_run) -> None:
         """Test getting equity curve."""
         mock_equity_point = MagicMock()
         mock_equity_point.time = datetime.now(UTC)
@@ -420,9 +396,7 @@ class TestGetEquityCurve:
 class TestDeleteBacktest:
     """Tests for DELETE /api/v1/backtest/{run_id} endpoint."""
 
-    def test_delete_backtest_success(
-        self, client: TestClient, mock_backtest_run
-    ) -> None:
+    def test_delete_backtest_success(self, client: TestClient, mock_backtest_run) -> None:
         """Test deleting a backtest."""
         with patch("squant.api.v1.backtest.BacktestService") as mock_service_class:
             mock_service = MagicMock()
@@ -441,9 +415,7 @@ class TestDeleteBacktest:
 
         with patch("squant.api.v1.backtest.BacktestService") as mock_service_class:
             mock_service = MagicMock()
-            mock_service.delete = AsyncMock(
-                side_effect=BacktestNotFoundError(str(run_id))
-            )
+            mock_service.delete = AsyncMock(side_effect=BacktestNotFoundError(str(run_id)))
             mock_service_class.return_value = mock_service
 
             response = client.delete(f"/api/v1/backtest/{run_id}")

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from decimal import Decimal
 from uuid import uuid4
 
@@ -126,7 +126,7 @@ class TestOrderDetail:
 
     def test_full_order_detail(self):
         """Test creating full order detail."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         detail = OrderDetail(
             id=uuid4(),
             account_id=uuid4(),
@@ -152,7 +152,7 @@ class TestOrderDetail:
 
     def test_optional_fields(self):
         """Test optional fields can be None."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         detail = OrderDetail(
             id=uuid4(),
             account_id=uuid4(),
@@ -186,7 +186,7 @@ class TestTradeDetail:
 
     def test_full_trade_detail(self):
         """Test creating full trade detail."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         trade = TradeDetail(
             id=uuid4(),
             order_id=uuid4(),
@@ -204,7 +204,7 @@ class TestTradeDetail:
 
     def test_optional_fields(self):
         """Test optional fields."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         trade = TradeDetail(
             id=uuid4(),
             order_id=uuid4(),
@@ -225,7 +225,7 @@ class TestOrderWithTrades:
 
     def test_order_with_trades(self):
         """Test order with trades list."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         order = OrderWithTrades(
             id=uuid4(),
             account_id=uuid4(),
@@ -271,7 +271,7 @@ class TestOrderWithTrades:
 
     def test_default_empty_trades(self):
         """Test default empty trades list."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         order = OrderWithTrades(
             id=uuid4(),
             account_id=uuid4(),
@@ -311,7 +311,7 @@ class TestListOrdersRequest:
 
     def test_with_filters(self):
         """Test request with filters."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         request = ListOrdersRequest(
             status=[OrderStatus.FILLED, OrderStatus.PARTIAL],
             symbol="BTC/USDT",
@@ -355,7 +355,7 @@ class TestOrderListData:
 
     def test_with_orders(self):
         """Test list with orders."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         order = OrderDetail(
             id=uuid4(),
             account_id=uuid4(),
@@ -386,7 +386,7 @@ class TestSyncOrdersResponse:
 
     def test_sync_response(self):
         """Test sync orders response."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         order = OrderDetail(
             id=uuid4(),
             account_id=uuid4(),
@@ -429,7 +429,15 @@ class TestOrderStatsResponse:
 
         assert stats.total == 100
         assert stats.filled == 70
-        assert stats.pending + stats.submitted + stats.partial + stats.filled + stats.cancelled + stats.rejected <= stats.total
+        assert (
+            stats.pending
+            + stats.submitted
+            + stats.partial
+            + stats.filled
+            + stats.cancelled
+            + stats.rejected
+            <= stats.total
+        )
 
     def test_all_fields_required(self):
         """Test all fields are required."""

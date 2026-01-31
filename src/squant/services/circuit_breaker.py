@@ -84,14 +84,10 @@ class CircuitBreakerState:
         """Convert to dictionary for Redis storage."""
         return {
             "is_active": self.is_active,
-            "triggered_at": (
-                self.triggered_at.isoformat() if self.triggered_at else None
-            ),
+            "triggered_at": (self.triggered_at.isoformat() if self.triggered_at else None),
             "trigger_type": self.trigger_type,
             "trigger_reason": self.trigger_reason,
-            "cooldown_until": (
-                self.cooldown_until.isoformat() if self.cooldown_until else None
-            ),
+            "cooldown_until": (self.cooldown_until.isoformat() if self.cooldown_until else None),
         }
 
     @classmethod
@@ -240,9 +236,7 @@ class CircuitBreakerService:
 
             now = datetime.now(UTC)
             cooldown = cooldown_minutes or self._settings.circuit_breaker_cooldown_minutes
-            cooldown_until = datetime.fromtimestamp(
-                now.timestamp() + cooldown * 60, tz=UTC
-            )
+            cooldown_until = datetime.fromtimestamp(now.timestamp() + cooldown * 60, tz=UTC)
 
             # Stop all sessions
             live_manager = get_live_session_manager()
@@ -346,18 +340,11 @@ class CircuitBreakerService:
             if engine and engine.is_running:
                 try:
                     close_result = await engine.emergency_close()
-                    results["live_positions_closed"] += close_result.get(
-                        "positions_closed", 0
-                    )
-                    results["orders_cancelled"] += close_result.get(
-                        "orders_cancelled", 0
-                    )
+                    results["live_positions_closed"] += close_result.get("positions_closed", 0)
+                    results["orders_cancelled"] += close_result.get("orders_cancelled", 0)
                     if close_result.get("errors"):
                         results["errors"].extend(
-                            [
-                                {"run_id": run_id, "error": e}
-                                for e in close_result["errors"]
-                            ]
+                            [{"run_id": run_id, "error": e} for e in close_result["errors"]]
                         )
                 except Exception as e:
                     logger.exception(f"Error closing positions for {run_id}")
@@ -449,14 +436,10 @@ async def get_circuit_breaker_status(redis: Redis) -> dict[str, Any]:
 
     return {
         "is_active": state.is_active,
-        "triggered_at": (
-            state.triggered_at.isoformat() if state.triggered_at else None
-        ),
+        "triggered_at": (state.triggered_at.isoformat() if state.triggered_at else None),
         "trigger_type": state.trigger_type,
         "trigger_reason": state.trigger_reason,
-        "cooldown_until": (
-            state.cooldown_until.isoformat() if state.cooldown_until else None
-        ),
+        "cooldown_until": (state.cooldown_until.isoformat() if state.cooldown_until else None),
         "active_live_sessions": live_manager.session_count,
         "active_paper_sessions": paper_manager.session_count,
     }

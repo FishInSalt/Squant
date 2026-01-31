@@ -9,7 +9,6 @@ The BacktestContext is injected into user strategies and provides:
 """
 
 from collections import deque
-from collections.abc import Sequence
 from datetime import datetime
 from decimal import Decimal
 from typing import Any
@@ -137,7 +136,9 @@ class BacktestContext:
     @property
     def positions(self) -> dict[str, Position]:
         """Get all positions (read-only copy)."""
-        return {k: Position(v.symbol, v.amount, v.avg_entry_price) for k, v in self._positions.items()}
+        return {
+            k: Position(v.symbol, v.amount, v.avg_entry_price) for k, v in self._positions.items()
+        }
 
     @property
     def current_bar(self) -> Bar | None:
@@ -545,9 +546,7 @@ class BacktestContext:
                 self._open_trade = None
 
             # Position reversed
-            elif (prev_amount > 0 and new_amount < 0) or (
-                prev_amount < 0 and new_amount > 0
-            ):
+            elif (prev_amount > 0 and new_amount < 0) or (prev_amount < 0 and new_amount > 0):
                 # Close existing trade
                 self._open_trade.exit_time = fill.timestamp
                 self._open_trade.exit_price = fill.price

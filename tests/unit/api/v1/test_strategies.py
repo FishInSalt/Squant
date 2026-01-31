@@ -145,9 +145,7 @@ class TestCreateStrategy:
         """Test creating strategy with existing name."""
         with patch("squant.api.v1.strategies.StrategyService") as mock_service_class:
             mock_service = MagicMock()
-            mock_service.create = AsyncMock(
-                side_effect=StrategyNameExistsError("Test Strategy")
-            )
+            mock_service.create = AsyncMock(side_effect=StrategyNameExistsError("Test Strategy"))
             mock_service_class.return_value = mock_service
 
             response = client.post("/api/v1/strategies", json=valid_create_request)
@@ -160,9 +158,7 @@ class TestCreateStrategy:
         """Test creating strategy with validation error."""
         with patch("squant.api.v1.strategies.StrategyService") as mock_service_class:
             mock_service = MagicMock()
-            mock_service.create = AsyncMock(
-                side_effect=StrategyValidationError(["Invalid syntax"])
-            )
+            mock_service.create = AsyncMock(side_effect=StrategyValidationError(["Invalid syntax"]))
             mock_service_class.return_value = mock_service
 
             response = client.post("/api/v1/strategies", json=valid_create_request)
@@ -197,9 +193,7 @@ class TestCreateStrategy:
 class TestListStrategies:
     """Tests for GET /api/v1/strategies endpoint."""
 
-    def test_list_strategies_success(
-        self, client: TestClient, mock_strategy
-    ) -> None:
+    def test_list_strategies_success(self, client: TestClient, mock_strategy) -> None:
         """Test listing strategies."""
         with patch("squant.api.v1.strategies.StrategyService") as mock_service_class:
             mock_service = MagicMock()
@@ -214,9 +208,7 @@ class TestListStrategies:
             assert data["data"]["total"] == 1
             assert len(data["data"]["items"]) == 1
 
-    def test_list_strategies_with_pagination(
-        self, client: TestClient, mock_strategy
-    ) -> None:
+    def test_list_strategies_with_pagination(self, client: TestClient, mock_strategy) -> None:
         """Test listing strategies with pagination."""
         with patch("squant.api.v1.strategies.StrategyService") as mock_service_class:
             mock_service = MagicMock()
@@ -230,9 +222,7 @@ class TestListStrategies:
             assert data["data"]["page"] == 2
             assert data["data"]["page_size"] == 10
 
-    def test_list_strategies_with_status_filter(
-        self, client: TestClient, mock_strategy
-    ) -> None:
+    def test_list_strategies_with_status_filter(self, client: TestClient, mock_strategy) -> None:
         """Test listing strategies with status filter."""
         mock_strategy.status = StrategyStatus.ACTIVE
 
@@ -274,9 +264,7 @@ class TestListStrategies:
 class TestGetStrategy:
     """Tests for GET /api/v1/strategies/{strategy_id} endpoint."""
 
-    def test_get_strategy_success(
-        self, client: TestClient, mock_strategy
-    ) -> None:
+    def test_get_strategy_success(self, client: TestClient, mock_strategy) -> None:
         """Test getting a strategy by ID."""
         with patch("squant.api.v1.strategies.StrategyService") as mock_service_class:
             mock_service = MagicMock()
@@ -296,9 +284,7 @@ class TestGetStrategy:
 
         with patch("squant.api.v1.strategies.StrategyService") as mock_service_class:
             mock_service = MagicMock()
-            mock_service.get = AsyncMock(
-                side_effect=StrategyNotFoundError(str(strategy_id))
-            )
+            mock_service.get = AsyncMock(side_effect=StrategyNotFoundError(str(strategy_id)))
             mock_service_class.return_value = mock_service
 
             response = client.get(f"/api/v1/strategies/{strategy_id}")
@@ -315,9 +301,7 @@ class TestGetStrategy:
 class TestUpdateStrategy:
     """Tests for PUT /api/v1/strategies/{strategy_id} endpoint."""
 
-    def test_update_strategy_success(
-        self, client: TestClient, mock_strategy
-    ) -> None:
+    def test_update_strategy_success(self, client: TestClient, mock_strategy) -> None:
         """Test updating a strategy."""
         mock_strategy.name = "Updated Strategy"
 
@@ -341,9 +325,7 @@ class TestUpdateStrategy:
 
         with patch("squant.api.v1.strategies.StrategyService") as mock_service_class:
             mock_service = MagicMock()
-            mock_service.update = AsyncMock(
-                side_effect=StrategyNotFoundError(str(strategy_id))
-            )
+            mock_service.update = AsyncMock(side_effect=StrategyNotFoundError(str(strategy_id)))
             mock_service_class.return_value = mock_service
 
             response = client.put(
@@ -353,9 +335,7 @@ class TestUpdateStrategy:
 
             assert response.status_code == 404
 
-    def test_update_strategy_name_exists(
-        self, client: TestClient, mock_strategy
-    ) -> None:
+    def test_update_strategy_name_exists(self, client: TestClient, mock_strategy) -> None:
         """Test updating strategy with existing name."""
         with patch("squant.api.v1.strategies.StrategyService") as mock_service_class:
             mock_service = MagicMock()
@@ -371,15 +351,11 @@ class TestUpdateStrategy:
 
             assert response.status_code == 409
 
-    def test_update_strategy_validation_error(
-        self, client: TestClient, mock_strategy
-    ) -> None:
+    def test_update_strategy_validation_error(self, client: TestClient, mock_strategy) -> None:
         """Test updating strategy with invalid code."""
         with patch("squant.api.v1.strategies.StrategyService") as mock_service_class:
             mock_service = MagicMock()
-            mock_service.update = AsyncMock(
-                side_effect=StrategyValidationError(["Syntax error"])
-            )
+            mock_service.update = AsyncMock(side_effect=StrategyValidationError(["Syntax error"]))
             mock_service_class.return_value = mock_service
 
             response = client.put(
@@ -393,9 +369,7 @@ class TestUpdateStrategy:
 class TestDeleteStrategy:
     """Tests for DELETE /api/v1/strategies/{strategy_id} endpoint."""
 
-    def test_delete_strategy_success(
-        self, client: TestClient, mock_strategy
-    ) -> None:
+    def test_delete_strategy_success(self, client: TestClient, mock_strategy) -> None:
         """Test deleting a strategy."""
         with patch("squant.api.v1.strategies.StrategyService") as mock_service_class:
             mock_service = MagicMock()
@@ -414,9 +388,7 @@ class TestDeleteStrategy:
 
         with patch("squant.api.v1.strategies.StrategyService") as mock_service_class:
             mock_service = MagicMock()
-            mock_service.delete = AsyncMock(
-                side_effect=StrategyNotFoundError(str(strategy_id))
-            )
+            mock_service.delete = AsyncMock(side_effect=StrategyNotFoundError(str(strategy_id)))
             mock_service_class.return_value = mock_service
 
             response = client.delete(f"/api/v1/strategies/{strategy_id}")

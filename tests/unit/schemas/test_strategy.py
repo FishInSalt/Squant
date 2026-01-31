@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from uuid import uuid4
 
 import pytest
@@ -194,7 +194,7 @@ class TestStrategyResponse:
 
     def test_full_response(self):
         """Test creating full response."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         response = StrategyResponse(
             id=uuid4(),
             name="Test Strategy",
@@ -231,7 +231,7 @@ class TestStrategyListItem:
 
     def test_list_item(self):
         """Test creating list item (without code)."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         item = StrategyListItem(
             id=uuid4(),
             name="Test Strategy",
@@ -252,7 +252,7 @@ class TestStrategyListItem:
 
     def test_description_optional(self):
         """Test description is optional."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         item = StrategyListItem(
             id=uuid4(),
             name="Test",

@@ -74,9 +74,7 @@ async def trigger_circuit_breaker(
         raise HTTPException(status_code=409, detail=str(e)) from None
 
 
-@router.post(
-    "/close-all-positions", response_model=ApiResponse[CloseAllPositionsResponse]
-)
+@router.post("/close-all-positions", response_model=ApiResponse[CloseAllPositionsResponse])
 async def close_all_positions(
     request: CloseAllPositionsRequest | None = None,
     session: AsyncSession = Depends(get_session),

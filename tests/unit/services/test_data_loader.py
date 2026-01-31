@@ -5,7 +5,6 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from unittest.mock import AsyncMock, MagicMock
-from uuid import uuid4
 
 import pytest
 
@@ -364,10 +363,7 @@ class TestDataLoader:
         mock_session.execute.return_value = mock_result
 
         loader = DataLoader(mock_session)
-        symbols = await loader.get_available_symbols(
-            exchange="okx",
-            timeframe="1h"
-        )
+        symbols = await loader.get_available_symbols(exchange="okx", timeframe="1h")
 
         assert len(symbols) == 0
         mock_session.execute.assert_called_once()

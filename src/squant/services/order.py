@@ -13,6 +13,8 @@ from squant.infra.exchange.exceptions import OrderNotFoundError as ExchangeOrder
 from squant.infra.exchange.types import (
     CancelOrderRequest,
     OrderRequest,
+)
+from squant.infra.exchange.types import (
     OrderResponse as ExchangeOrderResponse,
 )
 from squant.infra.repository import BaseRepository
@@ -43,9 +45,7 @@ class OrderRepository(BaseRepository[Order]):
     def __init__(self, session: AsyncSession):
         super().__init__(Order, session)
 
-    async def get_by_exchange_oid(
-        self, exchange: str, exchange_oid: str
-    ) -> Order | None:
+    async def get_by_exchange_oid(self, exchange: str, exchange_oid: str) -> Order | None:
         """Get order by exchange order ID."""
         stmt = select(Order).where(
             Order.exchange == exchange,
@@ -115,9 +115,7 @@ class OrderRepository(BaseRepository[Order]):
         """Count orders for an account."""
         from sqlalchemy import func
 
-        stmt = select(func.count()).select_from(Order).where(
-            Order.account_id == str(account_id)
-        )
+        stmt = select(func.count()).select_from(Order).where(Order.account_id == str(account_id))
 
         if status is not None:
             if isinstance(status, list):
@@ -159,11 +157,7 @@ class TradeRepository(BaseRepository[Trade]):
 
     async def list_by_order(self, order_id: str | UUID) -> list[Trade]:
         """List all trades for an order."""
-        stmt = (
-            select(Trade)
-            .where(Trade.order_id == str(order_id))
-            .order_by(Trade.timestamp)
-        )
+        stmt = select(Trade).where(Trade.order_id == str(order_id)).order_by(Trade.timestamp)
         result = await self.session.execute(stmt)
         return list(result.scalars().all())
 
@@ -347,9 +341,7 @@ class OrderService:
         Raises:
             OrderNotFoundError: If order not found.
         """
-        order = await self.order_repo.get_by_exchange_oid(
-            self.account.exchange, exchange_oid
-        )
+        order = await self.order_repo.get_by_exchange_oid(self.account.exchange, exchange_oid)
         if order is None:
             raise OrderNotFoundError(exchange_oid)
         return order
@@ -411,9 +403,7 @@ class OrderService:
         exchange_order_map = {o.order_id: o for o in exchange_orders}
 
         # Get local open orders
-        local_orders = await self.order_repo.list_open_orders(
-            self.account.id, symbol=symbol
-        )
+        local_orders = await self.order_repo.list_open_orders(self.account.id, symbol=symbol)
 
         updated_orders = []
 

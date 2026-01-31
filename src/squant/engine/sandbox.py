@@ -17,54 +17,134 @@ from RestrictedPython.Guards import (
 )
 
 # Modules that are explicitly forbidden
-DISALLOWED_MODULES = frozenset({
-    # System access
-    "os", "sys", "subprocess", "shutil", "pathlib",
-    # Network access
-    "socket", "urllib", "requests", "httpx", "aiohttp",
-    # Serialization (can be exploited)
-    "pickle", "marshal", "shelve",
-    # Low-level access
-    "ctypes", "cffi",
-    # Process/thread management
-    "multiprocessing", "threading", "concurrent",
-    # Import system manipulation
-    "importlib", "builtins", "__builtins__",
-    # Code execution
-    "code", "codeop", "compileall",
-    # File system
-    "io", "tempfile", "glob",
-})
+DISALLOWED_MODULES = frozenset(
+    {
+        # System access
+        "os",
+        "sys",
+        "subprocess",
+        "shutil",
+        "pathlib",
+        # Network access
+        "socket",
+        "urllib",
+        "requests",
+        "httpx",
+        "aiohttp",
+        # Serialization (can be exploited)
+        "pickle",
+        "marshal",
+        "shelve",
+        # Low-level access
+        "ctypes",
+        "cffi",
+        # Process/thread management
+        "multiprocessing",
+        "threading",
+        "concurrent",
+        # Import system manipulation
+        "importlib",
+        "builtins",
+        "__builtins__",
+        # Code execution
+        "code",
+        "codeop",
+        "compileall",
+        # File system
+        "io",
+        "tempfile",
+        "glob",
+    }
+)
 
 # Built-in functions that are explicitly forbidden
-DISALLOWED_BUILTINS = frozenset({
-    "eval", "exec", "compile", "open", "file",
-    "__import__", "input", "globals", "locals",
-    "getattr", "setattr", "delattr", "dir", "vars",
-    "type", "object", "classmethod", "staticmethod",
-    "property", "super", "memoryview", "bytearray",
-    "breakpoint", "help", "license", "credits", "copyright",
-})
+DISALLOWED_BUILTINS = frozenset(
+    {
+        "eval",
+        "exec",
+        "compile",
+        "open",
+        "file",
+        "__import__",
+        "input",
+        "globals",
+        "locals",
+        "getattr",
+        "setattr",
+        "delattr",
+        "dir",
+        "vars",
+        "type",
+        "object",
+        "classmethod",
+        "staticmethod",
+        "property",
+        "super",
+        "memoryview",
+        "bytearray",
+        "breakpoint",
+        "help",
+        "license",
+        "credits",
+        "copyright",
+    }
+)
 
 # Safe built-in functions allowed in strategy code
 SAFE_BUILTINS = {
     # Math and type conversion
-    "abs", "round", "pow", "divmod",
-    "int", "float", "bool", "str",
+    "abs",
+    "round",
+    "pow",
+    "divmod",
+    "int",
+    "float",
+    "bool",
+    "str",
     # Collections
-    "len", "list", "dict", "set", "tuple", "frozenset",
-    "range", "enumerate", "zip", "reversed", "sorted",
+    "len",
+    "list",
+    "dict",
+    "set",
+    "tuple",
+    "frozenset",
+    "range",
+    "enumerate",
+    "zip",
+    "reversed",
+    "sorted",
     # Iteration
-    "map", "filter", "all", "any", "sum", "min", "max",
+    "map",
+    "filter",
+    "all",
+    "any",
+    "sum",
+    "min",
+    "max",
     # Type checking
-    "isinstance", "issubclass", "callable", "hasattr",
+    "isinstance",
+    "issubclass",
+    "callable",
+    "hasattr",
     # String formatting
-    "format", "repr", "ascii", "chr", "ord",
-    "bin", "hex", "oct",
+    "format",
+    "repr",
+    "ascii",
+    "chr",
+    "ord",
+    "bin",
+    "hex",
+    "oct",
     # Other safe functions
-    "slice", "iter", "next", "hash", "id",
+    "slice",
+    "iter",
+    "next",
+    "hash",
+    "id",
     # Constants
-    "True", "False", "None",
+    "True",
+    "False",
+    "None",
     # Printing (useful for debugging in backtest)
     "print",
 }
@@ -156,13 +236,9 @@ class StrategyStructureValidator(ast.NodeVisitor):
     def finalize(self) -> None:
         """Check final validation results."""
         if not self.found_strategy_class:
-            self.result.add_error(
-                "Strategy code must define a class that inherits from Strategy"
-            )
+            self.result.add_error("Strategy code must define a class that inherits from Strategy")
         elif not self.has_on_bar:
-            self.result.add_error(
-                "Strategy class must implement the 'on_bar' method"
-            )
+            self.result.add_error("Strategy class must implement the 'on_bar' method")
 
 
 class DangerousBuiltinsValidator(ast.NodeVisitor):
@@ -180,9 +256,7 @@ class DangerousBuiltinsValidator(ast.NodeVisitor):
         if isinstance(node.func, ast.Name):
             func_name = node.func.id
             if func_name in DISALLOWED_BUILTINS:
-                self.result.add_error(
-                    f"Line {node.lineno}: Call to '{func_name}' is not allowed"
-                )
+                self.result.add_error(f"Line {node.lineno}: Call to '{func_name}' is not allowed")
 
         self.generic_visit(node)
 
@@ -196,7 +270,7 @@ def _inplacevar_(op: str, x: Any, y: Any) -> Any:
         "/=": lambda a, b: a / b,
         "//=": lambda a, b: a // b,
         "%=": lambda a, b: a % b,
-        "**=": lambda a, b: a ** b,
+        "**=": lambda a, b: a**b,
         "&=": lambda a, b: a & b,
         "|=": lambda a, b: a | b,
         "^=": lambda a, b: a ^ b,
@@ -213,12 +287,14 @@ def _build_restricted_globals() -> dict[str, Any]:
 
     # Add our explicitly allowed builtins
     import builtins
+
     for name in SAFE_BUILTINS:
         if hasattr(builtins, name):
             restricted_builtins[name] = getattr(builtins, name)
 
     # Add Decimal for precise financial calculations
     from decimal import Decimal
+
     restricted_builtins["Decimal"] = Decimal
 
     # Build globals with guards
@@ -240,7 +316,7 @@ def _build_restricted_globals() -> dict[str, Any]:
 
     # Inject Strategy base class and related types for backtest
     from squant.engine.backtest.strategy_base import Strategy
-    from squant.engine.backtest.types import Bar, Position, OrderSide, OrderType
+    from squant.engine.backtest.types import Bar, OrderSide, OrderType, Position
 
     restricted_globals["Strategy"] = Strategy
     restricted_globals["Bar"] = Bar

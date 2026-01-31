@@ -1,6 +1,6 @@
 """Unit tests for backtest matching engine."""
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from decimal import Decimal
 
 import pytest
@@ -27,7 +27,7 @@ def engine() -> MatchingEngine:
 def sample_bar() -> Bar:
     """Create a sample bar for testing."""
     return Bar(
-        time=datetime(2024, 1, 1, 12, 0, 0, tzinfo=timezone.utc),
+        time=datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC),
         symbol="BTC/USDT",
         open=Decimal("42000"),
         high=Decimal("43000"),
@@ -199,7 +199,7 @@ class TestLimitOrders:
         """Test that buy limit gets better price on gap down."""
         # Bar opens below limit price
         bar = Bar(
-            time=datetime(2024, 1, 1, tzinfo=timezone.utc),
+            time=datetime(2024, 1, 1, tzinfo=UTC),
             symbol="BTC/USDT",
             open=Decimal("40000"),  # Gap down below limit
             high=Decimal("41000"),
@@ -225,9 +225,7 @@ class TestLimitOrders:
 class TestMultipleOrders:
     """Tests for multiple order processing."""
 
-    def test_multiple_orders_processed(
-        self, engine: MatchingEngine, sample_bar: Bar
-    ) -> None:
+    def test_multiple_orders_processed(self, engine: MatchingEngine, sample_bar: Bar) -> None:
         """Test that multiple orders are processed in one bar."""
         order1 = SimulatedOrder.create(
             symbol="BTC/USDT",

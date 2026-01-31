@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from squant.api.utils import ApiResponse, PaginatedData
 from squant.engine.backtest.runner import BacktestError
 from squant.infra.database import get_session
+from squant.models.enums import RunStatus
 from squant.schemas.backtest import (
     AvailableSymbolResponse,
     BacktestDetailResponse,
@@ -20,7 +21,6 @@ from squant.schemas.backtest import (
     EquityCurvePoint,
     RunBacktestRequest,
 )
-from squant.models.enums import RunStatus
 from squant.services.backtest import (
     BacktestNotFoundError,
     BacktestService,
@@ -151,7 +151,9 @@ async def execute_backtest(
 @router.get("", response_model=ApiResponse[PaginatedData[BacktestListItem]])
 async def list_backtests(
     strategy_id: UUID | None = Query(None, description="Strategy ID (optional)"),
-    status: str | None = Query(None, description="Status filter: pending, running, completed, error"),
+    status: str | None = Query(
+        None, description="Status filter: pending, running, completed, error"
+    ),
     page: int = Query(1, ge=1, description="Page number"),
     page_size: int = Query(20, ge=1, le=100, description="Page size"),
     session: AsyncSession = Depends(get_session),
@@ -281,9 +283,7 @@ async def get_equity_curve(
 
     try:
         equity_curve = await service.get_equity_curve(run_id)
-        return ApiResponse(
-            data=[EquityCurvePoint.model_validate(e) for e in equity_curve]
-        )
+        return ApiResponse(data=[EquityCurvePoint.model_validate(e) for e in equity_curve])
     except BacktestNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
 
@@ -360,6 +360,4 @@ async def list_available_symbols(
     loader = DataLoader(session)
     symbols = await loader.get_available_symbols(exchange=exchange, timeframe=timeframe)
 
-    return ApiResponse(
-        data=[AvailableSymbolResponse(**s) for s in symbols]
-    )
+    return ApiResponse(data=[AvailableSymbolResponse(**s) for s in symbols])

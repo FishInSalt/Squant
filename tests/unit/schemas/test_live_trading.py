@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from decimal import Decimal
 from uuid import uuid4
 
@@ -261,7 +261,7 @@ class TestLiveTradingRunResponse:
 
     def test_full_response(self):
         """Test creating full response."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         response = LiveTradingRunResponse(
             id=uuid4(),
             strategy_id=uuid4(),
@@ -317,7 +317,7 @@ class TestLiveOrderInfo:
 
     def test_pending_order(self):
         """Test pending order info."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         order = LiveOrderInfo(
             internal_id="int-123",
             exchange_order_id="exc-456",
@@ -399,7 +399,7 @@ class TestLiveTradingStatusResponse:
 
     def test_running_status(self):
         """Test running session status."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         risk_state = RiskStateResponse(
             daily_pnl=Decimal("100"),
             daily_trade_count=10,
@@ -424,7 +424,9 @@ class TestLiveTradingStatusResponse:
             equity=Decimal("10500"),
             initial_capital=Decimal("10000"),
             total_fees=Decimal("50"),
-            positions={"BTC": LivePositionInfo(amount=Decimal("0.1"), avg_entry_price=Decimal("55000"))},
+            positions={
+                "BTC": LivePositionInfo(amount=Decimal("0.1"), avg_entry_price=Decimal("55000"))
+            },
             pending_orders=[],
             live_orders=[],
             completed_orders_count=20,
@@ -438,7 +440,7 @@ class TestLiveTradingStatusResponse:
 
     def test_status_without_risk_state(self):
         """Test status without risk state."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         response = LiveTradingStatusResponse(
             run_id=uuid4(),
             symbol="BTC/USDT",
@@ -468,7 +470,7 @@ class TestLiveTradingListItem:
 
     def test_list_item(self):
         """Test live trading list item."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         item = LiveTradingListItem(
             run_id=uuid4(),
             strategy_id=uuid4(),

@@ -17,9 +17,7 @@ class CreateOrderRequest(BaseModel):
     type: OrderType = Field(..., description="Order type (MARKET/LIMIT)")
     amount: Decimal = Field(..., gt=0, description="Order amount in base currency")
     price: Decimal | None = Field(None, description="Limit price (required for LIMIT orders)")
-    client_order_id: str | None = Field(
-        None, max_length=32, description="Optional client order ID"
-    )
+    client_order_id: str | None = Field(None, max_length=32, description="Optional client order ID")
     run_id: UUID | None = Field(None, description="Strategy run ID (if from strategy)")
 
 

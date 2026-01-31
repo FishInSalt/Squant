@@ -602,9 +602,7 @@ class BinanceWebSocketClient:
             timestamp=datetime.fromtimestamp(data.get("E", 0) / 1000, tz=UTC),
         ).model_dump()
 
-    def _parse_kline(
-        self, data: dict[str, Any], symbol: str, interval: str
-    ) -> dict[str, Any]:
+    def _parse_kline(self, data: dict[str, Any], symbol: str, interval: str) -> dict[str, Any]:
         """Parse kline/candlestick data from Binance format."""
         k = data.get("k", {})
         return BinanceCandle(
@@ -681,8 +679,12 @@ class BinanceWebSocketClient:
             commission=Decimal(data.get("n", "0")) if data.get("n") else None,
             commission_asset=data.get("N"),
             trade_id=data.get("t"),
-            created_at=datetime.fromtimestamp(data.get("O", 0) / 1000, tz=UTC) if data.get("O") else None,
-            updated_at=datetime.fromtimestamp(data.get("T", 0) / 1000, tz=UTC) if data.get("T") else None,
+            created_at=datetime.fromtimestamp(data.get("O", 0) / 1000, tz=UTC)
+            if data.get("O")
+            else None,
+            updated_at=datetime.fromtimestamp(data.get("T", 0) / 1000, tz=UTC)
+            if data.get("T")
+            else None,
         ).model_dump()
 
     def _parse_account_update(self, data: dict[str, Any]) -> dict[str, Any]:

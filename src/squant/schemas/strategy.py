@@ -18,9 +18,7 @@ class CreateStrategyRequest(BaseModel):
     params_schema: dict[str, Any] | None = Field(
         None, description="JSON Schema for strategy parameters"
     )
-    default_params: dict[str, Any] | None = Field(
-        None, description="Default parameter values"
-    )
+    default_params: dict[str, Any] | None = Field(None, description="Default parameter values")
 
 
 class UpdateStrategyRequest(BaseModel):

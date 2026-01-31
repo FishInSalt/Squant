@@ -87,10 +87,7 @@ class SessionManager:
                 if not self._subscriptions[key]:
                     del self._subscriptions[key]
 
-            logger.info(
-                f"Unregistered engine {run_id}, "
-                f"remaining sessions: {len(self._sessions)}"
-            )
+            logger.info(f"Unregistered engine {run_id}, remaining sessions: {len(self._sessions)}")
 
     def get(self, run_id: UUID) -> PaperTradingEngine | None:
         """Get a paper trading engine by run ID.
@@ -133,9 +130,7 @@ class SessionManager:
                 try:
                     await engine.process_candle(candle)
                 except Exception as e:
-                    logger.exception(
-                        f"Error dispatching candle to engine {run_id}: {e}"
-                    )
+                    logger.exception(f"Error dispatching candle to engine {run_id}: {e}")
 
     async def stop_all(self, reason: str = "shutdown") -> None:
         """Stop all active sessions.
@@ -175,9 +170,7 @@ class SessionManager:
             List of run_ids with pending snapshots exceeding batch size.
         """
         return [
-            run_id
-            for run_id, engine in self._sessions.items()
-            if engine.should_persist_snapshots()
+            run_id for run_id, engine in self._sessions.items() if engine.should_persist_snapshots()
         ]
 
     async def check_health(self, timeout_seconds: int = 300) -> list[UUID]:

@@ -47,10 +47,13 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         await init_stream_manager()
         logger.info("Stream manager initialized")
     except Exception as e:
-        logger.warning(f"Failed to initialize stream manager: {e}. Real-time data will be unavailable.")
+        logger.warning(
+            f"Failed to initialize stream manager: {e}. Real-time data will be unavailable."
+        )
         logger.warning("The application will continue without WebSocket connectivity.")
         # Start retry loop to attempt reconnection in the background
         from squant.websocket.manager import get_stream_manager
+
         stream_manager = get_stream_manager()
         stream_manager.start_retry_loop()
 
@@ -192,9 +195,7 @@ def create_app() -> FastAPI:
         )
 
     @app.exception_handler(ExchangeAPIError)
-    async def exchange_api_error_handler(
-        request: Request, exc: ExchangeAPIError
-    ) -> JSONResponse:
+    async def exchange_api_error_handler(request: Request, exc: ExchangeAPIError) -> JSONResponse:
         logger.warning(f"Exchange API error: {exc}")
         return JSONResponse(
             status_code=502,

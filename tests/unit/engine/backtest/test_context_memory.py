@@ -1,6 +1,6 @@
 """Unit tests for BacktestContext memory management with deque."""
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from decimal import Decimal
 
 import pytest
@@ -8,7 +8,6 @@ import pytest
 from squant.engine.backtest.context import BacktestContext
 from squant.engine.backtest.types import (
     Bar,
-    EquitySnapshot,
     Fill,
     OrderSide,
 )
@@ -34,7 +33,7 @@ def small_limits_context() -> BacktestContext:
 def sample_bar() -> Bar:
     """Create a sample bar."""
     return Bar(
-        time=datetime(2024, 1, 1, 12, 0, 0, tzinfo=timezone.utc),
+        time=datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC),
         symbol="BTC/USDT",
         open=Decimal("42000"),
         high=Decimal("43000"),
@@ -55,7 +54,7 @@ class TestEquityCurveMemoryLimit:
 
         # Record more snapshots than the limit
         for i in range(10):
-            snapshot_time = datetime(2024, 1, 1, 12, i, 0, tzinfo=timezone.utc)
+            snapshot_time = datetime(2024, 1, 1, 12, i, 0, tzinfo=UTC)
             small_limits_context._record_equity_snapshot(snapshot_time)
 
         # Should only keep the last 3 (max_equity_curve=3)
@@ -69,7 +68,7 @@ class TestEquityCurveMemoryLimit:
 
         # Record 5 snapshots, expecting to keep last 3
         for i in range(5):
-            snapshot_time = datetime(2024, 1, 1, 12, i, 0, tzinfo=timezone.utc)
+            snapshot_time = datetime(2024, 1, 1, 12, i, 0, tzinfo=UTC)
             small_limits_context._record_equity_snapshot(snapshot_time)
 
         equity_curve = small_limits_context.equity_curve
@@ -89,7 +88,7 @@ class TestCompletedOrdersMemoryLimit:
         small_limits_context._set_current_bar(sample_bar)
 
         # Create and cancel orders to move them to completed
-        for i in range(10):
+        for _i in range(10):
             order_id = small_limits_context.buy("BTC/USDT", Decimal("0.1"))
             small_limits_context.cancel_order(order_id)
 
@@ -115,7 +114,7 @@ class TestFillsMemoryLimit:
                 price=Decimal("42000"),
                 amount=Decimal("0.01"),
                 fee=Decimal("0.42"),
-                timestamp=datetime(2024, 1, 1, 12, i, 0, tzinfo=timezone.utc),
+                timestamp=datetime(2024, 1, 1, 12, i, 0, tzinfo=UTC),
             )
             small_limits_context._process_fill(fill)
 
@@ -158,14 +157,12 @@ class TestLogsMemoryLimit:
 class TestBarHistoryMemoryLimit:
     """Tests for bar history deque memory limit (existing functionality)."""
 
-    def test_bar_history_respects_max_length(
-        self, small_limits_context: BacktestContext
-    ) -> None:
+    def test_bar_history_respects_max_length(self, small_limits_context: BacktestContext) -> None:
         """Test that bar history respects max length."""
         # Add more bars than the limit
         for i in range(10):
             bar = Bar(
-                time=datetime(2024, 1, 1, i, 0, 0, tzinfo=timezone.utc),
+                time=datetime(2024, 1, 1, i, 0, 0, tzinfo=UTC),
                 symbol="BTC/USDT",
                 open=Decimal("42000"),
                 high=Decimal("43000"),
@@ -179,13 +176,11 @@ class TestBarHistoryMemoryLimit:
         bars = small_limits_context.get_bars(100)
         assert len(bars) == 5
 
-    def test_bar_history_keeps_latest(
-        self, small_limits_context: BacktestContext
-    ) -> None:
+    def test_bar_history_keeps_latest(self, small_limits_context: BacktestContext) -> None:
         """Test that bar history keeps the latest bars."""
         for i in range(10):
             bar = Bar(
-                time=datetime(2024, 1, 1, i, 0, 0, tzinfo=timezone.utc),
+                time=datetime(2024, 1, 1, i, 0, 0, tzinfo=UTC),
                 symbol="BTC/USDT",
                 open=Decimal("42000"),
                 high=Decimal("43000"),

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from uuid import uuid4
 
 import pytest
@@ -241,7 +241,7 @@ class TestRiskTriggerResponse:
 
     def test_full_response(self):
         """Test full risk trigger response."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         response = RiskTriggerResponse(
             id=uuid4(),
             time=now,
@@ -256,7 +256,7 @@ class TestRiskTriggerResponse:
 
     def test_minimal_response(self):
         """Test minimal response without optional fields."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         response = RiskTriggerResponse(
             id=uuid4(),
             time=now,
@@ -279,7 +279,7 @@ class TestRiskTriggerListItem:
 
     def test_list_item(self):
         """Test risk trigger list item."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         item = RiskTriggerListItem(
             id=uuid4(),
             time=now,
@@ -301,7 +301,7 @@ class TestCircuitBreakerEventResponse:
 
     def test_event_response(self):
         """Test circuit breaker event response."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         response = CircuitBreakerEventResponse(
             id=uuid4(),
             time=now,

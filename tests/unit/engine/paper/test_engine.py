@@ -1,6 +1,6 @@
 """Unit tests for paper trading engine."""
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from decimal import Decimal
 from uuid import uuid4
 
@@ -126,7 +126,7 @@ class TestCandleProcessing:
         return WSCandle(
             symbol="BTC/USDT",
             timeframe="1m",
-            timestamp=datetime(2024, 1, 1, 12, 0, 0, tzinfo=timezone.utc),
+            timestamp=datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC),
             open=Decimal("45000"),
             high=Decimal("46000"),
             low=Decimal("44000"),
@@ -141,7 +141,7 @@ class TestCandleProcessing:
         return WSCandle(
             symbol="BTC/USDT",
             timeframe="1m",
-            timestamp=datetime(2024, 1, 1, 12, 0, 0, tzinfo=timezone.utc),
+            timestamp=datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC),
             open=Decimal("45000"),
             high=Decimal("46000"),
             low=Decimal("44000"),
@@ -210,7 +210,7 @@ class TestOrderMatching:
         candle1 = WSCandle(
             symbol="BTC/USDT",
             timeframe="1m",
-            timestamp=datetime(2024, 1, 1, 12, 0, 0, tzinfo=timezone.utc),
+            timestamp=datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC),
             open=Decimal("45000"),
             high=Decimal("46000"),
             low=Decimal("44000"),
@@ -227,7 +227,7 @@ class TestOrderMatching:
         candle2 = WSCandle(
             symbol="BTC/USDT",
             timeframe="1m",
-            timestamp=datetime(2024, 1, 1, 12, 1, 0, tzinfo=timezone.utc),
+            timestamp=datetime(2024, 1, 1, 12, 1, 0, tzinfo=UTC),
             open=Decimal("46000"),
             high=Decimal("47000"),
             low=Decimal("45000"),
@@ -272,7 +272,7 @@ class TestStateSnapshot:
         candle1 = WSCandle(
             symbol="BTC/USDT",
             timeframe="1m",
-            timestamp=datetime(2024, 1, 1, 12, 0, 0, tzinfo=timezone.utc),
+            timestamp=datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC),
             open=Decimal("45000"),
             high=Decimal("46000"),
             low=Decimal("44000"),
@@ -285,7 +285,7 @@ class TestStateSnapshot:
         candle2 = WSCandle(
             symbol="BTC/USDT",
             timeframe="1m",
-            timestamp=datetime(2024, 1, 1, 12, 1, 0, tzinfo=timezone.utc),
+            timestamp=datetime(2024, 1, 1, 12, 1, 0, tzinfo=UTC),
             open=Decimal("46000"),
             high=Decimal("47000"),
             low=Decimal("45000"),
@@ -312,7 +312,7 @@ class TestPendingSnapshots:
         candle = WSCandle(
             symbol="BTC/USDT",
             timeframe="1m",
-            timestamp=datetime(2024, 1, 1, 12, 0, 0, tzinfo=timezone.utc),
+            timestamp=datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC),
             open=Decimal("45000"),
             high=Decimal("46000"),
             low=Decimal("44000"),
@@ -323,7 +323,7 @@ class TestPendingSnapshots:
 
         # Process multiple candles
         for i in range(5):
-            candle.timestamp = datetime(2024, 1, 1, 12, i, 0, tzinfo=timezone.utc)
+            candle.timestamp = datetime(2024, 1, 1, 12, i, 0, tzinfo=UTC)
             await engine.process_candle(candle)
 
         snapshots = engine.get_pending_snapshots()
@@ -340,7 +340,7 @@ class TestPendingSnapshots:
         candle = WSCandle(
             symbol="BTC/USDT",
             timeframe="1m",
-            timestamp=datetime(2024, 1, 1, 12, 0, 0, tzinfo=timezone.utc),
+            timestamp=datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC),
             open=Decimal("45000"),
             high=Decimal("46000"),
             low=Decimal("44000"),
@@ -351,14 +351,14 @@ class TestPendingSnapshots:
 
         # Process bars below batch size
         for i in range(5):
-            candle.timestamp = datetime(2024, 1, 1, 12, i, 0, tzinfo=timezone.utc)
+            candle.timestamp = datetime(2024, 1, 1, 12, i, 0, tzinfo=UTC)
             await engine.process_candle(candle)
 
         assert engine.should_persist_snapshots() is False
 
         # Process more to exceed batch size (default is 10)
         for i in range(5, 10):
-            candle.timestamp = datetime(2024, 1, 1, 12, i, 0, tzinfo=timezone.utc)
+            candle.timestamp = datetime(2024, 1, 1, 12, i, 0, tzinfo=UTC)
             await engine.process_candle(candle)
 
         assert engine.should_persist_snapshots() is True
@@ -385,7 +385,7 @@ class TestHealthCheck:
         candle = WSCandle(
             symbol="BTC/USDT",
             timeframe="1m",
-            timestamp=datetime(2024, 1, 1, 12, 0, 0, tzinfo=timezone.utc),
+            timestamp=datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC),
             open=Decimal("45000"),
             high=Decimal("46000"),
             low=Decimal("44000"),
@@ -426,5 +426,6 @@ class TestHealthCheck:
         # With 0 second timeout, should be considered unhealthy
         # since any elapsed time > 0
         import asyncio
+
         await asyncio.sleep(0.01)
         assert engine.is_healthy(timeout_seconds=0) is False

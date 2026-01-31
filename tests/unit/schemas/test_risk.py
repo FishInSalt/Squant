@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from uuid import uuid4
 
 import pytest
@@ -194,7 +194,7 @@ class TestRiskRuleResponse:
 
     def test_full_response(self):
         """Test creating full response."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         response = RiskRuleResponse(
             id=uuid4(),
             name="Max Position",
@@ -215,7 +215,7 @@ class TestRiskRuleResponse:
 
     def test_type_as_string(self):
         """Test type is stored as string in response."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         response = RiskRuleResponse(
             id=uuid4(),
             name="Test",
@@ -234,7 +234,7 @@ class TestRiskRuleListItem:
 
     def test_list_item(self):
         """Test creating list item."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         item = RiskRuleListItem(
             id=uuid4(),
             name="Order Limit",

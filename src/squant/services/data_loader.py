@@ -6,10 +6,9 @@ to Bar objects for the backtest engine.
 
 from collections.abc import AsyncIterator
 from datetime import datetime
-from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import select, func, and_
+from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from squant.engine.backtest.types import Bar

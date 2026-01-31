@@ -1,7 +1,7 @@
 """Unit tests for StreamManager."""
 
 import asyncio
-from collections.abc import AsyncGenerator
+import contextlib
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -649,10 +649,8 @@ class TestStreamManagerRetryLoop:
 
             # Cancel to cleanup
             manager._retry_task.cancel()
-            try:
+            with contextlib.suppress(asyncio.CancelledError):
                 await manager._retry_task
-            except asyncio.CancelledError:
-                pass
 
     @pytest.mark.asyncio
     async def test_start_retry_loop_already_running(self, mock_settings):
@@ -670,7 +668,5 @@ class TestStreamManagerRetryLoop:
 
             # Cleanup
             manager._retry_task.cancel()
-            try:
+            with contextlib.suppress(asyncio.CancelledError):
                 await manager._retry_task
-            except asyncio.CancelledError:
-                pass

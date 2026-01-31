@@ -13,23 +13,17 @@ class CreateExchangeAccountRequest(BaseModel):
     exchange: Literal["okx", "binance"] = Field(
         ..., description="Exchange identifier (okx or binance)"
     )
-    name: str = Field(
-        ..., min_length=1, max_length=64, description="Unique account name"
-    )
+    name: str = Field(..., min_length=1, max_length=64, description="Unique account name")
     api_key: SecretStr = Field(..., description="Exchange API key")
     api_secret: SecretStr = Field(..., description="Exchange API secret")
-    passphrase: SecretStr | None = Field(
-        None, description="API passphrase (required for OKX)"
-    )
+    passphrase: SecretStr | None = Field(None, description="API passphrase (required for OKX)")
     testnet: bool = Field(False, description="Whether to use testnet/sandbox mode")
 
 
 class UpdateExchangeAccountRequest(BaseModel):
     """Request to update an existing exchange account configuration."""
 
-    name: str | None = Field(
-        None, min_length=1, max_length=64, description="New account name"
-    )
+    name: str | None = Field(None, min_length=1, max_length=64, description="New account name")
     api_key: SecretStr | None = Field(None, description="New API key")
     api_secret: SecretStr | None = Field(None, description="New API secret")
     passphrase: SecretStr | None = Field(None, description="New passphrase")

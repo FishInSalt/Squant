@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from decimal import Decimal
 
 import pytest
@@ -65,7 +65,7 @@ class TestBalanceResponse:
 
     def test_with_balances(self):
         """Test response with multiple balances."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         response = BalanceResponse(
             exchange="okx",
             balances=[
@@ -90,7 +90,7 @@ class TestBalanceResponse:
 
     def test_empty_balances(self):
         """Test response with empty balances."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         response = BalanceResponse(
             exchange="binance",
             balances=[],
@@ -105,7 +105,7 @@ class TestTickerResponse:
 
     def test_full_ticker(self):
         """Test creating full ticker response."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         ticker = TickerResponse(
             symbol="BTC/USDT",
             last=Decimal("50000"),
@@ -127,7 +127,7 @@ class TestTickerResponse:
 
     def test_minimal_ticker(self):
         """Test minimal ticker with required fields only."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         ticker = TickerResponse(
             symbol="ETH/USDT",
             last=Decimal("3000"),
@@ -144,7 +144,7 @@ class TestTickerResponse:
         with pytest.raises(ValidationError):
             TickerResponse(
                 last=Decimal("50000"),
-                timestamp=datetime.now(timezone.utc),
+                timestamp=datetime.now(UTC),
             )
 
 
@@ -153,7 +153,7 @@ class TestCandlestickItem:
 
     def test_valid_candle(self):
         """Test creating valid candlestick."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         candle = CandlestickItem(
             timestamp=now,
             open=Decimal("50000"),
@@ -171,7 +171,7 @@ class TestCandlestickItem:
 
     def test_all_fields_required(self):
         """Test all fields are required."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         with pytest.raises(ValidationError):
             CandlestickItem(
                 timestamp=now,
@@ -186,7 +186,7 @@ class TestCandlestickResponse:
 
     def test_with_candles(self):
         """Test response with candles."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         response = CandlestickResponse(
             symbol="BTC/USDT",
             timeframe="1h",
@@ -306,7 +306,7 @@ class TestOrderResponse:
 
     def test_filled_order(self):
         """Test filled order response."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         order = OrderResponse(
             order_id="12345",
             client_order_id="my-order",

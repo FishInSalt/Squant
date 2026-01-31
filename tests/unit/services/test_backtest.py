@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
-from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
@@ -89,12 +88,14 @@ def mock_data_availability():
     availability.total_bars = 720
     availability.first_bar = datetime.now(UTC) - timedelta(days=30)
     availability.last_bar = datetime.now(UTC)
-    availability.to_dict = MagicMock(return_value={
-        "has_data": True,
-        "total_bars": 720,
-        "first_bar": (datetime.now(UTC) - timedelta(days=30)).isoformat(),
-        "last_bar": datetime.now(UTC).isoformat(),
-    })
+    availability.to_dict = MagicMock(
+        return_value={
+            "has_data": True,
+            "total_bars": 720,
+            "first_bar": (datetime.now(UTC) - timedelta(days=30)).isoformat(),
+            "last_bar": datetime.now(UTC).isoformat(),
+        }
+    )
     return availability
 
 
@@ -122,10 +123,7 @@ class TestStrategyRunRepository:
         mock_session.execute.return_value = mock_result
 
         repo = StrategyRunRepository(mock_session)
-        runs = await repo.list_by_strategy(
-            mock_run.strategy_id,
-            mode=RunMode.BACKTEST
-        )
+        runs = await repo.list_by_strategy(mock_run.strategy_id, mode=RunMode.BACKTEST)
 
         assert len(runs) == 1
         mock_session.execute.assert_called_once()
@@ -220,9 +218,7 @@ class TestBacktestService:
     @pytest.mark.asyncio
     async def test_get_success(self, mock_session, mock_run):
         """Test getting a backtest run by ID."""
-        with patch.object(
-            StrategyRunRepository, "get", new_callable=AsyncMock
-        ) as mock_get:
+        with patch.object(StrategyRunRepository, "get", new_callable=AsyncMock) as mock_get:
             mock_get.return_value = mock_run
 
             service = BacktestService(mock_session)
@@ -234,9 +230,7 @@ class TestBacktestService:
     @pytest.mark.asyncio
     async def test_get_not_found(self, mock_session):
         """Test getting non-existent backtest raises error."""
-        with patch.object(
-            StrategyRunRepository, "get", new_callable=AsyncMock
-        ) as mock_get:
+        with patch.object(StrategyRunRepository, "get", new_callable=AsyncMock) as mock_get:
             mock_get.return_value = None
 
             service = BacktestService(mock_session)
@@ -249,11 +243,10 @@ class TestBacktestService:
         """Test creating a backtest run record."""
         strategy_id = uuid4()
 
-        with patch(
-            "squant.services.strategy.StrategyRepository"
-        ) as mock_strategy_repo_class, patch.object(
-            StrategyRunRepository, "create", new_callable=AsyncMock
-        ) as mock_create:
+        with (
+            patch("squant.services.strategy.StrategyRepository") as mock_strategy_repo_class,
+            patch.object(StrategyRunRepository, "create", new_callable=AsyncMock) as mock_create,
+        ):
             mock_strategy_repo = MagicMock()
             mock_strategy_repo.get = AsyncMock(return_value=mock_strategy)
             mock_strategy_repo_class.return_value = mock_strategy_repo
@@ -277,9 +270,7 @@ class TestBacktestService:
     @pytest.mark.asyncio
     async def test_create_strategy_not_found(self, mock_session):
         """Test creating backtest with non-existent strategy."""
-        with patch(
-            "squant.services.strategy.StrategyRepository"
-        ) as mock_strategy_repo_class:
+        with patch("squant.services.strategy.StrategyRepository") as mock_strategy_repo_class:
             from squant.services.strategy import StrategyNotFoundError
 
             mock_strategy_repo = MagicMock()
@@ -302,11 +293,14 @@ class TestBacktestService:
     @pytest.mark.asyncio
     async def test_list_by_strategy(self, mock_session, mock_run):
         """Test listing backtest runs by strategy."""
-        with patch.object(
-            StrategyRunRepository, "list_by_strategy", new_callable=AsyncMock
-        ) as mock_list, patch.object(
-            StrategyRunRepository, "count_by_strategy", new_callable=AsyncMock
-        ) as mock_count:
+        with (
+            patch.object(
+                StrategyRunRepository, "list_by_strategy", new_callable=AsyncMock
+            ) as mock_list,
+            patch.object(
+                StrategyRunRepository, "count_by_strategy", new_callable=AsyncMock
+            ) as mock_count,
+        ):
             mock_list.return_value = [mock_run]
             mock_count.return_value = 1
 
@@ -321,11 +315,10 @@ class TestBacktestService:
     @pytest.mark.asyncio
     async def test_list_runs(self, mock_session, mock_run):
         """Test listing backtest runs with filters."""
-        with patch.object(
-            StrategyRunRepository, "list_runs", new_callable=AsyncMock
-        ) as mock_list, patch.object(
-            StrategyRunRepository, "count_runs", new_callable=AsyncMock
-        ) as mock_count:
+        with (
+            patch.object(StrategyRunRepository, "list_runs", new_callable=AsyncMock) as mock_list,
+            patch.object(StrategyRunRepository, "count_runs", new_callable=AsyncMock) as mock_count,
+        ):
             mock_list.return_value = [mock_run]
             mock_count.return_value = 1
 
@@ -338,15 +331,14 @@ class TestBacktestService:
             mock_count.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_get_equity_curve_success(
-        self, mock_session, mock_run, mock_equity_curve
-    ):
+    async def test_get_equity_curve_success(self, mock_session, mock_run, mock_equity_curve):
         """Test getting equity curve for a backtest."""
-        with patch.object(
-            StrategyRunRepository, "get", new_callable=AsyncMock
-        ) as mock_get, patch.object(
-            EquityCurveRepository, "get_by_run", new_callable=AsyncMock
-        ) as mock_get_curve:
+        with (
+            patch.object(StrategyRunRepository, "get", new_callable=AsyncMock) as mock_get,
+            patch.object(
+                EquityCurveRepository, "get_by_run", new_callable=AsyncMock
+            ) as mock_get_curve,
+        ):
             mock_get.return_value = mock_run
             mock_get_curve.return_value = [mock_equity_curve]
 
@@ -360,9 +352,7 @@ class TestBacktestService:
     @pytest.mark.asyncio
     async def test_get_equity_curve_not_found(self, mock_session):
         """Test getting equity curve for non-existent run."""
-        with patch.object(
-            StrategyRunRepository, "get", new_callable=AsyncMock
-        ) as mock_get:
+        with patch.object(StrategyRunRepository, "get", new_callable=AsyncMock) as mock_get:
             mock_get.return_value = None
 
             service = BacktestService(mock_session)
@@ -373,13 +363,13 @@ class TestBacktestService:
     @pytest.mark.asyncio
     async def test_delete_success(self, mock_session, mock_run):
         """Test deleting a backtest run."""
-        with patch.object(
-            StrategyRunRepository, "get", new_callable=AsyncMock
-        ) as mock_get, patch.object(
-            EquityCurveRepository, "delete_by_run", new_callable=AsyncMock
-        ) as mock_delete_curve, patch.object(
-            StrategyRunRepository, "delete", new_callable=AsyncMock
-        ) as mock_delete:
+        with (
+            patch.object(StrategyRunRepository, "get", new_callable=AsyncMock) as mock_get,
+            patch.object(
+                EquityCurveRepository, "delete_by_run", new_callable=AsyncMock
+            ) as mock_delete_curve,
+            patch.object(StrategyRunRepository, "delete", new_callable=AsyncMock) as mock_delete,
+        ):
             mock_get.return_value = mock_run
 
             service = BacktestService(mock_session)
@@ -392,9 +382,7 @@ class TestBacktestService:
     @pytest.mark.asyncio
     async def test_delete_not_found(self, mock_session):
         """Test deleting non-existent backtest raises error."""
-        with patch.object(
-            StrategyRunRepository, "get", new_callable=AsyncMock
-        ) as mock_get:
+        with patch.object(StrategyRunRepository, "get", new_callable=AsyncMock) as mock_get:
             mock_get.return_value = None
 
             service = BacktestService(mock_session)
@@ -403,13 +391,9 @@ class TestBacktestService:
                 await service.delete(uuid4())
 
     @pytest.mark.asyncio
-    async def test_check_data_availability(
-        self, mock_session, mock_data_availability
-    ):
+    async def test_check_data_availability(self, mock_session, mock_data_availability):
         """Test checking data availability."""
-        with patch.object(
-            BacktestService, "__init__", lambda x, y: None
-        ):
+        with patch.object(BacktestService, "__init__", lambda x, y: None):
             service = BacktestService.__new__(BacktestService)
             service.session = mock_session
             service.data_loader = MagicMock()
@@ -434,12 +418,10 @@ class TestBacktestService:
         run_id = uuid4()
         mock_run.id = str(run_id)
 
-        with patch.object(
-            StrategyRunRepository, "get", new_callable=AsyncMock
-        ) as mock_get, patch(
-            "squant.services.strategy.StrategyRepository"
-        ) as mock_strategy_repo_class, patch.object(
-            BacktestService, "__init__", lambda x, y: None
+        with (
+            patch.object(StrategyRunRepository, "get", new_callable=AsyncMock) as mock_get,
+            patch("squant.services.strategy.StrategyRepository") as mock_strategy_repo_class,
+            patch.object(BacktestService, "__init__", lambda x, y: None),
         ):
             mock_get.return_value = mock_run
 
@@ -456,9 +438,7 @@ class TestBacktestService:
             # Mock no data available
             mock_availability = MagicMock()
             mock_availability.has_data = False
-            service.data_loader.check_data_availability = AsyncMock(
-                return_value=mock_availability
-            )
+            service.data_loader.check_data_availability = AsyncMock(return_value=mock_availability)
 
             with pytest.raises(InsufficientDataError):
                 await service.run(run_id)

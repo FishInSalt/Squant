@@ -23,9 +23,7 @@ class RiskConfigRequest(BaseModel):
         le=1,
         description="Maximum single order size as fraction of equity (0-1)",
     )
-    daily_trade_limit: int = Field(
-        ..., gt=0, le=1000, description="Maximum trades per day"
-    )
+    daily_trade_limit: int = Field(..., gt=0, le=1000, description="Maximum trades per day")
     daily_loss_limit: Decimal = Field(
         ...,
         gt=0,
@@ -53,15 +51,11 @@ class StartLiveTradingRequest(BaseModel):
     symbol: str = Field(
         ..., min_length=1, max_length=32, description="Trading symbol (e.g., BTC/USDT)"
     )
-    exchange: str = Field(
-        ..., min_length=1, max_length=32, description="Exchange name (e.g., okx)"
-    )
+    exchange: str = Field(..., min_length=1, max_length=32, description="Exchange name (e.g., okx)")
     timeframe: str = Field(
         ..., min_length=1, max_length=8, description="Candle timeframe (e.g., 1m)"
     )
-    risk_config: RiskConfigRequest = Field(
-        ..., description="Risk management configuration"
-    )
+    risk_config: RiskConfigRequest = Field(..., description="Risk management configuration")
     initial_equity: Decimal | None = Field(
         None,
         gt=0,

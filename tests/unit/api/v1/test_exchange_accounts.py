@@ -1,8 +1,8 @@
 """Unit tests for exchange accounts API endpoints."""
 
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
-from datetime import datetime, timezone
 
 import pytest
 from fastapi import FastAPI
@@ -40,22 +40,18 @@ def mock_account() -> MagicMock:
     account.name = "test-account"
     account.testnet = True
     account.is_active = True
-    account.created_at = datetime.now(timezone.utc)
-    account.updated_at = datetime.now(timezone.utc)
+    account.created_at = datetime.now(UTC)
+    account.updated_at = datetime.now(UTC)
     return account
 
 
 class TestCreateExchangeAccount:
     """Tests for POST /exchange-accounts."""
 
-    def test_create_okx_account_success(
-        self, client: TestClient, mock_account: MagicMock
-    ) -> None:
+    def test_create_okx_account_success(self, client: TestClient, mock_account: MagicMock) -> None:
         """Test successful OKX account creation."""
         with patch("squant.api.v1.exchange_accounts.get_session"):
-            with patch(
-                "squant.api.v1.exchange_accounts.ExchangeAccountService"
-            ) as MockService:
+            with patch("squant.api.v1.exchange_accounts.ExchangeAccountService") as MockService:
                 service = MockService.return_value
                 service.create = AsyncMock(return_value=mock_account)
 
@@ -100,9 +96,7 @@ class TestCreateExchangeAccount:
         mock_account.exchange = "binance"
 
         with patch("squant.api.v1.exchange_accounts.get_session"):
-            with patch(
-                "squant.api.v1.exchange_accounts.ExchangeAccountService"
-            ) as MockService:
+            with patch("squant.api.v1.exchange_accounts.ExchangeAccountService") as MockService:
                 service = MockService.return_value
                 service.create = AsyncMock(return_value=mock_account)
 
@@ -121,9 +115,7 @@ class TestCreateExchangeAccount:
     def test_create_duplicate_name_returns_409(self, client: TestClient) -> None:
         """Test creating account with duplicate name returns 409."""
         with patch("squant.api.v1.exchange_accounts.get_session"):
-            with patch(
-                "squant.api.v1.exchange_accounts.ExchangeAccountService"
-            ) as MockService:
+            with patch("squant.api.v1.exchange_accounts.ExchangeAccountService") as MockService:
                 service = MockService.return_value
                 service.create = AsyncMock(
                     side_effect=AccountNameExistsError("okx", "existing-account")
@@ -146,14 +138,10 @@ class TestCreateExchangeAccount:
 class TestListExchangeAccounts:
     """Tests for GET /exchange-accounts."""
 
-    def test_list_all_accounts(
-        self, client: TestClient, mock_account: MagicMock
-    ) -> None:
+    def test_list_all_accounts(self, client: TestClient, mock_account: MagicMock) -> None:
         """Test listing all accounts."""
         with patch("squant.api.v1.exchange_accounts.get_session"):
-            with patch(
-                "squant.api.v1.exchange_accounts.ExchangeAccountService"
-            ) as MockService:
+            with patch("squant.api.v1.exchange_accounts.ExchangeAccountService") as MockService:
                 service = MockService.return_value
                 service.list = AsyncMock(return_value=[mock_account])
 
@@ -164,14 +152,10 @@ class TestListExchangeAccounts:
                 assert data["code"] == 0
                 assert len(data["data"]) == 1
 
-    def test_list_with_exchange_filter(
-        self, client: TestClient, mock_account: MagicMock
-    ) -> None:
+    def test_list_with_exchange_filter(self, client: TestClient, mock_account: MagicMock) -> None:
         """Test listing accounts with exchange filter."""
         with patch("squant.api.v1.exchange_accounts.get_session"):
-            with patch(
-                "squant.api.v1.exchange_accounts.ExchangeAccountService"
-            ) as MockService:
+            with patch("squant.api.v1.exchange_accounts.ExchangeAccountService") as MockService:
                 service = MockService.return_value
                 service.list = AsyncMock(return_value=[mock_account])
 
@@ -184,14 +168,10 @@ class TestListExchangeAccounts:
 class TestGetExchangeAccount:
     """Tests for GET /exchange-accounts/{id}."""
 
-    def test_get_account_success(
-        self, client: TestClient, mock_account: MagicMock
-    ) -> None:
+    def test_get_account_success(self, client: TestClient, mock_account: MagicMock) -> None:
         """Test getting an existing account."""
         with patch("squant.api.v1.exchange_accounts.get_session"):
-            with patch(
-                "squant.api.v1.exchange_accounts.ExchangeAccountService"
-            ) as MockService:
+            with patch("squant.api.v1.exchange_accounts.ExchangeAccountService") as MockService:
                 service = MockService.return_value
                 service.get = AsyncMock(return_value=mock_account)
 
@@ -206,13 +186,9 @@ class TestGetExchangeAccount:
         account_id = uuid4()
 
         with patch("squant.api.v1.exchange_accounts.get_session"):
-            with patch(
-                "squant.api.v1.exchange_accounts.ExchangeAccountService"
-            ) as MockService:
+            with patch("squant.api.v1.exchange_accounts.ExchangeAccountService") as MockService:
                 service = MockService.return_value
-                service.get = AsyncMock(
-                    side_effect=AccountNotFoundError(account_id)
-                )
+                service.get = AsyncMock(side_effect=AccountNotFoundError(account_id))
 
                 response = client.get(f"/exchange-accounts/{account_id}")
 
@@ -222,14 +198,10 @@ class TestGetExchangeAccount:
 class TestUpdateExchangeAccount:
     """Tests for PUT /exchange-accounts/{id}."""
 
-    def test_update_account_success(
-        self, client: TestClient, mock_account: MagicMock
-    ) -> None:
+    def test_update_account_success(self, client: TestClient, mock_account: MagicMock) -> None:
         """Test successful account update."""
         with patch("squant.api.v1.exchange_accounts.get_session"):
-            with patch(
-                "squant.api.v1.exchange_accounts.ExchangeAccountService"
-            ) as MockService:
+            with patch("squant.api.v1.exchange_accounts.ExchangeAccountService") as MockService:
                 service = MockService.return_value
                 service.update = AsyncMock(return_value=mock_account)
 
@@ -245,13 +217,9 @@ class TestUpdateExchangeAccount:
         account_id = uuid4()
 
         with patch("squant.api.v1.exchange_accounts.get_session"):
-            with patch(
-                "squant.api.v1.exchange_accounts.ExchangeAccountService"
-            ) as MockService:
+            with patch("squant.api.v1.exchange_accounts.ExchangeAccountService") as MockService:
                 service = MockService.return_value
-                service.update = AsyncMock(
-                    side_effect=AccountNotFoundError(account_id)
-                )
+                service.update = AsyncMock(side_effect=AccountNotFoundError(account_id))
 
                 response = client.put(
                     f"/exchange-accounts/{account_id}",
@@ -265,13 +233,9 @@ class TestUpdateExchangeAccount:
     ) -> None:
         """Test updating to duplicate name returns 409."""
         with patch("squant.api.v1.exchange_accounts.get_session"):
-            with patch(
-                "squant.api.v1.exchange_accounts.ExchangeAccountService"
-            ) as MockService:
+            with patch("squant.api.v1.exchange_accounts.ExchangeAccountService") as MockService:
                 service = MockService.return_value
-                service.update = AsyncMock(
-                    side_effect=AccountNameExistsError("okx", "existing")
-                )
+                service.update = AsyncMock(side_effect=AccountNameExistsError("okx", "existing"))
 
                 response = client.put(
                     f"/exchange-accounts/{mock_account.id}",
@@ -284,14 +248,10 @@ class TestUpdateExchangeAccount:
 class TestDeleteExchangeAccount:
     """Tests for DELETE /exchange-accounts/{id}."""
 
-    def test_delete_account_success(
-        self, client: TestClient, mock_account: MagicMock
-    ) -> None:
+    def test_delete_account_success(self, client: TestClient, mock_account: MagicMock) -> None:
         """Test successful account deletion."""
         with patch("squant.api.v1.exchange_accounts.get_session"):
-            with patch(
-                "squant.api.v1.exchange_accounts.ExchangeAccountService"
-            ) as MockService:
+            with patch("squant.api.v1.exchange_accounts.ExchangeAccountService") as MockService:
                 service = MockService.return_value
                 service.delete = AsyncMock()
 
@@ -306,13 +266,9 @@ class TestDeleteExchangeAccount:
         account_id = uuid4()
 
         with patch("squant.api.v1.exchange_accounts.get_session"):
-            with patch(
-                "squant.api.v1.exchange_accounts.ExchangeAccountService"
-            ) as MockService:
+            with patch("squant.api.v1.exchange_accounts.ExchangeAccountService") as MockService:
                 service = MockService.return_value
-                service.delete = AsyncMock(
-                    side_effect=AccountNotFoundError(account_id)
-                )
+                service.delete = AsyncMock(side_effect=AccountNotFoundError(account_id))
 
                 response = client.delete(f"/exchange-accounts/{account_id}")
 
@@ -323,9 +279,7 @@ class TestDeleteExchangeAccount:
     ) -> None:
         """Test deleting account in use returns 409."""
         with patch("squant.api.v1.exchange_accounts.get_session"):
-            with patch(
-                "squant.api.v1.exchange_accounts.ExchangeAccountService"
-            ) as MockService:
+            with patch("squant.api.v1.exchange_accounts.ExchangeAccountService") as MockService:
                 service = MockService.return_value
                 service.delete = AsyncMock(
                     side_effect=AccountInUseError(mock_account.id, "has associated orders")
@@ -340,14 +294,10 @@ class TestDeleteExchangeAccount:
 class TestConnectionTest:
     """Tests for POST /exchange-accounts/{id}/test."""
 
-    def test_connection_test_success(
-        self, client: TestClient, mock_account: MagicMock
-    ) -> None:
+    def test_connection_test_success(self, client: TestClient, mock_account: MagicMock) -> None:
         """Test successful connection test."""
         with patch("squant.api.v1.exchange_accounts.get_session"):
-            with patch(
-                "squant.api.v1.exchange_accounts.ExchangeAccountService"
-            ) as MockService:
+            with patch("squant.api.v1.exchange_accounts.ExchangeAccountService") as MockService:
                 service = MockService.return_value
                 service.test_connection = AsyncMock(
                     return_value={
@@ -357,23 +307,17 @@ class TestConnectionTest:
                     }
                 )
 
-                response = client.post(
-                    f"/exchange-accounts/{mock_account.id}/test"
-                )
+                response = client.post(f"/exchange-accounts/{mock_account.id}/test")
 
                 assert response.status_code == 200
                 data = response.json()
                 assert data["data"]["success"] is True
                 assert data["data"]["balance_count"] == 5
 
-    def test_connection_test_failure(
-        self, client: TestClient, mock_account: MagicMock
-    ) -> None:
+    def test_connection_test_failure(self, client: TestClient, mock_account: MagicMock) -> None:
         """Test failed connection test."""
         with patch("squant.api.v1.exchange_accounts.get_session"):
-            with patch(
-                "squant.api.v1.exchange_accounts.ExchangeAccountService"
-            ) as MockService:
+            with patch("squant.api.v1.exchange_accounts.ExchangeAccountService") as MockService:
                 service = MockService.return_value
                 service.test_connection = AsyncMock(
                     return_value={
@@ -383,9 +327,7 @@ class TestConnectionTest:
                     }
                 )
 
-                response = client.post(
-                    f"/exchange-accounts/{mock_account.id}/test"
-                )
+                response = client.post(f"/exchange-accounts/{mock_account.id}/test")
 
                 assert response.status_code == 200
                 data = response.json()
@@ -397,13 +339,9 @@ class TestConnectionTest:
         account_id = uuid4()
 
         with patch("squant.api.v1.exchange_accounts.get_session"):
-            with patch(
-                "squant.api.v1.exchange_accounts.ExchangeAccountService"
-            ) as MockService:
+            with patch("squant.api.v1.exchange_accounts.ExchangeAccountService") as MockService:
                 service = MockService.return_value
-                service.test_connection = AsyncMock(
-                    side_effect=AccountNotFoundError(account_id)
-                )
+                service.test_connection = AsyncMock(side_effect=AccountNotFoundError(account_id))
 
                 response = client.post(f"/exchange-accounts/{account_id}/test")
 

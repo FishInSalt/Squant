@@ -15,9 +15,7 @@ class StartPaperTradingRequest(BaseModel):
     symbol: str = Field(
         ..., min_length=1, max_length=32, description="Trading symbol (e.g., BTC/USDT)"
     )
-    exchange: str = Field(
-        ..., min_length=1, max_length=32, description="Exchange name (e.g., okx)"
-    )
+    exchange: str = Field(..., min_length=1, max_length=32, description="Exchange name (e.g., okx)")
     timeframe: str = Field(
         ..., min_length=1, max_length=8, description="Candle timeframe (e.g., 1m)"
     )
@@ -113,5 +111,3 @@ class PaperTradingListItem(BaseModel):
     bar_count: int
     equity: Decimal
     cash: Decimal
-
-

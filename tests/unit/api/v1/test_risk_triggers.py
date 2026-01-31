@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
@@ -22,9 +22,7 @@ class TestListRiskTriggers:
 
     def test_list_triggers_empty(self, client: TestClient) -> None:
         """Test listing triggers when none exist."""
-        with patch(
-            "squant.api.v1.risk_triggers.RiskTriggerService"
-        ) as mock_service_class:
+        with patch("squant.api.v1.risk_triggers.RiskTriggerService") as mock_service_class:
             mock_service = MagicMock()
             mock_service.list_triggers = AsyncMock(return_value=([], 0))
             mock_service_class.return_value = mock_service
@@ -42,7 +40,7 @@ class TestListRiskTriggers:
         trigger_id = uuid4()
         rule_id = uuid4()
         run_id = uuid4()
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
 
         mock_trigger = MagicMock()
         mock_trigger.id = str(trigger_id)
@@ -51,9 +49,7 @@ class TestListRiskTriggers:
         mock_trigger.run_id = str(run_id)
         mock_trigger.trigger_type = "daily_loss_limit"
 
-        with patch(
-            "squant.api.v1.risk_triggers.RiskTriggerService"
-        ) as mock_service_class:
+        with patch("squant.api.v1.risk_triggers.RiskTriggerService") as mock_service_class:
             mock_service = MagicMock()
             mock_service.list_triggers = AsyncMock(return_value=([mock_trigger], 1))
             mock_service_class.return_value = mock_service
@@ -68,9 +64,7 @@ class TestListRiskTriggers:
 
     def test_list_triggers_with_pagination(self, client: TestClient) -> None:
         """Test listing triggers with pagination."""
-        with patch(
-            "squant.api.v1.risk_triggers.RiskTriggerService"
-        ) as mock_service_class:
+        with patch("squant.api.v1.risk_triggers.RiskTriggerService") as mock_service_class:
             mock_service = MagicMock()
             mock_service.list_triggers = AsyncMock(return_value=([], 50))
             mock_service_class.return_value = mock_service
@@ -85,9 +79,7 @@ class TestListRiskTriggers:
 
     def test_list_triggers_with_time_filter(self, client: TestClient) -> None:
         """Test listing triggers with time filter."""
-        with patch(
-            "squant.api.v1.risk_triggers.RiskTriggerService"
-        ) as mock_service_class:
+        with patch("squant.api.v1.risk_triggers.RiskTriggerService") as mock_service_class:
             mock_service = MagicMock()
             mock_service.list_triggers = AsyncMock(return_value=([], 0))
             mock_service_class.return_value = mock_service
@@ -108,9 +100,7 @@ class TestListRiskTriggers:
         """Test listing triggers filtered by rule_id."""
         rule_id = uuid4()
 
-        with patch(
-            "squant.api.v1.risk_triggers.RiskTriggerService"
-        ) as mock_service_class:
+        with patch("squant.api.v1.risk_triggers.RiskTriggerService") as mock_service_class:
             mock_service = MagicMock()
             mock_service.list_triggers = AsyncMock(return_value=([], 0))
             mock_service_class.return_value = mock_service
@@ -125,9 +115,7 @@ class TestListRiskTriggers:
         """Test listing triggers filtered by run_id."""
         run_id = uuid4()
 
-        with patch(
-            "squant.api.v1.risk_triggers.RiskTriggerService"
-        ) as mock_service_class:
+        with patch("squant.api.v1.risk_triggers.RiskTriggerService") as mock_service_class:
             mock_service = MagicMock()
             mock_service.list_triggers = AsyncMock(return_value=([], 0))
             mock_service_class.return_value = mock_service

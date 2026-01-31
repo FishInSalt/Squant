@@ -20,7 +20,7 @@ FROM base AS development
 RUN pip install uv
 
 # 复制依赖文件
-COPY pyproject.toml uv.lock ./
+COPY pyproject.toml uv.lock README.md ./
 
 # 安装所有依赖（包括开发依赖）
 RUN uv sync --frozen
@@ -35,7 +35,7 @@ FROM base AS builder
 
 RUN pip install uv
 
-COPY pyproject.toml uv.lock ./
+COPY pyproject.toml uv.lock README.md ./
 
 # 只安装生产依赖
 RUN uv sync --frozen --no-dev
@@ -57,11 +57,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # 从构建阶段复制虚拟环境
 COPY --from=builder /app/.venv /app/.venv
 
-# 设置 PATH
-ENV PATH="/app/.venv/bin:$PATH"
+# 设置 PATH 和 PYTHONPATH
+ENV PATH="/app/.venv/bin:$PATH" \
+    PYTHONPATH="/app/src:$PYTHONPATH"
 
 # 复制应用代码
-COPY --chown=appuser:appuser src/squant/ ./squant/
+COPY --chown=appuser:appuser src/ ./src/
 COPY --chown=appuser:appuser alembic/ ./alembic/
 COPY --chown=appuser:appuser alembic.ini ./
 

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from decimal import Decimal
 from uuid import uuid4
 
@@ -141,7 +141,7 @@ class TestPaperTradingRunResponse:
 
     def test_full_response(self):
         """Test creating full response."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         response = PaperTradingRunResponse(
             id=uuid4(),
             strategy_id=uuid4(),
@@ -166,7 +166,7 @@ class TestPaperTradingRunResponse:
 
     def test_error_response(self):
         """Test response with error."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         response = PaperTradingRunResponse(
             id=uuid4(),
             strategy_id=uuid4(),
@@ -231,7 +231,7 @@ class TestPendingOrderInfo:
 
     def test_limit_order(self):
         """Test pending limit order."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         order = PendingOrderInfo(
             id="order-123",
             symbol="BTC/USDT",
@@ -269,7 +269,7 @@ class TestPaperTradingStatusResponse:
 
     def test_running_status(self):
         """Test running session status."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         response = PaperTradingStatusResponse(
             run_id=uuid4(),
             symbol="BTC/USDT",
@@ -283,7 +283,9 @@ class TestPaperTradingStatusResponse:
             equity=Decimal("10500"),
             initial_capital=Decimal("10000"),
             total_fees=Decimal("50"),
-            positions={"BTC": PositionInfo(amount=Decimal("0.1"), avg_entry_price=Decimal("55000"))},
+            positions={
+                "BTC": PositionInfo(amount=Decimal("0.1"), avg_entry_price=Decimal("55000"))
+            },
             pending_orders=[],
             completed_orders_count=20,
             trades_count=15,
@@ -295,7 +297,7 @@ class TestPaperTradingStatusResponse:
 
     def test_stopped_status(self):
         """Test stopped session status."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         response = PaperTradingStatusResponse(
             run_id=uuid4(),
             symbol="ETH/USDT",
@@ -320,7 +322,7 @@ class TestPaperTradingStatusResponse:
 
     def test_with_pending_orders(self):
         """Test status with pending orders."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         response = PaperTradingStatusResponse(
             run_id=uuid4(),
             symbol="BTC/USDT",
@@ -359,7 +361,7 @@ class TestPaperTradingListItem:
 
     def test_list_item(self):
         """Test paper trading list item."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         item = PaperTradingListItem(
             run_id=uuid4(),
             strategy_id=uuid4(),

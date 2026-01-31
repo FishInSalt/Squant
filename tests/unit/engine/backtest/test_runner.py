@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
-from typing import AsyncIterator
-from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -15,7 +14,7 @@ from squant.engine.backtest.runner import (
     StrategyInstantiationError,
     run_backtest,
 )
-from squant.engine.backtest.types import Bar, BacktestResult
+from squant.engine.backtest.types import BacktestResult, Bar
 
 
 @pytest.fixture
@@ -41,31 +40,31 @@ class MyStrategy(Strategy):
 @pytest.fixture
 def simple_strategy_code():
     """Create simplest valid strategy code."""
-    return '''
+    return """
 class TestStrategy(Strategy):
     def on_bar(self, bar):
         pass
-'''
+"""
 
 
 @pytest.fixture
 def invalid_strategy_code():
     """Create invalid strategy code (missing on_bar)."""
-    return '''
+    return """
 class BadStrategy(Strategy):
     def some_method(self):
         pass
-'''
+"""
 
 
 @pytest.fixture
 def syntax_error_code():
     """Create code with syntax error."""
-    return '''
+    return """
 class MyStrategy(Strategy)
     def on_bar(self, bar):
         pass
-'''
+"""
 
 
 @pytest.fixture
@@ -314,10 +313,10 @@ class TestStrategyInstantiation:
 
     def test_no_strategy_class_raises_error(self):
         """Test code without Strategy class raises error."""
-        code = '''
+        code = """
 def some_function():
     pass
-'''
+"""
         runner = BacktestRunner(
             strategy_code=code,
             strategy_name="Test",
@@ -462,11 +461,11 @@ class TestBacktestErrors:
     async def test_run_error_wrapped_in_backtest_error(self, sample_bars):
         """Test runtime errors are wrapped in BacktestError."""
         # Code that will error in on_bar
-        error_code = '''
+        error_code = """
 class ErrorStrategy(Strategy):
     def on_bar(self, bar):
         raise RuntimeError("Test error")
-'''
+"""
         runner = BacktestRunner(
             strategy_code=error_code,
             strategy_name="Test",

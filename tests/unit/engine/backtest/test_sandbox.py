@@ -5,18 +5,18 @@ from __future__ import annotations
 import pytest
 
 from squant.engine.sandbox import (
-    CompiledStrategy,
-    DangerousBuiltinsValidator,
     DISALLOWED_BUILTINS,
     DISALLOWED_MODULES,
-    ImportValidator,
     SAFE_BUILTINS,
+    CompiledStrategy,
+    DangerousBuiltinsValidator,
+    ImportValidator,
     StrategyStructureValidator,
     ValidationResult,
-    compile_strategy,
-    validate_strategy_code,
     _build_restricted_globals,
     _inplacevar_,
+    compile_strategy,
+    validate_strategy_code,
 )
 
 
@@ -43,11 +43,11 @@ class MyStrategy(Strategy):
 @pytest.fixture
 def minimal_strategy():
     """Minimal valid strategy."""
-    return '''
+    return """
 class MinimalStrategy(Strategy):
     def on_bar(self, bar):
         pass
-'''
+"""
 
 
 class TestValidationResult:
@@ -96,6 +96,7 @@ class TestImportValidator:
 
         # Parse code with allowed import
         import ast
+
         tree = ast.parse("from decimal import Decimal")
         validator.visit(tree)
 
@@ -108,6 +109,7 @@ class TestImportValidator:
         validator = ImportValidator(result)
 
         import ast
+
         tree = ast.parse("import os")
         validator.visit(tree)
 
@@ -120,6 +122,7 @@ class TestImportValidator:
         validator = ImportValidator(result)
 
         import ast
+
         tree = ast.parse("from subprocess import run")
         validator.visit(tree)
 
@@ -132,6 +135,7 @@ class TestImportValidator:
         validator = ImportValidator(result)
 
         import ast
+
         tree = ast.parse("import os\nimport sys\nimport socket")
         validator.visit(tree)
 
@@ -148,6 +152,7 @@ class TestStrategyStructureValidator:
         validator = StrategyStructureValidator(result)
 
         import ast
+
         tree = ast.parse(valid_strategy)
         validator.visit(tree)
         validator.finalize()
@@ -160,6 +165,7 @@ class TestStrategyStructureValidator:
         validator = StrategyStructureValidator(result)
 
         import ast
+
         tree = ast.parse("class SomeClass:\n    pass")
         validator.visit(tree)
         validator.finalize()
@@ -173,11 +179,12 @@ class TestStrategyStructureValidator:
         validator = StrategyStructureValidator(result)
 
         import ast
-        code = '''
+
+        code = """
 class MyStrategy(Strategy):
     def some_method(self):
         pass
-'''
+"""
         tree = ast.parse(code)
         validator.visit(tree)
         validator.finalize()
@@ -195,6 +202,7 @@ class TestDangerousBuiltinsValidator:
         validator = DangerousBuiltinsValidator(result)
 
         import ast
+
         tree = ast.parse("x = len([1, 2, 3])\ny = abs(-5)")
         validator.visit(tree)
 
@@ -206,6 +214,7 @@ class TestDangerousBuiltinsValidator:
         validator = DangerousBuiltinsValidator(result)
 
         import ast
+
         tree = ast.parse("eval('print(1)')")
         validator.visit(tree)
 
@@ -218,6 +227,7 @@ class TestDangerousBuiltinsValidator:
         validator = DangerousBuiltinsValidator(result)
 
         import ast
+
         tree = ast.parse("exec('x = 1')")
         validator.visit(tree)
 
@@ -230,6 +240,7 @@ class TestDangerousBuiltinsValidator:
         validator = DangerousBuiltinsValidator(result)
 
         import ast
+
         tree = ast.parse("f = open('file.txt')")
         validator.visit(tree)
 
@@ -242,6 +253,7 @@ class TestDangerousBuiltinsValidator:
         validator = DangerousBuiltinsValidator(result)
 
         import ast
+
         # obj.open() should be allowed (method call, not builtin)
         tree = ast.parse("file.open()")
         validator.visit(tree)
@@ -278,12 +290,12 @@ class TestValidateStrategyCode:
 
     def test_dangerous_import_fails(self):
         """Test dangerous imports fail."""
-        code = '''
+        code = """
 import os
 class MyStrategy(Strategy):
     def on_bar(self, bar):
         os.system("ls")
-'''
+"""
         result = validate_strategy_code(code)
         assert result.valid is False
 
@@ -321,7 +333,9 @@ class TestCompileStrategy:
         code = "class MyStrategy(Strategy)\n    def on_bar(): pass"
         with pytest.raises(ValueError) as exc_info:
             compile_strategy(code)
-        assert "syntax" in str(exc_info.value).lower() or "validation" in str(exc_info.value).lower()
+        assert (
+            "syntax" in str(exc_info.value).lower() or "validation" in str(exc_info.value).lower()
+        )
 
 
 class TestBuildRestrictedGlobals:
@@ -496,16 +510,17 @@ class TestCompiledStrategyExecution:
 
         strategy_class = local_namespace["MinimalStrategy"]
         from squant.engine.backtest.strategy_base import Strategy
+
         assert issubclass(strategy_class, Strategy)
 
     def test_strategy_can_use_decimal(self):
         """Test strategy can use Decimal in code."""
-        code = '''
+        code = """
 class DecimalStrategy(Strategy):
     def on_bar(self, bar):
         amount = Decimal("0.1")
         total = amount * Decimal("100")
-'''
+"""
         compiled = compile_strategy(code)
 
         local_namespace: dict = {}
@@ -515,13 +530,13 @@ class DecimalStrategy(Strategy):
 
     def test_strategy_can_use_inplace_operators(self):
         """Test strategy can use += and other inplace operators on local variables."""
-        code = '''
+        code = """
 class InplaceStrategy(Strategy):
     def on_bar(self, bar):
         counter = 0
         counter += 1
         total = counter * 10
-'''
+"""
         compiled = compile_strategy(code)
 
         local_namespace: dict = {}

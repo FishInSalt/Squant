@@ -313,9 +313,7 @@ async def get_equity_curve(
 
     try:
         equity_curve = await service.get_equity_curve(run_id)
-        return ApiResponse(
-            data=[EquityCurvePoint.model_validate(e) for e in equity_curve]
-        )
+        return ApiResponse(data=[EquityCurvePoint.model_validate(e) for e in equity_curve])
     except SessionNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
 

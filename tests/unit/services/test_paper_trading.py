@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from decimal import Decimal
-from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
@@ -95,15 +94,17 @@ def mock_engine():
     engine.start = AsyncMock()
     engine.stop = AsyncMock()
     engine.get_pending_snapshots = MagicMock(return_value=[])
-    engine.get_state_snapshot = MagicMock(return_value={
-        "run_id": str(engine.run_id),
-        "symbol": "BTC/USDT",
-        "timeframe": "1m",
-        "is_running": True,
-        "bar_count": 100,
-        "equity": "10500",
-        "cash": "9000",
-    })
+    engine.get_state_snapshot = MagicMock(
+        return_value={
+            "run_id": str(engine.run_id),
+            "symbol": "BTC/USDT",
+            "timeframe": "1m",
+            "is_running": True,
+            "bar_count": 100,
+            "equity": "10500",
+            "cash": "9000",
+        }
+    )
     return engine
 
 
@@ -202,9 +203,7 @@ class TestPaperTradingService:
     @pytest.mark.asyncio
     async def test_get_run_success(self, mock_session, mock_run):
         """Test getting a paper trading run by ID."""
-        with patch.object(
-            StrategyRunRepository, "get", new_callable=AsyncMock
-        ) as mock_get:
+        with patch.object(StrategyRunRepository, "get", new_callable=AsyncMock) as mock_get:
             mock_get.return_value = mock_run
 
             service = PaperTradingService(mock_session)
@@ -216,9 +215,7 @@ class TestPaperTradingService:
     @pytest.mark.asyncio
     async def test_get_run_not_found(self, mock_session):
         """Test getting non-existent run raises error."""
-        with patch.object(
-            StrategyRunRepository, "get", new_callable=AsyncMock
-        ) as mock_get:
+        with patch.object(StrategyRunRepository, "get", new_callable=AsyncMock) as mock_get:
             mock_get.return_value = None
 
             service = PaperTradingService(mock_session)
@@ -229,11 +226,14 @@ class TestPaperTradingService:
     @pytest.mark.asyncio
     async def test_list_runs(self, mock_session, mock_run):
         """Test listing paper trading runs."""
-        with patch.object(
-            StrategyRunRepository, "list_by_mode", new_callable=AsyncMock
-        ) as mock_list, patch.object(
-            StrategyRunRepository, "count_by_mode", new_callable=AsyncMock
-        ) as mock_count:
+        with (
+            patch.object(
+                StrategyRunRepository, "list_by_mode", new_callable=AsyncMock
+            ) as mock_list,
+            patch.object(
+                StrategyRunRepository, "count_by_mode", new_callable=AsyncMock
+            ) as mock_count,
+        ):
             mock_list.return_value = [mock_run]
             mock_count.return_value = 1
 
@@ -248,11 +248,14 @@ class TestPaperTradingService:
     @pytest.mark.asyncio
     async def test_list_runs_with_status(self, mock_session, mock_run):
         """Test listing runs with status filter."""
-        with patch.object(
-            StrategyRunRepository, "list_by_mode", new_callable=AsyncMock
-        ) as mock_list, patch.object(
-            StrategyRunRepository, "count_by_mode", new_callable=AsyncMock
-        ) as mock_count:
+        with (
+            patch.object(
+                StrategyRunRepository, "list_by_mode", new_callable=AsyncMock
+            ) as mock_list,
+            patch.object(
+                StrategyRunRepository, "count_by_mode", new_callable=AsyncMock
+            ) as mock_count,
+        ):
             mock_list.return_value = [mock_run]
             mock_count.return_value = 1
 
@@ -265,9 +268,7 @@ class TestPaperTradingService:
     @pytest.mark.asyncio
     async def test_list_active(self, mock_session):
         """Test listing active paper trading sessions."""
-        with patch(
-            "squant.services.paper_trading.get_session_manager"
-        ) as mock_get_manager:
+        with patch("squant.services.paper_trading.get_session_manager") as mock_get_manager:
             mock_manager = MagicMock()
             mock_manager.list_sessions.return_value = [
                 {"run_id": str(uuid4()), "symbol": "BTC/USDT", "is_running": True}
@@ -285,11 +286,10 @@ class TestPaperTradingService:
         """Test getting status of active session."""
         run_id = uuid4()
 
-        with patch.object(
-            StrategyRunRepository, "get", new_callable=AsyncMock
-        ) as mock_get, patch(
-            "squant.services.paper_trading.get_session_manager"
-        ) as mock_get_manager:
+        with (
+            patch.object(StrategyRunRepository, "get", new_callable=AsyncMock) as mock_get,
+            patch("squant.services.paper_trading.get_session_manager") as mock_get_manager,
+        ):
             mock_get.return_value = mock_run
             mock_manager = MagicMock()
             mock_manager.get.return_value = mock_engine
@@ -308,11 +308,10 @@ class TestPaperTradingService:
         mock_run.started_at = datetime.now(UTC)
         mock_run.stopped_at = datetime.now(UTC)
 
-        with patch.object(
-            StrategyRunRepository, "get", new_callable=AsyncMock
-        ) as mock_get, patch(
-            "squant.services.paper_trading.get_session_manager"
-        ) as mock_get_manager:
+        with (
+            patch.object(StrategyRunRepository, "get", new_callable=AsyncMock) as mock_get,
+            patch("squant.services.paper_trading.get_session_manager") as mock_get_manager,
+        ):
             mock_get.return_value = mock_run
             mock_manager = MagicMock()
             mock_manager.get.return_value = None  # No active engine
@@ -326,9 +325,7 @@ class TestPaperTradingService:
     @pytest.mark.asyncio
     async def test_get_status_not_found(self, mock_session):
         """Test getting status of non-existent session."""
-        with patch.object(
-            StrategyRunRepository, "get", new_callable=AsyncMock
-        ) as mock_get:
+        with patch.object(StrategyRunRepository, "get", new_callable=AsyncMock) as mock_get:
             mock_get.return_value = None
 
             service = PaperTradingService(mock_session)
@@ -337,15 +334,14 @@ class TestPaperTradingService:
                 await service.get_status(uuid4())
 
     @pytest.mark.asyncio
-    async def test_get_equity_curve_success(
-        self, mock_session, mock_run, mock_equity_curve
-    ):
+    async def test_get_equity_curve_success(self, mock_session, mock_run, mock_equity_curve):
         """Test getting equity curve for a run."""
-        with patch.object(
-            StrategyRunRepository, "get", new_callable=AsyncMock
-        ) as mock_get, patch.object(
-            EquityCurveRepository, "get_by_run", new_callable=AsyncMock
-        ) as mock_get_curve:
+        with (
+            patch.object(StrategyRunRepository, "get", new_callable=AsyncMock) as mock_get,
+            patch.object(
+                EquityCurveRepository, "get_by_run", new_callable=AsyncMock
+            ) as mock_get_curve,
+        ):
             mock_get.return_value = mock_run
             mock_get_curve.return_value = [mock_equity_curve]
 
@@ -359,9 +355,7 @@ class TestPaperTradingService:
     @pytest.mark.asyncio
     async def test_get_equity_curve_not_found(self, mock_session):
         """Test getting equity curve for non-existent run."""
-        with patch.object(
-            StrategyRunRepository, "get", new_callable=AsyncMock
-        ) as mock_get:
+        with patch.object(StrategyRunRepository, "get", new_callable=AsyncMock) as mock_get:
             mock_get.return_value = None
 
             service = PaperTradingService(mock_session)
@@ -375,15 +369,12 @@ class TestPaperTradingService:
         run_id = uuid4()
         mock_run.id = str(run_id)
 
-        with patch.object(
-            StrategyRunRepository, "get", new_callable=AsyncMock
-        ) as mock_get, patch.object(
-            StrategyRunRepository, "update", new_callable=AsyncMock
-        ) as mock_update, patch(
-            "squant.services.paper_trading.get_session_manager"
-        ) as mock_get_manager, patch(
-            "squant.services.paper_trading.get_stream_manager"
-        ) as mock_get_stream:
+        with (
+            patch.object(StrategyRunRepository, "get", new_callable=AsyncMock) as mock_get,
+            patch.object(StrategyRunRepository, "update", new_callable=AsyncMock) as mock_update,
+            patch("squant.services.paper_trading.get_session_manager") as mock_get_manager,
+            patch("squant.services.paper_trading.get_stream_manager") as mock_get_stream,
+        ):
             mock_get.return_value = mock_run
             mock_update.return_value = mock_run
 
@@ -398,7 +389,7 @@ class TestPaperTradingService:
             mock_get_stream.return_value = mock_stream
 
             service = PaperTradingService(mock_session)
-            result = await service.stop(run_id)
+            await service.stop(run_id)
 
             mock_engine.stop.assert_called_once()
             mock_manager.unregister.assert_called_once()
@@ -406,9 +397,7 @@ class TestPaperTradingService:
     @pytest.mark.asyncio
     async def test_stop_session_not_found(self, mock_session):
         """Test stopping non-existent session."""
-        with patch.object(
-            StrategyRunRepository, "get", new_callable=AsyncMock
-        ) as mock_get:
+        with patch.object(StrategyRunRepository, "get", new_callable=AsyncMock) as mock_get:
             mock_get.return_value = None
 
             service = PaperTradingService(mock_session)
@@ -419,9 +408,7 @@ class TestPaperTradingService:
     @pytest.mark.asyncio
     async def test_persist_snapshots_no_engine(self, mock_session):
         """Test persisting snapshots when no engine exists."""
-        with patch(
-            "squant.services.paper_trading.get_session_manager"
-        ) as mock_get_manager:
+        with patch("squant.services.paper_trading.get_session_manager") as mock_get_manager:
             mock_manager = MagicMock()
             mock_manager.get.return_value = None
             mock_get_manager.return_value = mock_manager
@@ -436,9 +423,7 @@ class TestPaperTradingService:
         """Test persisting snapshots when none are pending."""
         mock_engine.get_pending_snapshots.return_value = []
 
-        with patch(
-            "squant.services.paper_trading.get_session_manager"
-        ) as mock_get_manager:
+        with patch("squant.services.paper_trading.get_session_manager") as mock_get_manager:
             mock_manager = MagicMock()
             mock_manager.get.return_value = mock_engine
             mock_get_manager.return_value = mock_manager
@@ -459,9 +444,7 @@ class TestPaperTradingService:
         mock_snapshot.unrealized_pnl = Decimal("500")
         mock_engine.get_pending_snapshots.return_value = [mock_snapshot]
 
-        with patch(
-            "squant.services.paper_trading.get_session_manager"
-        ) as mock_get_manager:
+        with patch("squant.services.paper_trading.get_session_manager") as mock_get_manager:
             mock_manager = MagicMock()
             mock_manager.get.return_value = mock_engine
             mock_get_manager.return_value = mock_manager

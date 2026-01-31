@@ -88,9 +88,7 @@ class TestBaseRepositoryGet:
 
     @pytest.mark.asyncio
     @patch("squant.infra.repository.select")
-    async def test_get_returns_none_when_not_found(
-        self, mock_select, repository, mock_session
-    ):
+    async def test_get_returns_none_when_not_found(self, mock_select, repository, mock_session):
         """Test get returns None when not found."""
         mock_stmt = MagicMock()
         mock_stmt.where.return_value = mock_stmt
@@ -168,9 +166,7 @@ class TestBaseRepositoryGetBy:
 
     @pytest.mark.asyncio
     @patch("squant.infra.repository.select")
-    async def test_get_by_returns_none_when_not_found(
-        self, mock_select, repository, mock_session
-    ):
+    async def test_get_by_returns_none_when_not_found(self, mock_select, repository, mock_session):
         """Test get_by returns None when not found."""
         mock_stmt = MagicMock()
         mock_stmt.where.return_value = mock_stmt
@@ -348,9 +344,7 @@ class TestBaseRepositoryCount:
     @pytest.mark.asyncio
     @patch("squant.infra.repository.func")
     @patch("squant.infra.repository.select")
-    async def test_count_all(
-        self, mock_select, mock_func, repository, mock_session
-    ):
+    async def test_count_all(self, mock_select, mock_func, repository, mock_session):
         """Test count all records."""
         mock_stmt = MagicMock()
         mock_stmt.select_from.return_value = mock_stmt
@@ -369,9 +363,7 @@ class TestBaseRepositoryCount:
     @pytest.mark.asyncio
     @patch("squant.infra.repository.func")
     @patch("squant.infra.repository.select")
-    async def test_count_with_filters(
-        self, mock_select, mock_func, repository, mock_session
-    ):
+    async def test_count_with_filters(self, mock_select, mock_func, repository, mock_session):
         """Test count with filters."""
         mock_stmt = MagicMock()
         mock_stmt.select_from.return_value = mock_stmt
@@ -505,9 +497,7 @@ class TestBaseRepositoryUpdate:
         mock_result.scalar_one_or_none.return_value = mock_model_instance
         mock_session.execute.return_value = mock_result
 
-        result = await repository.update(
-            mock_model_instance.id, name="Updated", status=None
-        )
+        result = await repository.update(mock_model_instance.id, name="Updated", status=None)
 
         assert result is not None
         # values() should only receive non-None values
@@ -519,9 +509,7 @@ class TestBaseRepositoryDelete:
 
     @pytest.mark.asyncio
     @patch("squant.infra.repository.delete")
-    async def test_delete_returns_true_when_deleted(
-        self, mock_delete, repository, mock_session
-    ):
+    async def test_delete_returns_true_when_deleted(self, mock_delete, repository, mock_session):
         """Test delete returns True when record deleted."""
         mock_stmt = MagicMock()
         mock_stmt.where.return_value = mock_stmt
@@ -538,9 +526,7 @@ class TestBaseRepositoryDelete:
 
     @pytest.mark.asyncio
     @patch("squant.infra.repository.delete")
-    async def test_delete_returns_false_when_not_found(
-        self, mock_delete, repository, mock_session
-    ):
+    async def test_delete_returns_false_when_not_found(self, mock_delete, repository, mock_session):
         """Test delete returns False when record not found."""
         mock_stmt = MagicMock()
         mock_stmt.where.return_value = mock_stmt

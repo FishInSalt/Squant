@@ -1,14 +1,14 @@
 """Unit tests for backtest metrics calculation."""
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 import pytest
 
 from squant.engine.backtest.metrics import (
     PerformanceMetrics,
-    calculate_metrics,
     _calculate_max_drawdown,
+    calculate_metrics,
 )
 from squant.engine.backtest.types import (
     EquitySnapshot,
@@ -24,7 +24,7 @@ def create_equity_curve(
 ) -> list[EquitySnapshot]:
     """Helper to create equity curve from list of equity values."""
     if start_time is None:
-        start_time = datetime(2024, 1, 1, tzinfo=timezone.utc)
+        start_time = datetime(2024, 1, 1, tzinfo=UTC)
 
     curve = []
     for i, equity in enumerate(equities):
@@ -79,9 +79,7 @@ class TestCalculateMetrics:
         equities = [Decimal("10000"), Decimal("10000")]
         curve = create_equity_curve(equities)
 
-        metrics = calculate_metrics(
-            curve, [], Decimal("10000"), total_fees=Decimal("100")
-        )
+        metrics = calculate_metrics(curve, [], Decimal("10000"), total_fees=Decimal("100"))
 
         assert metrics.total_fees == Decimal("100")
 
@@ -148,9 +146,9 @@ class TestTradeStatistics:
             TradeRecord(
                 symbol="BTC/USDT",
                 side=OrderSide.BUY,
-                entry_time=datetime(2024, 1, 1, tzinfo=timezone.utc),
+                entry_time=datetime(2024, 1, 1, tzinfo=UTC),
                 entry_price=Decimal("42000"),
-                exit_time=datetime(2024, 1, 2, tzinfo=timezone.utc),
+                exit_time=datetime(2024, 1, 2, tzinfo=UTC),
                 exit_price=Decimal("43000"),
                 amount=Decimal("1"),
                 pnl=Decimal("1000"),
@@ -158,9 +156,9 @@ class TestTradeStatistics:
             TradeRecord(
                 symbol="BTC/USDT",
                 side=OrderSide.BUY,
-                entry_time=datetime(2024, 1, 3, tzinfo=timezone.utc),
+                entry_time=datetime(2024, 1, 3, tzinfo=UTC),
                 entry_price=Decimal("43000"),
-                exit_time=datetime(2024, 1, 4, tzinfo=timezone.utc),
+                exit_time=datetime(2024, 1, 4, tzinfo=UTC),
                 exit_price=Decimal("42000"),
                 amount=Decimal("1"),
                 pnl=Decimal("-1000"),
@@ -181,9 +179,9 @@ class TestTradeStatistics:
             TradeRecord(
                 symbol="BTC/USDT",
                 side=OrderSide.BUY,
-                entry_time=datetime(2024, 1, 1, tzinfo=timezone.utc),
+                entry_time=datetime(2024, 1, 1, tzinfo=UTC),
                 entry_price=Decimal("42000"),
-                exit_time=datetime(2024, 1, 2, tzinfo=timezone.utc),
+                exit_time=datetime(2024, 1, 2, tzinfo=UTC),
                 exit_price=Decimal("43000"),
                 amount=Decimal("1"),
                 pnl=Decimal("1000"),
@@ -191,9 +189,9 @@ class TestTradeStatistics:
             TradeRecord(
                 symbol="BTC/USDT",
                 side=OrderSide.BUY,
-                entry_time=datetime(2024, 1, 2, tzinfo=timezone.utc),
+                entry_time=datetime(2024, 1, 2, tzinfo=UTC),
                 entry_price=Decimal("43000"),
-                exit_time=datetime(2024, 1, 3, tzinfo=timezone.utc),
+                exit_time=datetime(2024, 1, 3, tzinfo=UTC),
                 exit_price=Decimal("44000"),
                 amount=Decimal("1"),
                 pnl=Decimal("1000"),
@@ -201,9 +199,9 @@ class TestTradeStatistics:
             TradeRecord(
                 symbol="BTC/USDT",
                 side=OrderSide.BUY,
-                entry_time=datetime(2024, 1, 3, tzinfo=timezone.utc),
+                entry_time=datetime(2024, 1, 3, tzinfo=UTC),
                 entry_price=Decimal("44000"),
-                exit_time=datetime(2024, 1, 4, tzinfo=timezone.utc),
+                exit_time=datetime(2024, 1, 4, tzinfo=UTC),
                 exit_price=Decimal("43000"),
                 amount=Decimal("1"),
                 pnl=Decimal("-1000"),
@@ -223,9 +221,9 @@ class TestTradeStatistics:
             TradeRecord(
                 symbol="BTC/USDT",
                 side=OrderSide.BUY,
-                entry_time=datetime(2024, 1, 1, tzinfo=timezone.utc),
+                entry_time=datetime(2024, 1, 1, tzinfo=UTC),
                 entry_price=Decimal("42000"),
-                exit_time=datetime(2024, 1, 2, tzinfo=timezone.utc),
+                exit_time=datetime(2024, 1, 2, tzinfo=UTC),
                 exit_price=Decimal("44000"),
                 amount=Decimal("1"),
                 pnl=Decimal("2000"),  # Win
@@ -233,9 +231,9 @@ class TestTradeStatistics:
             TradeRecord(
                 symbol="BTC/USDT",
                 side=OrderSide.BUY,
-                entry_time=datetime(2024, 1, 3, tzinfo=timezone.utc),
+                entry_time=datetime(2024, 1, 3, tzinfo=UTC),
                 entry_price=Decimal("44000"),
-                exit_time=datetime(2024, 1, 4, tzinfo=timezone.utc),
+                exit_time=datetime(2024, 1, 4, tzinfo=UTC),
                 exit_price=Decimal("43000"),
                 amount=Decimal("1"),
                 pnl=Decimal("-1000"),  # Loss
@@ -255,9 +253,9 @@ class TestTradeStatistics:
             TradeRecord(
                 symbol="BTC/USDT",
                 side=OrderSide.BUY,
-                entry_time=datetime(2024, 1, 1, tzinfo=timezone.utc),
+                entry_time=datetime(2024, 1, 1, tzinfo=UTC),
                 entry_price=Decimal("42000"),
-                exit_time=datetime(2024, 1, 2, tzinfo=timezone.utc),
+                exit_time=datetime(2024, 1, 2, tzinfo=UTC),
                 exit_price=Decimal("43000"),
                 amount=Decimal("1"),
                 pnl=Decimal("1000"),
@@ -265,9 +263,9 @@ class TestTradeStatistics:
             TradeRecord(
                 symbol="BTC/USDT",
                 side=OrderSide.BUY,
-                entry_time=datetime(2024, 1, 3, tzinfo=timezone.utc),
+                entry_time=datetime(2024, 1, 3, tzinfo=UTC),
                 entry_price=Decimal("43000"),
-                exit_time=datetime(2024, 1, 4, tzinfo=timezone.utc),
+                exit_time=datetime(2024, 1, 4, tzinfo=UTC),
                 exit_price=Decimal("42500"),
                 amount=Decimal("1"),
                 pnl=Decimal("-500"),

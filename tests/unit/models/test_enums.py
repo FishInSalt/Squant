@@ -177,7 +177,13 @@ class TestLogLevel:
 
     def test_severity_order(self):
         """Test log levels can be ordered by severity."""
-        levels = [LogLevel.DEBUG, LogLevel.INFO, LogLevel.WARNING, LogLevel.ERROR, LogLevel.CRITICAL]
+        levels = [
+            LogLevel.DEBUG,
+            LogLevel.INFO,
+            LogLevel.WARNING,
+            LogLevel.ERROR,
+            LogLevel.CRITICAL,
+        ]
         # Just verify they all exist in expected order
         assert len(levels) == 5
 

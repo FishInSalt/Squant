@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -138,9 +137,7 @@ class TestSetExchange:
         """Test switching exchange continues when stream manager fails."""
         with patch("squant.api.v1.market.get_stream_manager") as mock_get_manager:
             mock_manager = MagicMock()
-            mock_manager.switch_exchange = AsyncMock(
-                side_effect=Exception("WebSocket error")
-            )
+            mock_manager.switch_exchange = AsyncMock(side_effect=Exception("WebSocket error"))
             mock_get_manager.return_value = mock_manager
 
             # Should still succeed - REST API continues even if WebSocket fails
@@ -169,9 +166,7 @@ class TestGetTicker:
         assert float(data["data"]["bid"]) == 42000.0
         assert float(data["data"]["ask"]) == 42001.0
 
-    def test_get_ticker_symbol_with_dash(
-        self, client: TestClient, mock_exchange
-    ) -> None:
+    def test_get_ticker_symbol_with_dash(self, client: TestClient, mock_exchange) -> None:
         """Test getting ticker with dash-separated symbol."""
         mock_ticker_eth = Ticker(
             symbol="ETH/USDT",
@@ -194,15 +189,11 @@ class TestGetTicker:
         data = response.json()
         assert data["data"]["symbol"] == "ETH/USDT"
 
-    def test_get_ticker_exchange_error(
-        self, client: TestClient, mock_exchange
-    ) -> None:
+    def test_get_ticker_exchange_error(self, client: TestClient, mock_exchange) -> None:
         """Test getting ticker when exchange returns error."""
         from squant.infra.exchange.exceptions import ExchangeError
 
-        mock_exchange.get_ticker = AsyncMock(
-            side_effect=ExchangeError("Symbol not found")
-        )
+        mock_exchange.get_ticker = AsyncMock(side_effect=ExchangeError("Symbol not found"))
 
         response = client.get("/api/v1/market/ticker/INVALID/SYMBOL")
 
@@ -251,9 +242,7 @@ class TestGetTickers:
         assert data["code"] == 0
         assert len(data["data"]) == 2
 
-    def test_get_tickers_filtered_by_symbols(
-        self, client: TestClient, mock_exchange
-    ) -> None:
+    def test_get_tickers_filtered_by_symbols(self, client: TestClient, mock_exchange) -> None:
         """Test getting tickers filtered by symbols."""
         mock_ticker = Ticker(
             symbol="BTC/USDT",
@@ -277,9 +266,7 @@ class TestGetTickers:
         assert len(data["data"]) == 1
         assert data["data"][0]["symbol"] == "BTC/USDT"
 
-    def test_get_tickers_sorted_by_volume(
-        self, client: TestClient, mock_exchange
-    ) -> None:
+    def test_get_tickers_sorted_by_volume(self, client: TestClient, mock_exchange) -> None:
         """Test getting tickers sorted by volume."""
         mock_tickers = [
             Ticker(
@@ -301,18 +288,14 @@ class TestGetTickers:
         ]
         mock_exchange.get_tickers = AsyncMock(return_value=mock_tickers)
 
-        response = client.get(
-            "/api/v1/market/tickers?sort_by=volume_quote_24h&order=desc"
-        )
+        response = client.get("/api/v1/market/tickers?sort_by=volume_quote_24h&order=desc")
 
         assert response.status_code == 200
         data = response.json()
         # High volume should be first with descending order
         assert data["data"][0]["symbol"] == "HIGH/USDT"
 
-    def test_get_tickers_sorted_ascending(
-        self, client: TestClient, mock_exchange
-    ) -> None:
+    def test_get_tickers_sorted_ascending(self, client: TestClient, mock_exchange) -> None:
         """Test getting tickers sorted in ascending order."""
         mock_tickers = [
             Ticker(
@@ -334,18 +317,14 @@ class TestGetTickers:
         ]
         mock_exchange.get_tickers = AsyncMock(return_value=mock_tickers)
 
-        response = client.get(
-            "/api/v1/market/tickers?sort_by=volume_quote_24h&order=asc"
-        )
+        response = client.get("/api/v1/market/tickers?sort_by=volume_quote_24h&order=asc")
 
         assert response.status_code == 200
         data = response.json()
         # Low volume should be first with ascending order
         assert data["data"][0]["symbol"] == "LOW/USDT"
 
-    def test_get_tickers_with_limit(
-        self, client: TestClient, mock_exchange
-    ) -> None:
+    def test_get_tickers_with_limit(self, client: TestClient, mock_exchange) -> None:
         """Test getting tickers with limit."""
         mock_tickers = [
             Ticker(
@@ -445,15 +424,11 @@ class TestGetCandles:
         response = client.get("/api/v1/market/candles/BTC/USDT?limit=301")
         assert response.status_code == 422
 
-    def test_get_candles_exchange_error(
-        self, client: TestClient, mock_exchange
-    ) -> None:
+    def test_get_candles_exchange_error(self, client: TestClient, mock_exchange) -> None:
         """Test getting candles when exchange returns error."""
         from squant.infra.exchange.exceptions import ExchangeError
 
-        mock_exchange.get_candlesticks = AsyncMock(
-            side_effect=ExchangeError("Rate limit exceeded")
-        )
+        mock_exchange.get_candlesticks = AsyncMock(side_effect=ExchangeError("Rate limit exceeded"))
 
         response = client.get("/api/v1/market/candles/BTC/USDT")
 

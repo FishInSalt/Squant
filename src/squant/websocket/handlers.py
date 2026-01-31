@@ -78,9 +78,7 @@ class WebSocketGateway:
 
                 # Create tasks for receiving from Redis, handling client messages,
                 # and keeping the Redis connection alive
-                receive_task = asyncio.create_task(
-                    self._receive_from_redis(), name="redis_receive"
-                )
+                receive_task = asyncio.create_task(self._receive_from_redis(), name="redis_receive")
                 client_task = asyncio.create_task(
                     self._handle_client_messages(), name="client_messages"
                 )
@@ -101,9 +99,7 @@ class WebSocketGateway:
                         # Check if task raised an exception
                         exc = task.exception()
                         if exc:
-                            logger.warning(
-                                f"Gateway task '{task_name}' failed with: {exc}"
-                            )
+                            logger.warning(f"Gateway task '{task_name}' failed with: {exc}")
                         else:
                             logger.debug(f"Gateway task '{task_name}' completed normally")
                     except asyncio.CancelledError:
@@ -161,7 +157,9 @@ class WebSocketGateway:
                         f"Redis pubsub heartbeat failed (attempt {consecutive_failures}/{max_failures}): {e}"
                     )
                     if consecutive_failures >= max_failures:
-                        logger.error("Redis pubsub heartbeat failed too many times, stopping gateway")
+                        logger.error(
+                            "Redis pubsub heartbeat failed too many times, stopping gateway"
+                        )
                         self._running = False
                         break
 
@@ -224,11 +222,13 @@ class WebSocketGateway:
             channel: Channel name (e.g., "ticker:BTC/USDT").
         """
         if channel in self._subscribed_channels:
-            await self.websocket.send_json({
-                "type": "subscribed",
-                "channel": channel,
-                "message": "Already subscribed",
-            })
+            await self.websocket.send_json(
+                {
+                    "type": "subscribed",
+                    "channel": channel,
+                    "message": "Already subscribed",
+                }
+            )
             return
 
         try:
@@ -240,10 +240,12 @@ class WebSocketGateway:
             # Subscribe to OKX stream if needed
             await self._subscribe_okx(channel)
 
-            await self.websocket.send_json({
-                "type": "subscribed",
-                "channel": channel,
-            })
+            await self.websocket.send_json(
+                {
+                    "type": "subscribed",
+                    "channel": channel,
+                }
+            )
             logger.debug(f"Client subscribed to {channel}")
         except Exception as e:
             logger.warning(f"Failed to subscribe to {channel}: {e}")
@@ -262,19 +264,23 @@ class WebSocketGateway:
         stream_manager.unsubscribe_* when count reaches zero.
         """
         if channel not in self._subscribed_channels:
-            await self.websocket.send_json({
-                "type": "unsubscribed",
-                "channel": channel,
-                "message": "Not subscribed",
-            })
+            await self.websocket.send_json(
+                {
+                    "type": "unsubscribed",
+                    "channel": channel,
+                    "message": "Not subscribed",
+                }
+            )
             return
 
         await self._unsubscribe_redis(channel)
 
-        await self.websocket.send_json({
-            "type": "unsubscribed",
-            "channel": channel,
-        })
+        await self.websocket.send_json(
+            {
+                "type": "unsubscribed",
+                "channel": channel,
+            }
+        )
         logger.debug(f"Client unsubscribed from {channel}")
 
     async def _unsubscribe_redis(self, channel: str) -> None:
@@ -291,7 +297,9 @@ class WebSocketGateway:
         """
         parts = channel.split(":")
         channel_type = parts[0]
-        logger.debug(f"_subscribe_okx called: channel={channel}, parts={parts}, channel_type={channel_type}")
+        logger.debug(
+            f"_subscribe_okx called: channel={channel}, parts={parts}, channel_type={channel_type}"
+        )
 
         try:
             if channel_type == "ticker" and len(parts) >= 2:
@@ -339,8 +347,7 @@ class WebSocketGateway:
                     # Use get_message with a timeout instead of listen()
                     # This prevents the issue where listen() exits immediately with no subscriptions
                     message = await self._pubsub.get_message(
-                        ignore_subscribe_messages=True,
-                        timeout=1.0
+                        ignore_subscribe_messages=True, timeout=1.0
                     )
 
                     # Reset error counter on successful operation
@@ -382,7 +389,9 @@ class WebSocketGateway:
                 except Exception as e:
                     # Catch all other exceptions to prevent task from dying
                     consecutive_errors += 1
-                    logger.warning(f"Unexpected error in Redis receive loop (attempt {consecutive_errors}): {e}")
+                    logger.warning(
+                        f"Unexpected error in Redis receive loop (attempt {consecutive_errors}): {e}"
+                    )
                     if consecutive_errors >= max_consecutive_errors:
                         logger.error("Too many consecutive errors in Redis receive loop, giving up")
                         break
@@ -395,10 +404,12 @@ class WebSocketGateway:
 
     async def _send_error(self, message: str) -> None:
         """Send error message to client."""
-        await self.websocket.send_json({
-            "type": "error",
-            "message": message,
-        })
+        await self.websocket.send_json(
+            {
+                "type": "error",
+                "message": message,
+            }
+        )
 
 
 @router.websocket("")
@@ -442,12 +453,14 @@ async def websocket_gateway(websocket: WebSocket) -> None:
             logger.info("Stream manager late initialization successful")
         else:
             await websocket.accept()
-            await websocket.send_json({
-                "type": "error",
-                "message": "Real-time data service unavailable. Exchange WebSocket connection failed. "
-                           "Please check network connectivity or use REST API for data.",
-                "code": "STREAM_UNAVAILABLE",
-            })
+            await websocket.send_json(
+                {
+                    "type": "error",
+                    "message": "Real-time data service unavailable. Exchange WebSocket connection failed. "
+                    "Please check network connectivity or use REST API for data.",
+                    "code": "STREAM_UNAVAILABLE",
+                }
+            )
             await websocket.close(code=4503)  # Custom code for service unavailable
             return
 
@@ -455,8 +468,7 @@ async def websocket_gateway(websocket: WebSocket) -> None:
     # (e.g., CCXT provider lost connection after startup)
     if not stream_manager.is_healthy:
         logger.warning(
-            "Stream manager is running but not healthy - "
-            "exchange connection may have been lost"
+            "Stream manager is running but not healthy - exchange connection may have been lost"
         )
         # Continue anyway - the connection might recover
 
@@ -615,7 +627,9 @@ async def websocket_ticker(
 async def websocket_candles(
     websocket: WebSocket,
     symbol: str,
-    timeframe: str = Query(default="1m", description="Candle timeframe (1m, 5m, 15m, 30m, 1h, 4h, 1d, 1w)"),
+    timeframe: str = Query(
+        default="1m", description="Candle timeframe (1m, 5m, 15m, 30m, 1h, 4h, 1d, 1w)"
+    ),
 ) -> None:
     """WebSocket endpoint for real-time candlestick data.
 
@@ -752,7 +766,9 @@ async def websocket_orderbook(
 @router.websocket("/orders")
 async def websocket_orders(
     websocket: WebSocket,
-    inst_type: str = Query(default="SPOT", description="Instrument type (SPOT, MARGIN, SWAP, FUTURES, OPTION)"),
+    inst_type: str = Query(
+        default="SPOT", description="Instrument type (SPOT, MARGIN, SWAP, FUTURES, OPTION)"
+    ),
 ) -> None:
     """WebSocket endpoint for real-time order updates (private channel).
 
@@ -794,10 +810,12 @@ async def websocket_orders(
         await stream_manager.subscribe_orders(inst_type)
     except RuntimeError as e:
         await websocket.accept()
-        await websocket.send_json({
-            "error": str(e),
-            "message": "OKX API credentials not configured",
-        })
+        await websocket.send_json(
+            {
+                "error": str(e),
+                "message": "OKX API credentials not configured",
+            }
+        )
         await websocket.close(code=4001)
         return
 
@@ -851,10 +869,12 @@ async def websocket_account(
         await stream_manager.subscribe_account()
     except RuntimeError as e:
         await websocket.accept()
-        await websocket.send_json({
-            "error": str(e),
-            "message": "OKX API credentials not configured",
-        })
+        await websocket.send_json(
+            {
+                "error": str(e),
+                "message": "OKX API credentials not configured",
+            }
+        )
         await websocket.close(code=4001)
         return
 

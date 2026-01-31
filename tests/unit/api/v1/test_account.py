@@ -73,9 +73,7 @@ class TestGetBalance:
         assert len(data["data"]["balances"]) == 3
 
         # Check BTC balance (Decimal serializes as string in JSON)
-        btc_balance = next(
-            b for b in data["data"]["balances"] if b["currency"] == "BTC"
-        )
+        btc_balance = next(b for b in data["data"]["balances"] if b["currency"] == "BTC")
         assert float(btc_balance["available"]) == 1.5
         assert float(btc_balance["frozen"]) == 0.5
         assert float(btc_balance["total"]) == 2.0
@@ -96,9 +94,7 @@ class TestGetBalance:
         assert data["code"] == 0
         assert data["data"]["balances"] == []
 
-    def test_get_balance_authentication_error(
-        self, client: TestClient, mock_exchange
-    ) -> None:
+    def test_get_balance_authentication_error(self, client: TestClient, mock_exchange) -> None:
         """Test balance retrieval with authentication error."""
         mock_exchange.get_balance = AsyncMock(
             side_effect=ExchangeAuthenticationError("Invalid API key")
@@ -108,9 +104,7 @@ class TestGetBalance:
 
         assert response.status_code == 401
 
-    def test_get_balance_connection_error(
-        self, client: TestClient, mock_exchange
-    ) -> None:
+    def test_get_balance_connection_error(self, client: TestClient, mock_exchange) -> None:
         """Test balance retrieval with connection error."""
         mock_exchange.get_balance = AsyncMock(
             side_effect=ExchangeConnectionError("Connection timeout")
@@ -141,9 +135,7 @@ class TestGetBalanceCurrency:
         assert float(data["data"]["frozen"]) == 0.5
         assert float(data["data"]["total"]) == 2.0
 
-    def test_get_balance_currency_not_found(
-        self, client: TestClient, mock_exchange
-    ) -> None:
+    def test_get_balance_currency_not_found(self, client: TestClient, mock_exchange) -> None:
         """Test balance retrieval for non-existent currency."""
         mock_exchange.get_balance_currency = AsyncMock(return_value=None)
 
@@ -177,9 +169,7 @@ class TestGetBalanceCurrency:
 
         assert response.status_code == 401
 
-    def test_get_balance_currency_connection_error(
-        self, client: TestClient, mock_exchange
-    ) -> None:
+    def test_get_balance_currency_connection_error(self, client: TestClient, mock_exchange) -> None:
         """Test currency balance retrieval with connection error."""
         mock_exchange.get_balance_currency = AsyncMock(
             side_effect=ExchangeConnectionError("Connection timeout")

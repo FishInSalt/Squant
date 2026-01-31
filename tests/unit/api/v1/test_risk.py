@@ -105,9 +105,7 @@ class TestCreateRiskRule:
 class TestListRiskRules:
     """Tests for GET /api/v1/risk-rules endpoint."""
 
-    def test_list_risk_rules_success(
-        self, client: TestClient, mock_risk_rule
-    ) -> None:
+    def test_list_risk_rules_success(self, client: TestClient, mock_risk_rule) -> None:
         """Test listing risk rules."""
         with patch("squant.api.v1.risk.RiskRuleService") as mock_service_class:
             mock_service = MagicMock()
@@ -122,9 +120,7 @@ class TestListRiskRules:
             assert data["data"]["total"] == 1
             assert len(data["data"]["items"]) == 1
 
-    def test_list_risk_rules_with_pagination(
-        self, client: TestClient, mock_risk_rule
-    ) -> None:
+    def test_list_risk_rules_with_pagination(self, client: TestClient, mock_risk_rule) -> None:
         """Test listing risk rules with pagination."""
         with patch("squant.api.v1.risk.RiskRuleService") as mock_service_class:
             mock_service = MagicMock()
@@ -138,9 +134,7 @@ class TestListRiskRules:
             assert data["data"]["page"] == 2
             assert data["data"]["page_size"] == 10
 
-    def test_list_risk_rules_with_enabled_filter(
-        self, client: TestClient, mock_risk_rule
-    ) -> None:
+    def test_list_risk_rules_with_enabled_filter(self, client: TestClient, mock_risk_rule) -> None:
         """Test listing risk rules with enabled filter."""
         with patch("squant.api.v1.risk.RiskRuleService") as mock_service_class:
             mock_service = MagicMock()
@@ -150,9 +144,7 @@ class TestListRiskRules:
             response = client.get("/api/v1/risk-rules?enabled=true")
 
             assert response.status_code == 200
-            mock_service.list.assert_called_once_with(
-                page=1, page_size=20, enabled=True
-            )
+            mock_service.list.assert_called_once_with(page=1, page_size=20, enabled=True)
 
     def test_list_risk_rules_empty(self, client: TestClient) -> None:
         """Test listing risk rules when none exist."""
@@ -172,9 +164,7 @@ class TestListRiskRules:
 class TestGetRiskRule:
     """Tests for GET /api/v1/risk-rules/{rule_id} endpoint."""
 
-    def test_get_risk_rule_success(
-        self, client: TestClient, mock_risk_rule
-    ) -> None:
+    def test_get_risk_rule_success(self, client: TestClient, mock_risk_rule) -> None:
         """Test getting a risk rule by ID."""
         with patch("squant.api.v1.risk.RiskRuleService") as mock_service_class:
             mock_service = MagicMock()
@@ -194,9 +184,7 @@ class TestGetRiskRule:
 
         with patch("squant.api.v1.risk.RiskRuleService") as mock_service_class:
             mock_service = MagicMock()
-            mock_service.get = AsyncMock(
-                side_effect=RiskRuleNotFoundError(str(rule_id))
-            )
+            mock_service.get = AsyncMock(side_effect=RiskRuleNotFoundError(str(rule_id)))
             mock_service_class.return_value = mock_service
 
             response = client.get(f"/api/v1/risk-rules/{rule_id}")
@@ -213,9 +201,7 @@ class TestGetRiskRule:
 class TestUpdateRiskRule:
     """Tests for PUT /api/v1/risk-rules/{rule_id} endpoint."""
 
-    def test_update_risk_rule_success(
-        self, client: TestClient, mock_risk_rule
-    ) -> None:
+    def test_update_risk_rule_success(self, client: TestClient, mock_risk_rule) -> None:
         """Test updating a risk rule."""
         mock_risk_rule.name = "Updated Rule"
 
@@ -239,9 +225,7 @@ class TestUpdateRiskRule:
 
         with patch("squant.api.v1.risk.RiskRuleService") as mock_service_class:
             mock_service = MagicMock()
-            mock_service.update = AsyncMock(
-                side_effect=RiskRuleNotFoundError(str(rule_id))
-            )
+            mock_service.update = AsyncMock(side_effect=RiskRuleNotFoundError(str(rule_id)))
             mock_service_class.return_value = mock_service
 
             response = client.put(
@@ -251,9 +235,7 @@ class TestUpdateRiskRule:
 
             assert response.status_code == 404
 
-    def test_update_risk_rule_params(
-        self, client: TestClient, mock_risk_rule
-    ) -> None:
+    def test_update_risk_rule_params(self, client: TestClient, mock_risk_rule) -> None:
         """Test updating risk rule parameters."""
         mock_risk_rule.params = {"max_position": 2.0}
 
@@ -273,9 +255,7 @@ class TestUpdateRiskRule:
 class TestDeleteRiskRule:
     """Tests for DELETE /api/v1/risk-rules/{rule_id} endpoint."""
 
-    def test_delete_risk_rule_success(
-        self, client: TestClient, mock_risk_rule
-    ) -> None:
+    def test_delete_risk_rule_success(self, client: TestClient, mock_risk_rule) -> None:
         """Test deleting a risk rule."""
         with patch("squant.api.v1.risk.RiskRuleService") as mock_service_class:
             mock_service = MagicMock()
@@ -294,9 +274,7 @@ class TestDeleteRiskRule:
 
         with patch("squant.api.v1.risk.RiskRuleService") as mock_service_class:
             mock_service = MagicMock()
-            mock_service.delete = AsyncMock(
-                side_effect=RiskRuleNotFoundError(str(rule_id))
-            )
+            mock_service.delete = AsyncMock(side_effect=RiskRuleNotFoundError(str(rule_id)))
             mock_service_class.return_value = mock_service
 
             response = client.delete(f"/api/v1/risk-rules/{rule_id}")
@@ -307,9 +285,7 @@ class TestDeleteRiskRule:
 class TestToggleRiskRule:
     """Tests for POST /api/v1/risk-rules/{rule_id}/toggle endpoint."""
 
-    def test_toggle_risk_rule_enable(
-        self, client: TestClient, mock_risk_rule
-    ) -> None:
+    def test_toggle_risk_rule_enable(self, client: TestClient, mock_risk_rule) -> None:
         """Test enabling a risk rule."""
         mock_risk_rule.enabled = True
 
@@ -327,9 +303,7 @@ class TestToggleRiskRule:
             data = response.json()
             assert data["data"]["enabled"] is True
 
-    def test_toggle_risk_rule_disable(
-        self, client: TestClient, mock_risk_rule
-    ) -> None:
+    def test_toggle_risk_rule_disable(self, client: TestClient, mock_risk_rule) -> None:
         """Test disabling a risk rule."""
         mock_risk_rule.enabled = False
 
@@ -353,9 +327,7 @@ class TestToggleRiskRule:
 
         with patch("squant.api.v1.risk.RiskRuleService") as mock_service_class:
             mock_service = MagicMock()
-            mock_service.toggle = AsyncMock(
-                side_effect=RiskRuleNotFoundError(str(rule_id))
-            )
+            mock_service.toggle = AsyncMock(side_effect=RiskRuleNotFoundError(str(rule_id)))
             mock_service_class.return_value = mock_service
 
             response = client.post(
