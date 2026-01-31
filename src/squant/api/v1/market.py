@@ -1,7 +1,8 @@
 """Market data API endpoints."""
 
 import logging
-from typing import Annotated
+from datetime import UTC, datetime, timedelta
+from typing import Annotated, Any
 
 from fastapi import APIRouter, HTTPException, Path, Query
 
@@ -23,6 +24,42 @@ router = APIRouter()
 
 # Runtime storage for current exchange (single-user system)
 _current_exchange: str = get_settings().default_exchange
+
+
+class MarketDataCache:
+    """TTL cache for market data to reduce exchange API calls.
+
+    Caches ticker and market data with configurable time-to-live.
+    Expected to reduce exchange API calls by 80-90% for frequently
+    requested symbols during active trading hours.
+    """
+
+    def __init__(self, ttl_seconds: int = 1) -> None:
+        """Initialize cache with TTL in seconds."""
+        self._cache: dict[str, tuple[Any, datetime]] = {}
+        self._ttl = timedelta(seconds=ttl_seconds)
+
+    def get(self, key: str) -> Any | None:
+        """Get cached value if not expired."""
+        if key in self._cache:
+            value, timestamp = self._cache[key]
+            if datetime.now(UTC) - timestamp < self._ttl:
+                return value
+            # Expired, remove from cache
+            del self._cache[key]
+        return None
+
+    def set(self, key: str, value: Any) -> None:
+        """Cache value with current timestamp."""
+        self._cache[key] = (value, datetime.now(UTC))
+
+    def clear(self) -> None:
+        """Clear all cached values."""
+        self._cache.clear()
+
+
+# Global cache instance with 1 second TTL
+_market_cache = MarketDataCache(ttl_seconds=1)
 
 
 def get_current_exchange() -> str:
@@ -67,6 +104,10 @@ async def set_exchange(
 
     logger.info(f"Switching exchange from {old_exchange} to {exchange_id}")
 
+    # Clear market data cache when switching exchanges
+    _market_cache.clear()
+    logger.debug("Cleared market data cache after exchange switch")
+
     # Notify WebSocket manager to switch exchange
     try:
         stream_manager = get_stream_manager()
@@ -91,7 +132,14 @@ async def get_ticker(
     """Get ticker data for a trading pair.
 
     Returns the latest price and 24h statistics.
+    Cached for 1 second to reduce exchange API calls.
     """
+    # Check cache first
+    cache_key = f"ticker:{_current_exchange}:{symbol}"
+    cached = _market_cache.get(cache_key)
+    if cached:
+        return ApiResponse(data=cached)
+
     try:
         ticker = await exchange.get_ticker(symbol)
         data = TickerResponse(
@@ -107,6 +155,8 @@ async def get_ticker(
             change_pct_24h=ticker.change_pct_24h,
             timestamp=ticker.timestamp,
         )
+        # Cache the result
+        _market_cache.set(cache_key, data)
         return ApiResponse(data=data)
     except Exception as e:
         handle_exchange_error(e)
@@ -136,10 +186,18 @@ async def get_tickers(
 
     If no symbols specified, returns all available tickers.
     Use sort_by=volume_quote_24h to get hot/popular trading pairs by USDT trading volume.
+    Cached for 1 second to reduce exchange API calls.
     """
+    # Filter empty strings from split result
+    symbol_list = [s.strip() for s in symbols.split(",") if s.strip()] if symbols else None
+
+    # Check cache first
+    cache_key = f"tickers:{_current_exchange}:{symbols or 'all'}:{sort_by}:{order}:{limit}"
+    cached = _market_cache.get(cache_key)
+    if cached:
+        return ApiResponse(data=cached)
+
     try:
-        # Filter empty strings from split result
-        symbol_list = [s.strip() for s in symbols.split(",") if s.strip()] if symbols else None
         tickers = await exchange.get_tickers(symbol_list)
 
         # Sort tickers if sort_by is specified
@@ -174,6 +232,8 @@ async def get_tickers(
             )
             for t in tickers
         ]
+        # Cache the result
+        _market_cache.set(cache_key, data)
         return ApiResponse(data=data)
     except Exception as e:
         handle_exchange_error(e)

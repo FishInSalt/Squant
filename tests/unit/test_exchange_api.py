@@ -13,6 +13,7 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from squant.api.deps import get_exchange, get_okx_exchange
+from squant.api.v1.market import _market_cache
 from squant.infra.exchange import (
     AccountBalance,
     Balance,
@@ -26,6 +27,12 @@ from squant.infra.exchange.exceptions import (
     ExchangeRateLimitError,
 )
 from squant.main import app
+
+
+@pytest.fixture(autouse=True)
+def clear_market_cache() -> None:
+    """Clear market data cache before each test to avoid test pollution."""
+    _market_cache.clear()
 
 
 @pytest.fixture
