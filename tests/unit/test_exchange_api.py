@@ -64,8 +64,6 @@ class TestAccountBalanceEndpoints:
     """Tests for account balance endpoints."""
 
     @pytest.mark.asyncio
-
-
     async def test_get_balance(self, client: AsyncClient, mock_exchange: AsyncMock) -> None:
         """Test getting account balance."""
         mock_exchange.get_balance.return_value = AccountBalance(
@@ -91,9 +89,9 @@ class TestAccountBalanceEndpoints:
         assert Decimal(data["balances"][0]["total"]) == Decimal("2")
 
     @pytest.mark.asyncio
-
-
-    async def test_get_balance_currency(self, client: AsyncClient, mock_exchange: AsyncMock) -> None:
+    async def test_get_balance_currency(
+        self, client: AsyncClient, mock_exchange: AsyncMock
+    ) -> None:
         """Test getting balance for specific currency."""
         mock_exchange.get_balance_currency.return_value = Balance(
             currency="BTC",
@@ -125,9 +123,9 @@ class TestAccountBalanceEndpoints:
         assert json_resp["data"] is None
 
     @pytest.mark.asyncio
-
-
-    async def test_get_balance_auth_error(self, client: AsyncClient, mock_exchange: AsyncMock) -> None:
+    async def test_get_balance_auth_error(
+        self, client: AsyncClient, mock_exchange: AsyncMock
+    ) -> None:
         """Test balance endpoint with authentication error."""
         mock_exchange.get_balance.side_effect = ExchangeAuthenticationError(
             message="Invalid API key", exchange="okx"
@@ -142,8 +140,6 @@ class TestMarketTickerEndpoints:
     """Tests for market ticker endpoints."""
 
     @pytest.mark.asyncio
-
-
     async def test_get_ticker(self, client: AsyncClient, mock_exchange: AsyncMock) -> None:
         """Test getting ticker data."""
         mock_exchange.get_ticker.return_value = Ticker(
@@ -168,8 +164,6 @@ class TestMarketTickerEndpoints:
         assert data["bid"] == "41999"
 
     @pytest.mark.asyncio
-
-
     async def test_get_tickers(self, client: AsyncClient, mock_exchange: AsyncMock) -> None:
         """Test getting multiple tickers."""
         mock_exchange.get_tickers.return_value = [
@@ -194,9 +188,9 @@ class TestMarketTickerEndpoints:
         assert len(data) == 2
 
     @pytest.mark.asyncio
-
-
-    async def test_get_tickers_filtered(self, client: AsyncClient, mock_exchange: AsyncMock) -> None:
+    async def test_get_tickers_filtered(
+        self, client: AsyncClient, mock_exchange: AsyncMock
+    ) -> None:
         """Test getting tickers with filter."""
         mock_exchange.get_tickers.return_value = [
             Ticker(
@@ -236,8 +230,6 @@ class TestMarketCandlestickEndpoints:
     """Tests for market candlestick endpoints."""
 
     @pytest.mark.asyncio
-
-
     async def test_get_candles(self, client: AsyncClient, mock_exchange: AsyncMock) -> None:
         """Test getting candlestick data."""
         mock_exchange.get_candlesticks.return_value = [
@@ -285,8 +277,6 @@ class TestErrorHandling:
     """Tests for error handling."""
 
     @pytest.mark.asyncio
-
-
     async def test_rate_limit_error(self, client: AsyncClient, mock_exchange: AsyncMock) -> None:
         """Test rate limit error response."""
         mock_exchange.get_ticker.side_effect = ExchangeRateLimitError(
@@ -299,8 +289,6 @@ class TestErrorHandling:
         assert response.headers.get("Retry-After") == "5"
 
     @pytest.mark.asyncio
-
-
     async def test_api_error(self, client: AsyncClient, mock_exchange: AsyncMock) -> None:
         """Test API error response."""
         mock_exchange.get_ticker.side_effect = ExchangeAPIError(
