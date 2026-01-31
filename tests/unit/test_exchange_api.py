@@ -14,11 +14,6 @@ import pytest
 from fastapi.testclient import TestClient
 
 from squant.api.deps import get_okx_exchange
-
-pytestmark = pytest.mark.skipif(
-    os.getenv("CI") == "true",
-    reason="Async mock issues cause hangs in CI - covered by integration tests",
-)
 from squant.infra.exchange import (
     AccountBalance,
     Balance,
@@ -32,6 +27,11 @@ from squant.infra.exchange.exceptions import (
     ExchangeRateLimitError,
 )
 from squant.main import app
+
+pytestmark = pytest.mark.skipif(
+    os.getenv("CI") == "true",
+    reason="Async mock issues cause hangs in CI - covered by integration tests",
+)
 
 
 @pytest.fixture
