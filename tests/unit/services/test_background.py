@@ -169,9 +169,12 @@ class TestPersistSnapshots:
 
         mock_db_session = AsyncMock()
 
-        with patch(
-            "squant.engine.paper.manager.get_session_manager", return_value=mock_session_manager
-        ), patch("squant.infra.database.get_session_context") as mock_get_session:
+        with (
+            patch(
+                "squant.engine.paper.manager.get_session_manager", return_value=mock_session_manager
+            ),
+            patch("squant.infra.database.get_session_context") as mock_get_session,
+        ):
             mock_get_session.return_value.__aenter__.return_value = mock_db_session
             with patch(
                 "squant.services.paper_trading.PaperTradingService", return_value=mock_service
@@ -196,9 +199,12 @@ class TestHealthCheck:
         mock_settings = MagicMock()
         mock_settings.paper_session_timeout_seconds = 300
 
-        with patch(
-            "squant.engine.paper.manager.get_session_manager", return_value=mock_session_manager
-        ), patch("squant.config.get_settings", return_value=mock_settings):
+        with (
+            patch(
+                "squant.engine.paper.manager.get_session_manager", return_value=mock_session_manager
+            ),
+            patch("squant.config.get_settings", return_value=mock_settings),
+        ):
             await manager._health_check()
 
         mock_session_manager.cleanup_stale_sessions.assert_called_once_with(300)
@@ -214,9 +220,12 @@ class TestHealthCheck:
         mock_settings = MagicMock()
         mock_settings.paper_session_timeout_seconds = 300
 
-        with patch(
-            "squant.engine.paper.manager.get_session_manager", return_value=mock_session_manager
-        ), patch("squant.config.get_settings", return_value=mock_settings):
+        with (
+            patch(
+                "squant.engine.paper.manager.get_session_manager", return_value=mock_session_manager
+            ),
+            patch("squant.config.get_settings", return_value=mock_settings),
+        ):
             with patch("squant.services.background.logger") as mock_logger:
                 await manager._health_check()
 

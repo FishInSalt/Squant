@@ -423,9 +423,12 @@ class TestInstantiateStrategy:
                     mock_class.__bases__ = (mock_strategy_base,)
                     locals_dict["MyStrategy"] = mock_class
 
-                with patch("builtins.exec", patched_exec), patch(
-                    "squant.services.live_trading.issubclass",
-                    return_value=True,
+                with (
+                    patch("builtins.exec", patched_exec),
+                    patch(
+                        "squant.services.live_trading.issubclass",
+                        return_value=True,
+                    ),
                 ):
                     # This test is complex due to exec and type checking
                     # Just verify the method doesn't crash with valid setup

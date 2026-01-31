@@ -55,8 +55,11 @@ class TestBinanceAdapter:
             ]
         }
 
-        with patch.object(adapter._client, "connect", new_callable=AsyncMock), patch.object(
-            adapter._client, "get", new_callable=AsyncMock, return_value=mock_response
+        with (
+            patch.object(adapter._client, "connect", new_callable=AsyncMock),
+            patch.object(
+                adapter._client, "get", new_callable=AsyncMock, return_value=mock_response
+            ),
         ):
             await adapter.connect()
             balance = await adapter.get_balance()
@@ -90,8 +93,11 @@ class TestBinanceAdapter:
             "priceChangePercent": "1.21",
         }
 
-        with patch.object(adapter._client, "connect", new_callable=AsyncMock), patch.object(
-            adapter._client, "get", new_callable=AsyncMock, return_value=mock_response
+        with (
+            patch.object(adapter._client, "connect", new_callable=AsyncMock),
+            patch.object(
+                adapter._client, "get", new_callable=AsyncMock, return_value=mock_response
+            ),
         ):
             await adapter.connect()
             ticker = await adapter.get_ticker("BTC/USDT")
@@ -132,8 +138,11 @@ class TestBinanceAdapter:
             client_order_id="my_order_1",
         )
 
-        with patch.object(adapter._client, "connect", new_callable=AsyncMock), patch.object(
-            adapter._client, "post", new_callable=AsyncMock, return_value=mock_response
+        with (
+            patch.object(adapter._client, "connect", new_callable=AsyncMock),
+            patch.object(
+                adapter._client, "post", new_callable=AsyncMock, return_value=mock_response
+            ),
         ):
             await adapter.connect()
             response = await adapter.place_order(request)
