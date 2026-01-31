@@ -1,0 +1,14 @@
+# GitGuardian configuration
+# Ignore test credentials and development configuration files
+
+version: 2
+
+paths-ignore:
+  - scripts/test-env.sh
+  - docker-compose.local.yml
+  - docker-compose.test.yml
+  - docker-compose.dev.yml
+  - tests/**/*
+  - .github/workflows/**/*.yml
+  - alembic.ini
+  - .env.example
