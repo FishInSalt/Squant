@@ -210,6 +210,128 @@ Exception ignored in: <function _ProactorBasePipeTransport.__del__ at ...>
 
 ---
 
+### 问题14: FastAPI异步生成器依赖Mock导致测试挂起
+
+**症状**:
+- 单元测试在CI中挂起2小时以上无法完成
+- 本地运行可能返回真实API数据而非Mock数据
+- Mock配置看起来正确但没有生效
+
+**发生时间**: 2026-01-31，test_exchange_api.py中的13个测试
+
+**根本原因**:
+
+FastAPI的`TestClient`不支持异步生成器依赖的正确Mock。当依赖使用`yield`时，简单的lambda覆盖会被忽略：
+
+```python
+# ❌ 错误的Mock方式 - 不生效
+from fastapi.testclient import TestClient
+
+@pytest.fixture
+def client(mock_exchange: AsyncMock):
+    # 错误：get_okx_exchange()是async generator，lambda无法正确覆盖
+    app.dependency_overrides[get_okx_exchange] = lambda: mock_exchange
+    yield TestClient(app)
+    app.dependency_overrides.clear()
+
+# 实际的依赖定义:
+async def get_okx_exchange() -> AsyncGenerator[OKXAdapter, None]:
+    adapter = OKXAdapter(...)
+    async with adapter:
+        yield adapter  # 注意是yield，不是return
+```
+
+**为什么如此危险**:
+1. **CI挂起**: TestClient回退到真实连接，导致测试等待真实API响应或超时
+2. **资源泄漏**: 真实连接没有被正确清理
+3. **测试失效**: 测试可能通过但使用了真实数据，不是真正的单元测试
+4. **难以调试**: Mock看起来配置正确，但实际未生效
+
+**解决方案**:
+
+使用`httpx.AsyncClient`和正确的async generator覆盖：
+
+```python
+# ✅ 正确的Mock方式
+from httpx import AsyncClient, ASGITransport
+from collections.abc import AsyncGenerator
+
+@pytest.fixture
+async def client(mock_exchange: AsyncMock) -> AsyncGenerator[AsyncClient, None]:
+    """Create async test client with mocked exchange.
+
+    Properly overrides async generator dependency using httpx.AsyncClient.
+    """
+    # 关键：使用async generator覆盖
+    async def override_get_okx_exchange() -> AsyncGenerator[AsyncMock, None]:
+        yield mock_exchange
+
+    app.dependency_overrides[get_okx_exchange] = override_get_okx_exchange
+
+    # 使用AsyncClient而非TestClient
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        yield ac
+
+    app.dependency_overrides.clear()
+
+# 测试方法也需要是async
+@pytest.mark.asyncio
+async def test_get_balance(client: AsyncClient, mock_exchange: AsyncMock):
+    mock_exchange.get_balance.return_value = AccountBalance(...)
+
+    # 关键：使用await
+    response = await client.get("/api/v1/account/balance")
+
+    assert response.status_code == 200
+```
+
+**关键点**:
+
+1. **使用AsyncClient**: `httpx.AsyncClient` 支持async依赖，`TestClient`不支持
+2. **Async Generator覆盖**: 覆盖函数必须是async generator (使用`yield`)
+3. **Async测试方法**: 测试方法必须是`async def`并使用`@pytest.mark.asyncio`
+4. **Await调用**: 所有HTTP调用必须使用`await`
+5. **多个依赖**: 如果测试同时使用多个依赖，都需要覆盖
+
+**示例：覆盖多个依赖**:
+
+```python
+from squant.api.deps import get_exchange, get_okx_exchange
+
+@pytest.fixture
+async def client(mock_exchange: AsyncMock) -> AsyncGenerator[AsyncClient, None]:
+    # Market endpoints使用get_exchange()
+    async def override_get_exchange() -> AsyncGenerator[AsyncMock, None]:
+        yield mock_exchange
+
+    # Account endpoints使用get_okx_exchange()
+    async def override_get_okx_exchange() -> AsyncGenerator[AsyncMock, None]:
+        yield mock_exchange
+
+    # 同时覆盖两个依赖
+    app.dependency_overrides[get_exchange] = override_get_exchange
+    app.dependency_overrides[get_okx_exchange] = override_get_okx_exchange
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        yield ac
+
+    app.dependency_overrides.clear()
+```
+
+**性能影响**:
+
+修复后性能大幅提升：
+- **修复前**: 测试挂起2+ hours (CI超时)
+- **修复后**: 13个测试 0.42秒完成
+- **全部单元测试**: 1,537个测试 9.85秒完成
+
+**参考资料**:
+- [FastAPI Testing Dependencies](https://fastapi.tiangolo.com/advanced/testing-dependencies/)
+- [FastAPI Async Tests](https://fastapi.tiangolo.com/advanced/async-tests/)
+- [httpx AsyncClient文档](https://www.python-httpx.org/async/)
+
+---
+
 ## Mock相关问题
 
 ### 问题4: Mock没有生效

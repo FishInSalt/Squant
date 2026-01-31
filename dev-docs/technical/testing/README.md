@@ -21,22 +21,29 @@
    - 数据库和Redis测试
    - API集成测试
 
-3. **[TROUBLESHOOTING.md](./TROUBLESHOOTING.md)** - 问题排查指南
+3. **[E2E_TESTING.md](./E2E_TESTING.md)** - 端到端测试指南
+   - E2E vs 集成 vs 单元测试
+   - E2E测试环境（Docker Compose）
+   - 编写E2E测试
+   - 测试数据管理
+   - WebSocket测试
+
+4. **[TROUBLESHOOTING.md](./TROUBLESHOOTING.md)** - 问题排查指南
    - 13个常见问题及解决方案
    - 系统崩溃事件详细分析
    - 异步测试问题
    - Mock和Fixture问题
    - 数据库和API测试问题
 
-4. **[CI_SETUP.md](./CI_SETUP.md)** - CI/CD集成指南
+5. **[CI_SETUP.md](./CI_SETUP.md)** - CI/CD集成指南
    - GitHub Actions配置
    - 测试策略和分级执行
    - 覆盖率报告集成
    - 性能优化
    - 故障排查
 
-5. **[TEST_COVERAGE_REPORT.md](./TEST_COVERAGE_REPORT.md)** - 测试覆盖率报告
-   - 当前测试状态（1,537个测试，41%覆盖率）
+6. **[TEST_COVERAGE_REPORT.md](./TEST_COVERAGE_REPORT.md)** - 测试覆盖率报告
+   - 当前测试状态（1,537个测试，77%覆盖率）
    - 各模块覆盖率详情
    - 关键发现和建议
 
@@ -78,19 +85,20 @@
 
 ## 📊 当前测试状态
 
-**截至2026-01-30**:
+**截至2026-01-31**:
 
 | 指标 | 数值 |
 |------|------|
 | 测试总数 | 1,537个 |
-| 整体覆盖率 | 41% |
+| 整体覆盖率 | 77% |
 | 测试文件数 | 64个 |
+| 所有测试通过 | ✅ |
 
 ### 覆盖率分布
 
-- **高覆盖率模块（>90%）**: Models, Schemas, 核心Services, 主要API端点
-- **中等覆盖率模块（50-90%）**: 部分Services, 部分API
-- **低覆盖率模块（<50%）**: WebSocket, 交易所集成（需要集成测试而非单元测试）
+- **高覆盖率模块（>90%）**: Models (>90%), Schemas (>95%), Repository (100%), 核心API端点
+- **中等覆盖率模块（50-90%）**: Services (52-97%), Exchange infrastructure (45-87%)
+- **低覆盖率模块（<50%）**: WebSocket (47-48%), Engine components (需要集成测试而非单元测试)
 
 详细信息请查看 [TEST_COVERAGE_REPORT.md](./TEST_COVERAGE_REPORT.md)
 
@@ -182,6 +190,10 @@ Commands:
 **我要写集成测试**:
 1. [INTEGRATION_TESTING.md](./INTEGRATION_TESTING.md) - 完整指南
 2. [tests/integration/](../../../tests/integration/) - 参考示例
+
+**我要写E2E测试**:
+1. [E2E_TESTING.md](./E2E_TESTING.md) - 完整指南
+2. [tests/e2e/](../../../tests/e2e/) - 参考示例
 
 **我要配置CI/CD**:
 1. [CI_SETUP.md](./CI_SETUP.md) - CI/CD配置
@@ -282,37 +294,35 @@ Commands:
 
 ## 📝 更新日志
 
+### 2026-01-31
+
+- ✅ 完成Phase 4: E2E测试和CI/CD集成
+  - 创建 GitHub Actions CI/CD workflows（ci.yml, unit-tests.yml, integration-tests.yml, e2e-tests.yml, docker-build.yml）
+  - 创建 E2E_TESTING.md 端到端测试指南
+  - 修复13个挂起的单元测试（test_exchange_api.py）
+    - 从 TestClient 迁移到 httpx.AsyncClient
+    - 正确处理异步生成器依赖覆盖
+    - 所有1,537个测试通过，覆盖率77%
+  - 配置 GitGuardian 安全扫描
+  - 配置 Dependabot 自动依赖更新
+  - Docker entrypoint 自动数据库迁移
+
 ### 2026-01-30
 
-- ✅ 完成Phase 1: 测试文档和最佳实践
-  - 创建 TESTING_GUIDE.md
-  - 创建 TROUBLESHOOTING.md
-  - 创建测试模板
-  - 创建 CI_SETUP.md
+- ✅ 完成Phase 1-3: 测试基础设施和集成测试
+  - 创建 TESTING_GUIDE.md、TROUBLESHOOTING.md、CI_SETUP.md、INTEGRATION_TESTING.md
+  - 创建 docker-compose.test.yml 和 test-env.sh 脚本
+  - 创建测试模板和fixtures
+  - WebSocket测试改进（覆盖率16% → 48%）
+  - API端点测试（75个新测试）
+  - Services层测试（261个测试）
+  - Engine和Infrastructure层测试（464个测试）
+  - 🚨 修复危险测试导致的系统崩溃问题
 
-- ✅ 完成Phase 2: Docker集成测试环境
-  - 创建 docker-compose.test.yml
-  - 创建 test-env.sh 脚本
-  - 创建集成测试fixtures
-  - 创建集成测试示例
-  - 创建 INTEGRATION_TESTING.md
-
-- 📊 当前测试状态：1,537个测试，41%覆盖率
-
-### Phase 10 (2026-01-30)
-- ✅ WebSocket测试改进（覆盖率16% → 48%）
-- 🚨 修复危险测试导致的系统崩溃问题
-
-### Phase 9 (2026-01-30)
-- ✅ API端点测试（75个新测试）
-- 覆盖率：account 100%, backtest 99%, risk 100%, orders 77%
-
-### Phase 7-8 (2026-01-30)
-- ✅ Services层测试（261个测试）
-- ✅ Engine和Infrastructure层测试（464个测试）
+- 📊 测试状态：1,537个测试，覆盖率从41%提升至77%
 
 ---
 
 **维护者**: Development Team
-**最后更新**: 2026-01-30
+**最后更新**: 2026-01-31
 **项目**: Squant - 量化交易系统

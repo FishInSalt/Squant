@@ -171,9 +171,92 @@ Key environment variables:
 
 ## Testing
 
-- Integration tests may require running databases (marked with `@pytest.mark.integration`)
-- OKX-specific tests requiring credentials are marked with `@pytest.mark.okx_private`
-- pytest-asyncio is configured with `asyncio_mode = "auto"`
+Squant has comprehensive test coverage across unit, integration, and E2E layers.
+
+**Test Statistics** (as of 2026-01-31):
+- **Total tests**: 1,537
+- **Overall coverage**: 77%
+- **All tests passing**: ✅
+
+### Test Structure
+
+```
+tests/
+├── unit/              # Fast, isolated tests with mocks
+│   ├── api/           # API endpoint tests
+│   ├── engine/        # Trading engine tests
+│   ├── infra/         # Infrastructure tests
+│   ├── models/        # Model tests
+│   ├── schemas/       # Schema validation tests
+│   └── services/      # Business logic tests
+├── integration/       # Tests with real DB/Redis
+│   ├── api/           # API integration tests
+│   ├── conftest.py    # Shared fixtures
+│   └── services/      # Service integration tests
+├── e2e/               # End-to-end workflow tests
+│   ├── conftest.py    # E2E fixtures
+│   └── seed_data.py   # Test data seeding
+└── templates/         # Test templates for new tests
+
+```
+
+### Running Tests
+
+```bash
+# Unit tests (fast, no external dependencies)
+uv run pytest tests/unit -v
+
+# Integration tests (requires Docker)
+docker compose -f docker-compose.test.yml up -d postgres redis
+uv run pytest tests/integration -v
+
+# E2E tests (full stack)
+docker compose -f docker-compose.test.yml --profile e2e up -d
+uv run pytest tests/e2e -v
+
+# All tests
+uv run pytest -v
+
+# With coverage
+uv run pytest --cov=src/squant --cov-report=html
+```
+
+### Test Markers
+
+- `@pytest.mark.unit`: Unit tests (default)
+- `@pytest.mark.integration`: Integration tests requiring databases
+- `@pytest.mark.e2e`: End-to-end tests requiring full stack
+- `@pytest.mark.okx_private`: Tests requiring OKX credentials
+- `@pytest.mark.asyncio`: Async tests (pytest-asyncio mode = "auto")
+
+### Important Testing Notes
+
+**Async Testing with FastAPI**:
+- Use `httpx.AsyncClient` (not `TestClient`) for async endpoint tests
+- Override async generator dependencies correctly:
+  ```python
+  async def override_dep() -> AsyncGenerator[Mock, None]:
+      yield mock_object
+  app.dependency_overrides[get_dep] = override_dep
+  ```
+- All test methods must be `async def` with `@pytest.mark.asyncio`
+
+**Dangerous Operations to Avoid**:
+1. ❌ Never mock `asyncio.sleep()` in code with `while` loops
+2. ❌ Don't test methods with infinite `while running` loops
+3. ❌ Don't call WebSocket `run()` methods in unit tests
+4. ❌ Don't start background async tasks in unit tests
+
+See `dev-docs/technical/testing/TROUBLESHOOTING.md` for details on system crashes caused by these operations.
+
+### Test Documentation
+
+Comprehensive testing guides available in `dev-docs/technical/testing/`:
+- **TESTING_GUIDE.md** - General testing guide and best practices
+- **INTEGRATION_TESTING.md** - Integration testing with Docker
+- **E2E_TESTING.md** - End-to-end testing guide
+- **TROUBLESHOOTING.md** - Common issues and solutions
+- **CI_SETUP.md** - CI/CD workflow configuration
 
 ## Database
 
@@ -189,4 +272,5 @@ Detailed technical documentation is available in `dev-docs/`:
 - `dev-docs/technical/architecture/` - System architecture, module design, data flows
 - `dev-docs/technical/strategy-engine/` - Strategy lifecycle, sandbox, indicators
 - `dev-docs/technical/api/` - REST and WebSocket API specifications
+- `dev-docs/technical/testing/` - Comprehensive testing guides (unit, integration, E2E, CI/CD)
 - `dev-docs/technical/deployment/` - Docker, environment, monitoring
