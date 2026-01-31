@@ -33,12 +33,12 @@ class BackgroundTaskManager:
         """Check if background tasks are running."""
         return self._running
 
-    def start(self, persist_interval: int, health_check_interval: int) -> None:
+    def start(self, persist_interval: float, health_check_interval: float) -> None:
         """Start background tasks.
 
         Args:
-            persist_interval: Interval in seconds for snapshot persistence.
-            health_check_interval: Interval in seconds for health checks.
+            persist_interval: Interval in seconds for snapshot persistence (supports sub-second intervals).
+            health_check_interval: Interval in seconds for health checks (supports sub-second intervals).
         """
         if self._running:
             logger.warning("Background tasks already running")
@@ -72,13 +72,13 @@ class BackgroundTaskManager:
     async def _run_periodic(
         self,
         func: Callable[[], Awaitable[None]],
-        interval: int,
+        interval: float,
     ) -> None:
         """Run a function periodically.
 
         Args:
             func: Async function to run.
-            interval: Interval in seconds between runs.
+            interval: Interval in seconds between runs (supports sub-second intervals).
         """
         while self._running:
             try:
