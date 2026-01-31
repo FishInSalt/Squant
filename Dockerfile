@@ -65,9 +65,11 @@ ENV PATH="/app/.venv/bin:$PATH" \
 COPY --chown=appuser:appuser src/ ./src/
 COPY --chown=appuser:appuser alembic/ ./alembic/
 COPY --chown=appuser:appuser alembic.ini ./
+COPY --chown=appuser:appuser docker-entrypoint.sh ./
 
-# 创建必要目录
+# 创建必要目录并设置权限
 RUN mkdir -p /app/strategies /app/logs && \
+    chmod +x /app/docker-entrypoint.sh && \
     chown -R appuser:appuser /app
 
 USER appuser
@@ -78,4 +80,4 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD curl -f http://localhost:8000/api/v1/health || exit 1
 
-CMD ["uvicorn", "squant.main:app", "--host", "0.0.0.0", "--port", "8000"]
+ENTRYPOINT ["/app/docker-entrypoint.sh"]

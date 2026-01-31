@@ -34,13 +34,6 @@ jobs:
         echo "Waiting for services to be healthy..."
         sleep 30
 
-    - name: Run database migrations
-      env:
-        DATABASE_URL: postgresql+asyncpg://squant_test:squant_test@localhost:5433/squant_test
-      run: |
-        echo "Running database migrations..."
-        uv run alembic upgrade head
-
     - name: Check service health
       run: |
         docker compose -f docker-compose.test.yml --profile e2e ps
