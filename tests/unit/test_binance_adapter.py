@@ -55,10 +55,14 @@ class TestBinanceAdapter:
             ]
         }
 
-        with patch.object(adapter._client, "connect", new_callable=AsyncMock):
-            with patch.object(adapter._client, "get", new_callable=AsyncMock, return_value=mock_response):
-                await adapter.connect()
-                balance = await adapter.get_balance()
+        with (
+            patch.object(adapter._client, "connect", new_callable=AsyncMock),
+            patch.object(
+                adapter._client, "get", new_callable=AsyncMock, return_value=mock_response
+            ),
+        ):
+            await adapter.connect()
+            balance = await adapter.get_balance()
 
         assert balance.exchange == "binance"
         assert len(balance.balances) == 2  # ETH filtered out (zero balance)
@@ -89,10 +93,14 @@ class TestBinanceAdapter:
             "priceChangePercent": "1.21",
         }
 
-        with patch.object(adapter._client, "connect", new_callable=AsyncMock):
-            with patch.object(adapter._client, "get", new_callable=AsyncMock, return_value=mock_response):
-                await adapter.connect()
-                ticker = await adapter.get_ticker("BTC/USDT")
+        with (
+            patch.object(adapter._client, "connect", new_callable=AsyncMock),
+            patch.object(
+                adapter._client, "get", new_callable=AsyncMock, return_value=mock_response
+            ),
+        ):
+            await adapter.connect()
+            ticker = await adapter.get_ticker("BTC/USDT")
 
         assert ticker.symbol == "BTC/USDT"
         assert ticker.last == Decimal("42000.50")
@@ -130,10 +138,14 @@ class TestBinanceAdapter:
             client_order_id="my_order_1",
         )
 
-        with patch.object(adapter._client, "connect", new_callable=AsyncMock):
-            with patch.object(adapter._client, "post", new_callable=AsyncMock, return_value=mock_response):
-                await adapter.connect()
-                response = await adapter.place_order(request)
+        with (
+            patch.object(adapter._client, "connect", new_callable=AsyncMock),
+            patch.object(
+                adapter._client, "post", new_callable=AsyncMock, return_value=mock_response
+            ),
+        ):
+            await adapter.connect()
+            response = await adapter.place_order(request)
 
         assert response.order_id == "12345678"
         assert response.client_order_id == "my_order_1"

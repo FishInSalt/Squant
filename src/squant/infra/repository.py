@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from typing import Any, Generic, TypeVar
+from typing import Any, TypeVar
 from uuid import UUID
 
-from sqlalchemy import select, update, delete, func
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from squant.models.base import Base
@@ -13,7 +13,7 @@ from squant.models.base import Base
 ModelT = TypeVar("ModelT", bound=Base)
 
 
-class BaseRepository(Generic[ModelT]):
+class BaseRepository[ModelT: Base]:
     """Generic repository for CRUD operations."""
 
     def __init__(self, model: type[ModelT], session: AsyncSession):
@@ -22,9 +22,7 @@ class BaseRepository(Generic[ModelT]):
 
     async def get(self, id: str | UUID) -> ModelT | None:
         """Get a single record by ID."""
-        result = await self.session.execute(
-            select(self.model).where(self.model.id == str(id))
-        )
+        result = await self.session.execute(select(self.model).where(self.model.id == str(id)))
         return result.scalar_one_or_none()
 
     async def get_by(self, **kwargs: Any) -> ModelT | None:
@@ -95,9 +93,7 @@ class BaseRepository(Generic[ModelT]):
 
     async def delete(self, id: str | UUID) -> bool:
         """Delete a record by ID."""
-        result = await self.session.execute(
-            delete(self.model).where(self.model.id == str(id))
-        )
+        result = await self.session.execute(delete(self.model).where(self.model.id == str(id)))
         await self.session.flush()
         return result.rowcount > 0
 

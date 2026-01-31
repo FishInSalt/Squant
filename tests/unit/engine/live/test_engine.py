@@ -1,6 +1,6 @@
 """Unit tests for live trading engine."""
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from decimal import Decimal
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
@@ -15,7 +15,6 @@ from squant.infra.exchange.okx.ws_types import WSCandle, WSOrderUpdate
 from squant.infra.exchange.types import (
     AccountBalance,
     Balance,
-    OrderRequest,
     OrderResponse,
 )
 from squant.models.enums import OrderSide, OrderStatus, OrderType
@@ -326,7 +325,7 @@ class TestCandleProcessing:
         return WSCandle(
             symbol="BTC/USDT",
             timeframe="1m",
-            timestamp=datetime(2024, 1, 1, 12, 0, 0, tzinfo=timezone.utc),
+            timestamp=datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC),
             open=Decimal("45000"),
             high=Decimal("46000"),
             low=Decimal("44000"),
@@ -341,7 +340,7 @@ class TestCandleProcessing:
         return WSCandle(
             symbol="BTC/USDT",
             timeframe="1m",
-            timestamp=datetime(2024, 1, 1, 12, 0, 0, tzinfo=timezone.utc),
+            timestamp=datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC),
             open=Decimal("45000"),
             high=Decimal("46000"),
             low=Decimal("44000"),
@@ -405,7 +404,7 @@ class TestOrderSubmission:
         return WSCandle(
             symbol="BTC/USDT",
             timeframe="1m",
-            timestamp=datetime(2024, 1, 1, 12, 0, 0, tzinfo=timezone.utc),
+            timestamp=datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC),
             open=Decimal("45000"),
             high=Decimal("46000"),
             low=Decimal("44000"),
@@ -487,7 +486,7 @@ class TestRiskValidation:
         return WSCandle(
             symbol="BTC/USDT",
             timeframe="1m",
-            timestamp=datetime(2024, 1, 1, 12, 0, 0, tzinfo=timezone.utc),
+            timestamp=datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC),
             open=Decimal("45000"),
             high=Decimal("46000"),
             low=Decimal("44000"),
@@ -566,7 +565,7 @@ class TestEmergencyClose:
         engine.context._positions["BTC/USDT"].is_open = True
         engine.context._positions["BTC/USDT"].amount = Decimal("0.5")
 
-        results = await engine.emergency_close()
+        await engine.emergency_close()
 
         # Should place market sell order
         mock_adapter.place_order.assert_called()
@@ -698,7 +697,7 @@ class TestPendingSnapshots:
         return WSCandle(
             symbol="BTC/USDT",
             timeframe="1m",
-            timestamp=datetime(2024, 1, 1, 12, 0, 0, tzinfo=timezone.utc),
+            timestamp=datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC),
             open=Decimal("45000"),
             high=Decimal("46000"),
             low=Decimal("44000"),
@@ -714,7 +713,7 @@ class TestPendingSnapshots:
 
         # Process multiple candles
         for i in range(5):
-            closed_candle.timestamp = datetime(2024, 1, 1, 12, i, 0, tzinfo=timezone.utc)
+            closed_candle.timestamp = datetime(2024, 1, 1, 12, i, 0, tzinfo=UTC)
             await engine.process_candle(closed_candle)
 
         snapshots = engine.get_pending_snapshots()
@@ -730,14 +729,14 @@ class TestPendingSnapshots:
 
         # Process bars below batch size
         for i in range(5):
-            closed_candle.timestamp = datetime(2024, 1, 1, 12, i, 0, tzinfo=timezone.utc)
+            closed_candle.timestamp = datetime(2024, 1, 1, 12, i, 0, tzinfo=UTC)
             await engine.process_candle(closed_candle)
 
         assert engine.should_persist_snapshots() is False
 
         # Process more to exceed batch size (default is 10)
         for i in range(5, 10):
-            closed_candle.timestamp = datetime(2024, 1, 1, 12, i, 0, tzinfo=timezone.utc)
+            closed_candle.timestamp = datetime(2024, 1, 1, 12, i, 0, tzinfo=UTC)
             await engine.process_candle(closed_candle)
 
         assert engine.should_persist_snapshots() is True
@@ -764,7 +763,7 @@ class TestHealthCheck:
         candle = WSCandle(
             symbol="BTC/USDT",
             timeframe="1m",
-            timestamp=datetime(2024, 1, 1, 12, 0, 0, tzinfo=timezone.utc),
+            timestamp=datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC),
             open=Decimal("45000"),
             high=Decimal("46000"),
             low=Decimal("44000"),

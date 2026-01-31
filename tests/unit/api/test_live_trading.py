@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
-from uuid import UUID, uuid4
+from uuid import uuid4
 
 import pytest
 from fastapi.testclient import TestClient
@@ -63,14 +63,12 @@ class TestStartLiveTrading:
         mock_run.slippage = Decimal("0")
         mock_run.params = {"fast_period": 10}
         mock_run.error_message = None
-        mock_run.started_at = datetime.now(timezone.utc)
+        mock_run.started_at = datetime.now(UTC)
         mock_run.stopped_at = None
-        mock_run.created_at = datetime.now(timezone.utc)
-        mock_run.updated_at = datetime.now(timezone.utc)
+        mock_run.created_at = datetime.now(UTC)
+        mock_run.updated_at = datetime.now(UTC)
 
-        with patch(
-            "squant.api.v1.live_trading.LiveTradingService"
-        ) as mock_service_class:
+        with patch("squant.api.v1.live_trading.LiveTradingService") as mock_service_class:
             mock_service = MagicMock()
             mock_service.start = AsyncMock(return_value=mock_run)
             mock_service_class.return_value = mock_service
@@ -82,13 +80,9 @@ class TestStartLiveTrading:
             assert data["code"] == 0
             assert data["data"]["symbol"] == "BTC/USDT"
 
-    def test_start_strategy_not_found(
-        self, client: TestClient, valid_request: dict
-    ) -> None:
+    def test_start_strategy_not_found(self, client: TestClient, valid_request: dict) -> None:
         """Test error when strategy not found."""
-        with patch(
-            "squant.api.v1.live_trading.LiveTradingService"
-        ) as mock_service_class:
+        with patch("squant.api.v1.live_trading.LiveTradingService") as mock_service_class:
             mock_service = MagicMock()
             mock_service.start = AsyncMock(
                 side_effect=StrategyNotFoundError(valid_request["strategy_id"])
@@ -99,13 +93,9 @@ class TestStartLiveTrading:
 
             assert response.status_code == 404
 
-    def test_start_risk_configuration_error(
-        self, client: TestClient, valid_request: dict
-    ) -> None:
+    def test_start_risk_configuration_error(self, client: TestClient, valid_request: dict) -> None:
         """Test error with invalid risk configuration."""
-        with patch(
-            "squant.api.v1.live_trading.LiveTradingService"
-        ) as mock_service_class:
+        with patch("squant.api.v1.live_trading.LiveTradingService") as mock_service_class:
             mock_service = MagicMock()
             mock_service.start = AsyncMock(
                 side_effect=RiskConfigurationError("max_position_size must be positive")
@@ -121,9 +111,7 @@ class TestStartLiveTrading:
         self, client: TestClient, valid_request: dict
     ) -> None:
         """Test error when strategy instantiation fails."""
-        with patch(
-            "squant.api.v1.live_trading.LiveTradingService"
-        ) as mock_service_class:
+        with patch("squant.api.v1.live_trading.LiveTradingService") as mock_service_class:
             mock_service = MagicMock()
             mock_service.start = AsyncMock(
                 side_effect=StrategyInstantiationError("No Strategy subclass found")
@@ -134,13 +122,9 @@ class TestStartLiveTrading:
 
             assert response.status_code == 400
 
-    def test_start_exchange_connection_error(
-        self, client: TestClient, valid_request: dict
-    ) -> None:
+    def test_start_exchange_connection_error(self, client: TestClient, valid_request: dict) -> None:
         """Test error when exchange connection fails."""
-        with patch(
-            "squant.api.v1.live_trading.LiveTradingService"
-        ) as mock_service_class:
+        with patch("squant.api.v1.live_trading.LiveTradingService") as mock_service_class:
             mock_service = MagicMock()
             mock_service.start = AsyncMock(
                 side_effect=ExchangeConnectionError("Connection refused")
@@ -176,14 +160,12 @@ class TestStopLiveTrading:
         mock_run.slippage = Decimal("0")
         mock_run.params = {}
         mock_run.error_message = None
-        mock_run.started_at = datetime.now(timezone.utc)
-        mock_run.stopped_at = datetime.now(timezone.utc)
-        mock_run.created_at = datetime.now(timezone.utc)
-        mock_run.updated_at = datetime.now(timezone.utc)
+        mock_run.started_at = datetime.now(UTC)
+        mock_run.stopped_at = datetime.now(UTC)
+        mock_run.created_at = datetime.now(UTC)
+        mock_run.updated_at = datetime.now(UTC)
 
-        with patch(
-            "squant.api.v1.live_trading.LiveTradingService"
-        ) as mock_service_class:
+        with patch("squant.api.v1.live_trading.LiveTradingService") as mock_service_class:
             mock_service = MagicMock()
             mock_service.stop = AsyncMock(return_value=mock_run)
             mock_service_class.return_value = mock_service
@@ -210,21 +192,17 @@ class TestStopLiveTrading:
         mock_run.slippage = Decimal("0")
         mock_run.params = {}
         mock_run.error_message = None
-        mock_run.started_at = datetime.now(timezone.utc)
-        mock_run.stopped_at = datetime.now(timezone.utc)
-        mock_run.created_at = datetime.now(timezone.utc)
-        mock_run.updated_at = datetime.now(timezone.utc)
+        mock_run.started_at = datetime.now(UTC)
+        mock_run.stopped_at = datetime.now(UTC)
+        mock_run.created_at = datetime.now(UTC)
+        mock_run.updated_at = datetime.now(UTC)
 
-        with patch(
-            "squant.api.v1.live_trading.LiveTradingService"
-        ) as mock_service_class:
+        with patch("squant.api.v1.live_trading.LiveTradingService") as mock_service_class:
             mock_service = MagicMock()
             mock_service.stop = AsyncMock(return_value=mock_run)
             mock_service_class.return_value = mock_service
 
-            response = client.post(
-                f"/api/v1/live/{run_id}/stop", json={"cancel_orders": False}
-            )
+            response = client.post(f"/api/v1/live/{run_id}/stop", json={"cancel_orders": False})
 
             assert response.status_code == 200
             mock_service.stop.assert_called_once_with(run_id, cancel_orders=False)
@@ -233,9 +211,7 @@ class TestStopLiveTrading:
         """Test error when session not found."""
         run_id = uuid4()
 
-        with patch(
-            "squant.api.v1.live_trading.LiveTradingService"
-        ) as mock_service_class:
+        with patch("squant.api.v1.live_trading.LiveTradingService") as mock_service_class:
             mock_service = MagicMock()
             mock_service.stop = AsyncMock(side_effect=SessionNotFoundError(run_id))
             mock_service_class.return_value = mock_service
@@ -257,9 +233,7 @@ class TestEmergencyClose:
         """Test successful emergency close."""
         run_id = uuid4()
 
-        with patch(
-            "squant.api.v1.live_trading.LiveTradingService"
-        ) as mock_service_class:
+        with patch("squant.api.v1.live_trading.LiveTradingService") as mock_service_class:
             mock_service = MagicMock()
             mock_service.emergency_close = AsyncMock(
                 return_value={
@@ -283,9 +257,7 @@ class TestEmergencyClose:
         """Test emergency close on inactive session."""
         run_id = uuid4()
 
-        with patch(
-            "squant.api.v1.live_trading.LiveTradingService"
-        ) as mock_service_class:
+        with patch("squant.api.v1.live_trading.LiveTradingService") as mock_service_class:
             mock_service = MagicMock()
             mock_service.emergency_close = AsyncMock(
                 return_value={
@@ -306,13 +278,9 @@ class TestEmergencyClose:
         """Test error when session not found."""
         run_id = uuid4()
 
-        with patch(
-            "squant.api.v1.live_trading.LiveTradingService"
-        ) as mock_service_class:
+        with patch("squant.api.v1.live_trading.LiveTradingService") as mock_service_class:
             mock_service = MagicMock()
-            mock_service.emergency_close = AsyncMock(
-                side_effect=SessionNotFoundError(run_id)
-            )
+            mock_service.emergency_close = AsyncMock(side_effect=SessionNotFoundError(run_id))
             mock_service_class.return_value = mock_service
 
             response = client.post(f"/api/v1/live/{run_id}/emergency-close")
@@ -332,9 +300,7 @@ class TestGetStatus:
         """Test getting status of active session."""
         run_id = uuid4()
 
-        with patch(
-            "squant.api.v1.live_trading.LiveTradingService"
-        ) as mock_service_class:
+        with patch("squant.api.v1.live_trading.LiveTradingService") as mock_service_class:
             mock_service = MagicMock()
             mock_service.get_status = AsyncMock(
                 return_value={
@@ -342,7 +308,7 @@ class TestGetStatus:
                     "symbol": "BTC/USDT",
                     "timeframe": "1m",
                     "is_running": True,
-                    "started_at": datetime.now(timezone.utc),
+                    "started_at": datetime.now(UTC),
                     "stopped_at": None,
                     "error_message": None,
                     "bar_count": 100,
@@ -397,13 +363,9 @@ class TestGetStatus:
         """Test error when session not found."""
         run_id = uuid4()
 
-        with patch(
-            "squant.api.v1.live_trading.LiveTradingService"
-        ) as mock_service_class:
+        with patch("squant.api.v1.live_trading.LiveTradingService") as mock_service_class:
             mock_service = MagicMock()
-            mock_service.get_status = AsyncMock(
-                side_effect=SessionNotFoundError(run_id)
-            )
+            mock_service.get_status = AsyncMock(side_effect=SessionNotFoundError(run_id))
             mock_service_class.return_value = mock_service
 
             response = client.get(f"/api/v1/live/{run_id}/status")
@@ -421,9 +383,7 @@ class TestListActiveSessions:
 
     def test_list_active_empty(self, client: TestClient) -> None:
         """Test listing with no active sessions."""
-        with patch(
-            "squant.api.v1.live_trading.LiveTradingService"
-        ) as mock_service_class:
+        with patch("squant.api.v1.live_trading.LiveTradingService") as mock_service_class:
             mock_service = MagicMock()
             mock_service.list_active.return_value = []
             mock_service_class.return_value = mock_service
@@ -442,9 +402,7 @@ class TestListActiveSessions:
         mock_run = MagicMock()
         mock_run.strategy_id = str(strategy_id)
 
-        with patch(
-            "squant.api.v1.live_trading.LiveTradingService"
-        ) as mock_service_class:
+        with patch("squant.api.v1.live_trading.LiveTradingService") as mock_service_class:
             mock_service = MagicMock()
             mock_service.list_active.return_value = [
                 {
@@ -452,7 +410,7 @@ class TestListActiveSessions:
                     "symbol": "BTC/USDT",
                     "timeframe": "1m",
                     "is_running": True,
-                    "started_at": datetime.now(timezone.utc),
+                    "started_at": datetime.now(UTC),
                     "bar_count": 50,
                     "equity": "10500",
                     "cash": "5000",
@@ -479,9 +437,7 @@ class TestListRuns:
 
     def test_list_runs_default_pagination(self, client: TestClient) -> None:
         """Test listing runs with default pagination."""
-        with patch(
-            "squant.api.v1.live_trading.LiveTradingService"
-        ) as mock_service_class:
+        with patch("squant.api.v1.live_trading.LiveTradingService") as mock_service_class:
             mock_service = MagicMock()
             mock_service.list_runs = AsyncMock(return_value=([], 0))
             mock_service_class.return_value = mock_service
@@ -495,9 +451,7 @@ class TestListRuns:
 
     def test_list_runs_with_status_filter(self, client: TestClient) -> None:
         """Test listing runs with status filter."""
-        with patch(
-            "squant.api.v1.live_trading.LiveTradingService"
-        ) as mock_service_class:
+        with patch("squant.api.v1.live_trading.LiveTradingService") as mock_service_class:
             mock_service = MagicMock()
             mock_service.list_runs = AsyncMock(return_value=([], 0))
             mock_service_class.return_value = mock_service
@@ -508,9 +462,7 @@ class TestListRuns:
 
     def test_list_runs_invalid_status(self, client: TestClient) -> None:
         """Test error with invalid status filter."""
-        with patch(
-            "squant.api.v1.live_trading.LiveTradingService"
-        ) as mock_service_class:
+        with patch("squant.api.v1.live_trading.LiveTradingService") as mock_service_class:
             mock_service_class.return_value = MagicMock()
 
             response = client.get("/api/v1/live/runs?status=invalid")
@@ -542,14 +494,12 @@ class TestGetRun:
         mock_run.slippage = Decimal("0")
         mock_run.params = {}
         mock_run.error_message = None
-        mock_run.started_at = datetime.now(timezone.utc)
+        mock_run.started_at = datetime.now(UTC)
         mock_run.stopped_at = None
-        mock_run.created_at = datetime.now(timezone.utc)
-        mock_run.updated_at = datetime.now(timezone.utc)
+        mock_run.created_at = datetime.now(UTC)
+        mock_run.updated_at = datetime.now(UTC)
 
-        with patch(
-            "squant.api.v1.live_trading.LiveTradingService"
-        ) as mock_service_class:
+        with patch("squant.api.v1.live_trading.LiveTradingService") as mock_service_class:
             mock_service = MagicMock()
             mock_service.get_run = AsyncMock(return_value=mock_run)
             mock_service_class.return_value = mock_service
@@ -564,9 +514,7 @@ class TestGetRun:
         """Test error when run not found."""
         run_id = uuid4()
 
-        with patch(
-            "squant.api.v1.live_trading.LiveTradingService"
-        ) as mock_service_class:
+        with patch("squant.api.v1.live_trading.LiveTradingService") as mock_service_class:
             mock_service = MagicMock()
             mock_service.get_run = AsyncMock(side_effect=SessionNotFoundError(run_id))
             mock_service_class.return_value = mock_service
@@ -589,15 +537,13 @@ class TestGetEquityCurve:
         run_id = uuid4()
 
         mock_curve = MagicMock()
-        mock_curve.time = datetime.now(timezone.utc)
+        mock_curve.time = datetime.now(UTC)
         mock_curve.equity = Decimal("10000")
         mock_curve.cash = Decimal("5000")
         mock_curve.position_value = Decimal("5000")
         mock_curve.unrealized_pnl = Decimal("0")
 
-        with patch(
-            "squant.api.v1.live_trading.LiveTradingService"
-        ) as mock_service_class:
+        with patch("squant.api.v1.live_trading.LiveTradingService") as mock_service_class:
             mock_service = MagicMock()
             mock_service.get_equity_curve = AsyncMock(return_value=[mock_curve])
             mock_service_class.return_value = mock_service
@@ -612,13 +558,9 @@ class TestGetEquityCurve:
         """Test error when run not found."""
         run_id = uuid4()
 
-        with patch(
-            "squant.api.v1.live_trading.LiveTradingService"
-        ) as mock_service_class:
+        with patch("squant.api.v1.live_trading.LiveTradingService") as mock_service_class:
             mock_service = MagicMock()
-            mock_service.get_equity_curve = AsyncMock(
-                side_effect=SessionNotFoundError(run_id)
-            )
+            mock_service.get_equity_curve = AsyncMock(side_effect=SessionNotFoundError(run_id))
             mock_service_class.return_value = mock_service
 
             response = client.get(f"/api/v1/live/{run_id}/equity-curve")
@@ -638,9 +580,7 @@ class TestPersistSnapshots:
         """Test successful persist snapshots."""
         run_id = uuid4()
 
-        with patch(
-            "squant.api.v1.live_trading.LiveTradingService"
-        ) as mock_service_class:
+        with patch("squant.api.v1.live_trading.LiveTradingService") as mock_service_class:
             mock_service = MagicMock()
             mock_service.persist_snapshots = AsyncMock(return_value=5)
             mock_service_class.return_value = mock_service
@@ -655,13 +595,9 @@ class TestPersistSnapshots:
         """Test error when session not found."""
         run_id = uuid4()
 
-        with patch(
-            "squant.api.v1.live_trading.LiveTradingService"
-        ) as mock_service_class:
+        with patch("squant.api.v1.live_trading.LiveTradingService") as mock_service_class:
             mock_service = MagicMock()
-            mock_service.persist_snapshots = AsyncMock(
-                side_effect=SessionNotFoundError(run_id)
-            )
+            mock_service.persist_snapshots = AsyncMock(side_effect=SessionNotFoundError(run_id))
             mock_service_class.return_value = mock_service
 
             response = client.post(f"/api/v1/live/{run_id}/persist")

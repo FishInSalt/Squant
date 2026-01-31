@@ -22,6 +22,7 @@ class TestBackgroundTaskManagerInit:
         """Test get_task_manager returns singleton."""
         # Reset singleton for test
         import squant.services.background as bg_module
+
         bg_module._task_manager = None
 
         manager1 = get_task_manager()
@@ -91,9 +92,7 @@ class TestPeriodicTaskExecution:
         """Test that persist_snapshots is called periodically."""
         manager = BackgroundTaskManager()
 
-        with patch.object(
-            manager, '_persist_snapshots', new_callable=AsyncMock
-        ) as mock_persist:
+        with patch.object(manager, "_persist_snapshots", new_callable=AsyncMock) as mock_persist:
             manager.start(persist_interval=1, health_check_interval=100)
 
             # Wait enough time for the task to run
@@ -107,9 +106,7 @@ class TestPeriodicTaskExecution:
         """Test that health_check is called periodically."""
         manager = BackgroundTaskManager()
 
-        with patch.object(
-            manager, '_health_check', new_callable=AsyncMock
-        ) as mock_health:
+        with patch.object(manager, "_health_check", new_callable=AsyncMock) as mock_health:
             manager.start(persist_interval=100, health_check_interval=1)
 
             # Wait enough time for the task to run
@@ -131,8 +128,8 @@ class TestPeriodicTaskExecution:
             if call_count < 3:
                 raise ValueError("Test error")
 
-        with patch.object(manager, '_persist_snapshots', failing_task):
-            with patch.object(manager, '_health_check', AsyncMock()):
+        with patch.object(manager, "_persist_snapshots", failing_task):
+            with patch.object(manager, "_health_check", AsyncMock()):
                 manager.start(persist_interval=1, health_check_interval=100)
                 await asyncio.sleep(2.5)
                 await manager.stop()
@@ -153,8 +150,7 @@ class TestPersistSnapshots:
         mock_session_manager.get_sessions_needing_persistence.return_value = []
 
         with patch(
-            'squant.engine.paper.manager.get_session_manager',
-            return_value=mock_session_manager
+            "squant.engine.paper.manager.get_session_manager", return_value=mock_session_manager
         ):
             # Should not raise
             await manager._persist_snapshots()
@@ -166,29 +162,27 @@ class TestPersistSnapshots:
 
         mock_session_manager = MagicMock()
         # Only 'run-1' needs persistence (via public API)
-        mock_session_manager.get_sessions_needing_persistence.return_value = ['run-1']
+        mock_session_manager.get_sessions_needing_persistence.return_value = ["run-1"]
 
         mock_service = MagicMock()
         mock_service.persist_snapshots = AsyncMock(return_value=5)
 
         mock_db_session = AsyncMock()
 
-        with patch(
-            'squant.engine.paper.manager.get_session_manager',
-            return_value=mock_session_manager
+        with (
+            patch(
+                "squant.engine.paper.manager.get_session_manager", return_value=mock_session_manager
+            ),
+            patch("squant.infra.database.get_session_context") as mock_get_session,
         ):
+            mock_get_session.return_value.__aenter__.return_value = mock_db_session
             with patch(
-                'squant.infra.database.get_session_context'
-            ) as mock_get_session:
-                mock_get_session.return_value.__aenter__.return_value = mock_db_session
-                with patch(
-                    'squant.services.paper_trading.PaperTradingService',
-                    return_value=mock_service
-                ):
-                    await manager._persist_snapshots()
+                "squant.services.paper_trading.PaperTradingService", return_value=mock_service
+            ):
+                await manager._persist_snapshots()
 
         # Only run-1 should be persisted
-        mock_service.persist_snapshots.assert_called_once_with('run-1')
+        mock_service.persist_snapshots.assert_called_once_with("run-1")
 
 
 class TestHealthCheck:
@@ -205,15 +199,13 @@ class TestHealthCheck:
         mock_settings = MagicMock()
         mock_settings.paper_session_timeout_seconds = 300
 
-        with patch(
-            'squant.engine.paper.manager.get_session_manager',
-            return_value=mock_session_manager
+        with (
+            patch(
+                "squant.engine.paper.manager.get_session_manager", return_value=mock_session_manager
+            ),
+            patch("squant.config.get_settings", return_value=mock_settings),
         ):
-            with patch(
-                'squant.config.get_settings',
-                return_value=mock_settings
-            ):
-                await manager._health_check()
+            await manager._health_check()
 
         mock_session_manager.cleanup_stale_sessions.assert_called_once_with(300)
 
@@ -228,18 +220,14 @@ class TestHealthCheck:
         mock_settings = MagicMock()
         mock_settings.paper_session_timeout_seconds = 300
 
-        with patch(
-            'squant.engine.paper.manager.get_session_manager',
-            return_value=mock_session_manager
+        with (
+            patch(
+                "squant.engine.paper.manager.get_session_manager", return_value=mock_session_manager
+            ),
+            patch("squant.config.get_settings", return_value=mock_settings),
         ):
-            with patch(
-                'squant.config.get_settings',
-                return_value=mock_settings
-            ):
-                with patch(
-                    'squant.services.background.logger'
-                ) as mock_logger:
-                    await manager._health_check()
+            with patch("squant.services.background.logger") as mock_logger:
+                await manager._health_check()
 
-                    mock_logger.warning.assert_called_once()
-                    assert '2' in mock_logger.warning.call_args[0][0]
+                mock_logger.warning.assert_called_once()
+                assert "2" in mock_logger.warning.call_args[0][0]

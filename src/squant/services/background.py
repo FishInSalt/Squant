@@ -8,6 +8,7 @@ Manages periodic tasks:
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 from collections.abc import Awaitable, Callable
 
@@ -45,14 +46,10 @@ class BackgroundTaskManager:
 
         self._running = True
         self._tasks.append(
-            asyncio.create_task(
-                self._run_periodic(self._persist_snapshots, persist_interval)
-            )
+            asyncio.create_task(self._run_periodic(self._persist_snapshots, persist_interval))
         )
         self._tasks.append(
-            asyncio.create_task(
-                self._run_periodic(self._health_check, health_check_interval)
-            )
+            asyncio.create_task(self._run_periodic(self._health_check, health_check_interval))
         )
         logger.info(
             f"Background tasks started: persist_interval={persist_interval}s, "
@@ -67,10 +64,8 @@ class BackgroundTaskManager:
         self._running = False
         for task in self._tasks:
             task.cancel()
-            try:
+            with contextlib.suppress(asyncio.CancelledError):
                 await task
-            except asyncio.CancelledError:
-                pass
         self._tasks.clear()
         logger.info("Background tasks stopped")
 
@@ -127,9 +122,7 @@ class BackgroundTaskManager:
         settings = get_settings()
         session_manager = get_session_manager()
 
-        count = await session_manager.cleanup_stale_sessions(
-            settings.paper_session_timeout_seconds
-        )
+        count = await session_manager.cleanup_stale_sessions(settings.paper_session_timeout_seconds)
         if count > 0:
             logger.warning(f"Cleaned up {count} stale paper trading sessions")
 

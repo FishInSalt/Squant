@@ -30,9 +30,7 @@ class TriggerCircuitBreakerResponse(BaseModel):
     status: str = Field(..., description="Trigger status (triggered/already_active)")
     triggered_at: str = Field(..., description="ISO 8601 timestamp of trigger")
     live_sessions_stopped: int = Field(..., description="Number of live sessions stopped")
-    paper_sessions_stopped: int = Field(
-        ..., description="Number of paper sessions stopped"
-    )
+    paper_sessions_stopped: int = Field(..., description="Number of paper sessions stopped")
     errors: list[str] = Field(default_factory=list, description="Any errors encountered")
 
 
@@ -49,36 +47,22 @@ class CloseAllPositionsRequest(BaseModel):
 class CloseAllPositionsResponse(BaseModel):
     """Response after closing all positions."""
 
-    live_positions_closed: int = Field(
-        ..., description="Number of live positions closed"
-    )
-    paper_positions_reset: int = Field(
-        ..., description="Number of paper sessions reset"
-    )
+    live_positions_closed: int = Field(..., description="Number of live positions closed")
+    paper_positions_reset: int = Field(..., description="Number of paper sessions reset")
     orders_cancelled: int = Field(..., description="Number of orders cancelled")
-    errors: list[dict[str, Any]] = Field(
-        default_factory=list, description="Errors by session"
-    )
+    errors: list[dict[str, Any]] = Field(default_factory=list, description="Errors by session")
 
 
 class CircuitBreakerStatusResponse(BaseModel):
     """Circuit breaker status response."""
 
     is_active: bool = Field(..., description="Whether circuit breaker is currently active")
-    triggered_at: str | None = Field(
-        None, description="ISO 8601 timestamp of last trigger"
-    )
+    triggered_at: str | None = Field(None, description="ISO 8601 timestamp of last trigger")
     trigger_type: str | None = Field(None, description="Type of last trigger (manual/auto)")
     trigger_reason: str | None = Field(None, description="Reason for last trigger")
-    cooldown_until: str | None = Field(
-        None, description="ISO 8601 timestamp when cooldown ends"
-    )
-    active_live_sessions: int = Field(
-        ..., description="Number of active live trading sessions"
-    )
-    active_paper_sessions: int = Field(
-        ..., description="Number of active paper trading sessions"
-    )
+    cooldown_until: str | None = Field(None, description="ISO 8601 timestamp when cooldown ends")
+    active_live_sessions: int = Field(..., description="Number of active live trading sessions")
+    active_paper_sessions: int = Field(..., description="Number of active paper trading sessions")
 
 
 class ResetCircuitBreakerResponse(BaseModel):

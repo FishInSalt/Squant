@@ -159,38 +159,46 @@ class OrderReconciler:
                 # Order exists on exchange - check state matches
                 exchange_order = exchange_by_client_id[internal_id]
                 if self._has_discrepancy(local_state, exchange_order):
-                    discrepancies.append({
-                        "type": "state_mismatch",
-                        "order_id": internal_id,
-                        "local_status": local_state.get("status"),
-                        "exchange_status": exchange_order.status,
-                        "local_filled": local_state.get("filled"),
-                        "exchange_filled": exchange_order.filled,
-                    })
+                    discrepancies.append(
+                        {
+                            "type": "state_mismatch",
+                            "order_id": internal_id,
+                            "local_status": local_state.get("status"),
+                            "exchange_status": exchange_order.status,
+                            "local_filled": local_state.get("filled"),
+                            "exchange_filled": exchange_order.filled,
+                        }
+                    )
             else:
                 # Order not in open orders - might be filled/cancelled
                 if not self._is_terminal_status(local_state.get("status")):
-                    discrepancies.append({
-                        "type": "missing_on_exchange",
-                        "order_id": internal_id,
-                        "local_status": local_state.get("status"),
-                    })
+                    discrepancies.append(
+                        {
+                            "type": "missing_on_exchange",
+                            "order_id": internal_id,
+                            "local_status": local_state.get("status"),
+                        }
+                    )
 
         # Check exchange orders that we don't track
         for client_id, order in exchange_by_client_id.items():
             if client_id not in local_orders:
-                discrepancies.append({
-                    "type": "untracked_exchange_order",
-                    "order_id": order.order_id,
-                    "client_order_id": client_id,
-                    "status": order.status,
-                })
+                discrepancies.append(
+                    {
+                        "type": "untracked_exchange_order",
+                        "order_id": order.order_id,
+                        "client_order_id": client_id,
+                        "status": order.status,
+                    }
+                )
 
         if discrepancies:
-            self._reconciliation_log.append({
-                "timestamp": datetime.now(UTC),
-                "discrepancies": discrepancies,
-            })
+            self._reconciliation_log.append(
+                {
+                    "timestamp": datetime.now(UTC),
+                    "discrepancies": discrepancies,
+                }
+            )
             logger.warning(f"Found {len(discrepancies)} order discrepancies")
 
         return discrepancies
@@ -218,10 +226,7 @@ class OrderReconciler:
                 return True
 
         # Filled amount mismatch (significant difference)
-        if abs(local_filled - exchange_order.filled) > Decimal("0.00001"):
-            return True
-
-        return False
+        return abs(local_filled - exchange_order.filled) > Decimal("0.00001")
 
     def _is_terminal_status(self, status: OrderStatus | None) -> bool:
         """Check if status is a terminal state.

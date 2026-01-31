@@ -101,7 +101,9 @@ class OrderRequest(BaseModel):
     side: OrderSide = Field(..., description="Order side (buy/sell)")
     type: OrderType = Field(..., description="Order type (market/limit)")
     amount: Decimal = Field(..., gt=0, description="Order amount in base currency")
-    price: Decimal | None = Field(default=None, description="Limit price (required for limit orders)")
+    price: Decimal | None = Field(
+        default=None, description="Limit price (required for limit orders)"
+    )
     client_order_id: str | None = Field(default=None, description="Client-specified order ID")
 
     def model_post_init(self, __context: object) -> None:

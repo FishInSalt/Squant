@@ -10,7 +10,7 @@ Provides high-level operations for:
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
@@ -28,7 +28,6 @@ from squant.infra.exchange.okx.adapter import OKXAdapter
 from squant.infra.repository import BaseRepository
 from squant.models.enums import RunMode, RunStatus
 from squant.models.metrics import EquityCurve
-from squant.models.strategy import Strategy as StrategyModel
 from squant.models.strategy import StrategyRun
 
 if TYPE_CHECKING:
@@ -131,7 +130,7 @@ class LiveStrategyRunRepository(BaseRepository[StrategyRun]):
             .values(
                 status=RunStatus.ERROR,
                 error_message="Session terminated due to application restart",
-                stopped_at=datetime.now(timezone.utc),
+                stopped_at=datetime.now(UTC),
             )
         )
         result = await self.session.execute(stmt)
@@ -157,9 +156,7 @@ class LiveEquityCurveRepository:
     async def get_by_run(self, run_id: str) -> list[EquityCurve]:
         """Get equity curve for a run."""
         stmt = (
-            select(EquityCurve)
-            .where(EquityCurve.run_id == run_id)
-            .order_by(EquityCurve.time.asc())
+            select(EquityCurve).where(EquityCurve.run_id == run_id).order_by(EquityCurve.time.asc())
         )
         result = await self.session.execute(stmt)
         return list(result.scalars().all())
@@ -227,10 +224,7 @@ class LiveTradingService:
                 balance = await adapter.get_balance()
                 quote_currency = symbol.split("/")[1]  # e.g., "USDT"
                 quote_balance = balance.get_balance(quote_currency)
-                if quote_balance:
-                    initial_equity = quote_balance.available
-                else:
-                    initial_equity = Decimal("0")
+                initial_equity = quote_balance.available if quote_balance else Decimal("0")
                 logger.info(f"Fetched initial equity from exchange: {initial_equity}")
         except Exception as e:
             raise ExchangeConnectionError(f"Failed to connect to exchange: {e}") from e
@@ -247,7 +241,7 @@ class LiveTradingService:
             slippage=Decimal("0"),
             params=params or {},
             status=RunStatus.RUNNING,
-            started_at=datetime.now(timezone.utc),
+            started_at=datetime.now(UTC),
         )
         await self.session.commit()
 
@@ -284,9 +278,7 @@ class LiveTradingService:
             # Start engine
             await engine.start()
 
-            logger.info(
-                f"Started live trading session {run.id} for strategy {strategy_id}"
-            )
+            logger.info(f"Started live trading session {run.id} for strategy {strategy_id}")
 
             return run
 
@@ -314,7 +306,7 @@ class LiveTradingService:
                 run.id,
                 status=RunStatus.ERROR,
                 error_message=str(e),
-                stopped_at=datetime.now(timezone.utc),
+                stopped_at=datetime.now(UTC),
             )
             await self.session.commit()
             raise
@@ -385,7 +377,7 @@ class LiveTradingService:
 
             # Find the strategy class (subclass of Strategy)
             strategy_class = None
-            for name, obj in local_namespace.items():
+            for _name, obj in local_namespace.items():
                 if (
                     isinstance(obj, type)
                     and issubclass(obj, StrategyBase)
@@ -395,9 +387,7 @@ class LiveTradingService:
                     break
 
             if strategy_class is None:
-                raise StrategyInstantiationError(
-                    "No Strategy subclass found in strategy code"
-                )
+                raise StrategyInstantiationError("No Strategy subclass found in strategy code")
 
             # Instantiate
             return strategy_class()
@@ -405,9 +395,7 @@ class LiveTradingService:
         except ValueError as e:
             raise StrategyInstantiationError(f"Strategy compilation failed: {e}") from e
         except Exception as e:
-            raise StrategyInstantiationError(
-                f"Strategy instantiation failed: {e}"
-            ) from e
+            raise StrategyInstantiationError(f"Strategy instantiation failed: {e}") from e
 
     async def stop(self, run_id: UUID, cancel_orders: bool = True) -> StrategyRun:
         """Stop a live trading session.
@@ -448,7 +436,7 @@ class LiveTradingService:
         run = await self.run_repo.update(
             run.id,
             status=RunStatus.STOPPED,
-            stopped_at=datetime.now(timezone.utc),
+            stopped_at=datetime.now(UTC),
             error_message=engine.error_message if engine else None,
         )
         await self.session.commit()
@@ -498,7 +486,7 @@ class LiveTradingService:
         await self.run_repo.update(
             run.id,
             status=RunStatus.STOPPED,
-            stopped_at=datetime.now(timezone.utc),
+            stopped_at=datetime.now(UTC),
             error_message="Emergency close executed",
         )
         await self.session.commit()
@@ -677,9 +665,7 @@ class LiveTradingService:
 
         return len(snapshots)
 
-    async def _persist_snapshots(
-        self, run_id: str, snapshots: list[EquitySnapshot]
-    ) -> None:
+    async def _persist_snapshots(self, run_id: str, snapshots: list[EquitySnapshot]) -> None:
         """Persist equity snapshots to database.
 
         Args:

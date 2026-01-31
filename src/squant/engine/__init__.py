@@ -1,11 +1,5 @@
 """Strategy engine - execution and management."""
 
-from squant.engine.sandbox import (
-    CompiledStrategy,
-    ValidationResult,
-    compile_strategy,
-    validate_strategy_code,
-)
 from squant.engine.backtest import (
     BacktestContext,
     BacktestError,
@@ -26,6 +20,12 @@ from squant.engine.backtest import (
     TradeRecord,
     calculate_metrics,
     run_backtest,
+)
+from squant.engine.sandbox import (
+    CompiledStrategy,
+    ValidationResult,
+    compile_strategy,
+    validate_strategy_code,
 )
 
 __all__ = [

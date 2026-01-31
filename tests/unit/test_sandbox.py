@@ -43,32 +43,32 @@ class MyStrategy(Strategy):
 
     def test_syntax_error(self) -> None:
         """Test that syntax errors are caught."""
-        code = '''
+        code = """
 class MyStrategy(Strategy):
     def on_bar(self
-'''
+"""
         result = validate_strategy_code(code)
         assert result.valid is False
         assert any("Syntax error" in e for e in result.errors)
 
     def test_missing_strategy_class(self) -> None:
         """Test that missing Strategy class fails validation."""
-        code = '''
+        code = """
 class NotAStrategy:
     def on_bar(self, bar):
         pass
-'''
+"""
         result = validate_strategy_code(code)
         assert result.valid is False
         assert any("inherits from Strategy" in e for e in result.errors)
 
     def test_missing_on_bar_method(self) -> None:
         """Test that missing on_bar method fails validation."""
-        code = '''
+        code = """
 class MyStrategy(Strategy):
     def do_something(self):
         pass
-'''
+"""
         result = validate_strategy_code(code)
         assert result.valid is False
         assert any("on_bar" in e for e in result.errors)
@@ -77,34 +77,47 @@ class MyStrategy(Strategy):
 class TestDisallowedImports:
     """Tests for forbidden module imports."""
 
-    @pytest.mark.parametrize("module", [
-        "os", "sys", "subprocess", "socket", "pickle",
-    ])
+    @pytest.mark.parametrize(
+        "module",
+        [
+            "os",
+            "sys",
+            "subprocess",
+            "socket",
+            "pickle",
+        ],
+    )
     def test_disallowed_import(self, module: str) -> None:
         """Test that disallowed imports are rejected."""
-        code = f'''
+        code = f"""
 import {module}
 
 class MyStrategy(Strategy):
     def on_bar(self, bar):
         pass
-'''
+"""
         result = validate_strategy_code(code)
         assert result.valid is False
         assert any(f"'{module}'" in e for e in result.errors)
 
-    @pytest.mark.parametrize("module", [
-        "os", "sys", "subprocess", "shutil",
-    ])
+    @pytest.mark.parametrize(
+        "module",
+        [
+            "os",
+            "sys",
+            "subprocess",
+            "shutil",
+        ],
+    )
     def test_disallowed_from_import(self, module: str) -> None:
         """Test that 'from X import Y' is also rejected for disallowed modules."""
-        code = f'''
+        code = f"""
 from {module} import path
 
 class MyStrategy(Strategy):
     def on_bar(self, bar):
         pass
-'''
+"""
         result = validate_strategy_code(code)
         assert result.valid is False
         assert any(f"'{module}'" in e for e in result.errors)
@@ -120,7 +133,7 @@ class TestAllowedCode:
 
     def test_allowed_builtins(self) -> None:
         """Test that safe built-in functions are allowed."""
-        code = '''
+        code = """
 class MyStrategy(Strategy):
     def on_bar(self, bar):
         prices = [1, 2, 3, 4, 5]
@@ -129,13 +142,13 @@ class MyStrategy(Strategy):
         max_price = max(prices)
         sorted_prices = sorted(prices)
         print(f"Average: {avg}")
-'''
+"""
         result = validate_strategy_code(code)
         assert result.valid is True
 
     def test_decimal_allowed(self) -> None:
         """Test that Decimal is allowed for precise calculations."""
-        code = '''
+        code = """
 from decimal import Decimal
 
 class MyStrategy(Strategy):
@@ -143,30 +156,30 @@ class MyStrategy(Strategy):
         price = Decimal("42000.50")
         size = Decimal("0.001")
         total = price * size
-'''
+"""
         result = validate_strategy_code(code)
         assert result.valid is True
 
     def test_list_comprehension(self) -> None:
         """Test that list comprehensions are allowed."""
-        code = '''
+        code = """
 class MyStrategy(Strategy):
     def on_bar(self, bar):
         prices = [x * 2 for x in range(10)]
         filtered = [p for p in prices if p > 5]
-'''
+"""
         result = validate_strategy_code(code)
         assert result.valid is True
 
     def test_dict_operations(self) -> None:
         """Test that dictionary operations are allowed."""
-        code = '''
+        code = """
 class MyStrategy(Strategy):
     def on_bar(self, bar):
         data = {"open": 100, "close": 110}
         keys = list(data.keys())
         values = list(data.values())
-'''
+"""
         result = validate_strategy_code(code)
         assert result.valid is True
 
@@ -176,11 +189,11 @@ class TestDangerousCode:
 
     def test_eval_rejected(self) -> None:
         """Test that eval is rejected."""
-        code = '''
+        code = """
 class MyStrategy(Strategy):
     def on_bar(self, bar):
         eval("print('dangerous')")
-'''
+"""
         result = validate_strategy_code(code)
         # eval may be rejected at RestrictedPython level
         # The validation should fail
@@ -188,31 +201,31 @@ class MyStrategy(Strategy):
 
     def test_exec_rejected(self) -> None:
         """Test that exec is rejected."""
-        code = '''
+        code = """
 class MyStrategy(Strategy):
     def on_bar(self, bar):
         exec("import os")
-'''
+"""
         result = validate_strategy_code(code)
         assert result.valid is False or "exec" in str(result.errors)
 
     def test_open_rejected(self) -> None:
         """Test that open() is rejected."""
-        code = '''
+        code = """
 class MyStrategy(Strategy):
     def on_bar(self, bar):
         f = open("/etc/passwd", "r")
-'''
+"""
         result = validate_strategy_code(code)
         assert result.valid is False or "open" in str(result.errors)
 
     def test_dunder_import_rejected(self) -> None:
         """Test that __import__ is rejected."""
-        code = '''
+        code = """
 class MyStrategy(Strategy):
     def on_bar(self, bar):
         os = __import__("os")
-'''
+"""
         result = validate_strategy_code(code)
         # __import__ should be rejected at RestrictedPython level
         assert result.valid is False
@@ -223,11 +236,11 @@ class TestCompileStrategy:
 
     def test_compile_valid_strategy(self) -> None:
         """Test that valid strategy code compiles successfully."""
-        code = '''
+        code = """
 class MyStrategy(Strategy):
     def on_bar(self, bar):
         pass
-'''
+"""
         compiled = compile_strategy(code)
         assert compiled.code_object is not None
         assert compiled.restricted_globals is not None
@@ -235,24 +248,24 @@ class MyStrategy(Strategy):
 
     def test_compile_invalid_strategy_raises(self) -> None:
         """Test that invalid strategy code raises ValueError."""
-        code = '''
+        code = """
 import os
 
 class MyStrategy(Strategy):
     def on_bar(self, bar):
         pass
-'''
+"""
         with pytest.raises(ValueError) as exc_info:
             compile_strategy(code)
         assert "validation failed" in str(exc_info.value).lower()
 
     def test_compiled_has_safe_builtins(self) -> None:
         """Test that compiled strategy has safe built-ins."""
-        code = '''
+        code = """
 class MyStrategy(Strategy):
     def on_bar(self, bar):
         pass
-'''
+"""
         compiled = compile_strategy(code)
         builtins = compiled.restricted_globals["__builtins__"]
 
@@ -264,11 +277,11 @@ class MyStrategy(Strategy):
 
     def test_compiled_has_guards(self) -> None:
         """Test that compiled strategy has RestrictedPython guards."""
-        code = '''
+        code = """
 class MyStrategy(Strategy):
     def on_bar(self, bar):
         pass
-'''
+"""
         compiled = compile_strategy(code)
 
         assert "_getattr_" in compiled.restricted_globals

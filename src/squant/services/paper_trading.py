@@ -9,7 +9,7 @@ Provides high-level operations for:
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
 from uuid import UUID
@@ -25,7 +25,6 @@ from squant.engine.sandbox import compile_strategy
 from squant.infra.repository import BaseRepository
 from squant.models.enums import RunMode, RunStatus
 from squant.models.metrics import EquityCurve
-from squant.models.strategy import Strategy as StrategyModel
 from squant.models.strategy import StrategyRun
 from squant.websocket.manager import get_stream_manager
 
@@ -114,7 +113,7 @@ class StrategyRunRepository(BaseRepository[StrategyRun]):
             .values(
                 status=RunStatus.ERROR,
                 error_message="Session terminated due to application restart",
-                stopped_at=datetime.now(timezone.utc),
+                stopped_at=datetime.now(UTC),
             )
         )
         result = await self.session.execute(stmt)
@@ -140,9 +139,7 @@ class EquityCurveRepository:
     async def get_by_run(self, run_id: str) -> list[EquityCurve]:
         """Get equity curve for a run."""
         stmt = (
-            select(EquityCurve)
-            .where(EquityCurve.run_id == run_id)
-            .order_by(EquityCurve.time.asc())
+            select(EquityCurve).where(EquityCurve.run_id == run_id).order_by(EquityCurve.time.asc())
         )
         result = await self.session.execute(stmt)
         return list(result.scalars().all())
@@ -206,7 +203,7 @@ class PaperTradingService:
             slippage=slippage,
             params=params or {},
             status=RunStatus.RUNNING,
-            started_at=datetime.now(timezone.utc),
+            started_at=datetime.now(UTC),
         )
         await self.session.commit()
 
@@ -241,9 +238,7 @@ class PaperTradingService:
             # Start engine
             await engine.start()
 
-            logger.info(
-                f"Started paper trading session {run.id} for strategy {strategy_id}"
-            )
+            logger.info(f"Started paper trading session {run.id} for strategy {strategy_id}")
 
             return run
 
@@ -253,21 +248,25 @@ class PaperTradingService:
                 try:
                     await session_manager.unregister(engine.run_id)
                 except Exception as cleanup_error:
-                    logger.warning(f"Failed to cleanup engine during error handling: {cleanup_error}")
+                    logger.warning(
+                        f"Failed to cleanup engine during error handling: {cleanup_error}"
+                    )
 
             # Cleanup: unsubscribe from WebSocket if subscribed
             if subscribed:
                 try:
                     await self._check_unsubscribe(symbol, timeframe)
                 except Exception as cleanup_error:
-                    logger.warning(f"Failed to cleanup WebSocket subscription during error handling: {cleanup_error}")
+                    logger.warning(
+                        f"Failed to cleanup WebSocket subscription during error handling: {cleanup_error}"
+                    )
 
             # Update run status to error
             await self.run_repo.update(
                 run.id,
                 status=RunStatus.ERROR,
                 error_message=str(e),
-                stopped_at=datetime.now(timezone.utc),
+                stopped_at=datetime.now(UTC),
             )
             await self.session.commit()
             raise
@@ -304,7 +303,7 @@ class PaperTradingService:
 
             # Find the strategy class (subclass of Strategy)
             strategy_class = None
-            for name, obj in local_namespace.items():
+            for _name, obj in local_namespace.items():
                 if (
                     isinstance(obj, type)
                     and issubclass(obj, StrategyBase)
@@ -314,9 +313,7 @@ class PaperTradingService:
                     break
 
             if strategy_class is None:
-                raise StrategyInstantiationError(
-                    "No Strategy subclass found in strategy code"
-                )
+                raise StrategyInstantiationError("No Strategy subclass found in strategy code")
 
             # Instantiate
             return strategy_class()
@@ -324,9 +321,7 @@ class PaperTradingService:
         except ValueError as e:
             raise StrategyInstantiationError(f"Strategy compilation failed: {e}") from e
         except Exception as e:
-            raise StrategyInstantiationError(
-                f"Strategy instantiation failed: {e}"
-            ) from e
+            raise StrategyInstantiationError(f"Strategy instantiation failed: {e}") from e
 
     async def stop(self, run_id: UUID) -> StrategyRun:
         """Stop a paper trading session.
@@ -366,7 +361,7 @@ class PaperTradingService:
         run = await self.run_repo.update(
             run.id,
             status=RunStatus.STOPPED,
-            stopped_at=datetime.now(timezone.utc),
+            stopped_at=datetime.now(UTC),
             error_message=engine.error_message if engine else None,
         )
         await self.session.commit()
@@ -541,9 +536,7 @@ class PaperTradingService:
 
         return len(snapshots)
 
-    async def _persist_snapshots(
-        self, run_id: str, snapshots: list[EquitySnapshot]
-    ) -> None:
+    async def _persist_snapshots(self, run_id: str, snapshots: list[EquitySnapshot]) -> None:
         """Persist equity snapshots to database.
 
         Args:

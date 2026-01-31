@@ -6,7 +6,7 @@ Validates orders against configured risk rules before execution.
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from decimal import Decimal
 from typing import TYPE_CHECKING
 
@@ -19,7 +19,7 @@ from squant.engine.risk.models import (
 from squant.models.enums import OrderSide, OrderType
 
 if TYPE_CHECKING:
-    from squant.infra.exchange.types import OrderRequest, Ticker
+    from squant.infra.exchange.types import OrderRequest
 
 logger = logging.getLogger(__name__)
 
@@ -102,7 +102,7 @@ class RiskManager:
 
         Resets daily counters if we've moved to a new UTC day.
         """
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         if self.state.daily_reset_time is None:
             self.state.reset_daily_stats(self._current_equity)
             return
@@ -163,7 +163,9 @@ class RiskManager:
             if not result.passed:
                 return result
 
-        logger.debug(f"Order passed all risk checks: {order.symbol} {order.side.value} {order.amount}")
+        logger.debug(
+            f"Order passed all risk checks: {order.symbol} {order.side.value} {order.amount}"
+        )
         return RiskCheckResult.ok()
 
     def _check_circuit_breaker(self) -> RiskCheckResult:
@@ -180,8 +182,8 @@ class RiskManager:
             if self.state.circuit_breaker_until:
                 breaker_time = self.state.circuit_breaker_until
                 if breaker_time.tzinfo is None:
-                    breaker_time = breaker_time.replace(tzinfo=timezone.utc)
-                remaining = (breaker_time - datetime.now(timezone.utc)).total_seconds() / 60
+                    breaker_time = breaker_time.replace(tzinfo=UTC)
+                remaining = (breaker_time - datetime.now(UTC)).total_seconds() / 60
 
             return RiskCheckResult.reject(
                 rule_type=RiskRuleType.CIRCUIT_BREAKER,
@@ -370,9 +372,8 @@ class RiskManager:
             # Determine if the deviation is in a "bad" direction
             # For buys: paying more than market is bad
             # For sells: selling less than market is bad
-            is_adverse = (
-                (side == OrderSide.BUY and order_price > current_price)
-                or (side == OrderSide.SELL and order_price < current_price)
+            is_adverse = (side == OrderSide.BUY and order_price > current_price) or (
+                side == OrderSide.SELL and order_price < current_price
             )
 
             if is_adverse:

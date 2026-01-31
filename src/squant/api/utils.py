@@ -1,7 +1,7 @@
 """Shared API utilities."""
 
 import logging
-from typing import Any, Generic, TypeVar
+from typing import TypeVar
 
 from fastapi import HTTPException
 from pydantic import BaseModel
@@ -12,6 +12,8 @@ from squant.infra.exchange.exceptions import (
     ExchangeConnectionError,
     ExchangeRateLimitError,
     InvalidOrderError,
+)
+from squant.infra.exchange.exceptions import (
     OrderNotFoundError as ExchangeOrderNotFound,
 )
 
@@ -20,7 +22,7 @@ logger = logging.getLogger(__name__)
 T = TypeVar("T")
 
 
-class ApiResponse(BaseModel, Generic[T]):
+class ApiResponse[T](BaseModel):
     """Standard API response wrapper.
 
     All API responses follow this format per dev-docs/technical/api/01-conventions.md.
@@ -31,7 +33,7 @@ class ApiResponse(BaseModel, Generic[T]):
     data: T
 
 
-class PaginatedData(BaseModel, Generic[T]):
+class PaginatedData[T](BaseModel):
     """Paginated data container.
 
     Per dev-docs/technical/api/01-conventions.md:

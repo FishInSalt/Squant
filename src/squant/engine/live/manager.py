@@ -103,8 +103,7 @@ class LiveSessionManager:
                     del self._order_subscriptions[engine.symbol]
 
             logger.info(
-                f"Unregistered live engine {run_id}, "
-                f"remaining sessions: {len(self._sessions)}"
+                f"Unregistered live engine {run_id}, remaining sessions: {len(self._sessions)}"
             )
 
     def get(self, run_id: UUID) -> LiveTradingEngine | None:
@@ -148,9 +147,7 @@ class LiveSessionManager:
                 try:
                     await engine.process_candle(candle)
                 except Exception as e:
-                    logger.exception(
-                        f"Error dispatching candle to live engine {run_id}: {e}"
-                    )
+                    logger.exception(f"Error dispatching candle to live engine {run_id}: {e}")
 
     def dispatch_order_update(self, update: WSOrderUpdate) -> None:
         """Dispatch an order update to relevant engines.
@@ -173,9 +170,7 @@ class LiveSessionManager:
                 try:
                     engine.on_order_update(update)
                 except Exception as e:
-                    logger.exception(
-                        f"Error dispatching order update to live engine {run_id}: {e}"
-                    )
+                    logger.exception(f"Error dispatching order update to live engine {run_id}: {e}")
 
     async def stop_all(self, reason: str = "shutdown") -> None:
         """Stop all active sessions.
@@ -223,9 +218,7 @@ class LiveSessionManager:
             List of run_ids with pending snapshots exceeding batch size.
         """
         return [
-            run_id
-            for run_id, engine in self._sessions.items()
-            if engine.should_persist_snapshots()
+            run_id for run_id, engine in self._sessions.items() if engine.should_persist_snapshots()
         ]
 
     async def check_health(self, timeout_seconds: int = 300) -> list[UUID]:

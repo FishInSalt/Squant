@@ -6,7 +6,7 @@ Uses WebSocket market data to drive strategy execution with local order matching
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
 from uuid import UUID
@@ -158,7 +158,7 @@ class PaperTradingEngine:
             return False
         if self._last_active_at is None:
             return True  # Just started, no candles processed yet
-        elapsed = (datetime.now(timezone.utc) - self._last_active_at).total_seconds()
+        elapsed = (datetime.now(UTC) - self._last_active_at).total_seconds()
         return elapsed < timeout_seconds
 
     @property
@@ -177,8 +177,8 @@ class PaperTradingEngine:
 
         logger.info(f"Starting paper trading engine {self._run_id}")
         self._is_running = True
-        self._started_at = datetime.now(timezone.utc)
-        self._last_active_at = datetime.now(timezone.utc)
+        self._started_at = datetime.now(UTC)
+        self._last_active_at = datetime.now(UTC)
 
         try:
             # Call strategy initialization
@@ -217,7 +217,7 @@ class PaperTradingEngine:
                 self._error_message = f"Strategy stop failed: {e}"
 
         self._is_running = False
-        self._stopped_at = datetime.now(timezone.utc)
+        self._stopped_at = datetime.now(UTC)
 
     async def process_candle(self, candle: WSCandle) -> None:
         """Process a WebSocket candle update.
@@ -242,14 +242,12 @@ class PaperTradingEngine:
 
         # Verify symbol matches
         if candle.symbol != self._symbol:
-            logger.warning(
-                f"Symbol mismatch: expected {self._symbol}, got {candle.symbol}"
-            )
+            logger.warning(f"Symbol mismatch: expected {self._symbol}, got {candle.symbol}")
             return
 
         try:
             # Update last activity timestamp
-            self._last_active_at = datetime.now(timezone.utc)
+            self._last_active_at = datetime.now(UTC)
 
             # Convert WSCandle to Bar
             bar = self._candle_to_bar(candle)
@@ -284,8 +282,7 @@ class PaperTradingEngine:
             self._bar_count += 1
 
             logger.debug(
-                f"Processed bar {self._bar_count} at {bar.time}, "
-                f"equity={self._context.equity}"
+                f"Processed bar {self._bar_count} at {bar.time}, equity={self._context.equity}"
             )
 
         except Exception as e:
@@ -346,16 +343,18 @@ class PaperTradingEngine:
 
         pending_orders = []
         for order in self._context.pending_orders:
-            pending_orders.append({
-                "id": order.id,
-                "symbol": order.symbol,
-                "side": order.side.value,
-                "type": order.type.value,
-                "amount": str(order.amount),
-                "price": str(order.price) if order.price else None,
-                "status": order.status.value,
-                "created_at": order.created_at.isoformat() if order.created_at else None,
-            })
+            pending_orders.append(
+                {
+                    "id": order.id,
+                    "symbol": order.symbol,
+                    "side": order.side.value,
+                    "type": order.type.value,
+                    "amount": str(order.amount),
+                    "price": str(order.price) if order.price else None,
+                    "status": order.status.value,
+                    "created_at": order.created_at.isoformat() if order.created_at else None,
+                }
+            )
 
         return {
             "run_id": str(self._run_id),

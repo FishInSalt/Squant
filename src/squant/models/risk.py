@@ -25,9 +25,7 @@ class RiskRule(Base, UUIDMixin, TimestampMixin):
     enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
     # Relationships
-    triggers: Mapped[list["RiskTrigger"]] = relationship(
-        back_populates="rule", lazy="selectin"
-    )
+    triggers: Mapped[list["RiskTrigger"]] = relationship(back_populates="rule", lazy="selectin")
 
     def __repr__(self) -> str:
         return f"<RiskRule(id={self.id}, name={self.name}, type={self.type})>"
@@ -76,12 +74,8 @@ class CircuitBreakerEvent(Base, UUIDMixin):
     __tablename__ = "circuit_breaker_events"
 
     time: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    trigger_type: Mapped[str] = mapped_column(
-        String(16), nullable=False
-    )  # manual / auto
-    trigger_source: Mapped[str] = mapped_column(
-        String(64), nullable=False
-    )  # api / rule:xxx
+    trigger_type: Mapped[str] = mapped_column(String(16), nullable=False)  # manual / auto
+    trigger_source: Mapped[str] = mapped_column(String(64), nullable=False)  # api / rule:xxx
     reason: Mapped[str] = mapped_column(String(256), nullable=False)
     details: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
     sessions_stopped: Mapped[int] = mapped_column(nullable=False, default=0)
@@ -90,7 +84,4 @@ class CircuitBreakerEvent(Base, UUIDMixin):
     __table_args__ = (Index("idx_circuit_breaker_events_time", "time"),)
 
     def __repr__(self) -> str:
-        return (
-            f"<CircuitBreakerEvent(id={self.id}, time={self.time}, "
-            f"type={self.trigger_type})>"
-        )
+        return f"<CircuitBreakerEvent(id={self.id}, time={self.time}, type={self.trigger_type})>"

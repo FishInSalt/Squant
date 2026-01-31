@@ -1,0 +1,105 @@
+name: E2E Tests
+
+on:
+  push:
+    branches: [ main, develop, cc/* ]
+  pull_request:
+    branches: [ main, develop ]
+
+jobs:
+  e2e-tests:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.12'
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v4
+      with:
+        version: "latest"
+
+    - name: Install dependencies
+      run: |
+        uv sync --all-extras
+
+    - name: Start E2E test environment
+      run: |
+        docker compose -f docker-compose.test.yml --profile e2e up -d
+        echo "Waiting for services to be healthy..."
+        sleep 30
+
+    - name: Check service health
+      run: |
+        docker compose -f docker-compose.test.yml --profile e2e ps
+
+        # Wait for API to be ready
+        max_attempts=30
+        attempt=0
+        until curl -f http://localhost:8001/api/v1/health || [ $attempt -eq $max_attempts ]; do
+          echo "Waiting for API to be ready... (attempt $((attempt+1))/$max_attempts)"
+          sleep 2
+          attempt=$((attempt+1))
+        done
+
+        if [ $attempt -eq $max_attempts ]; then
+          echo "API failed to become ready"
+          docker compose -f docker-compose.test.yml --profile e2e logs app-test
+          exit 1
+        fi
+
+        echo "API is ready!"
+
+    - name: Seed test data
+      env:
+        DATABASE_URL: postgresql+asyncpg://squant_test:squant_test@localhost:5433/squant_test
+      run: |
+        uv run python tests/e2e/seed_data.py
+
+    - name: Run E2E tests
+      env:
+        DATABASE_URL: postgresql+asyncpg://squant_test:squant_test@localhost:5433/squant_test
+        REDIS_URL: redis://localhost:6380
+        SECRET_KEY: test-secret-key-for-integration-testing-min-32-chars
+      run: |
+        uv run pytest tests/e2e -v --cov=src/squant --cov-report=xml --cov-report=term
+
+    - name: Upload coverage to Codecov
+      uses: codecov/codecov-action@v4
+      with:
+        files: ./coverage.xml
+        flags: e2e
+        name: codecov-e2e
+        fail_ci_if_error: false
+      env:
+        CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+
+    - name: Generate test summary
+      if: always()
+      run: |
+        echo "## E2E Test Results" >> $GITHUB_STEP_SUMMARY
+        echo "- Full application stack tested" >> $GITHUB_STEP_SUMMARY
+        echo "- API: http://localhost:8001" >> $GITHUB_STEP_SUMMARY
+        echo "- Database: PostgreSQL + TimescaleDB (port 5433)" >> $GITHUB_STEP_SUMMARY
+        echo "- Cache: Redis (port 6380)" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+
+    - name: Show logs on failure
+      if: failure()
+      run: |
+        echo "=== PostgreSQL logs ==="
+        docker compose -f docker-compose.test.yml logs postgres-test
+        echo "=== Redis logs ==="
+        docker compose -f docker-compose.test.yml logs redis-test
+        echo "=== Backend API logs ==="
+        docker compose -f docker-compose.test.yml logs app-test
+
+    - name: Cleanup
+      if: always()
+      run: |
+        docker compose -f docker-compose.test.yml --profile e2e down -v

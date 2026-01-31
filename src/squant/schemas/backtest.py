@@ -5,16 +5,20 @@ from decimal import Decimal
 from typing import Any
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class RunBacktestRequest(BaseModel):
     """Request to create and run a backtest."""
 
     strategy_id: UUID = Field(..., description="Strategy ID to backtest")
-    symbol: str = Field(..., min_length=1, max_length=32, description="Trading symbol (e.g., BTC/USDT)")
+    symbol: str = Field(
+        ..., min_length=1, max_length=32, description="Trading symbol (e.g., BTC/USDT)"
+    )
     exchange: str = Field(..., min_length=1, max_length=32, description="Exchange name (e.g., okx)")
-    timeframe: str = Field(..., min_length=1, max_length=8, description="Candle timeframe (e.g., 1h)")
+    timeframe: str = Field(
+        ..., min_length=1, max_length=8, description="Candle timeframe (e.g., 1h)"
+    )
     start_date: datetime = Field(..., description="Backtest start date")
     end_date: datetime = Field(..., description="Backtest end date")
     initial_capital: Decimal = Field(..., gt=0, description="Starting capital")
@@ -32,6 +36,13 @@ class RunBacktestRequest(BaseModel):
     )
     params: dict[str, Any] | None = Field(None, description="Strategy parameters")
 
+    @model_validator(mode="after")
+    def validate_date_range(self) -> "RunBacktestRequest":
+        """Validate that end_date is after start_date."""
+        if self.end_date <= self.start_date:
+            raise ValueError("end_date must be after start_date")
+        return self
+
 
 class CreateBacktestRequest(BaseModel):
     """Request to create a backtest without immediately running it."""
@@ -47,6 +58,13 @@ class CreateBacktestRequest(BaseModel):
     slippage: Decimal = Field(default=Decimal("0"), ge=0, le=1)
     params: dict[str, Any] | None = Field(None, description="Strategy parameters")
 
+    @model_validator(mode="after")
+    def validate_date_range(self) -> "CreateBacktestRequest":
+        """Validate that end_date is after start_date."""
+        if self.end_date <= self.start_date:
+            raise ValueError("end_date must be after start_date")
+        return self
+
 
 class CheckDataRequest(BaseModel):
     """Request to check data availability."""
@@ -56,6 +74,13 @@ class CheckDataRequest(BaseModel):
     timeframe: str = Field(..., min_length=1, max_length=8)
     start_date: datetime
     end_date: datetime
+
+    @model_validator(mode="after")
+    def validate_date_range(self) -> "CheckDataRequest":
+        """Validate that end_date is after start_date."""
+        if self.end_date <= self.start_date:
+            raise ValueError("end_date must be after start_date")
+        return self
 
 
 class BacktestRunResponse(BaseModel):

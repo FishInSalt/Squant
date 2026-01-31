@@ -6,12 +6,11 @@ Calculates standard performance metrics including:
 - Trade statistics (win rate, profit factor)
 """
 
-from dataclasses import dataclass, field
-from datetime import datetime, timedelta
-from decimal import Decimal
 import math
+from dataclasses import dataclass
+from decimal import Decimal
 
-from squant.engine.backtest.types import EquitySnapshot, OrderSide, TradeRecord
+from squant.engine.backtest.types import EquitySnapshot, TradeRecord
 
 
 @dataclass
@@ -127,11 +126,15 @@ def calculate_metrics(
         if total_return_factor > 0 and years > 0:
             try:
                 # Annualized return = (1 + total_return)^(1/years) - 1
-                annualized_factor = Decimal(str(math.pow(float(total_return_factor), float(1 / years))))
+                annualized_factor = Decimal(
+                    str(math.pow(float(total_return_factor), float(1 / years)))
+                )
                 metrics.annualized_return = (annualized_factor - 1) * 100
             except (OverflowError, ValueError):
                 # Extreme values, cap at reasonable maximum
-                metrics.annualized_return = Decimal("9999.99") if total_return_factor > 1 else Decimal("-99.99")
+                metrics.annualized_return = (
+                    Decimal("9999.99") if total_return_factor > 1 else Decimal("-99.99")
+                )
 
     # Max drawdown
     metrics.max_drawdown, metrics.max_drawdown_pct = _calculate_max_drawdown(equity_curve)
@@ -268,7 +271,7 @@ def _calculate_sortino_ratio(
         # No negative returns means infinite Sortino (cap at high value)
         return Decimal("99.99")
 
-    downside_variance = sum(r ** 2 for r in negative_returns) / len(returns)
+    downside_variance = sum(r**2 for r in negative_returns) / len(returns)
     downside_dev = math.sqrt(downside_variance) if downside_variance > 0 else 0
 
     if downside_dev == 0:

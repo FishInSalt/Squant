@@ -32,9 +32,7 @@ class TestTriggerCircuitBreaker:
             "cooldown_minutes": 30,
         }
 
-    def test_trigger_success(
-        self, client: TestClient, valid_request: dict[str, Any]
-    ) -> None:
+    def test_trigger_success(self, client: TestClient, valid_request: dict[str, Any]) -> None:
         """Test successful circuit breaker trigger."""
         now = datetime.now(UTC)
         mock_result = {
@@ -45,16 +43,12 @@ class TestTriggerCircuitBreaker:
             "errors": [],
         }
 
-        with patch(
-            "squant.api.v1.circuit_breaker.CircuitBreakerService"
-        ) as mock_service_class:
+        with patch("squant.api.v1.circuit_breaker.CircuitBreakerService") as mock_service_class:
             mock_service = MagicMock()
             mock_service.trigger = AsyncMock(return_value=mock_result)
             mock_service_class.return_value = mock_service
 
-            response = client.post(
-                "/api/v1/circuit-breaker/trigger", json=valid_request
-            )
+            response = client.post("/api/v1/circuit-breaker/trigger", json=valid_request)
 
             assert response.status_code == 200
             data = response.json()
@@ -67,18 +61,12 @@ class TestTriggerCircuitBreaker:
         self, client: TestClient, valid_request: dict[str, Any]
     ) -> None:
         """Test trigger when already active."""
-        with patch(
-            "squant.api.v1.circuit_breaker.CircuitBreakerService"
-        ) as mock_service_class:
+        with patch("squant.api.v1.circuit_breaker.CircuitBreakerService") as mock_service_class:
             mock_service = MagicMock()
-            mock_service.trigger = AsyncMock(
-                side_effect=CircuitBreakerAlreadyActiveError()
-            )
+            mock_service.trigger = AsyncMock(side_effect=CircuitBreakerAlreadyActiveError())
             mock_service_class.return_value = mock_service
 
-            response = client.post(
-                "/api/v1/circuit-breaker/trigger", json=valid_request
-            )
+            response = client.post("/api/v1/circuit-breaker/trigger", json=valid_request)
 
             assert response.status_code == 409
 
@@ -125,9 +113,7 @@ class TestCloseAllPositions:
             "errors": [],
         }
 
-        with patch(
-            "squant.api.v1.circuit_breaker.CircuitBreakerService"
-        ) as mock_service_class:
+        with patch("squant.api.v1.circuit_breaker.CircuitBreakerService") as mock_service_class:
             mock_service = MagicMock()
             mock_service.close_all_positions = AsyncMock(return_value=mock_result)
             mock_service_class.return_value = mock_service
@@ -149,9 +135,7 @@ class TestCloseAllPositions:
             "errors": [],
         }
 
-        with patch(
-            "squant.api.v1.circuit_breaker.CircuitBreakerService"
-        ) as mock_service_class:
+        with patch("squant.api.v1.circuit_breaker.CircuitBreakerService") as mock_service_class:
             mock_service = MagicMock()
             mock_service.close_all_positions = AsyncMock(return_value=mock_result)
             mock_service_class.return_value = mock_service
@@ -172,9 +156,7 @@ class TestCloseAllPositions:
             "errors": [{"run_id": "abc", "error": "Connection lost"}],
         }
 
-        with patch(
-            "squant.api.v1.circuit_breaker.CircuitBreakerService"
-        ) as mock_service_class:
+        with patch("squant.api.v1.circuit_breaker.CircuitBreakerService") as mock_service_class:
             mock_service = MagicMock()
             mock_service.close_all_positions = AsyncMock(return_value=mock_result)
             mock_service_class.return_value = mock_service
@@ -260,9 +242,7 @@ class TestResetCircuitBreaker:
             "cooldown_remaining_minutes": None,
         }
 
-        with patch(
-            "squant.api.v1.circuit_breaker.CircuitBreakerService"
-        ) as mock_service_class:
+        with patch("squant.api.v1.circuit_breaker.CircuitBreakerService") as mock_service_class:
             mock_service = MagicMock()
             mock_service.reset = AsyncMock(return_value=mock_result)
             mock_service_class.return_value = mock_service
@@ -280,9 +260,7 @@ class TestResetCircuitBreaker:
             "cooldown_remaining_minutes": None,
         }
 
-        with patch(
-            "squant.api.v1.circuit_breaker.CircuitBreakerService"
-        ) as mock_service_class:
+        with patch("squant.api.v1.circuit_breaker.CircuitBreakerService") as mock_service_class:
             mock_service = MagicMock()
             mock_service.reset = AsyncMock(return_value=mock_result)
             mock_service_class.return_value = mock_service
@@ -295,13 +273,9 @@ class TestResetCircuitBreaker:
 
     def test_reset_in_cooldown(self, client: TestClient) -> None:
         """Test reset during cooldown."""
-        with patch(
-            "squant.api.v1.circuit_breaker.CircuitBreakerService"
-        ) as mock_service_class:
+        with patch("squant.api.v1.circuit_breaker.CircuitBreakerService") as mock_service_class:
             mock_service = MagicMock()
-            mock_service.reset = AsyncMock(
-                side_effect=CircuitBreakerCooldownError(30.5)
-            )
+            mock_service.reset = AsyncMock(side_effect=CircuitBreakerCooldownError(30.5))
             mock_service_class.return_value = mock_service
 
             response = client.post("/api/v1/circuit-breaker/reset")
@@ -315,9 +289,7 @@ class TestResetCircuitBreaker:
             "cooldown_remaining_minutes": None,
         }
 
-        with patch(
-            "squant.api.v1.circuit_breaker.CircuitBreakerService"
-        ) as mock_service_class:
+        with patch("squant.api.v1.circuit_breaker.CircuitBreakerService") as mock_service_class:
             mock_service = MagicMock()
             mock_service.reset = AsyncMock(return_value=mock_result)
             mock_service_class.return_value = mock_service

@@ -1,8 +1,8 @@
 """Unit tests for live session manager."""
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from decimal import Decimal
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
 import pytest
@@ -159,7 +159,7 @@ class TestCandleDispatch:
         return WSCandle(
             symbol="BTC/USDT",
             timeframe="1m",
-            timestamp=datetime(2024, 1, 1, 12, 0, 0, tzinfo=timezone.utc),
+            timestamp=datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC),
             open=Decimal("45000"),
             high=Decimal("46000"),
             low=Decimal("44000"),
@@ -169,9 +169,7 @@ class TestCandleDispatch:
         )
 
     @pytest.mark.asyncio
-    async def test_dispatch_candle_to_subscribed_engine(
-        self, session_manager, mock_engine, candle
-    ):
+    async def test_dispatch_candle_to_subscribed_engine(self, session_manager, mock_engine, candle):
         """Test dispatching candle to subscribed engine."""
         await session_manager.register(mock_engine)
         await session_manager.dispatch_candle(candle)
@@ -195,9 +193,7 @@ class TestCandleDispatch:
         mock_engine.process_candle.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_dispatch_candle_wrong_timeframe(
-        self, session_manager, mock_engine, candle
-    ):
+    async def test_dispatch_candle_wrong_timeframe(self, session_manager, mock_engine, candle):
         """Test dispatching candle for non-subscribed timeframe."""
         await session_manager.register(mock_engine)
 
@@ -226,9 +222,7 @@ class TestCandleDispatch:
             engine.process_candle.assert_called_once_with(candle)
 
     @pytest.mark.asyncio
-    async def test_dispatch_candle_skips_stopped_engine(
-        self, session_manager, mock_engine, candle
-    ):
+    async def test_dispatch_candle_skips_stopped_engine(self, session_manager, mock_engine, candle):
         """Test that candles are not dispatched to stopped engines."""
         mock_engine.is_running = False
         await session_manager.register(mock_engine)
@@ -270,9 +264,7 @@ class TestOrderUpdateDispatch:
         session_manager.dispatch_order_update(order_update)
         # Should not raise
 
-    def test_dispatch_order_update_wrong_symbol(
-        self, session_manager, mock_engine, order_update
-    ):
+    def test_dispatch_order_update_wrong_symbol(self, session_manager, mock_engine, order_update):
         """Test dispatching order update for non-subscribed symbol."""
         session_manager._sessions[mock_engine.run_id] = mock_engine
         session_manager._order_subscriptions["BTC/USDT"] = {mock_engine.run_id}

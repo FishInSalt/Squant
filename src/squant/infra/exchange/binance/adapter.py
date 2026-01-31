@@ -135,9 +135,7 @@ class BinanceAdapter(ExchangeAdapter):
 
     async def get_balance(self) -> AccountBalance:
         """Get account balance for all currencies."""
-        response = _ensure_dict(
-            await self._client.get("/api/v3/account"), "get_balance"
-        )
+        response = _ensure_dict(await self._client.get("/api/v3/account"), "get_balance")
 
         balances: list[Balance] = []
         for item in response.get("balances", []):
@@ -321,9 +319,7 @@ class BinanceAdapter(ExchangeAdapter):
             symbol=request.symbol,
             side=request.side,
             type=request.type,
-            status=self.ORDER_STATUS_MAP.get(
-                response.get("status", "NEW"), OrderStatus.SUBMITTED
-            ),
+            status=self.ORDER_STATUS_MAP.get(response.get("status", "NEW"), OrderStatus.SUBMITTED),
             price=request.price,
             amount=request.amount,
             filled=Decimal(response.get("executedQty", "0")),

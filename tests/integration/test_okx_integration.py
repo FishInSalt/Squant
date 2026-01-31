@@ -146,9 +146,7 @@ class TestOKXPublicEndpoints:
         assert timestamps == sorted(timestamps)
 
     @pytest.mark.asyncio
-    async def test_get_candlesticks_various_timeframes(
-        self, okx_adapter: OKXAdapter
-    ) -> None:
+    async def test_get_candlesticks_various_timeframes(self, okx_adapter: OKXAdapter) -> None:
         """Test various timeframes."""
         timeframes = [TimeFrame.M1, TimeFrame.M5, TimeFrame.M15, TimeFrame.D1]
 
@@ -323,9 +321,7 @@ class TestOKXOrderFlow:
             await okx_adapter.get_order("BTC/USDT", "123456789012345678")
 
     @pytest.mark.asyncio
-    async def test_place_limit_order_without_price(
-        self, okx_adapter: OKXAdapter
-    ) -> None:
+    async def test_place_limit_order_without_price(self, okx_adapter: OKXAdapter) -> None:
         """Test that limit order without price raises error."""
         with pytest.raises(ValueError, match="Limit orders must have a price"):
             OrderRequest(
@@ -342,9 +338,7 @@ class TestOKXEdgeCases:
     """Tests for edge cases and error handling."""
 
     @pytest.mark.asyncio
-    async def test_cancel_already_cancelled_order(
-        self, okx_adapter: OKXAdapter
-    ) -> None:
+    async def test_cancel_already_cancelled_order(self, okx_adapter: OKXAdapter) -> None:
         """Test cancelling an already cancelled order."""
         # First, place and cancel an order
         ticker = await okx_adapter.get_ticker("BTC/USDT")
@@ -372,9 +366,7 @@ class TestOKXEdgeCases:
             await okx_adapter.cancel_order(cancel_request)
 
     @pytest.mark.asyncio
-    async def test_place_order_insufficient_balance(
-        self, okx_adapter: OKXAdapter
-    ) -> None:
+    async def test_place_order_insufficient_balance(self, okx_adapter: OKXAdapter) -> None:
         """Test placing order with insufficient balance."""
         ticker = await okx_adapter.get_ticker("BTC/USDT")
 

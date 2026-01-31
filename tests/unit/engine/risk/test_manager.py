@@ -1,6 +1,6 @@
 """Unit tests for risk manager."""
 
-from datetime import UTC, datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 import pytest
@@ -512,7 +512,7 @@ class TestEquityUpdate:
         """Test equity update affects validations."""
         # Initial equity: $10000
         # Max order size: 5% = $500
-        initial_max = Decimal("500")
+        Decimal("500")
 
         # Update to $20000
         risk_manager.update_equity(Decimal("20000"))

@@ -70,8 +70,7 @@ class CCXTStreamProvider:
         """
         if exchange_id.lower() not in SUPPORTED_EXCHANGES:
             raise ValueError(
-                f"Unsupported exchange: {exchange_id}. "
-                f"Supported: {', '.join(SUPPORTED_EXCHANGES)}"
+                f"Unsupported exchange: {exchange_id}. Supported: {', '.join(SUPPORTED_EXCHANGES)}"
             )
 
         self._exchange_id = exchange_id.lower()
@@ -131,8 +130,7 @@ class CCXTStreamProvider:
             and (time_since_last := time.time() - self._last_successful_message) > 60
         ):
             logger.warning(
-                f"No messages received in {time_since_last:.0f}s, "
-                "connection may be dead"
+                f"No messages received in {time_since_last:.0f}s, connection may be dead"
             )
             return False
 
@@ -191,7 +189,7 @@ class CCXTStreamProvider:
         try:
             await asyncio.wait_for(
                 self._exchange.load_markets(),
-                timeout=30.0  # 30 second timeout
+                timeout=30.0,  # 30 second timeout
             )
         except TimeoutError:
             raise ExchangeConnectionError(
@@ -401,7 +399,9 @@ class CCXTStreamProvider:
                 return
 
             self._watched_ticker_symbols.add(symbol)
-            logger.info(f"Added ticker to watch list: {symbol} (total: {len(self._watched_ticker_symbols)})")
+            logger.info(
+                f"Added ticker to watch list: {symbol} (total: {len(self._watched_ticker_symbols)})"
+            )
 
             # Start or restart the batch tickers loop if not running
             if self._tickers_task is None or self._tickers_task.done():
@@ -735,9 +735,7 @@ class CCXTStreamProvider:
 
                 orderbook = await self._exchange.watch_order_book(symbol, limit)
                 self._mark_success(key)
-                ws_orderbook = self._transformer.orderbook_to_ws_orderbook(
-                    orderbook, symbol, limit
-                )
+                ws_orderbook = self._transformer.orderbook_to_ws_orderbook(orderbook, symbol, limit)
                 await self._dispatch("orderbook", ws_orderbook)
 
             except asyncio.CancelledError:

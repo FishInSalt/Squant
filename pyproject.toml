@@ -68,6 +68,7 @@ packages = ["src/squant"]
 target-version = "py312"
 line-length = 100
 src = ["src"]
+extend-exclude = ["tests/templates/"]
 
 [tool.ruff.lint]
 select = [
@@ -83,6 +84,13 @@ select = [
 ignore = [
     "E501",   # line too long (handled by formatter)
     "B008",   # do not perform function calls in argument defaults
+    "B904",   # raise-without-from-inside-except (FastAPI error handling pattern)
+    "SIM117", # multiple-with-statements (readability preference)
+    "SIM102", # collapsible-if (readability preference)
+    "SIM105", # suppressible-exception (explicit is clearer)
+    "B027",   # empty-method-without-abstract-decorator (false positives)
+    "B007",   # unused-loop-control-variable (intentional in some cases)
+    "B017",   # assert-raises-exception (valid testing pattern)
 ]
 
 [tool.ruff.lint.isort]

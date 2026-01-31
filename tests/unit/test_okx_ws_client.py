@@ -1,6 +1,5 @@
 """Unit tests for OKX WebSocket client."""
 
-import asyncio
 import json
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -305,7 +304,9 @@ class TestWSMessageTypes:
 
         account = WSAccountUpdate(
             balances=[
-                WSBalanceUpdate(currency="USDT", available=Decimal("10000.00"), frozen=Decimal("500.00")),
+                WSBalanceUpdate(
+                    currency="USDT", available=Decimal("10000.00"), frozen=Decimal("500.00")
+                ),
                 WSBalanceUpdate(currency="BTC", available=Decimal("1.5"), frozen=Decimal("0.1")),
             ],
         )
@@ -404,19 +405,19 @@ class TestOKXWebSocketClientReconnect:
         max_delay = OKXWebSocketClient.RECONNECT_MAX_DELAY
 
         # First attempt: base * 2^0 = 1s
-        delay1 = min(base * (2 ** 0), max_delay)
+        delay1 = min(base * (2**0), max_delay)
         assert delay1 == 1.0
 
         # Second attempt: base * 2^1 = 2s
-        delay2 = min(base * (2 ** 1), max_delay)
+        delay2 = min(base * (2**1), max_delay)
         assert delay2 == 2.0
 
         # Third attempt: base * 2^2 = 4s
-        delay3 = min(base * (2 ** 2), max_delay)
+        delay3 = min(base * (2**2), max_delay)
         assert delay3 == 4.0
 
         # Should cap at max_delay
-        delay_max = min(base * (2 ** 10), max_delay)
+        delay_max = min(base * (2**10), max_delay)
         assert delay_max == max_delay
 
     def test_max_reconnect_attempts(self) -> None:

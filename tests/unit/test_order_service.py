@@ -1,17 +1,18 @@
 """Unit tests for order service."""
 
-from datetime import datetime, UTC
 from decimal import Decimal
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import pytest
 
-from squant.infra.exchange.types import OrderResponse as ExchangeOrderResponse
 from squant.infra.exchange.exceptions import (
     ExchangeAPIError,
+)
+from squant.infra.exchange.exceptions import (
     OrderNotFoundError as ExchangeOrderNotFound,
 )
+from squant.infra.exchange.types import OrderResponse as ExchangeOrderResponse
 from squant.models.enums import OrderSide, OrderStatus, OrderType
 from squant.models.order import Order
 from squant.services.order import (
@@ -73,9 +74,7 @@ class TestOrderRepository:
         assert result is None
 
     @pytest.mark.asyncio
-    async def test_list_by_account(
-        self, repo: OrderRepository, mock_session: AsyncMock
-    ) -> None:
+    async def test_list_by_account(self, repo: OrderRepository, mock_session: AsyncMock) -> None:
         """Test listing orders by account."""
         mock_orders = [MagicMock(spec=Order) for _ in range(3)]
 
@@ -101,16 +100,12 @@ class TestOrderRepository:
         mock_session.execute.return_value = mock_result
 
         account_id = str(uuid4())
-        result = await repo.list_by_account(
-            account_id, status=OrderStatus.FILLED
-        )
+        result = await repo.list_by_account(account_id, status=OrderStatus.FILLED)
 
         assert len(result) == 1
 
     @pytest.mark.asyncio
-    async def test_list_open_orders(
-        self, repo: OrderRepository, mock_session: AsyncMock
-    ) -> None:
+    async def test_list_open_orders(self, repo: OrderRepository, mock_session: AsyncMock) -> None:
         """Test listing open orders."""
         mock_orders = [MagicMock(spec=Order) for _ in range(2)]
 
@@ -489,7 +484,7 @@ class TestOrderService:
                 rejected_order.status = OrderStatus.REJECTED
                 mock_update.return_value = rejected_order
 
-                result = await service.sync_order(order_id)
+                await service.sync_order(order_id)
 
                 # Should mark as rejected
                 mock_update.assert_called_once()
@@ -505,7 +500,9 @@ class TestOrderService:
         """Test listing orders with filters."""
         mock_orders = [MagicMock(spec=Order) for _ in range(5)]
 
-        with patch.object(service.order_repo, "list_by_account", new_callable=AsyncMock) as mock_list:
+        with patch.object(
+            service.order_repo, "list_by_account", new_callable=AsyncMock
+        ) as mock_list:
             mock_list.return_value = mock_orders
 
             result = await service.list_orders(
@@ -535,7 +532,9 @@ class TestOrderService:
         """Test getting open orders."""
         mock_orders = [MagicMock(spec=Order) for _ in range(2)]
 
-        with patch.object(service.order_repo, "list_open_orders", new_callable=AsyncMock) as mock_list:
+        with patch.object(
+            service.order_repo, "list_open_orders", new_callable=AsyncMock
+        ) as mock_list:
             mock_list.return_value = mock_orders
 
             result = await service.get_open_orders(symbol="ETH/USDT")
@@ -550,7 +549,9 @@ class TestOrderService:
         mock_account: MagicMock,
     ) -> None:
         """Test counting orders."""
-        with patch.object(service.order_repo, "count_by_account", new_callable=AsyncMock) as mock_count:
+        with patch.object(
+            service.order_repo, "count_by_account", new_callable=AsyncMock
+        ) as mock_count:
             mock_count.return_value = 42
 
             result = await service.count_orders(status=OrderStatus.FILLED)

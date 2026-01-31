@@ -1,6 +1,5 @@
 """Unit tests for exchange account service."""
 
-import os
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
@@ -119,9 +118,7 @@ class TestExchangeAccountService:
         ) as mock_get:
             mock_get.return_value = None
 
-            with patch.object(
-                service.repository, "create", new_callable=AsyncMock
-            ) as mock_create:
+            with patch.object(service.repository, "create", new_callable=AsyncMock) as mock_create:
                 mock_create.return_value = mock_account
 
                 result = await service.create(request)
@@ -162,9 +159,7 @@ class TestExchangeAccountService:
         mock_account = MagicMock(spec=ExchangeAccount)
         mock_account.id = str(account_id)
 
-        with patch.object(
-            service.repository, "get", new_callable=AsyncMock
-        ) as mock_get:
+        with patch.object(service.repository, "get", new_callable=AsyncMock) as mock_get:
             mock_get.return_value = mock_account
 
             result = await service.get(account_id)
@@ -175,9 +170,7 @@ class TestExchangeAccountService:
         """Test getting an account that doesn't exist."""
         account_id = uuid4()
 
-        with patch.object(
-            service.repository, "get", new_callable=AsyncMock
-        ) as mock_get:
+        with patch.object(service.repository, "get", new_callable=AsyncMock) as mock_get:
             mock_get.return_value = None
 
             with pytest.raises(AccountNotFoundError) as exc_info:
@@ -192,14 +185,10 @@ class TestExchangeAccountService:
         """Test successful account deletion."""
         account_id = uuid4()
 
-        with patch.object(
-            service.repository, "exists", new_callable=AsyncMock
-        ) as mock_exists:
+        with patch.object(service.repository, "exists", new_callable=AsyncMock) as mock_exists:
             mock_exists.return_value = True
 
-            with patch.object(
-                service.repository, "delete", new_callable=AsyncMock
-            ) as mock_delete:
+            with patch.object(service.repository, "delete", new_callable=AsyncMock) as mock_delete:
                 mock_delete.return_value = True
 
                 await service.delete(account_id)
@@ -211,9 +200,7 @@ class TestExchangeAccountService:
         """Test deleting an account that doesn't exist."""
         account_id = uuid4()
 
-        with patch.object(
-            service.repository, "exists", new_callable=AsyncMock
-        ) as mock_exists:
+        with patch.object(service.repository, "exists", new_callable=AsyncMock) as mock_exists:
             mock_exists.return_value = False
 
             with pytest.raises(AccountNotFoundError):
@@ -232,9 +219,7 @@ class TestExchangeAccountService:
 
         request = UpdateExchangeAccountRequest(name="new-name")
 
-        with patch.object(
-            service.repository, "get", new_callable=AsyncMock
-        ) as mock_get:
+        with patch.object(service.repository, "get", new_callable=AsyncMock) as mock_get:
             mock_get.return_value = mock_account
 
             with patch.object(
@@ -251,9 +236,7 @@ class TestExchangeAccountService:
                     assert result == mock_account
 
     @pytest.mark.asyncio
-    async def test_update_name_conflict(
-        self, service: ExchangeAccountService
-    ) -> None:
+    async def test_update_name_conflict(self, service: ExchangeAccountService) -> None:
         """Test that updating to existing name raises error."""
         account_id = uuid4()
         mock_account = MagicMock(spec=ExchangeAccount)
@@ -263,9 +246,7 @@ class TestExchangeAccountService:
 
         request = UpdateExchangeAccountRequest(name="existing-name")
 
-        with patch.object(
-            service.repository, "get", new_callable=AsyncMock
-        ) as mock_get:
+        with patch.object(service.repository, "get", new_callable=AsyncMock) as mock_get:
             mock_get.return_value = mock_account
 
             with patch.object(
@@ -284,9 +265,7 @@ class TestExchangeAccountService:
             MagicMock(spec=ExchangeAccount),
         ]
 
-        with patch.object(
-            service.repository, "list_all", new_callable=AsyncMock
-        ) as mock_list:
+        with patch.object(service.repository, "list_all", new_callable=AsyncMock) as mock_list:
             mock_list.return_value = mock_accounts
 
             result = await service.list()
@@ -298,9 +277,7 @@ class TestExchangeAccountService:
         """Test listing accounts filtered by exchange."""
         mock_accounts = [MagicMock(spec=ExchangeAccount)]
 
-        with patch.object(
-            service.repository, "list_all", new_callable=AsyncMock
-        ) as mock_list:
+        with patch.object(service.repository, "list_all", new_callable=AsyncMock) as mock_list:
             mock_list.return_value = mock_accounts
 
             result = await service.list(exchange="okx")

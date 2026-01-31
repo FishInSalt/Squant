@@ -1,6 +1,6 @@
 """Unit tests for paper trading session manager."""
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from decimal import Decimal
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
@@ -27,15 +27,17 @@ def mock_engine():
     engine.is_running = True
     engine.process_candle = AsyncMock()
     engine.stop = AsyncMock()
-    engine.get_state_snapshot = MagicMock(return_value={
-        "run_id": str(engine.run_id),
-        "symbol": "BTC/USDT",
-        "timeframe": "1m",
-        "is_running": True,
-        "bar_count": 0,
-        "cash": "10000",
-        "equity": "10000",
-    })
+    engine.get_state_snapshot = MagicMock(
+        return_value={
+            "run_id": str(engine.run_id),
+            "symbol": "BTC/USDT",
+            "timeframe": "1m",
+            "is_running": True,
+            "bar_count": 0,
+            "cash": "10000",
+            "equity": "10000",
+        }
+    )
     return engine
 
 
@@ -135,7 +137,7 @@ class TestCandleDispatch:
         return WSCandle(
             symbol="BTC/USDT",
             timeframe="1m",
-            timestamp=datetime(2024, 1, 1, 12, 0, 0, tzinfo=timezone.utc),
+            timestamp=datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC),
             open=Decimal("45000"),
             high=Decimal("46000"),
             low=Decimal("44000"),
@@ -145,9 +147,7 @@ class TestCandleDispatch:
         )
 
     @pytest.mark.asyncio
-    async def test_dispatch_to_subscribed_engine(
-        self, session_manager, mock_engine, sample_candle
-    ):
+    async def test_dispatch_to_subscribed_engine(self, session_manager, mock_engine, sample_candle):
         """Test that candles are dispatched to subscribed engines."""
         await session_manager.register(mock_engine)
         await session_manager.dispatch_candle(sample_candle)
@@ -155,9 +155,7 @@ class TestCandleDispatch:
         mock_engine.process_candle.assert_called_once_with(sample_candle)
 
     @pytest.mark.asyncio
-    async def test_no_dispatch_to_unsubscribed(
-        self, session_manager, mock_engine, sample_candle
-    ):
+    async def test_no_dispatch_to_unsubscribed(self, session_manager, mock_engine, sample_candle):
         """Test that candles are not dispatched to unsubscribed symbols."""
         mock_engine.symbol = "ETH/USDT"
         await session_manager.register(mock_engine)
@@ -192,9 +190,7 @@ class TestCandleDispatch:
         engine2.process_candle.assert_called_once_with(sample_candle)
 
     @pytest.mark.asyncio
-    async def test_no_dispatch_to_stopped_engine(
-        self, session_manager, mock_engine, sample_candle
-    ):
+    async def test_no_dispatch_to_stopped_engine(self, session_manager, mock_engine, sample_candle):
         """Test that candles are not dispatched to stopped engines."""
         mock_engine.is_running = False
         await session_manager.register(mock_engine)
@@ -238,19 +234,23 @@ class TestListSessions:
         engine1.run_id = uuid4()
         engine1.symbol = "BTC/USDT"
         engine1.timeframe = "1m"
-        engine1.get_state_snapshot = MagicMock(return_value={
-            "run_id": str(engine1.run_id),
-            "symbol": "BTC/USDT",
-        })
+        engine1.get_state_snapshot = MagicMock(
+            return_value={
+                "run_id": str(engine1.run_id),
+                "symbol": "BTC/USDT",
+            }
+        )
 
         engine2 = MagicMock()
         engine2.run_id = uuid4()
         engine2.symbol = "ETH/USDT"
         engine2.timeframe = "1m"
-        engine2.get_state_snapshot = MagicMock(return_value={
-            "run_id": str(engine2.run_id),
-            "symbol": "ETH/USDT",
-        })
+        engine2.get_state_snapshot = MagicMock(
+            return_value={
+                "run_id": str(engine2.run_id),
+                "symbol": "ETH/USDT",
+            }
+        )
 
         await session_manager.register(engine1)
         await session_manager.register(engine2)
@@ -376,9 +376,7 @@ class TestGetSessionsNeedingPersistence:
         assert engine2.run_id not in result
 
     @pytest.mark.asyncio
-    async def test_returns_empty_when_no_sessions_need_persistence(
-        self, session_manager
-    ):
+    async def test_returns_empty_when_no_sessions_need_persistence(self, session_manager):
         """Test returns empty list when no sessions need persistence."""
         engine = MagicMock()
         engine.run_id = uuid4()

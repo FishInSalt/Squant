@@ -4,9 +4,8 @@ These tests verify the complete flow from API to engine execution.
 Note: Some tests require a running database and may be skipped in CI.
 """
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from decimal import Decimal
-from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import pytest
@@ -14,7 +13,6 @@ import pytest
 from squant.engine.paper.engine import PaperTradingEngine
 from squant.engine.paper.manager import SessionManager
 from squant.infra.exchange.okx.ws_types import WSCandle
-
 
 # Test strategy code for integration tests
 TEST_STRATEGY_CODE = '''
@@ -48,9 +46,9 @@ class TestPaperTradingIntegration:
     @pytest.fixture
     def strategy_instance(self):
         """Create a strategy instance from test code."""
-        from squant.engine.sandbox import compile_strategy
         from squant.engine.backtest.strategy_base import Strategy as StrategyBase
         from squant.engine.backtest.types import Bar, OrderSide, OrderType, Position
+        from squant.engine.sandbox import compile_strategy
 
         compiled = compile_strategy(TEST_STRATEGY_CODE)
         compiled.restricted_globals["Strategy"] = StrategyBase
@@ -63,7 +61,7 @@ class TestPaperTradingIntegration:
         exec(compiled.code_object, compiled.restricted_globals, local_namespace)
 
         strategy_class = None
-        for name, obj in local_namespace.items():
+        for _name, obj in local_namespace.items():
             if isinstance(obj, type) and issubclass(obj, StrategyBase) and obj is not StrategyBase:
                 strategy_class = obj
                 break
@@ -98,7 +96,7 @@ class TestPaperTradingIntegration:
         candle1 = WSCandle(
             symbol="BTC/USDT",
             timeframe="1m",
-            timestamp=datetime(2024, 1, 1, 12, 0, 0, tzinfo=timezone.utc),
+            timestamp=datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC),
             open=Decimal("44000"),
             high=Decimal("44500"),
             low=Decimal("43500"),
@@ -115,7 +113,7 @@ class TestPaperTradingIntegration:
         candle2 = WSCandle(
             symbol="BTC/USDT",
             timeframe="1m",
-            timestamp=datetime(2024, 1, 1, 12, 1, 0, tzinfo=timezone.utc),
+            timestamp=datetime(2024, 1, 1, 12, 1, 0, tzinfo=UTC),
             open=Decimal("44300"),
             high=Decimal("44800"),
             low=Decimal("44100"),
@@ -133,7 +131,7 @@ class TestPaperTradingIntegration:
         candle3 = WSCandle(
             symbol="BTC/USDT",
             timeframe="1m",
-            timestamp=datetime(2024, 1, 1, 12, 2, 0, tzinfo=timezone.utc),
+            timestamp=datetime(2024, 1, 1, 12, 2, 0, tzinfo=UTC),
             open=Decimal("45500"),
             high=Decimal("46000"),
             low=Decimal("45000"),
@@ -149,7 +147,7 @@ class TestPaperTradingIntegration:
         candle4 = WSCandle(
             symbol="BTC/USDT",
             timeframe="1m",
-            timestamp=datetime(2024, 1, 1, 12, 3, 0, tzinfo=timezone.utc),
+            timestamp=datetime(2024, 1, 1, 12, 3, 0, tzinfo=UTC),
             open=Decimal("45900"),
             high=Decimal("46500"),
             low=Decimal("45700"),
@@ -181,7 +179,7 @@ class TestPaperTradingIntegration:
         candle = WSCandle(
             symbol="BTC/USDT",
             timeframe="1m",
-            timestamp=datetime(2024, 1, 1, 12, 0, 0, tzinfo=timezone.utc),
+            timestamp=datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC),
             open=Decimal("44000"),
             high=Decimal("44500"),
             low=Decimal("43500"),
@@ -212,9 +210,9 @@ class TestPaperTradingIntegration:
         )
 
         # Need a fresh strategy instance for second engine
-        from squant.engine.sandbox import compile_strategy
         from squant.engine.backtest.strategy_base import Strategy as StrategyBase
         from squant.engine.backtest.types import Bar, OrderSide, OrderType, Position
+        from squant.engine.sandbox import compile_strategy
 
         compiled = compile_strategy(TEST_STRATEGY_CODE)
         compiled.restricted_globals["Strategy"] = StrategyBase
@@ -226,7 +224,7 @@ class TestPaperTradingIntegration:
         local_namespace = {}
         exec(compiled.code_object, compiled.restricted_globals, local_namespace)
         strategy_class = None
-        for name, obj in local_namespace.items():
+        for _name, obj in local_namespace.items():
             if isinstance(obj, type) and issubclass(obj, StrategyBase) and obj is not StrategyBase:
                 strategy_class = obj
                 break
@@ -249,7 +247,7 @@ class TestPaperTradingIntegration:
         btc_candle = WSCandle(
             symbol="BTC/USDT",
             timeframe="1m",
-            timestamp=datetime(2024, 1, 1, 12, 0, 0, tzinfo=timezone.utc),
+            timestamp=datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC),
             open=Decimal("44000"),
             high=Decimal("44500"),
             low=Decimal("43500"),
@@ -266,7 +264,7 @@ class TestPaperTradingIntegration:
         eth_candle = WSCandle(
             symbol="ETH/USDT",
             timeframe="1m",
-            timestamp=datetime(2024, 1, 1, 12, 0, 0, tzinfo=timezone.utc),
+            timestamp=datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC),
             open=Decimal("2200"),
             high=Decimal("2250"),
             low=Decimal("2150"),
@@ -299,7 +297,7 @@ class TestPaperTradingIntegration:
         candle1 = WSCandle(
             symbol="BTC/USDT",
             timeframe="1m",
-            timestamp=datetime(2024, 1, 1, 12, 0, 0, tzinfo=timezone.utc),
+            timestamp=datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC),
             open=Decimal("44000"),
             high=Decimal("44500"),
             low=Decimal("43500"),
@@ -312,7 +310,7 @@ class TestPaperTradingIntegration:
         candle2 = WSCandle(
             symbol="BTC/USDT",
             timeframe="1m",
-            timestamp=datetime(2024, 1, 1, 12, 1, 0, tzinfo=timezone.utc),
+            timestamp=datetime(2024, 1, 1, 12, 1, 0, tzinfo=UTC),
             open=Decimal("44300"),
             high=Decimal("44800"),
             low=Decimal("44100"),
@@ -337,9 +335,9 @@ class TestPaperTradingIntegration:
         # Create multiple engines
         engines = []
         for i in range(3):
-            from squant.engine.sandbox import compile_strategy
             from squant.engine.backtest.strategy_base import Strategy as StrategyBase
             from squant.engine.backtest.types import Bar, OrderSide, OrderType, Position
+            from squant.engine.sandbox import compile_strategy
 
             compiled = compile_strategy(TEST_STRATEGY_CODE)
             compiled.restricted_globals["Strategy"] = StrategyBase
@@ -351,8 +349,12 @@ class TestPaperTradingIntegration:
             local_namespace = {}
             exec(compiled.code_object, compiled.restricted_globals, local_namespace)
             strategy_class = None
-            for name, obj in local_namespace.items():
-                if isinstance(obj, type) and issubclass(obj, StrategyBase) and obj is not StrategyBase:
+            for _name, obj in local_namespace.items():
+                if (
+                    isinstance(obj, type)
+                    and issubclass(obj, StrategyBase)
+                    and obj is not StrategyBase
+                ):
                     strategy_class = obj
                     break
 
@@ -386,7 +388,7 @@ class TestErrorHandling:
     async def test_strategy_error_in_on_bar(self):
         """Test handling of strategy errors during on_bar."""
         # Strategy that raises an error
-        error_strategy_code = '''
+        error_strategy_code = """
 class ErrorStrategy(Strategy):
     def on_init(self):
         pass
@@ -397,10 +399,10 @@ class ErrorStrategy(Strategy):
 
     def on_stop(self):
         pass
-'''
-        from squant.engine.sandbox import compile_strategy
+"""
         from squant.engine.backtest.strategy_base import Strategy as StrategyBase
         from squant.engine.backtest.types import Bar, OrderSide, OrderType, Position
+        from squant.engine.sandbox import compile_strategy
 
         compiled = compile_strategy(error_strategy_code)
         compiled.restricted_globals["Strategy"] = StrategyBase
@@ -412,7 +414,7 @@ class ErrorStrategy(Strategy):
         local_namespace = {}
         exec(compiled.code_object, compiled.restricted_globals, local_namespace)
         strategy_class = None
-        for name, obj in local_namespace.items():
+        for _name, obj in local_namespace.items():
             if isinstance(obj, type) and issubclass(obj, StrategyBase) and obj is not StrategyBase:
                 strategy_class = obj
                 break
@@ -431,7 +433,7 @@ class ErrorStrategy(Strategy):
         candle = WSCandle(
             symbol="BTC/USDT",
             timeframe="1m",
-            timestamp=datetime(2024, 1, 1, 12, 0, 0, tzinfo=timezone.utc),
+            timestamp=datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC),
             open=Decimal("44000"),
             high=Decimal("45000"),
             low=Decimal("43500"),

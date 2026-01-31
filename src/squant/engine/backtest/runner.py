@@ -16,7 +16,7 @@ from typing import Any
 
 from squant.engine.backtest.context import BacktestContext
 from squant.engine.backtest.matching import MatchingEngine
-from squant.engine.backtest.metrics import PerformanceMetrics, calculate_metrics
+from squant.engine.backtest.metrics import calculate_metrics
 from squant.engine.backtest.strategy_base import Strategy
 from squant.engine.backtest.types import BacktestResult, Bar
 from squant.engine.sandbox import compile_strategy
@@ -182,7 +182,7 @@ class BacktestRunner:
 
             # Find the strategy class (subclass of Strategy)
             strategy_class = None
-            for name, obj in local_namespace.items():
+            for _name, obj in local_namespace.items():
                 if (
                     isinstance(obj, type)
                     and issubclass(obj, StrategyBase)
@@ -192,9 +192,7 @@ class BacktestRunner:
                     break
 
             if strategy_class is None:
-                raise StrategyInstantiationError(
-                    "No Strategy subclass found in strategy code"
-                )
+                raise StrategyInstantiationError("No Strategy subclass found in strategy code")
 
             # Instantiate
             return strategy_class()
@@ -202,9 +200,7 @@ class BacktestRunner:
         except ValueError as e:
             raise StrategyInstantiationError(f"Strategy compilation failed: {e}") from e
         except Exception as e:
-            raise StrategyInstantiationError(
-                f"Strategy instantiation failed: {e}"
-            ) from e
+            raise StrategyInstantiationError(f"Strategy instantiation failed: {e}") from e
 
     def _process_bar(self, bar: Bar) -> None:
         """Process a single bar through the backtest loop.

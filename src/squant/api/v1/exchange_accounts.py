@@ -65,9 +65,7 @@ async def create_exchange_account(
 
 @router.get("", response_model=ApiResponse[list[ExchangeAccountListItem]])
 async def list_exchange_accounts(
-    exchange: Literal["okx", "binance"] | None = Query(
-        None, description="Filter by exchange"
-    ),
+    exchange: Literal["okx", "binance"] | None = Query(None, description="Filter by exchange"),
     session: AsyncSession = Depends(get_session),
 ) -> ApiResponse[list[ExchangeAccountListItem]]:
     """List all exchange account configurations.

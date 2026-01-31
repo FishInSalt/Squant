@@ -87,9 +87,7 @@ class RiskRuleService:
         await self.session.commit()
         return rule
 
-    async def update(
-        self, rule_id: UUID, request: UpdateRiskRuleRequest
-    ) -> RiskRule:
+    async def update(self, rule_id: UUID, request: UpdateRiskRuleRequest) -> RiskRule:
         """Update an existing risk rule.
 
         Args:

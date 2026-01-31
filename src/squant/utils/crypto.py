@@ -137,9 +137,7 @@ class CryptoManager:
 
         return bytes(nonce)
 
-    def encrypt_with_derived_nonce(
-        self, plaintext: str, base_nonce: bytes, index: int
-    ) -> bytes:
+    def encrypt_with_derived_nonce(self, plaintext: str, base_nonce: bytes, index: int) -> bytes:
         """Encrypt using a derived nonce.
 
         Useful for encrypting multiple fields with a single stored nonce.
@@ -156,9 +154,7 @@ class CryptoManager:
         ciphertext, _ = self.encrypt(plaintext, nonce=derived_nonce)
         return ciphertext
 
-    def decrypt_with_derived_nonce(
-        self, ciphertext: bytes, base_nonce: bytes, index: int
-    ) -> str:
+    def decrypt_with_derived_nonce(self, ciphertext: bytes, base_nonce: bytes, index: int) -> str:
         """Decrypt using a derived nonce.
 
         Args:
@@ -227,9 +223,7 @@ def get_crypto_manager() -> CryptoManager:
         try:
             key_bytes = base64.b64decode(key)
             if len(key_bytes) != 32:
-                raise ValueError(
-                    f"Base64-decoded key must be 32 bytes, got {len(key_bytes)}"
-                )
+                raise ValueError(f"Base64-decoded key must be 32 bytes, got {len(key_bytes)}")
         except Exception as e:
             raise ValueError(f"Invalid base64 encryption key: {e}") from e
     elif len(key) == 32:
@@ -239,7 +233,7 @@ def get_crypto_manager() -> CryptoManager:
         raise ValueError(
             f"ENCRYPTION_KEY must be 32 ASCII characters or 44-char base64 "
             f"(32 bytes encoded), got {len(key)} characters. "
-            f"Generate with: python -c \"import secrets; print(secrets.token_urlsafe(32)[:32])\""
+            f'Generate with: python -c "import secrets; print(secrets.token_urlsafe(32)[:32])"'
         )
 
     return CryptoManager(key_bytes)

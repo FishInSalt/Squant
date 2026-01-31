@@ -2,9 +2,6 @@
 
 from datetime import UTC, datetime
 from decimal import Decimal
-from unittest.mock import AsyncMock, MagicMock, patch
-
-import pytest
 
 from squant.infra.exchange.binance.ws_client import (
     BinanceWebSocketClient,
@@ -12,11 +9,11 @@ from squant.infra.exchange.binance.ws_client import (
     _to_binance_symbol,
 )
 from squant.infra.exchange.binance.ws_types import (
+    KLINE_INTERVALS,
     BinanceCandle,
     BinanceOrderBook,
     BinanceTicker,
     BinanceTrade,
-    KLINE_INTERVALS,
 )
 
 

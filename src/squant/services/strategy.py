@@ -126,9 +126,7 @@ class StrategyService:
         await self.session.commit()
         return strategy
 
-    async def update(
-        self, strategy_id: UUID, request: UpdateStrategyRequest
-    ) -> Strategy:
+    async def update(self, strategy_id: UUID, request: UpdateStrategyRequest) -> Strategy:
         """Update an existing strategy.
 
         Args:

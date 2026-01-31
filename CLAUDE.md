@@ -72,25 +72,41 @@ docker compose -f docker-compose.dev.yml --profile full up -d
 ```
 src/squant/
 ├── main.py              # FastAPI entry point with lifespan management
-├── config.py            # Pydantic Settings (loaded from .env)
+├── config.py            # Nested Pydantic Settings (loaded from .env)
 ├── api/                 # REST API routes (presentation layer)
+│   ├── deps.py          # Dependency injection (sessions, exchange clients)
 │   └── v1/              # Versioned endpoints
+│       ├── market.py, strategies.py, backtest.py
+│       ├── paper_trading.py, live_trading.py
+│       ├── orders.py, account.py, risk.py
+│       └── circuit_breaker.py, exchange_accounts.py
 ├── websocket/           # WebSocket handlers for real-time data
+│   ├── manager.py       # Stream manager with auto-reconnect
+│   └── handlers.py      # Message routing
 ├── services/            # Business logic layer
+│   ├── backtest.py, paper_trading.py, live_trading.py
+│   ├── order.py, account.py, risk.py
+│   ├── circuit_breaker.py  # Trading halt on risk events
+│   ├── background.py    # Background task manager
+│   └── data_loader.py   # Historical data loading
 ├── engine/              # Trading engines
-│   ├── backtest/        # Backtesting engine with matching simulation
-│   ├── paper/           # Paper trading engine (in-memory)
-│   ├── live/            # Live trading engine (real orders)
-│   └── risk/            # Risk management and circuit breaker
+│   ├── backtest/        # Backtesting with order matching simulation
+│   ├── paper/           # Real-time paper trading (in-memory)
+│   ├── live/            # Live trading with real orders
+│   ├── risk/            # Risk management engine
+│   └── sandbox.py       # RestrictedPython strategy sandbox
 ├── models/              # SQLAlchemy ORM models
 ├── schemas/             # Pydantic request/response schemas
 └── infra/               # Infrastructure layer
     ├── database.py      # AsyncPG + SQLAlchemy async session
-    ├── redis.py         # Redis client
+    ├── redis.py         # Redis client with pub/sub
     ├── repository.py    # Generic repository pattern
     └── exchange/        # Exchange adapters
-        ├── ccxt/        # CCXT-based multi-exchange adapter
-        └── okx/         # Native OKX implementation (legacy)
+        ├── base.py      # Abstract adapter interface
+        ├── types.py     # Shared types (Ticker, Order, etc.)
+        ├── ccxt/        # CCXT multi-exchange (REST + WebSocket)
+        ├── okx/         # Native OKX implementation
+        └── binance/     # Native Binance implementation
 ```
 
 ### Key Patterns
@@ -100,6 +116,8 @@ src/squant/
 - **Repository pattern**: Generic CRUD operations in `infra/repository.py`
 - **Process isolation**: Strategy execution runs in separate processes via `multiprocessing`
 - **Strategy sandbox**: RestrictedPython for safe user strategy execution
+- **Circuit breaker**: Automatic trading halt on risk events (max loss, position limits)
+- **Background tasks**: Periodic persistence, health checks, session cleanup
 
 ### Trading Engines
 
@@ -109,10 +127,18 @@ src/squant/
 
 ### Exchange Abstraction
 
-CCXT provider (`infra/exchange/ccxt/`) wraps multiple exchanges with unified interface:
-- REST adapter for trading operations
-- WebSocket streaming for real-time data (tickers, orderbook, trades)
-- Configurable via `DEFAULT_EXCHANGE` and `USE_CCXT_PROVIDER` settings
+Two adapter implementations available:
+
+1. **CCXT Provider** (`infra/exchange/ccxt/`): Multi-exchange support via CCXT library
+   - REST adapter for trading operations
+   - WebSocket streaming for real-time data (tickers, orderbook, trades)
+   - Supports OKX, Binance, Bybit with unified interface
+
+2. **Native Adapters** (`infra/exchange/okx/`, `binance/`): Direct API implementations
+   - Lower latency, exchange-specific optimizations
+   - Full WebSocket support with auto-reconnect
+
+Configurable via `DEFAULT_EXCHANGE` (okx/binance/bybit) and `USE_CCXT_PROVIDER` (true/false) settings.
 
 ### Data Flow
 
@@ -122,14 +148,26 @@ CCXT provider (`infra/exchange/ccxt/`) wraps multiple exchanges with unified int
 
 ## Configuration
 
-Environment variables are loaded from `.env` via Pydantic Settings. Key variables:
+Environment variables are loaded from `.env` via Pydantic Settings with nested configuration classes:
+
+```python
+settings = get_settings()
+settings.database.url      # DatabaseSettings
+settings.redis.url         # RedisSettings
+settings.security.secret_key  # SecuritySettings
+settings.exchange.default_exchange  # ExchangeSettings
+# ... plus LoggingSettings, StrategySettings, RiskSettings, etc.
+```
+
+Key environment variables:
 
 - `DATABASE_URL`: PostgreSQL connection string (must include `+asyncpg`)
 - `REDIS_URL`: Redis connection string
 - `SECRET_KEY`: Application secret (min 32 chars)
 - `ENCRYPTION_KEY`: For encrypting stored API keys
 - `DEFAULT_EXCHANGE`: okx, binance, or bybit
-- `*_API_KEY`, `*_API_SECRET`: Exchange credentials
+- `USE_CCXT_PROVIDER`: true (CCXT) or false (native adapter)
+- `*_API_KEY`, `*_API_SECRET`, `*_PASSPHRASE`: Exchange credentials
 
 ## Testing
 
@@ -142,3 +180,13 @@ Environment variables are loaded from `.env` via Pydantic Settings. Key variable
 - PostgreSQL 16 with TimescaleDB extension for time-series data (candles, equity curves)
 - Alembic for migrations in `alembic/` directory
 - Models use SQLAlchemy 2.0 async patterns
+
+## Documentation
+
+Detailed technical documentation is available in `dev-docs/`:
+
+- `dev-docs/requirements/` - PRD, user stories, acceptance criteria
+- `dev-docs/technical/architecture/` - System architecture, module design, data flows
+- `dev-docs/technical/strategy-engine/` - Strategy lifecycle, sandbox, indicators
+- `dev-docs/technical/api/` - REST and WebSocket API specifications
+- `dev-docs/technical/deployment/` - Docker, environment, monitoring

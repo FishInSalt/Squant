@@ -8,6 +8,7 @@ Mark with pytest.mark.integration to skip in quick test runs.
 """
 
 import asyncio
+import os
 
 import pytest
 
@@ -31,6 +32,7 @@ class TestCCXTProviderConnection:
             assert provider.is_connected is False
 
     @pytest.mark.asyncio
+    @pytest.mark.skipif(os.getenv("CI") == "true", reason="Binance blocks GitHub Actions runners")
     async def test_connect_binance(self) -> None:
         """Test connecting to Binance (public channels only)."""
         provider = CCXTStreamProvider("binance")
@@ -43,6 +45,7 @@ class TestCCXTProviderConnection:
             assert provider.is_connected is False
 
     @pytest.mark.asyncio
+    @pytest.mark.skipif(os.getenv("CI") == "true", reason="Bybit blocks GitHub Actions runners")
     async def test_connect_bybit(self) -> None:
         """Test connecting to Bybit (public channels only)."""
         provider = CCXTStreamProvider("bybit")

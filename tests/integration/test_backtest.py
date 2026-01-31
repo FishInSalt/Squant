@@ -1,8 +1,8 @@
 """Integration tests for backtest engine."""
 
-from datetime import datetime, timezone
+from collections.abc import AsyncIterator
+from datetime import UTC, datetime
 from decimal import Decimal
-from typing import AsyncIterator
 
 import pytest
 
@@ -35,7 +35,7 @@ async def create_sample_bars(
         low = min(open_price, close_price) - Decimal("50")
 
         yield Bar(
-            time=datetime(2024, 1, 1, i % 24, tzinfo=timezone.utc),
+            time=datetime(2024, 1, 1, i % 24, tzinfo=UTC),
             symbol=symbol,
             open=open_price,
             high=high,
@@ -53,7 +53,7 @@ class TestBacktestRunner:
     @pytest.mark.asyncio
     async def test_simple_strategy_execution(self) -> None:
         """Test running a simple strategy."""
-        strategy_code = '''
+        strategy_code = """
 class TestStrategy(Strategy):
     def on_init(self):
         self.bought = False
@@ -62,7 +62,7 @@ class TestStrategy(Strategy):
         if not self.bought:
             self.ctx.buy(bar.symbol, Decimal("0.1"))
             self.bought = True
-'''
+"""
 
         runner = BacktestRunner(
             strategy_code=strategy_code,
@@ -87,7 +87,7 @@ class TestStrategy(Strategy):
     @pytest.mark.asyncio
     async def test_dual_ma_strategy(self) -> None:
         """Test a dual moving average strategy."""
-        strategy_code = '''
+        strategy_code = """
 class DualMA(Strategy):
     def on_init(self):
         self.fast_period = self.ctx.params.get("fast", 5)
@@ -107,7 +107,7 @@ class DualMA(Strategy):
             self.ctx.buy(bar.symbol, Decimal("0.1"))
         elif fast_ma < slow_ma and pos:
             self.ctx.sell(bar.symbol, pos.amount)
-'''
+"""
 
         runner = BacktestRunner(
             strategy_code=strategy_code,
@@ -130,7 +130,7 @@ class DualMA(Strategy):
     @pytest.mark.asyncio
     async def test_strategy_with_logging(self) -> None:
         """Test strategy logging functionality."""
-        strategy_code = '''
+        strategy_code = """
 class LoggingStrategy(Strategy):
     def on_init(self):
         self.ctx.log("Strategy initialized")
@@ -140,7 +140,7 @@ class LoggingStrategy(Strategy):
 
     def on_stop(self):
         self.ctx.log("Strategy stopped")
-'''
+"""
 
         result = await run_backtest(
             strategy_code=strategy_code,
@@ -158,7 +158,7 @@ class LoggingStrategy(Strategy):
     @pytest.mark.asyncio
     async def test_metrics_calculated(self) -> None:
         """Test that metrics are calculated."""
-        strategy_code = '''
+        strategy_code = """
 class BuyAndHold(Strategy):
     def on_init(self):
         self.bought = False
@@ -167,7 +167,7 @@ class BuyAndHold(Strategy):
         if not self.bought:
             self.ctx.buy(bar.symbol, Decimal("1"))
             self.bought = True
-'''
+"""
 
         result = await run_backtest(
             strategy_code=strategy_code,
@@ -186,7 +186,7 @@ class BuyAndHold(Strategy):
     @pytest.mark.asyncio
     async def test_commission_deducted(self) -> None:
         """Test that commission is deducted from trades."""
-        strategy_code = '''
+        strategy_code = """
 class SingleTrade(Strategy):
     def on_init(self):
         self.traded = False
@@ -195,7 +195,7 @@ class SingleTrade(Strategy):
         if not self.traded:
             self.ctx.buy(bar.symbol, Decimal("1"))
             self.traded = True
-'''
+"""
 
         result = await run_backtest(
             strategy_code=strategy_code,
@@ -218,11 +218,11 @@ class TestRunBacktestFunction:
     @pytest.mark.asyncio
     async def test_run_backtest_convenience(self) -> None:
         """Test the convenience function."""
-        strategy_code = '''
+        strategy_code = """
 class Simple(Strategy):
     def on_bar(self, bar):
         pass
-'''
+"""
 
         result = await run_backtest(
             strategy_code=strategy_code,
@@ -243,11 +243,11 @@ class TestErrorHandling:
     @pytest.mark.asyncio
     async def test_invalid_strategy_code_raises(self) -> None:
         """Test that invalid strategy code raises error."""
-        strategy_code = '''
+        strategy_code = """
 class NotAStrategy:
     def on_bar(self, bar):
         pass
-'''
+"""
 
         runner = BacktestRunner(
             strategy_code=strategy_code,
@@ -263,12 +263,12 @@ class NotAStrategy:
     @pytest.mark.asyncio
     async def test_strategy_error_logged(self) -> None:
         """Test that strategy errors are logged but don't crash backtest."""
-        strategy_code = '''
+        strategy_code = """
 class ErrorStrategy(Strategy):
     def on_bar(self, bar):
         if self.ctx.get_closes(5):  # Will work after 5 bars
             raise ValueError("Intentional error for testing")
-'''
+"""
 
         result = await run_backtest(
             strategy_code=strategy_code,

@@ -130,7 +130,9 @@ class BinanceOrderUpdate(BaseModel):
     price: Decimal | None = Field(default=None, description="Order price")
     quantity: Decimal = Field(..., description="Order quantity")
     filled_quantity: Decimal = Field(default=Decimal("0"), description="Filled quantity")
-    cumulative_quote_qty: Decimal | None = Field(default=None, description="Cumulative quote quantity")
+    cumulative_quote_qty: Decimal | None = Field(
+        default=None, description="Cumulative quote quantity"
+    )
     last_filled_price: Decimal | None = Field(default=None, description="Last fill price")
     last_filled_qty: Decimal | None = Field(default=None, description="Last fill quantity")
     commission: Decimal | None = Field(default=None, description="Commission amount")

@@ -179,7 +179,9 @@ class StreamManager:
                 break
 
             retry_count += 1
-            logger.info(f"Retrying stream manager connection (attempt {retry_count}/{self._max_startup_retries})...")
+            logger.info(
+                f"Retrying stream manager connection (attempt {retry_count}/{self._max_startup_retries})..."
+            )
 
             try:
                 await self.start()
@@ -288,7 +290,9 @@ class StreamManager:
         self._ccxt_provider.add_handler(self._handle_ccxt_message)
         await self._ccxt_provider.connect()
 
-        logger.info(f"Connected to {exchange_id}, resubscribing to {len(ticker_subs)} tickers, {len(candle_subs)} candles")
+        logger.info(
+            f"Connected to {exchange_id}, resubscribing to {len(ticker_subs)} tickers, {len(candle_subs)} candles"
+        )
 
         # Resubscribe to all previous channels on new exchange
         for symbol in ticker_subs:
@@ -334,7 +338,9 @@ class StreamManager:
                 return ExchangeCredentials(
                     api_key=self._settings.okx_api_key.get_secret_value(),
                     api_secret=self._settings.okx_api_secret.get_secret_value(),
-                    passphrase=self._settings.okx_passphrase.get_secret_value() if self._settings.okx_passphrase else None,
+                    passphrase=self._settings.okx_passphrase.get_secret_value()
+                    if self._settings.okx_passphrase
+                    else None,
                     sandbox=self._settings.okx_testnet,
                 )
         elif exchange_id == "binance":
@@ -365,11 +371,13 @@ class StreamManager:
             return
 
         # Native OKX mode
-        if not all([
-            self._settings.okx_api_key,
-            self._settings.okx_api_secret,
-            self._settings.okx_passphrase,
-        ]):
+        if not all(
+            [
+                self._settings.okx_api_key,
+                self._settings.okx_api_secret,
+                self._settings.okx_passphrase,
+            ]
+        ):
             logger.warning("OKX credentials not configured, private channels unavailable")
             return
 
@@ -381,9 +389,15 @@ class StreamManager:
 
         # Initialize private WebSocket client
         self._private_client = OKXWebSocketClient(
-            api_key=self._settings.okx_api_key.get_secret_value() if self._settings.okx_api_key else None,
-            api_secret=self._settings.okx_api_secret.get_secret_value() if self._settings.okx_api_secret else None,
-            passphrase=self._settings.okx_passphrase.get_secret_value() if self._settings.okx_passphrase else None,
+            api_key=self._settings.okx_api_key.get_secret_value()
+            if self._settings.okx_api_key
+            else None,
+            api_secret=self._settings.okx_api_secret.get_secret_value()
+            if self._settings.okx_api_secret
+            else None,
+            passphrase=self._settings.okx_passphrase.get_secret_value()
+            if self._settings.okx_passphrase
+            else None,
             testnet=self._settings.okx_testnet,
             private=True,
         )
@@ -465,9 +479,9 @@ class StreamManager:
             if not self._public_client:
                 raise RuntimeError("Public client not started. Call start() first.")
             okx_symbol = self._to_okx_symbol(symbol)
-            await self._public_client.subscribe([
-                {"channel": OKXChannel.TICKERS.value, "instId": okx_symbol}
-            ])
+            await self._public_client.subscribe(
+                [{"channel": OKXChannel.TICKERS.value, "instId": okx_symbol}]
+            )
 
         self._ticker_subscriptions.add(normalized_symbol)
         logger.info(f"Subscribed to ticker: {normalized_symbol}")
@@ -485,9 +499,9 @@ class StreamManager:
         else:
             if self._public_client:
                 okx_symbol = self._to_okx_symbol(symbol)
-                await self._public_client.unsubscribe([
-                    {"channel": OKXChannel.TICKERS.value, "instId": okx_symbol}
-                ])
+                await self._public_client.unsubscribe(
+                    [{"channel": OKXChannel.TICKERS.value, "instId": okx_symbol}]
+                )
 
         self._ticker_subscriptions.discard(normalized_symbol)
 
@@ -511,7 +525,9 @@ class StreamManager:
                 logger.error("CCXT provider not started!")
                 raise RuntimeError("CCXT provider not started. Call start() first.")
 
-            logger.info(f"Subscribing to candles via CCXT: symbol={normalized_symbol}, timeframe={timeframe}")
+            logger.info(
+                f"Subscribing to candles via CCXT: symbol={normalized_symbol}, timeframe={timeframe}"
+            )
             await self._ccxt_provider.watch_ohlcv(normalized_symbol, timeframe)
         else:
             # Native OKX mode
@@ -525,10 +541,12 @@ class StreamManager:
                 raise ValueError(f"Invalid timeframe: {timeframe}")
 
             okx_symbol = self._to_okx_symbol(symbol)
-            logger.info(f"Sending candle subscription to OKX business endpoint: channel={channel.value}, instId={okx_symbol}")
-            await self._business_client.subscribe([
-                {"channel": channel.value, "instId": okx_symbol}
-            ])
+            logger.info(
+                f"Sending candle subscription to OKX business endpoint: channel={channel.value}, instId={okx_symbol}"
+            )
+            await self._business_client.subscribe(
+                [{"channel": channel.value, "instId": okx_symbol}]
+            )
 
         self._candle_subscriptions.add(key)
         logger.info(f"Subscribed to candles: {normalized_symbol} {timeframe}")
@@ -549,9 +567,9 @@ class StreamManager:
                 channel = CANDLE_CHANNELS.get(timeframe.lower())
                 if channel:
                     okx_symbol = self._to_okx_symbol(symbol)
-                    await self._business_client.unsubscribe([
-                        {"channel": channel.value, "instId": okx_symbol}
-                    ])
+                    await self._business_client.unsubscribe(
+                        [{"channel": channel.value, "instId": okx_symbol}]
+                    )
 
         self._candle_subscriptions.discard(key)
 
@@ -570,9 +588,9 @@ class StreamManager:
             if not self._public_client:
                 raise RuntimeError("Public client not started. Call start() first.")
             okx_symbol = self._to_okx_symbol(symbol)
-            await self._public_client.subscribe([
-                {"channel": OKXChannel.TRADES.value, "instId": okx_symbol}
-            ])
+            await self._public_client.subscribe(
+                [{"channel": OKXChannel.TRADES.value, "instId": okx_symbol}]
+            )
 
         self._trade_subscriptions.add(normalized_symbol)
         logger.info(f"Subscribed to trades: {normalized_symbol}")
@@ -590,9 +608,9 @@ class StreamManager:
         else:
             if self._public_client:
                 okx_symbol = self._to_okx_symbol(symbol)
-                await self._public_client.unsubscribe([
-                    {"channel": OKXChannel.TRADES.value, "instId": okx_symbol}
-                ])
+                await self._public_client.unsubscribe(
+                    [{"channel": OKXChannel.TRADES.value, "instId": okx_symbol}]
+                )
 
         self._trade_subscriptions.discard(normalized_symbol)
 
@@ -611,9 +629,9 @@ class StreamManager:
             if not self._public_client:
                 raise RuntimeError("Public client not started. Call start() first.")
             okx_symbol = self._to_okx_symbol(symbol)
-            await self._public_client.subscribe([
-                {"channel": OKXChannel.BOOKS5.value, "instId": okx_symbol}
-            ])
+            await self._public_client.subscribe(
+                [{"channel": OKXChannel.BOOKS5.value, "instId": okx_symbol}]
+            )
 
         self._orderbook_subscriptions.add(normalized_symbol)
         logger.info(f"Subscribed to orderbook: {normalized_symbol}")
@@ -631,9 +649,9 @@ class StreamManager:
         else:
             if self._public_client:
                 okx_symbol = self._to_okx_symbol(symbol)
-                await self._public_client.unsubscribe([
-                    {"channel": OKXChannel.BOOKS5.value, "instId": okx_symbol}
-                ])
+                await self._public_client.unsubscribe(
+                    [{"channel": OKXChannel.BOOKS5.value, "instId": okx_symbol}]
+                )
 
         self._orderbook_subscriptions.discard(normalized_symbol)
 
@@ -658,9 +676,9 @@ class StreamManager:
             if not self._private_client:
                 raise RuntimeError("Private client not available (credentials missing)")
 
-            await self._private_client.subscribe([
-                {"channel": OKXChannel.ORDERS.value, "instType": inst_type}
-            ])
+            await self._private_client.subscribe(
+                [{"channel": OKXChannel.ORDERS.value, "instType": inst_type}]
+            )
             logger.info(f"Subscribed to orders: {inst_type}")
 
     async def subscribe_account(self) -> None:
@@ -677,9 +695,7 @@ class StreamManager:
             if not self._private_client:
                 raise RuntimeError("Private client not available (credentials missing)")
 
-            await self._private_client.subscribe([
-                {"channel": OKXChannel.ACCOUNT.value}
-            ])
+            await self._private_client.subscribe([{"channel": OKXChannel.ACCOUNT.value}])
             logger.info("Subscribed to account updates")
 
     # ==================== Message Handlers ====================
@@ -750,10 +766,12 @@ class StreamManager:
 
             elif data_type == "candle":
                 candle: WSCandle = data
-                logger.info(f"Processing candle from CCXT: symbol={candle.symbol}, timeframe={candle.timeframe}, close={candle.close}")
+                logger.debug(
+                    f"Processing candle from CCXT: symbol={candle.symbol}, timeframe={candle.timeframe}, close={candle.close}"
+                )
                 # Publish to Redis for WebSocket clients
                 channel = f"candle:{candle.symbol}:{candle.timeframe}"
-                logger.info(f"Publishing candle to Redis channel: {channel}")
+                logger.debug(f"Publishing candle to Redis channel: {channel}")
                 await self._publish(
                     WSMessageType.CANDLE,
                     channel,
@@ -833,7 +851,9 @@ class StreamManager:
 
         # Extract timeframe from channel (e.g., "candle1m" -> "1m")
         timeframe = channel.replace("candle", "").lower()
-        logger.debug(f"Processing candle data: symbol={symbol}, timeframe={timeframe}, count={len(data)}")
+        logger.debug(
+            f"Processing candle data: symbol={symbol}, timeframe={timeframe}, count={len(data)}"
+        )
 
         for item in data:
             # OKX candle format: [ts, o, h, l, c, vol, volCcy, volCcyQuote, confirm]
@@ -954,11 +974,13 @@ class StreamManager:
         for item in data:
             balances = []
             for detail in item.get("details", []):
-                balances.append(WSBalanceUpdate(
-                    currency=detail.get("ccy", ""),
-                    available=Decimal(detail.get("availBal", "0")),
-                    frozen=Decimal(detail.get("frozenBal", "0")),
-                ))
+                balances.append(
+                    WSBalanceUpdate(
+                        currency=detail.get("ccy", ""),
+                        available=Decimal(detail.get("availBal", "0")),
+                        frozen=Decimal(detail.get("frozenBal", "0")),
+                    )
+                )
 
             account = WSAccountUpdate(
                 balances=balances,
@@ -1100,8 +1122,7 @@ class StreamManager:
 
                     if consecutive_unhealthy >= max_unhealthy_before_action:
                         logger.error(
-                            "Stream manager unhealthy for too long, "
-                            "attempting recovery..."
+                            "Stream manager unhealthy for too long, attempting recovery..."
                         )
                         await self._attempt_recovery()
                         consecutive_unhealthy = 0
