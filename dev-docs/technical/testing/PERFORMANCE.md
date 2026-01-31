@@ -15,18 +15,29 @@ This document covers performance analysis, optimization strategies, and benchmar
 
 ### Current State (2026-01-31)
 
-**Unit Tests**:
+**Unit Tests (Before Optimization)**:
 - Total tests: 1,537
-- Total time: 9.91 seconds
-- Average: ~6.4ms per test
+- Total time: 9.99 seconds (with coverage)
+- Average: ~6.5ms per test
 - Coverage: 77%
 
-**Slowest Tests**:
-1. `test_periodic_task_handles_exception`: 2.50s (uses real asyncio.sleep)
-2. `test_persist_snapshots_called`: 1.50s (uses real asyncio.sleep)
-3. `test_health_check_called`: 1.50s (uses real asyncio.sleep)
+**Slowest Tests (Before)**:
+1. `test_periodic_task_handles_exception`: 2.50s (used real asyncio.sleep)
+2. `test_persist_snapshots_called`: 1.50s (used real asyncio.sleep)
+3. `test_health_check_called`: 1.50s (used real asyncio.sleep)
 
-**Analysis**: Background service tests use actual sleep delays to test periodic task execution, accounting for 5.5s out of 9.91s total runtime. This is acceptable for testing real-world timing behavior.
+**Unit Tests (After Optimization)**:
+- Total tests: 1,537
+- Total time: **5.03 seconds** (with coverage) - **50% faster!**
+- Average: ~3.3ms per test
+- Coverage: 77%
+
+**Slowest Tests (After)**:
+1. `test_periodic_task_handles_exception`: 0.35s (down from 2.50s)
+2. `test_persist_snapshots_called`: 0.15s (down from 1.50s)
+3. `test_health_check_called`: 0.15s (down from 1.50s)
+
+**Optimization Impact**: Reduced sleep intervals in periodic task tests from 1-2.5s to 0.1-0.35s while maintaining test validity. Total time saved: 4.96 seconds (50% improvement).
 
 ### Test Optimization Strategies
 
@@ -35,9 +46,7 @@ This document covers performance analysis, optimization strategies, and benchmar
 Run independent test modules in parallel using pytest-xdist:
 
 ```bash
-# Install pytest-xdist
-uv add --dev pytest-xdist
-
+# pytest-xdist is already installed in dev dependencies
 # Run tests in parallel (auto-detect CPU count)
 uv run pytest tests/unit -n auto
 
@@ -45,19 +54,53 @@ uv run pytest tests/unit -n auto
 uv run pytest tests/unit -n 4
 ```
 
-**Current status**: ⚠️ **Blocked** - pytest-xdist is installed but many tests fail in parallel due to:
-- Shared fixture state (session/module scoped fixtures)
-- WebSocket connection state across workers
-- Mock object state conflicts
+**Current status**: ⚠️ **Not Recommended** - Parallel execution is actually **slower** for this test suite:
+- Sequential (no cov): 3.03s
+- Parallel -n auto (no cov): 12.04s (4x slower!)
 
-**Required refactoring before enabling**:
-1. Convert shared fixtures to function scope with proper cleanup
-2. Ensure WebSocket tests use isolated connections
-3. Fix mock object sharing issues in parallel workers
+**Why parallel is slower**:
+- Test suite is heavily async (pytest-asyncio + pytest-xdist have known compatibility issues)
+- Each worker spawns its own event loop with overhead
+- Async fixture setup/teardown doesn't benefit from parallelization
+- Most tests are fast (<10ms), so worker communication overhead exceeds benefits
 
-**Expected improvement after refactoring**: 40-60% faster on multi-core systems
+**Recommendation**: Use sequential execution for unit tests. Focus on optimizing individual slow tests instead (see optimization strategies below).
 
-#### 2. Test Grouping by Speed
+#### 2. Optimize Sleep Intervals in Periodic Task Tests
+
+**Technique**: Reduce `asyncio.sleep()` delays to minimum required for test validation
+
+**Example Optimization** (from `tests/unit/services/test_background.py`):
+
+```python
+# Before (slow)
+async def test_persist_snapshots_called(self) -> None:
+    manager.start(persist_interval=1, health_check_interval=100)
+    await asyncio.sleep(1.5)  # Wait 1.5s for task to run
+    await manager.stop()
+    mock_persist.assert_called()
+
+# After (fast)
+async def test_persist_snapshots_called(self) -> None:
+    manager.start(persist_interval=0.1, health_check_interval=100)
+    await asyncio.sleep(0.15)  # Wait just enough (0.15s)
+    await manager.stop()
+    mock_persist.assert_called()
+```
+
+**Impact**:
+- `test_periodic_task_handles_exception`: 2.50s → 0.35s (86% faster)
+- `test_persist_snapshots_called`: 1.50s → 0.15s (90% faster)
+- `test_health_check_called`: 1.50s → 0.15s (90% faster)
+- **Total savings**: 4.85 seconds out of 9.99s (48.5% of test time)
+
+**Guidelines**:
+- Set interval to minimum practical value (0.05-0.1s)
+- Sleep time = interval + small buffer (e.g., interval * 1.5)
+- Verify test still validates the behavior correctly
+- Use for tests that verify periodic/scheduled tasks
+
+#### 3. Test Grouping by Speed
 
 Separate fast and slow tests for efficient CI pipelines:
 

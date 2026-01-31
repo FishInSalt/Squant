@@ -93,10 +93,10 @@ class TestPeriodicTaskExecution:
         manager = BackgroundTaskManager()
 
         with patch.object(manager, "_persist_snapshots", new_callable=AsyncMock) as mock_persist:
-            manager.start(persist_interval=1, health_check_interval=100)
+            manager.start(persist_interval=0.1, health_check_interval=100)
 
-            # Wait enough time for the task to run
-            await asyncio.sleep(1.5)
+            # Wait enough time for the task to run (just over interval)
+            await asyncio.sleep(0.15)
             await manager.stop()
 
             mock_persist.assert_called()
@@ -107,10 +107,10 @@ class TestPeriodicTaskExecution:
         manager = BackgroundTaskManager()
 
         with patch.object(manager, "_health_check", new_callable=AsyncMock) as mock_health:
-            manager.start(persist_interval=100, health_check_interval=1)
+            manager.start(persist_interval=100, health_check_interval=0.1)
 
-            # Wait enough time for the task to run
-            await asyncio.sleep(1.5)
+            # Wait enough time for the task to run (just over interval)
+            await asyncio.sleep(0.15)
             await manager.stop()
 
             mock_health.assert_called()
@@ -130,8 +130,9 @@ class TestPeriodicTaskExecution:
 
         with patch.object(manager, "_persist_snapshots", failing_task):
             with patch.object(manager, "_health_check", AsyncMock()):
-                manager.start(persist_interval=1, health_check_interval=100)
-                await asyncio.sleep(2.5)
+                manager.start(persist_interval=0.1, health_check_interval=100)
+                # Wait for multiple task executions (3 intervals: 0.3s total)
+                await asyncio.sleep(0.35)
                 await manager.stop()
 
         # Should have been called multiple times despite exceptions
