@@ -5,6 +5,8 @@ from squant.utils.crypto import (
     CryptoManager,
     DecryptionError,
     EncryptionError,
+    decrypt_string,
+    encrypt_string,
     get_crypto_manager,
 )
 
@@ -14,4 +16,6 @@ __all__ = [
     "EncryptionError",
     "DecryptionError",
     "get_crypto_manager",
+    "encrypt_string",
+    "decrypt_string",
 ]

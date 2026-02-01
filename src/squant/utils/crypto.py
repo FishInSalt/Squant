@@ -237,3 +237,47 @@ def get_crypto_manager() -> CryptoManager:
         )
 
     return CryptoManager(key_bytes)
+
+
+def encrypt_string(plaintext: str) -> str:
+    """Encrypt a string using the application's encryption key.
+
+    Args:
+        plaintext: The string to encrypt.
+
+    Returns:
+        Base64-encoded encrypted string (nonce + ciphertext).
+
+    Raises:
+        EncryptionError: If encryption fails.
+    """
+    crypto_manager = get_crypto_manager()
+    # Generate random nonce
+    nonce = os.urandom(CryptoManager.NONCE_SIZE)
+    # Encrypt
+    ciphertext, nonce_used = crypto_manager.encrypt(plaintext, nonce)
+    # Combine nonce and ciphertext, then base64 encode
+    combined = nonce_used + ciphertext
+    return base64.b64encode(combined).decode("ascii")
+
+
+def decrypt_string(encrypted: str) -> str:
+    """Decrypt a string encrypted with encrypt_string.
+
+    Args:
+        encrypted: Base64-encoded encrypted string (nonce + ciphertext).
+
+    Returns:
+        Decrypted plaintext string.
+
+    Raises:
+        DecryptionError: If decryption fails.
+    """
+    crypto_manager = get_crypto_manager()
+    # Decode from base64
+    combined = base64.b64decode(encrypted)
+    # Split nonce and ciphertext
+    nonce = combined[: CryptoManager.NONCE_SIZE]
+    ciphertext = combined[CryptoManager.NONCE_SIZE :]
+    # Decrypt
+    return crypto_manager.decrypt(ciphertext, nonce)
