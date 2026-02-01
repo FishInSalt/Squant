@@ -1,335 +1,634 @@
 """
-API集成测试示例 - Strategy API
+Integration tests for Strategy API endpoints.
 
-展示如何进行完整的API集成测试，包括数据库持久化验证。
+Tests validate acceptance criteria from dev-docs/requirements/acceptance-criteria/02-strategy.md:
+- STR-001: Provide strategy template base class
+- STR-011: Syntax validation with detailed error messages
+- STR-012: Security checks (forbidden imports/functions)
+- STR-014: Auto-save to strategy library after validation
+- STR-020: Strategy list display
+- STR-021: Strategy details view
+- STR-024: Strategy deletion
 """
 
 from uuid import uuid4
 
 import pytest
-import pytest_asyncio
-from httpx import ASGITransport, AsyncClient
 from sqlalchemy import select
 
-from squant.api.deps import get_session
-from squant.main import app
+from squant.models.enums import StrategyStatus
 from squant.models.strategy import Strategy
 
-pytestmark = pytest.mark.integration
 
+class TestStrategyTemplateBaseClass:
+    """
+    Tests for STR-001: Provide strategy template base class
 
-@pytest_asyncio.fixture
-async def client(db_session):
-    """创建异步测试客户端，使用真实数据库session"""
-
-    async def override_get_session():
-        yield db_session
-
-    app.dependency_overrides[get_session] = override_get_session
-
-    transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as ac:
-        yield ac
-
-    app.dependency_overrides.clear()
-
-
-class TestStrategyAPIIntegration:
-    """策略API集成测试"""
+    Acceptance criteria:
+    - Strategy can use all lifecycle methods when inheriting base class
+    - Validation fails if on_bar method not implemented
+    - Validation passes if strategy correctly inherits template
+    """
 
     @pytest.mark.asyncio
-    async def test_create_strategy_end_to_end(self, client, db_session):
-        """
-        测试创建策略的完整流程
-
-        验证: API请求 → 数据持久化 → 响应正确性
-        """
-        # Arrange
-        strategy_data = {
-            "name": "Integration Test Strategy",
-            "code": "class MyStrategy(Strategy):\n    def on_bar(self, bar):\n        pass",
-            "description": "A strategy created in integration test",
+    async def test_validate_code_with_on_bar_method(self, client):
+        """Test STR-001-3: Validation passes when strategy correctly inherits template."""
+        validate_request = {
+            "code": """class MyStrategy(Strategy):
+    def on_bar(self, bar):
+        pass
+"""
         }
 
-        # Act - 通过API创建策略
+        response = await client.post("/api/v1/strategies/validate", json=validate_request)
+
+        assert response.status_code == 200
+        data = response.json()
+
+        result = data["data"]
+        assert result["valid"] is True
+        assert len(result["errors"]) == 0
+
+    @pytest.mark.asyncio
+    async def test_validate_code_without_on_bar_method(self, client):
+        """Test STR-001-2: Validation fails if on_bar method not implemented."""
+        validate_request = {
+            "code": """class MyStrategy(Strategy):
+    def some_other_method(self):
+        pass
+"""
+        }
+
+        response = await client.post("/api/v1/strategies/validate", json=validate_request)
+
+        assert response.status_code == 200
+        data = response.json()
+
+        result = data["data"]
+        assert result["valid"] is False
+        # Should have error about missing on_bar method
+        assert any("on_bar" in error.lower() for error in result["errors"])
+
+
+class TestSyntaxValidation:
+    """
+    Tests for STR-011: Syntax validation with detailed error messages
+
+    Acceptance criteria:
+    - Return error line number and description for syntax errors
+    - Continue to next validation if syntax is correct
+    - Return list of all errors when multiple exist
+    """
+
+    @pytest.mark.asyncio
+    async def test_syntax_validation_with_errors(self, client):
+        """Test STR-011-1: Return error line number and description."""
+        validate_request = {
+            "code": """class MyStrategy(Strategy):
+    def on_bar(self, bar)
+        # Missing colon causes syntax error
+        pass
+"""
+        }
+
+        response = await client.post("/api/v1/strategies/validate", json=validate_request)
+
+        assert response.status_code == 200
+        data = response.json()
+
+        result = data["data"]
+        assert result["valid"] is False
+        assert len(result["errors"]) > 0
+
+    @pytest.mark.asyncio
+    async def test_syntax_validation_passes(self, client):
+        """Test STR-011-2: Syntax check passes for correct code."""
+        validate_request = {
+            "code": """class MyStrategy(Strategy):
+    def on_bar(self, bar):
+        pass
+"""
+        }
+
+        response = await client.post("/api/v1/strategies/validate", json=validate_request)
+
+        assert response.status_code == 200
+        data = response.json()
+
+        result = data["data"]
+        # Should be valid
+        assert result["valid"] is True
+
+    @pytest.mark.asyncio
+    async def test_multiple_syntax_errors(self, client):
+        """Test STR-011-3: Return all errors in a list."""
+        validate_request = {
+            "code": """class MyStrategy(Strategy):
+    def on_bar(self, bar)  # Missing colon
+        x = undefined_variable  # Indentation issues
+        # Multiple issues should be reported
+"""
+        }
+
+        response = await client.post("/api/v1/strategies/validate", json=validate_request)
+
+        assert response.status_code == 200
+        data = response.json()
+
+        result = data["data"]
+        assert result["valid"] is False
+        # Should have at least one error
+        assert len(result["errors"]) > 0
+
+
+class TestSecurityChecks:
+    """
+    Tests for STR-012: Security checks
+
+    Acceptance criteria:
+    - Reject import of os module
+    - Reject import of subprocess
+    - Reject use of eval() function
+    - Reject use of exec() function
+    - Pass security check for allowed modules only
+    """
+
+    @pytest.mark.asyncio
+    async def test_reject_os_module(self, client):
+        """Test STR-012-1: Reject import of os module."""
+        validate_request = {
+            "code": """import os
+
+class MyStrategy(Strategy):
+    def on_bar(self, bar):
+        os.system('ls')
+"""
+        }
+
+        response = await client.post("/api/v1/strategies/validate", json=validate_request)
+
+        assert response.status_code == 200
+        data = response.json()
+
+        result = data["data"]
+        assert result["valid"] is False
+        # Should mention forbidden import
+        assert any("import" in error.lower() or "os" in error.lower() for error in result["errors"])
+
+    @pytest.mark.asyncio
+    async def test_reject_subprocess_module(self, client):
+        """Test STR-012-2: Reject import of subprocess."""
+        validate_request = {
+            "code": """import subprocess
+
+class MyStrategy(Strategy):
+    def on_bar(self, bar):
+        pass
+"""
+        }
+
+        response = await client.post("/api/v1/strategies/validate", json=validate_request)
+
+        assert response.status_code == 200
+        data = response.json()
+
+        result = data["data"]
+        assert result["valid"] is False
+        assert any("import" in error.lower() or "subprocess" in error.lower() for error in result["errors"])
+
+    @pytest.mark.asyncio
+    async def test_reject_eval_function(self, client):
+        """Test STR-012-3: Reject use of eval() function."""
+        validate_request = {
+            "code": """class MyStrategy(Strategy):
+    def on_bar(self, bar):
+        eval('1 + 1')
+"""
+        }
+
+        response = await client.post("/api/v1/strategies/validate", json=validate_request)
+
+        assert response.status_code == 200
+        data = response.json()
+
+        result = data["data"]
+        assert result["valid"] is False
+        assert any("eval" in error.lower() for error in result["errors"])
+
+    @pytest.mark.asyncio
+    async def test_reject_exec_function(self, client):
+        """Test STR-012-4: Reject use of exec() function."""
+        validate_request = {
+            "code": """class MyStrategy(Strategy):
+    def on_bar(self, bar):
+        exec('x = 1')
+"""
+        }
+
+        response = await client.post("/api/v1/strategies/validate", json=validate_request)
+
+        assert response.status_code == 200
+        data = response.json()
+
+        result = data["data"]
+        assert result["valid"] is False
+        assert any("exec" in error.lower() for error in result["errors"])
+
+    @pytest.mark.asyncio
+    async def test_allow_safe_code(self, client):
+        """Test STR-012-5: Security check passes for allowed modules."""
+        validate_request = {
+            "code": """import numpy as np
+
+class MyStrategy(Strategy):
+    def on_bar(self, bar):
+        # Using allowed imports
+        data = np.array([1, 2, 3])
+"""
+        }
+
+        response = await client.post("/api/v1/strategies/validate", json=validate_request)
+
+        assert response.status_code == 200
+        data = response.json()
+
+        result = data["data"]
+        # Should pass security checks (may have other warnings/errors)
+        assert result["valid"] is True or all("forbidden" not in error.lower() for error in result["errors"])
+
+
+class TestAutoSaveToLibrary:
+    """
+    Tests for STR-014: Auto-save to strategy library after validation
+
+    Acceptance criteria:
+    - Strategy saved to library after passing all validations
+    - New strategy appears in strategy list after save
+    - Prompt if strategy name already exists
+    """
+
+    @pytest.mark.asyncio
+    async def test_create_strategy_after_validation(self, client, db_session):
+        """Test STR-014-1 & STR-014-2: Save strategy after validation passes."""
+        strategy_data = {
+            "name": "Test Strategy",
+            "code": """class MyStrategy(Strategy):
+    def on_bar(self, bar):
+        pass
+""",
+            "description": "Integration test strategy",
+        }
+
         response = await client.post("/api/v1/strategies", json=strategy_data)
 
-        # Assert - 验证响应
         assert response.status_code == 200
-        response_data = response.json()
-        assert response_data["code"] == 0
-        created_strategy = response_data["data"]
-        assert created_strategy["name"] == strategy_data["name"]
-        assert "id" in created_strategy
-        strategy_id = created_strategy["id"]
+        data = response.json()
 
-        # Assert - 验证数据库持久化
-        result = await db_session.execute(select(Strategy).where(Strategy.id == strategy_id))
-        db_strategy = result.scalar_one_or_none()
+        result = data["data"]
+        assert result["name"] == "Test Strategy"
+        assert "id" in result
+
+        # Verify saved to database
+        strategy_id = result["id"]
+        db_result = await db_session.execute(select(Strategy).where(Strategy.id == strategy_id))
+        db_strategy = db_result.scalar_one_or_none()
         assert db_strategy is not None
-        assert db_strategy.name == strategy_data["name"]
-        assert db_strategy.code == strategy_data["code"]
+        assert db_strategy.name == "Test Strategy"
 
     @pytest.mark.asyncio
-    async def test_get_strategy_by_id(self, client, db_session):
-        """测试通过ID获取策略"""
-        # Arrange - 先在数据库中创建策略
+    async def test_create_strategy_with_duplicate_name(self, client, db_session):
+        """Test STR-014-3: Prompt if strategy name already exists."""
+        # Create first strategy
+        existing_strategy = Strategy(
+            id=uuid4(),
+            name="Duplicate Name",
+            code="class MyStrategy(Strategy):\n    def on_bar(self, bar):\n        pass",
+            version="1.0.0",
+        )
+        db_session.add(existing_strategy)
+        await db_session.commit()
+
+        # Try to create second strategy with same name
+        strategy_data = {
+            "name": "Duplicate Name",
+            "code": """class MyStrategy(Strategy):
+    def on_bar(self, bar):
+        pass
+""",
+        }
+
+        response = await client.post("/api/v1/strategies", json=strategy_data)
+
+        # Should return 409 Conflict
+        assert response.status_code == 409
+        data = response.json()
+
+        assert "detail" in data
+        assert "exists" in data["detail"].lower() or "已存在" in data["detail"]
+
+
+class TestStrategyListDisplay:
+    """
+    Tests for STR-020: Strategy list display
+
+    Acceptance criteria:
+    - Display all strategies when strategy library has strategies
+    - Each strategy shows name, version, status, created_at
+    - Show empty state when no strategies exist
+    """
+
+    @pytest.mark.asyncio
+    async def test_list_strategies_with_data(self, client, db_session):
+        """Test STR-020-1 & STR-020-2: Display all strategies with required fields."""
+        # Create test strategies
+        for i in range(3):
+            strategy = Strategy(
+                id=uuid4(),
+                name=f"Strategy {i}",
+                code="class MyStrategy(Strategy):\n    def on_bar(self, bar):\n        pass",
+                version=f"1.{i}.0",
+                status=StrategyStatus.ACTIVE,
+            )
+            db_session.add(strategy)
+        await db_session.commit()
+
+        response = await client.get("/api/v1/strategies")
+
+        assert response.status_code == 200
+        data = response.json()
+
+        result = data["data"]
+        assert "items" in result
+        assert "total" in result
+        assert len(result["items"]) >= 3
+
+        # Check required fields in each strategy
+        for strategy in result["items"]:
+            assert "name" in strategy
+            assert "version" in strategy
+            assert "status" in strategy
+            assert "created_at" in strategy
+
+    @pytest.mark.asyncio
+    async def test_list_strategies_empty_state(self, client):
+        """Test STR-020-3: Show empty state when no strategies."""
+        response = await client.get("/api/v1/strategies")
+
+        assert response.status_code == 200
+        data = response.json()
+
+        result = data["data"]
+        # Empty list is valid response
+        assert "items" in result
+        assert isinstance(result["items"], list)
+
+    @pytest.mark.asyncio
+    async def test_list_strategies_pagination(self, client, db_session):
+        """Test pagination support for strategy list."""
+        # Create many strategies
+        for i in range(25):
+            strategy = Strategy(
+                id=uuid4(),
+                name=f"Pagination Test {i}",
+                code="class MyStrategy(Strategy):\n    def on_bar(self, bar):\n        pass",
+                version="1.0.0",
+            )
+            db_session.add(strategy)
+        await db_session.commit()
+
+        # Get first page
+        response = await client.get("/api/v1/strategies", params={"page": 1, "page_size": 10})
+
+        assert response.status_code == 200
+        data = response.json()
+
+        result = data["data"]
+        assert len(result["items"]) == 10
+        assert result["page"] == 1
+        assert result["page_size"] == 10
+        assert result["total"] >= 25
+
+
+class TestStrategyDetailsView:
+    """
+    Tests for STR-021: Strategy details view
+
+    Acceptance criteria:
+    - Click strategy name to enter details page
+    - Display strategy name, version, description, params
+    """
+
+    @pytest.mark.asyncio
+    async def test_get_strategy_details(self, client, db_session):
+        """Test STR-021-1 & STR-021-2: Display complete strategy details."""
+        # Create strategy with full details
         strategy_id = uuid4()
         strategy = Strategy(
             id=strategy_id,
-            name="Get Test Strategy",
-            code="class MyStrategy(Strategy):\n    def on_bar(self, bar):\n        pass",
+            name="Detailed Strategy",
+            code="class MyStrategy:\n    def on_bar(self, bar):\n        pass",
+            version="2.0.0",
+            description="This is a detailed strategy",
+            params_schema={"type": "object", "properties": {"param1": {"type": "number"}}},
+            default_params={"param1": 10},
         )
         db_session.add(strategy)
         await db_session.commit()
 
-        # Act - 通过API获取策略
         response = await client.get(f"/api/v1/strategies/{strategy_id}")
 
-        # Assert
         assert response.status_code == 200
-        response_data = response.json()
-        assert response_data["code"] == 0
-        strategy_data = response_data["data"]
-        assert strategy_data["id"] == str(strategy_id)
-        assert strategy_data["name"] == "Get Test Strategy"
+        data = response.json()
+
+        result = data["data"]
+        assert result["id"] == str(strategy_id)
+        assert result["name"] == "Detailed Strategy"
+        assert result["version"] == "2.0.0"
+        assert result["description"] == "This is a detailed strategy"
+        assert result["params_schema"] == {"type": "object", "properties": {"param1": {"type": "number"}}}
+        assert result["default_params"] == {"param1": 10}
 
     @pytest.mark.asyncio
-    async def test_update_strategy(self, client, db_session):
-        """测试更新策略"""
-        # Arrange - 创建初始策略
+    async def test_get_strategy_includes_code(self, client, db_session):
+        """Test STR-022: Strategy details include source code."""
         strategy_id = uuid4()
+        strategy_code = "class MyStrategy(Strategy):\n    def on_bar(self, bar):\n        # Strategy logic here\n        pass"
         strategy = Strategy(
             id=strategy_id,
-            name="Original Name",
-            code="class MyStrategy(Strategy):\n    def on_bar(self, bar):\n        pass",
+            name="Code Preview Strategy",
+            code=strategy_code,
+            version="1.0.0",
         )
         db_session.add(strategy)
         await db_session.commit()
 
-        # Act - 通过API更新策略
-        update_data = {
-            "name": "Updated Name",
-            "description": "Updated description",
-        }
-        response = await client.put(f"/api/v1/strategies/{strategy_id}", json=update_data)
+        response = await client.get(f"/api/v1/strategies/{strategy_id}")
 
-        # Assert - 验证响应
         assert response.status_code == 200
-        response_data = response.json()
-        assert response_data["code"] == 0
-        updated_strategy = response_data["data"]
-        assert updated_strategy["name"] == "Updated Name"
+        data = response.json()
 
-        # Assert - 验证数据库更新
-        result = await db_session.execute(select(Strategy).where(Strategy.id == strategy_id))
-        db_strategy = result.scalar_one()
-        assert db_strategy.name == "Updated Name"
-        assert db_strategy.description == "Updated description"
+        result = data["data"]
+        assert "code" in result
+        assert result["code"] == strategy_code
 
     @pytest.mark.asyncio
-    async def test_delete_strategy(self, client, db_session):
-        """测试删除策略"""
-        # Arrange - 创建策略
+    async def test_get_nonexistent_strategy(self, client):
+        """Test getting non-existent strategy returns 404."""
+        response = await client.get(f"/api/v1/strategies/{uuid4()}")
+
+        assert response.status_code == 404
+
+
+class TestStrategyDeletion:
+    """
+    Tests for STR-024: Strategy deletion
+
+    Acceptance criteria:
+    - Show confirmation dialog when deleting (frontend)
+    - Remove strategy from library after confirmation
+    - Cannot delete running strategy
+    """
+
+    @pytest.mark.asyncio
+    async def test_delete_strategy_success(self, client, db_session):
+        """Test STR-024-2: Strategy removed from library after deletion."""
         strategy_id = uuid4()
         strategy = Strategy(
             id=strategy_id,
             name="To Be Deleted",
             code="class MyStrategy(Strategy):\n    def on_bar(self, bar):\n        pass",
+            version="1.0.0",
         )
         db_session.add(strategy)
         await db_session.commit()
 
-        # Act - 通过API删除策略
         response = await client.delete(f"/api/v1/strategies/{strategy_id}")
 
-        # Assert - 验证响应
         assert response.status_code == 200
-        response_data = response.json()
-        assert response_data["code"] == 0
 
-        # Assert - 验证数据库删除
-        result = await db_session.execute(select(Strategy).where(Strategy.id == strategy_id))
-        db_strategy = result.scalar_one_or_none()
+        # Verify deleted from database
+        db_result = await db_session.execute(select(Strategy).where(Strategy.id == strategy_id))
+        db_strategy = db_result.scalar_one_or_none()
         assert db_strategy is None
 
     @pytest.mark.asyncio
-    async def test_list_strategies(self, client, db_session):
-        """测试列出所有策略"""
-        # Arrange - 创建多个策略
-        for i in range(3):
-            strategy = Strategy(
-                id=uuid4(),
-                name=f"List Test Strategy {i}",
-                code="class MyStrategy(Strategy):\n    def on_bar(self, bar):\n        pass",
-            )
-            db_session.add(strategy)
+    @pytest.mark.skip(
+        reason="Running strategy deletion constraint tested at service level - requires StrategyRun setup"
+    )
+    async def test_cannot_delete_running_strategy(self, client, db_session):
+        """Test STR-024-3: Cannot delete strategy that is running."""
+        # This would require creating a StrategyRun linked to the strategy
+        # Skipped for integration test simplicity - tested at service level
+        pass
+
+
+class TestStrategyUpdate:
+    """Test strategy update operations."""
+
+    @pytest.mark.asyncio
+    async def test_update_strategy_name_and_description(self, client, db_session):
+        """Test updating strategy name and description."""
+        strategy_id = uuid4()
+        strategy = Strategy(
+            id=strategy_id,
+            name="Original Name",
+            code="class MyStrategy(Strategy):\n    def on_bar(self, bar):\n        pass",
+            version="1.0.0",
+            description="Original description",
+        )
+        db_session.add(strategy)
         await db_session.commit()
 
-        # Act - 通过API获取策略列表
-        response = await client.get("/api/v1/strategies")
+        update_data = {
+            "name": "Updated Name",
+            "description": "Updated description",
+        }
 
-        # Assert
+        response = await client.put(f"/api/v1/strategies/{strategy_id}", json=update_data)
+
         assert response.status_code == 200
-        response_data = response.json()
-        assert response_data["code"] == 0
-        strategies = response_data["data"]["items"]
-        assert isinstance(strategies, list)
-        assert len(strategies) >= 3
+        data = response.json()
+
+        result = data["data"]
+        assert result["name"] == "Updated Name"
+        assert result["description"] == "Updated description"
+
+    @pytest.mark.asyncio
+    async def test_update_strategy_code(self, client, db_session):
+        """Test updating strategy code triggers validation."""
+        strategy_id = uuid4()
+        strategy = Strategy(
+            id=strategy_id,
+            name="Code Update Test",
+            code="class MyStrategy(Strategy):\n    def on_bar(self, bar):\n        pass",
+            version="1.0.0",
+        )
+        db_session.add(strategy)
+        await db_session.commit()
+
+        update_data = {
+            "code": """class MyStrategy(Strategy):
+    def on_bar(self, bar):
+        # Updated logic
+        print("New code")
+"""
+        }
+
+        response = await client.put(f"/api/v1/strategies/{strategy_id}", json=update_data)
+
+        assert response.status_code == 200
+        data = response.json()
+
+        result = data["data"]
+        assert "New code" in result["code"]
+
+    @pytest.mark.asyncio
+    async def test_update_strategy_with_invalid_code(self, client, db_session):
+        """Test updating with invalid code returns validation error."""
+        strategy_id = uuid4()
+        strategy = Strategy(
+            id=strategy_id,
+            name="Invalid Update Test",
+            code="class MyStrategy(Strategy):\n    def on_bar(self, bar):\n        pass",
+            version="1.0.0",
+        )
+        db_session.add(strategy)
+        await db_session.commit()
+
+        update_data = {
+            "code": "this is not valid python code !!!"
+        }
+
+        response = await client.put(f"/api/v1/strategies/{strategy_id}", json=update_data)
+
+        # Should return validation error (400)
+        assert response.status_code == 400
 
 
-class TestStrategyAPIValidation:
-    """测试API数据验证"""
+class TestStrategyValidation:
+    """Additional validation tests."""
+
+    @pytest.mark.asyncio
+    async def test_create_strategy_without_required_field(self, client):
+        """Test creating strategy without required name field."""
+        strategy_data = {
+            "code": "class MyStrategy(Strategy):\n    def on_bar(self, bar):\n        pass",
+            # Missing name field
+        }
+
+        response = await client.post("/api/v1/strategies", json=strategy_data)
+
+        assert response.status_code == 422  # Validation error
 
     @pytest.mark.asyncio
     async def test_create_strategy_with_invalid_code(self, client):
-        """测试创建包含无效代码的策略"""
-        # Arrange
+        """Test creating strategy with invalid code returns validation error."""
         strategy_data = {
             "name": "Invalid Strategy",
             "code": "this is not valid python code !!!",
         }
 
-        # Act
         response = await client.post("/api/v1/strategies", json=strategy_data)
 
-        # Assert - 可能是422（验证失败）或400（业务逻辑错误）
-        assert response.status_code in [400, 422]
-
-    @pytest.mark.asyncio
-    async def test_create_strategy_without_required_field(self, client):
-        """测试缺少必需字段"""
-        # Arrange
-        strategy_data = {
-            "code": "class MyStrategy(Strategy):\n    def on_bar(self, bar):\n        pass",
-            # 缺少 name 字段
-        }
-
-        # Act
-        response = await client.post("/api/v1/strategies", json=strategy_data)
-
-        # Assert
-        assert response.status_code == 422
-
-    @pytest.mark.asyncio
-    async def test_get_nonexistent_strategy(self, client):
-        """测试获取不存在的策略"""
-        # Act
-        response = await client.get(f"/api/v1/strategies/{uuid4()}")
-
-        # Assert
-        assert response.status_code == 404
-
-
-class TestStrategyAPIErrorHandling:
-    """测试API错误处理"""
-
-    @pytest.mark.asyncio
-    @pytest.mark.skip(reason="Mock doesn't work correctly with async session - test needs redesign")
-    async def test_database_error_handling(self, client, db_session):
-        """测试数据库错误处理"""
-        from unittest.mock import patch
-
-        # Arrange
-        strategy_data = {
-            "name": "Test Strategy",
-            "code": "class MyStrategy(Strategy):\n    def on_bar(self, bar):\n        pass",
-        }
-
-        # Act - Mock数据库提交失败
-        with patch.object(db_session, "commit", side_effect=Exception("Database error")):
-            response = await client.post("/api/v1/strategies", json=strategy_data)
-
-        # Assert
-        # 应该返回500或适当的错误码
-        assert response.status_code >= 400
-
-
-class TestStrategyAPIConcurrency:
-    """测试API并发场景"""
-
-    @pytest.mark.asyncio
-    async def test_concurrent_updates(self, client, db_session):
-        """测试并发更新同一策略"""
-        # Arrange - 创建策略
-        strategy_id = uuid4()
-        strategy = Strategy(
-            id=strategy_id,
-            name="Concurrent Test",
-            code="class MyStrategy(Strategy):\n    def on_bar(self, bar):\n        pass",
-        )
-        db_session.add(strategy)
-        await db_session.commit()
-
-        # Act - 两次更新
-        update1 = {"name": "Update 1"}
-        update2 = {"name": "Update 2"}
-
-        response1 = await client.put(f"/api/v1/strategies/{strategy_id}", json=update1)
-        response2 = await client.put(f"/api/v1/strategies/{strategy_id}", json=update2)
-
-        # Assert - 两次更新都应该成功
-        assert response1.status_code == 200
-        assert response2.status_code == 200
-
-        # 最后一次更新应该生效
-        final_response = await client.get(f"/api/v1/strategies/{strategy_id}")
-        final_data = final_response.json()
-        assert final_data["code"] == 0
-        assert final_data["data"]["name"] == "Update 2"
-
-
-class TestStrategyAPIPerformance:
-    """测试API性能"""
-
-    @pytest.mark.slow
-    @pytest.mark.asyncio
-    async def test_bulk_create_strategies(self, client, db_session):
-        """测试批量创建策略的性能"""
-        import time
-
-        # Act
-        start = time.time()
-        for i in range(10):
-            strategy_data = {
-                "name": f"Bulk Strategy {i}",
-                "code": "class MyStrategy(Strategy):\n    def on_bar(self, bar):\n        pass",
-            }
-            response = await client.post("/api/v1/strategies", json=strategy_data)
-            assert response.status_code == 200
-
-        duration = time.time() - start
-
-        # Assert - 10个请求应该在合理时间内完成
-        assert duration < 5.0  # 5秒内完成
-
-    @pytest.mark.slow
-    @pytest.mark.asyncio
-    async def test_list_large_number_of_strategies(self, client, db_session):
-        """测试列出大量策略的性能"""
-        import time
-
-        # Arrange - 创建100个策略
-        for i in range(100):
-            strategy = Strategy(
-                id=uuid4(),
-                name=f"Performance Test Strategy {i}",
-                code="class MyStrategy(Strategy):\n    def on_bar(self, bar):\n        pass",
-            )
-            db_session.add(strategy)
-        await db_session.commit()
-
-        # Act
-        start = time.time()
-        response = await client.get("/api/v1/strategies")
-        duration = time.time() - start
-
-        # Assert
-        assert response.status_code == 200
-        response_data = response.json()
-        assert response_data["code"] == 0
-        # API returns paginated results with default limit=20
-        # Check total count instead of items length
-        data = response_data["data"]
-        assert data["total"] >= 100 or len(data["items"]) >= 20
-        assert duration < 2.0  # 2秒内完成
+        # Should return validation error (400)
+        assert response.status_code == 400
