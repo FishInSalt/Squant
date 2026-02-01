@@ -274,6 +274,75 @@ The error handling logic works correctly at the unit level through `handle_excha
 - [x] Create without required field returns error
 - [x] Create with invalid code returns error
 
+### Backtest API Tests (`test_backtest_api.py`)
+
+**Status**: ✅ Complete
+**Results**: 26 passed, 0 skipped
+
+#### Key Changes Made
+
+1. **Aligned with acceptance criteria**
+   - Organized tests by TRD-001 through TRD-009 acceptance criteria
+   - Comprehensive coverage of backtest configuration and execution
+   - All validation scenarios tested
+
+2. **Created test fixtures**
+   - `sample_strategy`: Strategy for backtesting
+   - `sample_backtest_config`: Complete backtest configuration with all parameters
+
+3. **Test coverage**
+   - Date range validation (start/end date ordering)
+   - Initial capital validation (minimum requirements)
+   - Commission rate configuration and defaults
+   - Strategy parameter configuration
+   - Backtest task execution and completion
+   - Report generation with equity curves
+   - List/filter/delete operations
+   - Async backtest creation
+
+#### Tests Passing
+
+**TRD-001: Select strategy and trading pair** (2 tests)
+- [x] Create backtest with strategy and symbol
+- [x] Validation error for non-existent strategy
+
+**TRD-002: Set backtest time range** (3 tests)
+- [x] Valid date range accepted
+- [x] Error if start date after end date
+- [x] Error if date range too short
+
+**TRD-003: Set initial capital** (3 tests)
+- [x] Set initial capital successfully
+- [x] Minimum capital validation (>= $100)
+- [x] Default capital when not specified
+
+**TRD-004: Set commission rate** (2 tests)
+- [x] Set custom commission rate
+- [x] Default commission rate when not specified
+
+**TRD-006: Configure strategy parameters** (1 test)
+- [x] Pass custom parameters to strategy
+
+**TRD-007: Start backtest task** (5 tests)
+- [x] Start backtest with complete config
+- [x] Backtest runs asynchronously
+- [x] Multiple backtests run independently
+- [x] Check data availability before backtest
+- [x] Error if insufficient historical data
+
+**TRD-009: Generate backtest report** (3 tests)
+- [x] Report includes performance metrics
+- [x] Report includes trade list
+- [x] Equity curve data retrieval
+
+**Additional tests** (6 tests)
+- [x] List all backtests
+- [x] Filter backtests by strategy
+- [x] Filter backtests by status
+- [x] Get backtest details
+- [x] Delete backtest
+- [x] Async backtest creation
+
 ## Summary
 
 All API integration test files have been successfully fixed and aligned with acceptance criteria:
@@ -282,8 +351,9 @@ All API integration test files have been successfully fixed and aligned with acc
 - **Market API**: 14 passed, 1 skipped ✅
 - **Orders API**: 8 passed, 5 skipped ✅
 - **Strategy API**: 24 passed, 1 skipped ✅
+- **Backtest API**: 26 passed, 0 skipped ✅
 
-**Total**: 63 passed, 8 skipped
+**Total**: 89 passed, 8 skipped
 
 ## Pattern Established
 
