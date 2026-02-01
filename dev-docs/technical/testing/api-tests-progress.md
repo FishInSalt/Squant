@@ -555,6 +555,105 @@ async def test_list_active_sessions(...)
 - [x] Create frequency limit rule
 - [x] Create volatility break rule
 
+### Risk Triggers API Tests (`test_risk_triggers_api.py`)
+
+**Status**: ✅ Complete
+**Results**: 11 passed, 0 skipped
+
+#### Key Changes Made
+
+1. **Read-only audit log endpoint**
+   - Single GET endpoint for listing risk trigger records
+   - Pagination and filtering support
+
+2. **Created comprehensive tests**
+   - All pagination scenarios tested
+   - All filter combinations tested (time range, rule_id, run_id)
+   - Different trigger types validated
+
+3. **Test coverage**
+   - Pagination with page size limits
+   - Time range filtering with URL-encoded datetime
+   - Filter by rule_id for specific risk rule
+   - Filter by run_id for specific strategy run
+   - Multiple filters combined
+   - Triggers without rule_id (manual triggers)
+   - Triggers without run_id (global triggers)
+
+#### Tests Passing
+
+**RSK-008: Risk trigger audit records** (11 tests)
+- [x] List triggers with pagination
+- [x] Second page pagination
+- [x] Empty state
+- [x] Filter by time range (start_time, end_time)
+- [x] Filter by rule ID
+- [x] Filter by run ID
+- [x] Multiple filters combined
+- [x] Different trigger types displayed
+- [x] Triggers without associated rule
+- [x] Triggers without associated run
+- [x] Pagination validation
+
+### Circuit Breaker API Tests (`test_circuit_breaker_api.py`)
+
+**Status**: ✅ Complete
+**Results**: 19 passed, 0 skipped
+
+#### Key Changes Made
+
+1. **Emergency trading halt functionality**
+   - Trigger circuit breaker to stop all trading (RSK-010)
+   - Close all positions across all sessions (RSK-011)
+   - Status query and reset operations
+
+2. **Fixed exception handling**
+   - Custom exceptions don't take message arguments
+   - CircuitBreakerCooldownError takes remaining_minutes float
+   - Proper patching of get_circuit_breaker_status function
+
+3. **Test coverage**
+   - Trigger with default/custom cooldown
+   - Already active error handling
+   - Operation in progress error
+   - Close all positions with/without request body
+   - Partial success scenarios
+   - Status query for active/inactive states
+   - Reset with force flag
+   - Cooldown enforcement
+   - Full workflow integration
+
+#### Tests Passing
+
+**RSK-010: Trigger circuit breaker** (6 tests)
+- [x] Trigger successfully with custom cooldown
+- [x] Trigger with default cooldown
+- [x] Cannot trigger if already active (409)
+- [x] Cannot trigger if operation in progress (409)
+- [x] Show errors encountered during trigger
+- [x] Request validation (reason, cooldown_minutes)
+
+**RSK-011: Close all positions** (4 tests)
+- [x] Close all positions successfully
+- [x] Close without request body (default reason)
+- [x] Show errors for failed closes
+- [x] Partial success with some failures
+
+**Status query** (3 tests)
+- [x] Get status when active
+- [x] Get status when inactive
+- [x] Show auto-trigger information
+
+**Reset operations** (5 tests)
+- [x] Reset successfully after cooldown
+- [x] Reset with force flag
+- [x] Fail during cooldown without force (409)
+- [x] Reset when not active
+- [x] Force bypass cooldown
+
+**Integration workflow** (1 test)
+- [x] Full trigger → status → reset → status workflow
+
 ## Summary
 
 All API integration test files have been successfully fixed and aligned with acceptance criteria:
@@ -567,8 +666,10 @@ All API integration test files have been successfully fixed and aligned with acc
 - **Paper Trading API**: 22 passed, 1 skipped ✅
 - **Live Trading API**: 20 passed, 2 skipped ✅
 - **Risk Management API**: 20 passed, 0 skipped ✅
+- **Risk Triggers API**: 11 passed, 0 skipped ✅
+- **Circuit Breaker API**: 19 passed, 0 skipped ✅
 
-**Total**: 151 passed, 11 skipped
+**Total**: 181 passed, 11 skipped
 
 ## Pattern Established
 
