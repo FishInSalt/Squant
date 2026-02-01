@@ -132,6 +132,22 @@ class TestRunBacktestRequest:
                 initial_capital=Decimal("10000"),
             )
 
+    def test_date_range_validation(self):
+        """Test end_date must be after start_date."""
+        start = datetime(2024, 6, 1, tzinfo=UTC)
+        end = datetime(2024, 1, 1, tzinfo=UTC)  # Before start
+
+        with pytest.raises(ValidationError, match="end_date must be after start_date"):
+            RunBacktestRequest(
+                strategy_id=uuid4(),
+                symbol="BTC/USDT",
+                exchange="okx",
+                timeframe="1h",
+                start_date=start,
+                end_date=end,
+                initial_capital=Decimal("10000"),
+            )
+
 
 class TestCreateBacktestRequest:
     """Tests for CreateBacktestRequest schema."""
@@ -170,6 +186,22 @@ class TestCreateBacktestRequest:
                 initial_capital=Decimal("0"),  # Invalid
             )
 
+    def test_date_range_validation(self):
+        """Test end_date must be after start_date."""
+        start = datetime(2024, 6, 1, tzinfo=UTC)
+        end = datetime(2024, 1, 1, tzinfo=UTC)  # Before start
+
+        with pytest.raises(ValidationError, match="end_date must be after start_date"):
+            CreateBacktestRequest(
+                strategy_id=uuid4(),
+                symbol="BTC/USDT",
+                exchange="okx",
+                timeframe="1h",
+                start_date=start,
+                end_date=end,
+                initial_capital=Decimal("10000"),
+            )
+
 
 class TestCheckDataRequest:
     """Tests for CheckDataRequest schema."""
@@ -194,6 +226,20 @@ class TestCheckDataRequest:
         """Test all fields are required."""
         with pytest.raises(ValidationError):
             CheckDataRequest(exchange="okx", symbol="BTC/USDT")
+
+    def test_date_range_validation(self):
+        """Test end_date must be after start_date."""
+        start = datetime(2024, 6, 1, tzinfo=UTC)
+        end = datetime(2024, 1, 1, tzinfo=UTC)  # Before start
+
+        with pytest.raises(ValidationError, match="end_date must be after start_date"):
+            CheckDataRequest(
+                exchange="okx",
+                symbol="BTC/USDT",
+                timeframe="1h",
+                start_date=start,
+                end_date=end,
+            )
 
 
 class TestBacktestRunResponse:

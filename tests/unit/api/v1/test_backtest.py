@@ -203,6 +203,22 @@ class TestExecuteBacktest:
 
             assert response.status_code == 400
 
+    def test_execute_backtest_insufficient_data(
+        self, client: TestClient, mock_backtest_run
+    ) -> None:
+        """Test backtest execution with insufficient data."""
+        with patch("squant.api.v1.backtest.BacktestService") as mock_service_class:
+            mock_service = MagicMock()
+            mock_service.run = AsyncMock(
+                side_effect=InsufficientDataError("Not enough data for backtest")
+            )
+            mock_service_class.return_value = mock_service
+
+            response = client.post(f"/api/v1/backtest/{mock_backtest_run.id}/run")
+
+            assert response.status_code == 400
+            assert "Not enough data" in response.json()["detail"]
+
 
 class TestListBacktests:
     """Tests for GET /api/v1/backtest endpoint."""

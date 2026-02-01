@@ -8,6 +8,7 @@ import pytest
 
 from squant.api.deps import (
     _exchange_cache,
+    _get_current_exchange_id,
     _get_exchange_credentials,
     _get_or_create_exchange_adapter,
     clear_exchange_cache,
@@ -98,6 +99,20 @@ class TestGetOrCreateExchangeAdapter:
         assert result_binance == mock_adapter_binance
         assert "okx" in _exchange_cache
         assert "binance" in _exchange_cache
+
+
+class TestGetCurrentExchangeId:
+    """Tests for _get_current_exchange_id function."""
+
+    @patch("squant.api.v1.market.get_current_exchange")
+    def test_returns_current_exchange(self, mock_get_current_exchange):
+        """Test returns the current exchange ID."""
+        mock_get_current_exchange.return_value = "binance"
+
+        result = _get_current_exchange_id()
+
+        assert result == "binance"
+        mock_get_current_exchange.assert_called_once()
 
 
 class TestClearExchangeCache:

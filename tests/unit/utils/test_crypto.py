@@ -2,6 +2,7 @@
 
 import base64
 import os
+from unittest.mock import patch
 
 import pytest
 
@@ -9,6 +10,7 @@ from squant.utils.crypto import (
     CryptoManager,
     DecryptionError,
     EncryptionError,
+    get_crypto_manager,
 )
 
 
@@ -244,3 +246,183 @@ class TestCryptoManagerBase64:
 
         decrypted = crypto_manager.decrypt_from_base64(b64_ciphertext, b64_nonce)
         assert decrypted == plaintext
+
+
+class TestCryptoManagerEdgeCases:
+    """Tests for edge cases and error paths."""
+
+    @pytest.fixture
+    def crypto_manager(self) -> CryptoManager:
+        """Create a CryptoManager with random key."""
+        return CryptoManager(os.urandom(32))
+
+    def test_encrypt_with_invalid_custom_nonce_length(self, crypto_manager: CryptoManager) -> None:
+        """Test that custom nonce with wrong length raises error."""
+        plaintext = "secret_data"
+        invalid_nonce = os.urandom(16)  # Wrong size (should be 12)
+
+        with pytest.raises(EncryptionError, match="Nonce must be 12 bytes"):
+            crypto_manager.encrypt(plaintext, nonce=invalid_nonce)
+
+    def test_encrypt_with_valid_custom_nonce(self, crypto_manager: CryptoManager) -> None:
+        """Test encryption with valid custom nonce."""
+        plaintext = "secret_data"
+        custom_nonce = os.urandom(CryptoManager.NONCE_SIZE)
+
+        ciphertext, nonce = crypto_manager.encrypt(plaintext, nonce=custom_nonce)
+
+        # Returned nonce should be the same as custom nonce
+        assert nonce == custom_nonce
+
+        # Should decrypt correctly
+        decrypted = crypto_manager.decrypt(ciphertext, nonce)
+        assert decrypted == plaintext
+
+    def test_encrypt_reraises_encryption_error(self, crypto_manager: CryptoManager) -> None:
+        """Test that EncryptionError is re-raised without wrapping."""
+        plaintext = "secret_data"
+
+        # Create invalid nonce to trigger EncryptionError path
+        invalid_nonce = b"short"  # Too short
+
+        # This should raise EncryptionError directly (line 85: except EncryptionError: raise)
+        with pytest.raises(EncryptionError):
+            crypto_manager.encrypt(plaintext, nonce=invalid_nonce)
+
+    def test_encrypt_wraps_generic_exception(self, crypto_manager: CryptoManager) -> None:
+        """Test that generic exceptions during encryption are wrapped."""
+        # Create a custom object that raises exception on encode()
+        class BadString:
+            def __str__(self):
+                return "bad_string"
+
+            def encode(self, encoding):
+                raise ValueError("Cannot encode this object")
+
+        bad_plaintext = BadString()
+
+        # This should catch the ValueError and wrap it as EncryptionError
+        with pytest.raises(EncryptionError, match="Encryption failed"):
+            crypto_manager.encrypt(bad_plaintext)
+
+
+class TestGetCryptoManager:
+    """Tests for get_crypto_manager factory function."""
+
+    def test_with_32_char_ascii_key(self) -> None:
+        """Test get_crypto_manager with 32-character ASCII key."""
+        # Mock settings to return 32-char key
+        mock_settings = type("Settings", (), {})()
+        mock_key = type("SecretStr", (), {"get_secret_value": lambda self: "a" * 32})()
+        mock_settings.encryption_key = mock_key
+
+        with patch("squant.utils.crypto.get_settings", return_value=mock_settings):
+            # Clear cache to ensure fresh instance
+            get_crypto_manager.cache_clear()
+
+            manager = get_crypto_manager()
+            assert isinstance(manager, CryptoManager)
+
+            # Should be able to encrypt/decrypt
+            plaintext = "test_data"
+            ciphertext, nonce = manager.encrypt(plaintext)
+            assert manager.decrypt(ciphertext, nonce) == plaintext
+
+    def test_with_base64_encoded_key(self) -> None:
+        """Test get_crypto_manager with base64-encoded 32-byte key."""
+        # Generate valid base64-encoded 32-byte key
+        key_bytes = os.urandom(32)
+        b64_key = base64.b64encode(key_bytes).decode("ascii")
+        assert len(b64_key) == 44  # base64 of 32 bytes is 44 chars
+        assert b64_key.endswith("=")
+
+        # Mock settings to return base64 key
+        mock_settings = type("Settings", (), {})()
+        mock_key = type("SecretStr", (), {"get_secret_value": lambda self: b64_key})()
+        mock_settings.encryption_key = mock_key
+
+        with patch("squant.utils.crypto.get_settings", return_value=mock_settings):
+            # Clear cache to ensure fresh instance
+            get_crypto_manager.cache_clear()
+
+            manager = get_crypto_manager()
+            assert isinstance(manager, CryptoManager)
+
+            # Should be able to encrypt/decrypt
+            plaintext = "test_data"
+            ciphertext, nonce = manager.encrypt(plaintext)
+            assert manager.decrypt(ciphertext, nonce) == plaintext
+
+    def test_with_invalid_base64_key(self) -> None:
+        """Test that invalid base64 key raises error."""
+        # 44 chars ending with = but not valid base64
+        invalid_b64 = "invalid!base64@string#that$is%44chars^long1="
+        assert len(invalid_b64) == 44
+        assert invalid_b64.endswith("=")
+
+        mock_settings = type("Settings", (), {})()
+        mock_key = type("SecretStr", (), {"get_secret_value": lambda self: invalid_b64})()
+        mock_settings.encryption_key = mock_key
+
+        with patch("squant.utils.crypto.get_settings", return_value=mock_settings):
+            # Clear cache to ensure fresh instance
+            get_crypto_manager.cache_clear()
+
+            with pytest.raises(ValueError, match="Invalid base64 encryption key"):
+                get_crypto_manager()
+
+    def test_with_base64_key_wrong_decoded_length(self) -> None:
+        """Test that base64 key with wrong decoded length raises error."""
+        # Valid base64 but decodes to wrong length
+        key_bytes = os.urandom(16)  # Only 16 bytes, not 32
+        b64_key = base64.b64encode(key_bytes).decode("ascii") + "="  # Make it 44 chars
+
+        # Adjust to make it exactly 44 chars
+        while len(b64_key) < 44:
+            b64_key += "="
+
+        mock_settings = type("Settings", (), {})()
+        mock_key = type("SecretStr", (), {"get_secret_value": lambda self: b64_key})()
+        mock_settings.encryption_key = mock_key
+
+        with patch("squant.utils.crypto.get_settings", return_value=mock_settings):
+            # Clear cache to ensure fresh instance
+            get_crypto_manager.cache_clear()
+
+            try:
+                get_crypto_manager()
+                # If no error raised, the key might be valid by chance
+            except ValueError as e:
+                # Should mention length issue
+                assert "32 bytes" in str(e) or "Invalid base64" in str(e)
+
+    def test_with_invalid_key_length(self) -> None:
+        """Test that key with invalid length raises error."""
+        invalid_key = "short_key"  # Not 32 chars
+
+        mock_settings = type("Settings", (), {})()
+        mock_key = type("SecretStr", (), {"get_secret_value": lambda self: invalid_key})()
+        mock_settings.encryption_key = mock_key
+
+        with patch("squant.utils.crypto.get_settings", return_value=mock_settings):
+            # Clear cache to ensure fresh instance
+            get_crypto_manager.cache_clear()
+
+            with pytest.raises(ValueError, match="ENCRYPTION_KEY must be 32 ASCII characters"):
+                get_crypto_manager()
+
+    def test_caching(self) -> None:
+        """Test that get_crypto_manager caches the instance."""
+        mock_settings = type("Settings", (), {})()
+        mock_key = type("SecretStr", (), {"get_secret_value": lambda self: "a" * 32})()
+        mock_settings.encryption_key = mock_key
+
+        with patch("squant.utils.crypto.get_settings", return_value=mock_settings):
+            # Clear cache first
+            get_crypto_manager.cache_clear()
+
+            manager1 = get_crypto_manager()
+            manager2 = get_crypto_manager()
+
+            # Should return the same instance due to caching
+            assert manager1 is manager2

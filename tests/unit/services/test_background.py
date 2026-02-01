@@ -185,6 +185,41 @@ class TestPersistSnapshots:
         # Only run-1 should be persisted
         mock_service.persist_snapshots.assert_called_once_with("run-1")
 
+    @pytest.mark.asyncio
+    async def test_persist_snapshots_handles_exception(self) -> None:
+        """Test that exceptions during persist_snapshots are handled."""
+        manager = BackgroundTaskManager()
+
+        mock_session_manager = MagicMock()
+        mock_session_manager.get_sessions_needing_persistence.return_value = ["run-1", "run-2"]
+
+        mock_service = MagicMock()
+        # First call raises exception, second succeeds
+        mock_service.persist_snapshots = AsyncMock(
+            side_effect=[Exception("Database error"), 3]
+        )
+
+        mock_db_session = AsyncMock()
+
+        with (
+            patch(
+                "squant.engine.paper.manager.get_session_manager", return_value=mock_session_manager
+            ),
+            patch("squant.infra.database.get_session_context") as mock_get_session,
+            patch("squant.services.background.logger") as mock_logger,
+        ):
+            mock_get_session.return_value.__aenter__.return_value = mock_db_session
+            with patch(
+                "squant.services.paper_trading.PaperTradingService", return_value=mock_service
+            ):
+                await manager._persist_snapshots()
+
+        # Should have tried both runs
+        assert mock_service.persist_snapshots.call_count == 2
+        # Should have logged the error
+        mock_logger.error.assert_called_once()
+        assert "run-1" in mock_logger.error.call_args[0][0]
+
 
 class TestHealthCheck:
     """Tests for _health_check method."""

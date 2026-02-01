@@ -339,6 +339,29 @@ class TestStrategyService:
         assert call_args[1]["version"] == "1.0.6"
 
     @pytest.mark.asyncio
+    async def test_update_with_params_and_status(self, service, sample_strategy):
+        """Test updating params_schema, default_params, and status."""
+        service.repository.get = AsyncMock(return_value=sample_strategy)
+        service.repository.update = AsyncMock(return_value=sample_strategy)
+
+        params_schema = {"type": "object", "properties": {"period": {"type": "integer"}}}
+        default_params = {"period": 14}
+
+        request = UpdateStrategyRequest(
+            params_schema=params_schema,
+            default_params=default_params,
+            status=StrategyStatus.ARCHIVED,
+        )
+
+        await service.update(sample_strategy.id, request)
+
+        # Check that all fields were passed to update
+        call_args = service.repository.update.call_args
+        assert call_args[1]["params_schema"] == params_schema
+        assert call_args[1]["default_params"] == default_params
+        assert call_args[1]["status"] == StrategyStatus.ARCHIVED
+
+    @pytest.mark.asyncio
     async def test_delete_success(self, service):
         """Test successful strategy deletion."""
         service.repository.exists = AsyncMock(return_value=True)

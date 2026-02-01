@@ -446,6 +446,41 @@ class TestRiskTriggerRepository:
 
         assert result == 5
 
+    @pytest.mark.asyncio
+    async def test_count_with_start_time_filter(self, repository, mock_session):
+        """Test counting with start_time filter."""
+        mock_result = MagicMock()
+        mock_result.scalar_one.return_value = 4
+        mock_session.execute.return_value = mock_result
+
+        start_time = datetime(2024, 1, 1, 0, 0, 0, tzinfo=UTC)
+        result = await repository.count_with_filters(start_time=start_time)
+
+        assert result == 4
+
+    @pytest.mark.asyncio
+    async def test_count_with_end_time_filter(self, repository, mock_session):
+        """Test counting with end_time filter."""
+        mock_result = MagicMock()
+        mock_result.scalar_one.return_value = 3
+        mock_session.execute.return_value = mock_result
+
+        end_time = datetime(2024, 1, 15, 12, 0, 0, tzinfo=UTC)
+        result = await repository.count_with_filters(end_time=end_time)
+
+        assert result == 3
+
+    @pytest.mark.asyncio
+    async def test_count_with_run_id_filter(self, repository, mock_session):
+        """Test counting with run_id filter."""
+        mock_result = MagicMock()
+        mock_result.scalar_one.return_value = 7
+        mock_session.execute.return_value = mock_result
+
+        result = await repository.count_with_filters(run_id=uuid4())
+
+        assert result == 7
+
 
 class TestRiskTriggerService:
     """Tests for RiskTriggerService."""

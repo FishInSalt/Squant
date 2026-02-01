@@ -193,6 +193,19 @@ class TestOrderRepository:
         assert result == 3
 
     @pytest.mark.asyncio
+    async def test_count_by_account_with_status_list(self, repository, mock_session):
+        """Test counting orders with status list filter."""
+        mock_result = MagicMock()
+        mock_result.scalar_one.return_value = 8
+        mock_session.execute.return_value = mock_result
+
+        result = await repository.count_by_account(
+            uuid4(), status=[OrderStatus.FILLED, OrderStatus.SUBMITTED]
+        )
+
+        assert result == 8
+
+    @pytest.mark.asyncio
     async def test_get_stats_by_status(self, repository, mock_session):
         """Test getting order stats by status."""
         mock_result = MagicMock()
@@ -510,6 +523,59 @@ class TestOrderService:
         assert call_kwargs["status"] == OrderStatus.REJECTED
 
     @pytest.mark.asyncio
+    async def test_sync_order_with_avg_price(self, service, sample_order):
+        """Test sync order updates avg_price when provided."""
+        service.order_repo.get = AsyncMock(return_value=sample_order)
+        service.order_repo.update = AsyncMock(return_value=sample_order)
+
+        # Exchange response with avg_price
+        response = ExchangeOrderResponse(
+            order_id="exc-123",
+            symbol="BTC/USDT",
+            side=OrderSide.BUY,
+            type=OrderType.LIMIT,
+            status=OrderStatus.FILLED,
+            price=Decimal("50000"),
+            amount=Decimal("0.1"),
+            filled=Decimal("0.1"),
+            avg_price=Decimal("50100"),  # avg_price provided
+        )
+        service.exchange.get_order.return_value = response
+
+        await service.sync_order(sample_order.id)
+
+        # Should include avg_price in update
+        call_kwargs = service.order_repo.update.call_args[1]
+        assert call_kwargs["avg_price"] == Decimal("50100")
+
+    @pytest.mark.asyncio
+    async def test_sync_order_updates_price_when_missing(self, service, sample_order):
+        """Test sync order updates price when order doesn't have one."""
+        # Order without price (market order)
+        sample_order.price = None
+        service.order_repo.get = AsyncMock(return_value=sample_order)
+        service.order_repo.update = AsyncMock(return_value=sample_order)
+
+        # Exchange response with price
+        response = ExchangeOrderResponse(
+            order_id="exc-123",
+            symbol="BTC/USDT",
+            side=OrderSide.BUY,
+            type=OrderType.MARKET,
+            status=OrderStatus.FILLED,
+            price=Decimal("50000"),  # Response has price
+            amount=Decimal("0.1"),
+            filled=Decimal("0.1"),
+        )
+        service.exchange.get_order.return_value = response
+
+        await service.sync_order(sample_order.id)
+
+        # Should include price in update
+        call_kwargs = service.order_repo.update.call_args[1]
+        assert call_kwargs["price"] == Decimal("50000")
+
+    @pytest.mark.asyncio
     async def test_list_orders(self, service, sample_order):
         """Test listing orders."""
         service.order_repo.list_by_account = AsyncMock(return_value=[sample_order])
@@ -565,3 +631,25 @@ class TestOrderService:
         result = await service.sync_open_orders()
 
         assert len(result) == 1
+
+    @pytest.mark.asyncio
+    async def test_sync_open_orders_with_sync_failure(
+        self, service, sample_order, exchange_response
+    ):
+        """Test sync_open_orders handles sync_order exception gracefully."""
+        # Setup: Exchange returns empty list (no open orders)
+        # But we have a local order with exchange_oid
+        service.exchange.get_open_orders.return_value = []
+        service.order_repo.list_open_orders = AsyncMock(return_value=[sample_order])
+
+        # sync_order will be called and raise an exception
+        async def mock_sync_order(order_id):
+            raise Exception("Exchange API error")
+
+        service.sync_order = mock_sync_order
+
+        # Should not raise, should return the order despite sync failure
+        result = await service.sync_open_orders()
+
+        assert len(result) == 1
+        assert result[0] == sample_order
