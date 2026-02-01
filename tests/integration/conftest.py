@@ -256,19 +256,31 @@ def handle_data(context, data):
 @pytest_asyncio.fixture
 async def sample_exchange_account(db_session):
     """创建示例交易所账户"""
+    import os
     from uuid import uuid4
 
     from squant.models.exchange import ExchangeAccount
-    from squant.utils.crypto import encrypt_string
+    from squant.utils.crypto import get_crypto_manager
+
+    # Generate a base nonce for derived nonce encryption
+    crypto = get_crypto_manager()
+    nonce = os.urandom(crypto.NONCE_SIZE)
+
+    # Encrypt credentials using derived nonces (matches account service pattern)
+    # Index: 0=api_key, 1=api_secret, 2=passphrase
+    api_key_enc = crypto.encrypt_with_derived_nonce("test_api_key", nonce, index=0)
+    api_secret_enc = crypto.encrypt_with_derived_nonce("test_api_secret", nonce, index=1)
+    passphrase_enc = crypto.encrypt_with_derived_nonce("test_passphrase", nonce, index=2)
 
     account = ExchangeAccount(
         id=uuid4(),
         exchange="okx",
         name="Test Account",
-        api_key=encrypt_string("test_api_key"),
-        api_secret=encrypt_string("test_api_secret"),
-        passphrase=encrypt_string("test_passphrase"),
-        is_testnet=True,
+        api_key_enc=api_key_enc,
+        api_secret_enc=api_secret_enc,
+        passphrase_enc=passphrase_enc,
+        nonce=nonce,
+        testnet=True,
     )
 
     db_session.add(account)
@@ -276,6 +288,27 @@ async def sample_exchange_account(db_session):
     await db_session.refresh(account)
 
     return account
+
+
+@pytest.fixture
+def mock_exchange_adapter():
+    """Create a mock exchange adapter for testing."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    adapter = MagicMock()
+    # Add async methods commonly used in tests
+    adapter.get_balance = AsyncMock(return_value={"USDT": 10000.0})
+    adapter.get_ticker = AsyncMock()
+    adapter.get_tickers = AsyncMock()
+    adapter.get_ohlcv = AsyncMock()
+    adapter.create_order = AsyncMock()
+    adapter.cancel_order = AsyncMock()
+    adapter.get_order = AsyncMock()
+    adapter.get_open_orders = AsyncMock()
+    adapter.test_connection = AsyncMock(return_value=True)
+    adapter.close = AsyncMock()
+
+    return adapter
 
 
 @pytest_asyncio.fixture
