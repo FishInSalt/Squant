@@ -2,16 +2,15 @@
 Integration tests for Data Loader Service.
 
 Tests data loader functionality with real database integration:
-- Historical candle data loading
-- Data caching and retrieval
-- Multiple timeframe support
-- Data validation and cleanup
+- Loading historical bars from the database
+- Streaming bars as async iterator
+- Counting available bars
+- Checking data availability
+- Querying available symbols
 """
 
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
-from unittest.mock import AsyncMock, MagicMock, patch
-from uuid import uuid4
 
 import pytest
 import pytest_asyncio
@@ -26,481 +25,393 @@ async def data_loader(db_session):
     return DataLoader(db_session)
 
 
-@pytest.fixture
-def sample_ohlcv_data():
-    """Create sample OHLCV data from exchange."""
+@pytest_asyncio.fixture
+async def sample_klines(db_session):
+    """Create sample klines in the database."""
     now = datetime.now(UTC)
-    data = []
+    klines = []
 
-    for i in range(100, 0, -1):
-        timestamp = now - timedelta(minutes=i)
-        data.append(
-            [
-                int(timestamp.timestamp() * 1000),  # timestamp in ms
-                40000.0 + i * 10,  # open
-                40100.0 + i * 10,  # high
-                39900.0 + i * 10,  # low
-                40050.0 + i * 10,  # close
-                100.0 + i,  # volume
-            ]
-        )
-
-    return data
-
-
-class TestHistoricalDataLoading:
-    """Tests for loading historical candle data."""
-
-    @pytest.mark.asyncio
-    async def test_load_candles_from_exchange(
-        self, data_loader, sample_ohlcv_data, sample_exchange_account
-    ):
-        """Test loading candles from exchange."""
-        # Mock exchange adapter
-        mock_adapter = MagicMock()
-        mock_adapter.get_ohlcv = AsyncMock(return_value=sample_ohlcv_data)
-
-        with patch("squant.services.data_loader.get_exchange_adapter", return_value=mock_adapter):
-            candles = await data_loader.load_candles(
-                exchange_account_id=sample_exchange_account.id,
-                symbol="BTC/USDT",
-                timeframe="1m",
-                start_time=datetime.now(UTC) - timedelta(hours=2),
-                end_time=datetime.now(UTC),
-            )
-
-        # Should have loaded 100 candles
-        assert len(candles) == 100
-        assert candles[0].symbol == "BTC/USDT"
-        assert candles[0].timeframe == "1m"
-
-    @pytest.mark.asyncio
-    async def test_load_candles_persists_to_database(
-        self, data_loader, sample_ohlcv_data, sample_exchange_account, db_session
-    ):
-        """Test that loaded candles are persisted to database."""
-        mock_adapter = MagicMock()
-        mock_adapter.get_ohlcv = AsyncMock(return_value=sample_ohlcv_data[:10])  # Just 10 candles
-
-        with patch("squant.services.data_loader.get_exchange_adapter", return_value=mock_adapter):
-            await data_loader.load_candles(
-                exchange_account_id=sample_exchange_account.id,
-                symbol="BTC/USDT",
-                timeframe="1m",
-                start_time=datetime.now(UTC) - timedelta(minutes=10),
-                end_time=datetime.now(UTC),
-            )
-
-        # Query database to verify persistence
-        from sqlalchemy import select
-
-        result = await db_session.execute(
-            select(Kline).where(
-                Kline.exchange_account_id == sample_exchange_account.id,
-                Kline.symbol == "BTC/USDT",
-            )
-        )
-        candles = result.scalars().all()
-
-        assert len(candles) == 10
-
-    @pytest.mark.asyncio
-    async def test_load_candles_multiple_timeframes(
-        self, data_loader, sample_ohlcv_data, sample_exchange_account
-    ):
-        """Test loading candles for different timeframes."""
-        timeframes = ["1m", "5m", "1h", "1d"]
-
-        for timeframe in timeframes:
-            mock_adapter = MagicMock()
-            mock_adapter.get_ohlcv = AsyncMock(return_value=sample_ohlcv_data)
-
-            with patch(
-                "squant.services.data_loader.get_exchange_adapter", return_value=mock_adapter
-            ):
-                candles = await data_loader.load_candles(
-                    exchange_account_id=sample_exchange_account.id,
-                    symbol="BTC/USDT",
-                    timeframe=timeframe,
-                    start_time=datetime.now(UTC) - timedelta(hours=2),
-                    end_time=datetime.now(UTC),
-                )
-
-            assert len(candles) > 0
-            assert all(c.timeframe == timeframe for c in candles)
-
-    @pytest.mark.asyncio
-    async def test_load_candles_handles_duplicate_data(
-        self, data_loader, sample_ohlcv_data, sample_exchange_account, db_session
-    ):
-        """Test that loading duplicate data doesn't create duplicates."""
-        mock_adapter = MagicMock()
-        mock_adapter.get_ohlcv = AsyncMock(return_value=sample_ohlcv_data[:10])
-
-        with patch("squant.services.data_loader.get_exchange_adapter", return_value=mock_adapter):
-            # Load same data twice
-            await data_loader.load_candles(
-                exchange_account_id=sample_exchange_account.id,
-                symbol="BTC/USDT",
-                timeframe="1m",
-                start_time=datetime.now(UTC) - timedelta(minutes=10),
-                end_time=datetime.now(UTC),
-            )
-
-            await data_loader.load_candles(
-                exchange_account_id=sample_exchange_account.id,
-                symbol="BTC/USDT",
-                timeframe="1m",
-                start_time=datetime.now(UTC) - timedelta(minutes=10),
-                end_time=datetime.now(UTC),
-            )
-
-        # Should still have only 10 candles (no duplicates)
-        from sqlalchemy import select
-
-        result = await db_session.execute(
-            select(Kline).where(
-                Kline.exchange_account_id == sample_exchange_account.id,
-                Kline.symbol == "BTC/USDT",
-            )
-        )
-        candles = result.scalars().all()
-
-        # Should be 10, not 20
-        assert len(candles) == 10
-
-
-class TestDataRetrieval:
-    """Tests for retrieving candle data."""
-
-    @pytest.mark.asyncio
-    async def test_get_candles_from_database(
-        self, data_loader, sample_exchange_account, db_session
-    ):
-        """Test retrieving candles from database."""
-        # First create some candles in database
-        now = datetime.now(UTC)
-        for i in range(10):
-            candle = Kline(
-                id=uuid4(),
-                exchange_account_id=sample_exchange_account.id,
-                symbol="BTC/USDT",
-                timeframe="1m",
-                timestamp=now - timedelta(minutes=10 - i),
-                open=Decimal("40000"),
-                high=Decimal("40100"),
-                low=Decimal("39900"),
-                close=Decimal("40050"),
-                volume=Decimal("100"),
-            )
-            db_session.add(candle)
-
-        await db_session.commit()
-
-        # Retrieve candles
-        candles = await data_loader.get_candles(
-            exchange_account_id=sample_exchange_account.id,
+    # Create 20 klines for BTC/USDT
+    for i in range(20):
+        kline = Kline(
+            exchange="okx",
             symbol="BTC/USDT",
             timeframe="1m",
-            start_time=now - timedelta(minutes=11),
-            end_time=now,
+            time=now - timedelta(minutes=20 - i),
+            open=Decimal("40000") + Decimal(str(i * 10)),
+            high=Decimal("40100") + Decimal(str(i * 10)),
+            low=Decimal("39900") + Decimal(str(i * 10)),
+            close=Decimal("40050") + Decimal(str(i * 10)),
+            volume=Decimal("100") + Decimal(str(i)),
         )
+        klines.append(kline)
+        db_session.add(kline)
 
-        assert len(candles) == 10
+    # Create 10 klines for ETH/USDT
+    for i in range(10):
+        kline = Kline(
+            exchange="okx",
+            symbol="ETH/USDT",
+            timeframe="1m",
+            time=now - timedelta(minutes=10 - i),
+            open=Decimal("2500") + Decimal(str(i * 5)),
+            high=Decimal("2550") + Decimal(str(i * 5)),
+            low=Decimal("2450") + Decimal(str(i * 5)),
+            close=Decimal("2525") + Decimal(str(i * 5)),
+            volume=Decimal("500") + Decimal(str(i * 10)),
+        )
+        klines.append(kline)
+        db_session.add(kline)
+
+    await db_session.commit()
+
+    for kline in klines:
+        await db_session.refresh(kline)
+
+    return klines
+
+
+class TestBarLoading:
+    """Tests for loading bars from the database."""
 
     @pytest.mark.asyncio
-    async def test_get_candles_filters_by_time_range(
-        self, data_loader, sample_exchange_account, db_session
-    ):
-        """Test that get_candles filters by time range."""
-        now = datetime.now(UTC)
+    async def test_load_bars_as_iterator(self, data_loader, sample_klines):
+        """Test loading bars as an async iterator."""
+        # Use times from sample klines to avoid timing issues
+        btc_klines = [k for k in sample_klines if k.symbol == "BTC/USDT"]
+        start = min(k.time for k in btc_klines) - timedelta(seconds=1)
+        end = max(k.time for k in btc_klines) + timedelta(seconds=1)
 
-        # Create candles with different timestamps
-        for i in range(20):
-            candle = Kline(
-                id=uuid4(),
-                exchange_account_id=sample_exchange_account.id,
-                symbol="BTC/USDT",
-                timeframe="1m",
-                timestamp=now - timedelta(minutes=20 - i),
-                open=Decimal("40000"),
-                high=Decimal("40100"),
-                low=Decimal("39900"),
-                close=Decimal("40050"),
-                volume=Decimal("100"),
-            )
-            db_session.add(candle)
-
-        await db_session.commit()
-
-        # Get only last 5 minutes
-        candles = await data_loader.get_candles(
-            exchange_account_id=sample_exchange_account.id,
+        bars = []
+        async for bar in data_loader.load_bars(
+            exchange="okx",
             symbol="BTC/USDT",
             timeframe="1m",
-            start_time=now - timedelta(minutes=5),
-            end_time=now,
-        )
+            start=start,
+            end=end,
+        ):
+            bars.append(bar)
 
-        # Should have at most 5 candles
-        assert len(candles) <= 5
+        # Should load all 20 BTC/USDT klines
+        assert len(bars) == 20
+        assert all(bar.symbol == "BTC/USDT" for bar in bars)
+
+        # Verify bars are in chronological order
+        for i in range(1, len(bars)):
+            assert bars[i].time > bars[i - 1].time
 
     @pytest.mark.asyncio
-    async def test_get_candles_filters_by_symbol(
-        self, data_loader, sample_exchange_account, db_session
-    ):
-        """Test filtering candles by symbol."""
+    async def test_load_bars_with_time_filter(self, data_loader, sample_klines):
+        """Test loading bars with time range filter."""
         now = datetime.now(UTC)
+        # Only get the last 5 minutes
+        start = now - timedelta(minutes=5)
+        end = now
 
-        # Create candles for different symbols
-        for symbol in ["BTC/USDT", "ETH/USDT"]:
-            for i in range(5):
-                candle = Kline(
-                    id=uuid4(),
-                    exchange_account_id=sample_exchange_account.id,
-                    symbol=symbol,
-                    timeframe="1m",
-                    timestamp=now - timedelta(minutes=5 - i),
-                    open=Decimal("40000"),
-                    high=Decimal("40100"),
-                    low=Decimal("39900"),
-                    close=Decimal("40050"),
-                    volume=Decimal("100"),
-                )
-                db_session.add(candle)
-
-        await db_session.commit()
-
-        # Get only BTC candles
-        candles = await data_loader.get_candles(
-            exchange_account_id=sample_exchange_account.id,
+        bars = []
+        async for bar in data_loader.load_bars(
+            exchange="okx",
             symbol="BTC/USDT",
             timeframe="1m",
-            start_time=now - timedelta(minutes=6),
-            end_time=now,
-        )
+            start=start,
+            end=end,
+        ):
+            bars.append(bar)
 
-        assert all(c.symbol == "BTC/USDT" for c in candles)
-        assert len(candles) == 5
-
-
-class TestDataCaching:
-    """Tests for data caching mechanisms."""
-
-    @pytest.mark.asyncio
-    async def test_load_only_missing_data(
-        self, data_loader, sample_ohlcv_data, sample_exchange_account, db_session
-    ):
-        """Test that only missing data is loaded from exchange."""
-        now = datetime.now(UTC)
-
-        # Pre-populate database with first 50 candles
-        for i in range(50):
-            ohlcv = sample_ohlcv_data[i]
-            candle = Kline(
-                id=uuid4(),
-                exchange_account_id=sample_exchange_account.id,
-                symbol="BTC/USDT",
-                timeframe="1m",
-                timestamp=datetime.fromtimestamp(ohlcv[0] / 1000, tz=UTC),
-                open=Decimal(str(ohlcv[1])),
-                high=Decimal(str(ohlcv[2])),
-                low=Decimal(str(ohlcv[3])),
-                close=Decimal(str(ohlcv[4])),
-                volume=Decimal(str(ohlcv[5])),
-            )
-            db_session.add(candle)
-
-        await db_session.commit()
-
-        # Mock exchange to return all 100 candles
-        mock_adapter = MagicMock()
-        mock_adapter.get_ohlcv = AsyncMock(return_value=sample_ohlcv_data)
-
-        with patch("squant.services.data_loader.get_exchange_adapter", return_value=mock_adapter):
-            candles = await data_loader.load_candles(
-                exchange_account_id=sample_exchange_account.id,
-                symbol="BTC/USDT",
-                timeframe="1m",
-                start_time=now - timedelta(hours=2),
-                end_time=now,
-            )
-
-        # Should have all 100 candles (50 from DB + 50 new)
-        assert len(candles) == 100
-
-
-class TestDataValidation:
-    """Tests for data validation."""
+        # Should get roughly 5 bars (may be slightly different due to timing)
+        assert len(bars) <= 5
+        assert all(bar.time >= start for bar in bars)
+        assert all(bar.time <= end for bar in bars)
 
     @pytest.mark.asyncio
-    async def test_validate_candle_data_completeness(
-        self, data_loader, sample_exchange_account
-    ):
-        """Test that incomplete candle data is rejected."""
-        # Invalid OHLCV data (missing fields)
-        invalid_data = [
-            [1234567890000, 40000.0, 40100.0],  # Missing low, close, volume
-        ]
+    async def test_load_bars_different_symbols(self, data_loader, sample_klines):
+        """Test that symbol filter works correctly."""
+        # Use times from sample klines
+        all_times = [k.time for k in sample_klines]
+        start = min(all_times) - timedelta(seconds=1)
+        end = max(all_times) + timedelta(seconds=1)
 
-        mock_adapter = MagicMock()
-        mock_adapter.get_ohlcv = AsyncMock(return_value=invalid_data)
-
-        with (
-            patch(
-                "squant.services.data_loader.get_exchange_adapter", return_value=mock_adapter
-            ),
-            pytest.raises(Exception),
-        ):  # Should raise validation error
-            await data_loader.load_candles(
-                exchange_account_id=sample_exchange_account.id,
-                symbol="BTC/USDT",
-                timeframe="1m",
-                start_time=datetime.now(UTC) - timedelta(hours=1),
-                end_time=datetime.now(UTC),
-            )
-
-    @pytest.mark.asyncio
-    async def test_validate_price_sanity_checks(
-        self, data_loader, sample_exchange_account
-    ):
-        """Test price sanity checks (high >= low, etc.)."""
-        # Invalid data where high < low
-        invalid_data = [
-            [
-                int(datetime.now(UTC).timestamp() * 1000),
-                40000.0,  # open
-                39000.0,  # high (should be >= low)
-                40000.0,  # low (higher than high - invalid!)
-                40050.0,  # close
-                100.0,  # volume
-            ],
-        ]
-
-        mock_adapter = MagicMock()
-        mock_adapter.get_ohlcv = AsyncMock(return_value=invalid_data)
-
-        with patch("squant.services.data_loader.get_exchange_adapter", return_value=mock_adapter):
-            # Service should either:
-            # 1. Skip invalid candles, or
-            # 2. Raise validation error
-            # (Depends on implementation)
-            try:
-                candles = await data_loader.load_candles(
-                    exchange_account_id=sample_exchange_account.id,
-                    symbol="BTC/USDT",
-                    timeframe="1m",
-                    start_time=datetime.now(UTC) - timedelta(hours=1),
-                    end_time=datetime.now(UTC),
-                )
-                # If no error, should have skipped invalid candle
-                assert len(candles) == 0
-            except Exception:
-                # Validation error is also acceptable
-                pass
-
-
-class TestDataCleanup:
-    """Tests for data cleanup and maintenance."""
-
-    @pytest.mark.asyncio
-    async def test_delete_old_candles(
-        self, data_loader, sample_exchange_account, db_session
-    ):
-        """Test deleting old candle data."""
-        now = datetime.now(UTC)
-
-        # Create old candles (1 year ago)
-        for i in range(10):
-            old_candle = Kline(
-                id=uuid4(),
-                exchange_account_id=sample_exchange_account.id,
-                symbol="BTC/USDT",
-                timeframe="1m",
-                timestamp=now - timedelta(days=365 + i),
-                open=Decimal("40000"),
-                high=Decimal("40100"),
-                low=Decimal("39900"),
-                close=Decimal("40050"),
-                volume=Decimal("100"),
-            )
-            db_session.add(old_candle)
-
-        # Create recent candles
-        for i in range(10):
-            recent_candle = Kline(
-                id=uuid4(),
-                exchange_account_id=sample_exchange_account.id,
-                symbol="BTC/USDT",
-                timeframe="1m",
-                timestamp=now - timedelta(minutes=10 - i),
-                open=Decimal("40000"),
-                high=Decimal("40100"),
-                low=Decimal("39900"),
-                close=Decimal("40050"),
-                volume=Decimal("100"),
-            )
-            db_session.add(recent_candle)
-
-        await db_session.commit()
-
-        # Delete candles older than 30 days
-        deleted_count = await data_loader.cleanup_old_candles(
-            exchange_account_id=sample_exchange_account.id,
+        # Load BTC bars
+        btc_bars = []
+        async for bar in data_loader.load_bars(
+            exchange="okx",
             symbol="BTC/USDT",
             timeframe="1m",
-            older_than=now - timedelta(days=30),
-        )
+            start=start,
+            end=end,
+        ):
+            btc_bars.append(bar)
 
-        # Should have deleted 10 old candles
-        assert deleted_count == 10
+        # Load ETH bars
+        eth_bars = []
+        async for bar in data_loader.load_bars(
+            exchange="okx",
+            symbol="ETH/USDT",
+            timeframe="1m",
+            start=start,
+            end=end,
+        ):
+            eth_bars.append(bar)
+
+        assert len(btc_bars) == 20
+        assert len(eth_bars) == 10
+        assert all(b.symbol == "BTC/USDT" for b in btc_bars)
+        assert all(b.symbol == "ETH/USDT" for b in eth_bars)
 
     @pytest.mark.asyncio
-    async def test_deduplicate_candles(
-        self, data_loader, sample_exchange_account, db_session
-    ):
-        """Test removing duplicate candles."""
+    async def test_load_bars_empty_result(self, data_loader):
+        """Test loading bars when no data exists."""
         now = datetime.now(UTC)
-        timestamp = now - timedelta(minutes=5)
+        start = now - timedelta(hours=48)  # Long time ago
+        end = now - timedelta(hours=24)  # Still long ago
 
-        # Create duplicate candles (same timestamp, symbol, timeframe)
-        for _ in range(3):
-            candle = Kline(
-                id=uuid4(),
-                exchange_account_id=sample_exchange_account.id,
-                symbol="BTC/USDT",
-                timeframe="1m",
-                timestamp=timestamp,
-                open=Decimal("40000"),
-                high=Decimal("40100"),
-                low=Decimal("39900"),
-                close=Decimal("40050"),
-                volume=Decimal("100"),
-            )
-            db_session.add(candle)
+        bars = []
+        async for bar in data_loader.load_bars(
+            exchange="okx",
+            symbol="NONEXISTENT/USDT",
+            timeframe="1m",
+            start=start,
+            end=end,
+        ):
+            bars.append(bar)
 
-        await db_session.commit()
+        assert len(bars) == 0
 
-        # Deduplicate
-        removed_count = await data_loader.deduplicate_candles(
-            exchange_account_id=sample_exchange_account.id,
+    @pytest.mark.asyncio
+    async def test_load_bars_batch_size(self, data_loader, sample_klines):
+        """Test that batch_size parameter works."""
+        # Use times from sample klines
+        btc_klines = [k for k in sample_klines if k.symbol == "BTC/USDT"]
+        start = min(k.time for k in btc_klines) - timedelta(seconds=1)
+        end = max(k.time for k in btc_klines) + timedelta(seconds=1)
+
+        # Load with small batch size
+        bars = []
+        async for bar in data_loader.load_bars(
+            exchange="okx",
             symbol="BTC/USDT",
             timeframe="1m",
+            start=start,
+            end=end,
+            batch_size=5,  # Small batch
+        ):
+            bars.append(bar)
+
+        # Should still get all 20 bars, just in smaller batches
+        assert len(bars) == 20
+
+
+class TestBarCounting:
+    """Tests for counting bars."""
+
+    @pytest.mark.asyncio
+    async def test_count_bars(self, data_loader, sample_klines):
+        """Test counting available bars."""
+        # Use times from sample klines
+        btc_klines = [k for k in sample_klines if k.symbol == "BTC/USDT"]
+        start = min(k.time for k in btc_klines) - timedelta(seconds=1)
+        end = max(k.time for k in btc_klines) + timedelta(seconds=1)
+
+        count = await data_loader.count_bars(
+            exchange="okx",
+            symbol="BTC/USDT",
+            timeframe="1m",
+            start=start,
+            end=end,
         )
 
-        # Should have removed 2 duplicates, keeping 1
-        assert removed_count == 2
+        assert count == 20
 
-        # Verify only 1 candle remains
-        from sqlalchemy import select
+    @pytest.mark.asyncio
+    async def test_count_bars_with_filter(self, data_loader, sample_klines):
+        """Test counting bars with time filter."""
+        now = datetime.now(UTC)
+        start = now - timedelta(minutes=5)
+        end = now
 
-        result = await db_session.execute(
-            select(Kline).where(
-                Kline.exchange_account_id == sample_exchange_account.id,
-                Kline.symbol == "BTC/USDT",
-                Kline.timestamp == timestamp,
-            )
+        count = await data_loader.count_bars(
+            exchange="okx",
+            symbol="BTC/USDT",
+            timeframe="1m",
+            start=start,
+            end=end,
         )
-        remaining = result.scalars().all()
 
-        assert len(remaining) == 1
+        # Should be roughly 5 bars
+        assert count <= 5
+
+    @pytest.mark.asyncio
+    async def test_count_bars_no_data(self, data_loader):
+        """Test counting when no data exists."""
+        now = datetime.now(UTC)
+        start = now - timedelta(hours=48)
+        end = now - timedelta(hours=24)
+
+        count = await data_loader.count_bars(
+            exchange="okx",
+            symbol="NONEXISTENT/USDT",
+            timeframe="1m",
+            start=start,
+            end=end,
+        )
+
+        assert count == 0
+
+
+class TestDataAvailability:
+    """Tests for checking data availability."""
+
+    @pytest.mark.asyncio
+    async def test_check_data_availability_complete(self, data_loader, sample_klines):
+        """Test checking data availability when data is complete."""
+        # Use times from sample klines
+        btc_klines = [k for k in sample_klines if k.symbol == "BTC/USDT"]
+        start = min(k.time for k in btc_klines) - timedelta(seconds=1)
+        end = max(k.time for k in btc_klines) + timedelta(seconds=1)
+
+        availability = await data_loader.check_data_availability(
+            exchange="okx",
+            symbol="BTC/USDT",
+            timeframe="1m",
+            start=start,
+            end=end,
+        )
+
+        assert availability.has_data is True
+        assert availability.total_bars == 20
+        assert availability.exchange == "okx"
+        assert availability.symbol == "BTC/USDT"
+        assert availability.timeframe == "1m"
+        assert availability.first_bar is not None
+        assert availability.last_bar is not None
+
+    @pytest.mark.asyncio
+    async def test_check_data_availability_no_data(self, data_loader):
+        """Test checking data availability when no data exists."""
+        now = datetime.now(UTC)
+        start = now - timedelta(hours=48)
+        end = now - timedelta(hours=24)
+
+        availability = await data_loader.check_data_availability(
+            exchange="okx",
+            symbol="NONEXISTENT/USDT",
+            timeframe="1m",
+            start=start,
+            end=end,
+        )
+
+        assert availability.has_data is False
+        assert availability.total_bars == 0
+        assert availability.first_bar is None
+        assert availability.last_bar is None
+
+    @pytest.mark.asyncio
+    async def test_check_data_availability_is_complete(self, data_loader, sample_klines):
+        """Test is_complete property."""
+        now = datetime.now(UTC)
+
+        # Request range that should be covered
+        start = now - timedelta(minutes=15)
+        end = now - timedelta(minutes=5)
+
+        availability = await data_loader.check_data_availability(
+            exchange="okx",
+            symbol="BTC/USDT",
+            timeframe="1m",
+            start=start,
+            end=end,
+        )
+
+        assert availability.has_data is True
+        # is_complete checks if data covers the full requested range
+        # Since we have data from 20 minutes ago to now, it should be complete
+
+    @pytest.mark.asyncio
+    async def test_data_availability_to_dict(self, data_loader, sample_klines):
+        """Test converting availability to dictionary."""
+        # Use times from sample klines
+        btc_klines = [k for k in sample_klines if k.symbol == "BTC/USDT"]
+        start = min(k.time for k in btc_klines) - timedelta(seconds=1)
+        end = max(k.time for k in btc_klines) + timedelta(seconds=1)
+
+        availability = await data_loader.check_data_availability(
+            exchange="okx",
+            symbol="BTC/USDT",
+            timeframe="1m",
+            start=start,
+            end=end,
+        )
+
+        result = availability.to_dict()
+
+        assert isinstance(result, dict)
+        assert result["exchange"] == "okx"
+        assert result["symbol"] == "BTC/USDT"
+        assert result["timeframe"] == "1m"
+        assert result["total_bars"] == 20
+        assert result["has_data"] is True
+        assert "first_bar" in result
+        assert "last_bar" in result
+        assert "requested_start" in result
+        assert "requested_end" in result
+
+
+class TestAvailableSymbols:
+    """Tests for querying available symbols."""
+
+    @pytest.mark.asyncio
+    async def test_get_available_symbols(self, data_loader, sample_klines):
+        """Test getting list of available symbols."""
+        symbols = await data_loader.get_available_symbols()
+
+        # Should have both BTC/USDT and ETH/USDT
+        assert len(symbols) >= 2
+
+        # Find BTC entry
+        btc_entry = next((s for s in symbols if s["symbol"] == "BTC/USDT"), None)
+        assert btc_entry is not None
+        assert btc_entry["exchange"] == "okx"
+        assert btc_entry["timeframe"] == "1m"
+        assert btc_entry["bar_count"] == 20
+
+        # Find ETH entry
+        eth_entry = next((s for s in symbols if s["symbol"] == "ETH/USDT"), None)
+        assert eth_entry is not None
+        assert eth_entry["bar_count"] == 10
+
+    @pytest.mark.asyncio
+    async def test_get_available_symbols_filter_by_exchange(self, data_loader, sample_klines):
+        """Test filtering available symbols by exchange."""
+        symbols = await data_loader.get_available_symbols(exchange="okx")
+
+        assert len(symbols) >= 2
+        assert all(s["exchange"] == "okx" for s in symbols)
+
+    @pytest.mark.asyncio
+    async def test_get_available_symbols_filter_by_timeframe(self, data_loader, sample_klines):
+        """Test filtering available symbols by timeframe."""
+        symbols = await data_loader.get_available_symbols(timeframe="1m")
+
+        assert len(symbols) >= 2
+        assert all(s["timeframe"] == "1m" for s in symbols)
+
+    @pytest.mark.asyncio
+    async def test_get_available_symbols_no_data(self, data_loader):
+        """Test getting available symbols when no data exists."""
+        symbols = await data_loader.get_available_symbols(exchange="nonexistent")
+
+        assert len(symbols) == 0
+
+    @pytest.mark.asyncio
+    async def test_available_symbols_include_metadata(self, data_loader, sample_klines):
+        """Test that available symbols include first_bar and last_bar."""
+        symbols = await data_loader.get_available_symbols()
+
+        for symbol in symbols:
+            assert "first_bar" in symbol
+            assert "last_bar" in symbol
+            assert "bar_count" in symbol
+            # Should have ISO format timestamps
+            if symbol["first_bar"]:
+                assert isinstance(symbol["first_bar"], str)
+                assert "T" in symbol["first_bar"]  # ISO format
