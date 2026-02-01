@@ -492,6 +492,69 @@ async def test_emergency_close_exchange_unavailable(...)
 async def test_list_active_sessions(...)
 ```
 
+### Risk Management API Tests (`test_risk_api.py`)
+
+**Status**: ✅ Complete
+**Results**: 20 passed, 0 skipped
+
+#### Key Changes Made
+
+1. **CRUD operations for risk rules**
+   - Create, list, get, update, delete, and toggle risk rules
+   - All 6 risk rule types tested
+
+2. **Created test organization**
+   - TestCreateRiskRule: 4 tests for different rule types
+   - TestListRiskRules: 3 tests for listing and filtering
+   - TestGetRiskRule: 2 tests for retrieval
+   - TestUpdateRiskRule: 3 tests for updates
+   - TestDeleteRiskRule: 2 tests for deletion
+   - TestToggleRiskRule: 3 tests for enabling/disabling
+   - TestAllRiskRuleTypes: 3 tests for remaining rule types
+
+3. **Test coverage**
+   - All RiskRuleType enum values tested: ORDER_LIMIT, POSITION_LIMIT, DAILY_LOSS_LIMIT, TOTAL_LOSS_LIMIT, FREQUENCY_LIMIT, VOLATILITY_BREAK
+   - Proper service mocking with AsyncMock
+   - ApiResponse wrapper handling
+   - Pagination support
+   - Filter by enabled status
+
+#### Tests Passing
+
+**Create risk rules** (4 tests)
+- [x] Create order limit rule (max order value)
+- [x] Create position limit rule (max position size)
+- [x] Create daily loss limit rule (max daily loss percentage)
+- [x] Validation error for missing parameters
+
+**List and filter risk rules** (3 tests)
+- [x] List all risk rules
+- [x] Filter by enabled status
+- [x] Pagination support
+
+**Get risk rule details** (2 tests)
+- [x] Get risk rule by ID
+- [x] Non-existent rule returns 404
+
+**Update risk rules** (3 tests)
+- [x] Update rule name and parameters
+- [x] Update preserves other fields
+- [x] Update non-existent rule returns 404
+
+**Delete risk rules** (2 tests)
+- [x] Delete risk rule successfully
+- [x] Delete non-existent rule returns 404
+
+**Toggle risk rules** (3 tests)
+- [x] Enable disabled rule
+- [x] Disable enabled rule
+- [x] Toggle non-existent rule returns 404
+
+**All risk rule types** (3 tests)
+- [x] Create total loss limit rule
+- [x] Create frequency limit rule
+- [x] Create volatility break rule
+
 ## Summary
 
 All API integration test files have been successfully fixed and aligned with acceptance criteria:
@@ -503,8 +566,9 @@ All API integration test files have been successfully fixed and aligned with acc
 - **Backtest API**: 26 passed, 0 skipped ✅
 - **Paper Trading API**: 22 passed, 1 skipped ✅
 - **Live Trading API**: 20 passed, 2 skipped ✅
+- **Risk Management API**: 20 passed, 0 skipped ✅
 
-**Total**: 131 passed, 11 skipped
+**Total**: 151 passed, 11 skipped
 
 ## Pattern Established
 
