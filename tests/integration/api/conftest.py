@@ -1,0 +1,35 @@
+"""
+Configuration for API integration tests.
+
+Uses httpx.AsyncClient for testing async FastAPI routes.
+"""
+
+import pytest
+import pytest_asyncio
+from httpx import ASGITransport, AsyncClient
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from squant.main import app
+
+
+@pytest_asyncio.fixture
+async def client(db_session: AsyncSession):
+    """Create async HTTP client for FastAPI testing.
+
+    Overrides the database session dependency to use test session.
+    """
+    from squant.infra.database import get_session
+
+    # Override database dependency
+    async def override_get_session():
+        yield db_session
+
+    app.dependency_overrides[get_session] = override_get_session
+
+    # Create async client
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        yield client
+
+    # Clean up
+    app.dependency_overrides.clear()
