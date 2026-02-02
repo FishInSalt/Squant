@@ -1,12 +1,14 @@
 """Unit tests for exchange accounts API endpoints."""
 
 from datetime import UTC, datetime
+from typing import AsyncGenerator
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import pytest
+import pytest_asyncio
 from fastapi import FastAPI
-from fastapi.testclient import TestClient
+from httpx import ASGITransport, AsyncClient
 
 from squant.api.v1.exchange_accounts import router
 from squant.models.exchange import ExchangeAccount
@@ -25,10 +27,13 @@ def app() -> FastAPI:
     return app
 
 
-@pytest.fixture
-def client(app: FastAPI) -> TestClient:
-    """Create a test client."""
-    return TestClient(app)
+@pytest_asyncio.fixture
+async def client(app: FastAPI) -> AsyncGenerator[AsyncClient, None]:
+    """Create async test client."""
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as ac:
+        yield ac
 
 
 @pytest.fixture
@@ -48,14 +53,15 @@ def mock_account() -> MagicMock:
 class TestCreateExchangeAccount:
     """Tests for POST /exchange-accounts."""
 
-    def test_create_okx_account_success(self, client: TestClient, mock_account: MagicMock) -> None:
+    @pytest.mark.asyncio
+    async def test_create_okx_account_success(self, client: AsyncClient, mock_account: MagicMock) -> None:
         """Test successful OKX account creation."""
         with patch("squant.api.v1.exchange_accounts.get_session"):
             with patch("squant.api.v1.exchange_accounts.ExchangeAccountService") as MockService:
                 service = MockService.return_value
                 service.create = AsyncMock(return_value=mock_account)
 
-                response = client.post(
+                response = await client.post(
                     "/exchange-accounts",
                     json={
                         "exchange": "okx",
@@ -73,10 +79,11 @@ class TestCreateExchangeAccount:
                 assert data["data"]["name"] == "test-account"
                 assert data["data"]["exchange"] == "okx"
 
-    def test_create_okx_without_passphrase_fails(self, client: TestClient) -> None:
+    @pytest.mark.asyncio
+    async def test_create_okx_without_passphrase_fails(self, client: AsyncClient) -> None:
         """Test OKX account creation without passphrase fails."""
         with patch("squant.api.v1.exchange_accounts.get_session"):
-            response = client.post(
+            response = await client.post(
                 "/exchange-accounts",
                 json={
                     "exchange": "okx",
@@ -89,8 +96,9 @@ class TestCreateExchangeAccount:
             assert response.status_code == 400
             assert "passphrase" in response.json()["detail"].lower()
 
-    def test_create_binance_without_passphrase_succeeds(
-        self, client: TestClient, mock_account: MagicMock
+    @pytest.mark.asyncio
+    async def test_create_binance_without_passphrase_succeeds(
+        self, client: AsyncClient, mock_account: MagicMock
     ) -> None:
         """Test Binance account creation without passphrase succeeds."""
         mock_account.exchange = "binance"
@@ -100,7 +108,7 @@ class TestCreateExchangeAccount:
                 service = MockService.return_value
                 service.create = AsyncMock(return_value=mock_account)
 
-                response = client.post(
+                response = await client.post(
                     "/exchange-accounts",
                     json={
                         "exchange": "binance",
@@ -112,7 +120,8 @@ class TestCreateExchangeAccount:
 
                 assert response.status_code == 200
 
-    def test_create_duplicate_name_returns_409(self, client: TestClient) -> None:
+    @pytest.mark.asyncio
+    async def test_create_duplicate_name_returns_409(self, client: AsyncClient) -> None:
         """Test creating account with duplicate name returns 409."""
         with patch("squant.api.v1.exchange_accounts.get_session"):
             with patch("squant.api.v1.exchange_accounts.ExchangeAccountService") as MockService:
@@ -121,7 +130,7 @@ class TestCreateExchangeAccount:
                     side_effect=AccountNameExistsError("okx", "existing-account")
                 )
 
-                response = client.post(
+                response = await client.post(
                     "/exchange-accounts",
                     json={
                         "exchange": "okx",
@@ -138,28 +147,30 @@ class TestCreateExchangeAccount:
 class TestListExchangeAccounts:
     """Tests for GET /exchange-accounts."""
 
-    def test_list_all_accounts(self, client: TestClient, mock_account: MagicMock) -> None:
+    @pytest.mark.asyncio
+    async def test_list_all_accounts(self, client: AsyncClient, mock_account: MagicMock) -> None:
         """Test listing all accounts."""
         with patch("squant.api.v1.exchange_accounts.get_session"):
             with patch("squant.api.v1.exchange_accounts.ExchangeAccountService") as MockService:
                 service = MockService.return_value
                 service.list = AsyncMock(return_value=[mock_account])
 
-                response = client.get("/exchange-accounts")
+                response = await client.get("/exchange-accounts")
 
                 assert response.status_code == 200
                 data = response.json()
                 assert data["code"] == 0
                 assert len(data["data"]) == 1
 
-    def test_list_with_exchange_filter(self, client: TestClient, mock_account: MagicMock) -> None:
+    @pytest.mark.asyncio
+    async def test_list_with_exchange_filter(self, client: AsyncClient, mock_account: MagicMock) -> None:
         """Test listing accounts with exchange filter."""
         with patch("squant.api.v1.exchange_accounts.get_session"):
             with patch("squant.api.v1.exchange_accounts.ExchangeAccountService") as MockService:
                 service = MockService.return_value
                 service.list = AsyncMock(return_value=[mock_account])
 
-                response = client.get("/exchange-accounts?exchange=okx")
+                response = await client.get("/exchange-accounts?exchange=okx")
 
                 assert response.status_code == 200
                 service.list.assert_called_once()
@@ -168,20 +179,22 @@ class TestListExchangeAccounts:
 class TestGetExchangeAccount:
     """Tests for GET /exchange-accounts/{id}."""
 
-    def test_get_account_success(self, client: TestClient, mock_account: MagicMock) -> None:
+    @pytest.mark.asyncio
+    async def test_get_account_success(self, client: AsyncClient, mock_account: MagicMock) -> None:
         """Test getting an existing account."""
         with patch("squant.api.v1.exchange_accounts.get_session"):
             with patch("squant.api.v1.exchange_accounts.ExchangeAccountService") as MockService:
                 service = MockService.return_value
                 service.get = AsyncMock(return_value=mock_account)
 
-                response = client.get(f"/exchange-accounts/{mock_account.id}")
+                response = await client.get(f"/exchange-accounts/{mock_account.id}")
 
                 assert response.status_code == 200
                 data = response.json()
                 assert data["data"]["name"] == "test-account"
 
-    def test_get_account_not_found(self, client: TestClient) -> None:
+    @pytest.mark.asyncio
+    async def test_get_account_not_found(self, client: AsyncClient) -> None:
         """Test getting non-existent account returns 404."""
         account_id = uuid4()
 
@@ -190,7 +203,7 @@ class TestGetExchangeAccount:
                 service = MockService.return_value
                 service.get = AsyncMock(side_effect=AccountNotFoundError(account_id))
 
-                response = client.get(f"/exchange-accounts/{account_id}")
+                response = await client.get(f"/exchange-accounts/{account_id}")
 
                 assert response.status_code == 404
 
@@ -198,21 +211,23 @@ class TestGetExchangeAccount:
 class TestUpdateExchangeAccount:
     """Tests for PUT /exchange-accounts/{id}."""
 
-    def test_update_account_success(self, client: TestClient, mock_account: MagicMock) -> None:
+    @pytest.mark.asyncio
+    async def test_update_account_success(self, client: AsyncClient, mock_account: MagicMock) -> None:
         """Test successful account update."""
         with patch("squant.api.v1.exchange_accounts.get_session"):
             with patch("squant.api.v1.exchange_accounts.ExchangeAccountService") as MockService:
                 service = MockService.return_value
                 service.update = AsyncMock(return_value=mock_account)
 
-                response = client.put(
+                response = await client.put(
                     f"/exchange-accounts/{mock_account.id}",
                     json={"name": "updated-name"},
                 )
 
                 assert response.status_code == 200
 
-    def test_update_account_not_found(self, client: TestClient) -> None:
+    @pytest.mark.asyncio
+    async def test_update_account_not_found(self, client: AsyncClient) -> None:
         """Test updating non-existent account returns 404."""
         account_id = uuid4()
 
@@ -221,15 +236,16 @@ class TestUpdateExchangeAccount:
                 service = MockService.return_value
                 service.update = AsyncMock(side_effect=AccountNotFoundError(account_id))
 
-                response = client.put(
+                response = await client.put(
                     f"/exchange-accounts/{account_id}",
                     json={"name": "new-name"},
                 )
 
                 assert response.status_code == 404
 
-    def test_update_duplicate_name_returns_409(
-        self, client: TestClient, mock_account: MagicMock
+    @pytest.mark.asyncio
+    async def test_update_duplicate_name_returns_409(
+        self, client: AsyncClient, mock_account: MagicMock
     ) -> None:
         """Test updating to duplicate name returns 409."""
         with patch("squant.api.v1.exchange_accounts.get_session"):
@@ -237,7 +253,7 @@ class TestUpdateExchangeAccount:
                 service = MockService.return_value
                 service.update = AsyncMock(side_effect=AccountNameExistsError("okx", "existing"))
 
-                response = client.put(
+                response = await client.put(
                     f"/exchange-accounts/{mock_account.id}",
                     json={"name": "existing"},
                 )
@@ -248,20 +264,22 @@ class TestUpdateExchangeAccount:
 class TestDeleteExchangeAccount:
     """Tests for DELETE /exchange-accounts/{id}."""
 
-    def test_delete_account_success(self, client: TestClient, mock_account: MagicMock) -> None:
+    @pytest.mark.asyncio
+    async def test_delete_account_success(self, client: AsyncClient, mock_account: MagicMock) -> None:
         """Test successful account deletion."""
         with patch("squant.api.v1.exchange_accounts.get_session"):
             with patch("squant.api.v1.exchange_accounts.ExchangeAccountService") as MockService:
                 service = MockService.return_value
                 service.delete = AsyncMock()
 
-                response = client.delete(f"/exchange-accounts/{mock_account.id}")
+                response = await client.delete(f"/exchange-accounts/{mock_account.id}")
 
                 assert response.status_code == 200
                 data = response.json()
                 assert data["message"] == "Account deleted"
 
-    def test_delete_account_not_found(self, client: TestClient) -> None:
+    @pytest.mark.asyncio
+    async def test_delete_account_not_found(self, client: AsyncClient) -> None:
         """Test deleting non-existent account returns 404."""
         account_id = uuid4()
 
@@ -270,12 +288,13 @@ class TestDeleteExchangeAccount:
                 service = MockService.return_value
                 service.delete = AsyncMock(side_effect=AccountNotFoundError(account_id))
 
-                response = client.delete(f"/exchange-accounts/{account_id}")
+                response = await client.delete(f"/exchange-accounts/{account_id}")
 
                 assert response.status_code == 404
 
-    def test_delete_account_in_use_returns_409(
-        self, client: TestClient, mock_account: MagicMock
+    @pytest.mark.asyncio
+    async def test_delete_account_in_use_returns_409(
+        self, client: AsyncClient, mock_account: MagicMock
     ) -> None:
         """Test deleting account in use returns 409."""
         with patch("squant.api.v1.exchange_accounts.get_session"):
@@ -285,7 +304,7 @@ class TestDeleteExchangeAccount:
                     side_effect=AccountInUseError(mock_account.id, "has associated orders")
                 )
 
-                response = client.delete(f"/exchange-accounts/{mock_account.id}")
+                response = await client.delete(f"/exchange-accounts/{mock_account.id}")
 
                 assert response.status_code == 409
                 assert "in use" in response.json()["detail"].lower()
@@ -294,7 +313,8 @@ class TestDeleteExchangeAccount:
 class TestConnectionTest:
     """Tests for POST /exchange-accounts/{id}/test."""
 
-    def test_connection_test_success(self, client: TestClient, mock_account: MagicMock) -> None:
+    @pytest.mark.asyncio
+    async def test_connection_test_success(self, client: AsyncClient, mock_account: MagicMock) -> None:
         """Test successful connection test."""
         with patch("squant.api.v1.exchange_accounts.get_session"):
             with patch("squant.api.v1.exchange_accounts.ExchangeAccountService") as MockService:
@@ -307,14 +327,15 @@ class TestConnectionTest:
                     }
                 )
 
-                response = client.post(f"/exchange-accounts/{mock_account.id}/test")
+                response = await client.post(f"/exchange-accounts/{mock_account.id}/test")
 
                 assert response.status_code == 200
                 data = response.json()
                 assert data["data"]["success"] is True
                 assert data["data"]["balance_count"] == 5
 
-    def test_connection_test_failure(self, client: TestClient, mock_account: MagicMock) -> None:
+    @pytest.mark.asyncio
+    async def test_connection_test_failure(self, client: AsyncClient, mock_account: MagicMock) -> None:
         """Test failed connection test."""
         with patch("squant.api.v1.exchange_accounts.get_session"):
             with patch("squant.api.v1.exchange_accounts.ExchangeAccountService") as MockService:
@@ -327,14 +348,15 @@ class TestConnectionTest:
                     }
                 )
 
-                response = client.post(f"/exchange-accounts/{mock_account.id}/test")
+                response = await client.post(f"/exchange-accounts/{mock_account.id}/test")
 
                 assert response.status_code == 200
                 data = response.json()
                 assert data["data"]["success"] is False
                 assert "Invalid API key" in data["data"]["message"]
 
-    def test_connection_test_account_not_found(self, client: TestClient) -> None:
+    @pytest.mark.asyncio
+    async def test_connection_test_account_not_found(self, client: AsyncClient) -> None:
         """Test connection test for non-existent account returns 404."""
         account_id = uuid4()
 
@@ -343,6 +365,6 @@ class TestConnectionTest:
                 service = MockService.return_value
                 service.test_connection = AsyncMock(side_effect=AccountNotFoundError(account_id))
 
-                response = client.post(f"/exchange-accounts/{account_id}/test")
+                response = await client.post(f"/exchange-accounts/{account_id}/test")
 
                 assert response.status_code == 404

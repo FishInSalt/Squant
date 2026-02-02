@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from typing import AsyncGenerator
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import pytest
-from fastapi.testclient import TestClient
+import pytest_asyncio
+from httpx import ASGITransport, AsyncClient
 
 from squant.engine.backtest.runner import BacktestError
 from squant.main import app
@@ -16,10 +18,13 @@ from squant.services.backtest import BacktestNotFoundError, InsufficientDataErro
 from squant.services.strategy import StrategyNotFoundError
 
 
-@pytest.fixture
-def client() -> TestClient:
-    """Create test client."""
-    return TestClient(app)
+@pytest_asyncio.fixture
+async def client() -> AsyncGenerator[AsyncClient, None]:
+    """Create async test client."""
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as ac:
+        yield ac
 
 
 @pytest.fixture
@@ -67,8 +72,9 @@ def valid_run_request() -> dict:
 class TestRunBacktest:
     """Tests for POST /api/v1/backtest endpoint."""
 
-    def test_run_backtest_success(
-        self, client: TestClient, valid_run_request: dict, mock_backtest_run
+    @pytest.mark.asyncio
+    async def test_run_backtest_success(
+        self, client: AsyncClient, valid_run_request: dict, mock_backtest_run
     ) -> None:
         """Test successful synchronous backtest run."""
         with patch("squant.api.v1.backtest.BacktestService") as mock_service_class:
@@ -76,15 +82,16 @@ class TestRunBacktest:
             mock_service.create_and_run = AsyncMock(return_value=mock_backtest_run)
             mock_service_class.return_value = mock_service
 
-            response = client.post("/api/v1/backtest", json=valid_run_request)
+            response = await client.post("/api/v1/backtest", json=valid_run_request)
 
             assert response.status_code == 200
             data = response.json()
             assert data["code"] == 0
             assert data["data"]["symbol"] == "BTC/USDT"
 
-    def test_run_backtest_strategy_not_found(
-        self, client: TestClient, valid_run_request: dict
+    @pytest.mark.asyncio
+    async def test_run_backtest_strategy_not_found(
+        self, client: AsyncClient, valid_run_request: dict
     ) -> None:
         """Test backtest with non-existent strategy."""
         with patch("squant.api.v1.backtest.BacktestService") as mock_service_class:
@@ -94,12 +101,13 @@ class TestRunBacktest:
             )
             mock_service_class.return_value = mock_service
 
-            response = client.post("/api/v1/backtest", json=valid_run_request)
+            response = await client.post("/api/v1/backtest", json=valid_run_request)
 
             assert response.status_code == 404
 
-    def test_run_backtest_insufficient_data(
-        self, client: TestClient, valid_run_request: dict
+    @pytest.mark.asyncio
+    async def test_run_backtest_insufficient_data(
+        self, client: AsyncClient, valid_run_request: dict
     ) -> None:
         """Test backtest with insufficient historical data."""
         with patch("squant.api.v1.backtest.BacktestService") as mock_service_class:
@@ -109,12 +117,13 @@ class TestRunBacktest:
             )
             mock_service_class.return_value = mock_service
 
-            response = client.post("/api/v1/backtest", json=valid_run_request)
+            response = await client.post("/api/v1/backtest", json=valid_run_request)
 
             assert response.status_code == 400
 
-    def test_run_backtest_execution_error(
-        self, client: TestClient, valid_run_request: dict
+    @pytest.mark.asyncio
+    async def test_run_backtest_execution_error(
+        self, client: AsyncClient, valid_run_request: dict
     ) -> None:
         """Test backtest with execution error."""
         with patch("squant.api.v1.backtest.BacktestService") as mock_service_class:
@@ -124,7 +133,7 @@ class TestRunBacktest:
             )
             mock_service_class.return_value = mock_service
 
-            response = client.post("/api/v1/backtest", json=valid_run_request)
+            response = await client.post("/api/v1/backtest", json=valid_run_request)
 
             assert response.status_code == 400
 
@@ -132,8 +141,9 @@ class TestRunBacktest:
 class TestCreateBacktestAsync:
     """Tests for POST /api/v1/backtest/async endpoint."""
 
-    def test_create_backtest_success(
-        self, client: TestClient, valid_run_request: dict, mock_backtest_run
+    @pytest.mark.asyncio
+    async def test_create_backtest_success(
+        self, client: AsyncClient, valid_run_request: dict, mock_backtest_run
     ) -> None:
         """Test successful async backtest creation."""
         mock_backtest_run.status = RunStatus.PENDING
@@ -143,14 +153,15 @@ class TestCreateBacktestAsync:
             mock_service.create = AsyncMock(return_value=mock_backtest_run)
             mock_service_class.return_value = mock_service
 
-            response = client.post("/api/v1/backtest/async", json=valid_run_request)
+            response = await client.post("/api/v1/backtest/async", json=valid_run_request)
 
             assert response.status_code == 200
             data = response.json()
             assert data["code"] == 0
 
-    def test_create_backtest_strategy_not_found(
-        self, client: TestClient, valid_run_request: dict
+    @pytest.mark.asyncio
+    async def test_create_backtest_strategy_not_found(
+        self, client: AsyncClient, valid_run_request: dict
     ) -> None:
         """Test async creation with non-existent strategy."""
         with patch("squant.api.v1.backtest.BacktestService") as mock_service_class:
@@ -160,7 +171,7 @@ class TestCreateBacktestAsync:
             )
             mock_service_class.return_value = mock_service
 
-            response = client.post("/api/v1/backtest/async", json=valid_run_request)
+            response = await client.post("/api/v1/backtest/async", json=valid_run_request)
 
             assert response.status_code == 404
 
@@ -168,18 +179,20 @@ class TestCreateBacktestAsync:
 class TestExecuteBacktest:
     """Tests for POST /api/v1/backtest/{run_id}/run endpoint."""
 
-    def test_execute_backtest_success(self, client: TestClient, mock_backtest_run) -> None:
+    @pytest.mark.asyncio
+    async def test_execute_backtest_success(self, client: AsyncClient, mock_backtest_run) -> None:
         """Test successful backtest execution."""
         with patch("squant.api.v1.backtest.BacktestService") as mock_service_class:
             mock_service = MagicMock()
             mock_service.run = AsyncMock(return_value=mock_backtest_run)
             mock_service_class.return_value = mock_service
 
-            response = client.post(f"/api/v1/backtest/{mock_backtest_run.id}/run")
+            response = await client.post(f"/api/v1/backtest/{mock_backtest_run.id}/run")
 
             assert response.status_code == 200
 
-    def test_execute_backtest_not_found(self, client: TestClient) -> None:
+    @pytest.mark.asyncio
+    async def test_execute_backtest_not_found(self, client: AsyncClient) -> None:
         """Test executing non-existent backtest."""
         run_id = uuid4()
 
@@ -188,23 +201,25 @@ class TestExecuteBacktest:
             mock_service.run = AsyncMock(side_effect=BacktestNotFoundError(str(run_id)))
             mock_service_class.return_value = mock_service
 
-            response = client.post(f"/api/v1/backtest/{run_id}/run")
+            response = await client.post(f"/api/v1/backtest/{run_id}/run")
 
             assert response.status_code == 404
 
-    def test_execute_backtest_error(self, client: TestClient, mock_backtest_run) -> None:
+    @pytest.mark.asyncio
+    async def test_execute_backtest_error(self, client: AsyncClient, mock_backtest_run) -> None:
         """Test backtest execution failure."""
         with patch("squant.api.v1.backtest.BacktestService") as mock_service_class:
             mock_service = MagicMock()
             mock_service.run = AsyncMock(side_effect=BacktestError("Execution failed"))
             mock_service_class.return_value = mock_service
 
-            response = client.post(f"/api/v1/backtest/{mock_backtest_run.id}/run")
+            response = await client.post(f"/api/v1/backtest/{mock_backtest_run.id}/run")
 
             assert response.status_code == 400
 
-    def test_execute_backtest_insufficient_data(
-        self, client: TestClient, mock_backtest_run
+    @pytest.mark.asyncio
+    async def test_execute_backtest_insufficient_data(
+        self, client: AsyncClient, mock_backtest_run
     ) -> None:
         """Test backtest execution with insufficient data."""
         with patch("squant.api.v1.backtest.BacktestService") as mock_service_class:
@@ -214,7 +229,7 @@ class TestExecuteBacktest:
             )
             mock_service_class.return_value = mock_service
 
-            response = client.post(f"/api/v1/backtest/{mock_backtest_run.id}/run")
+            response = await client.post(f"/api/v1/backtest/{mock_backtest_run.id}/run")
 
             assert response.status_code == 400
             assert "Not enough data" in response.json()["detail"]
@@ -223,14 +238,15 @@ class TestExecuteBacktest:
 class TestListBacktests:
     """Tests for GET /api/v1/backtest endpoint."""
 
-    def test_list_backtests_success(self, client: TestClient, mock_backtest_run) -> None:
+    @pytest.mark.asyncio
+    async def test_list_backtests_success(self, client: AsyncClient, mock_backtest_run) -> None:
         """Test listing backtests."""
         with patch("squant.api.v1.backtest.BacktestService") as mock_service_class:
             mock_service = MagicMock()
             mock_service.list_runs = AsyncMock(return_value=([mock_backtest_run], 1))
             mock_service_class.return_value = mock_service
 
-            response = client.get("/api/v1/backtest")
+            response = await client.get("/api/v1/backtest")
 
             assert response.status_code == 200
             data = response.json()
@@ -238,39 +254,43 @@ class TestListBacktests:
             assert data["data"]["total"] == 1
             assert len(data["data"]["items"]) == 1
 
-    def test_list_backtests_with_pagination(self, client: TestClient, mock_backtest_run) -> None:
+    @pytest.mark.asyncio
+    async def test_list_backtests_with_pagination(self, client: AsyncClient, mock_backtest_run) -> None:
         """Test listing backtests with pagination."""
         with patch("squant.api.v1.backtest.BacktestService") as mock_service_class:
             mock_service = MagicMock()
             mock_service.list_runs = AsyncMock(return_value=([mock_backtest_run], 50))
             mock_service_class.return_value = mock_service
 
-            response = client.get("/api/v1/backtest?page=2&page_size=10")
+            response = await client.get("/api/v1/backtest?page=2&page_size=10")
 
             assert response.status_code == 200
             data = response.json()
             assert data["data"]["page"] == 2
             assert data["data"]["page_size"] == 10
 
-    def test_list_backtests_with_status_filter(self, client: TestClient, mock_backtest_run) -> None:
+    @pytest.mark.asyncio
+    async def test_list_backtests_with_status_filter(self, client: AsyncClient, mock_backtest_run) -> None:
         """Test listing backtests with status filter."""
         with patch("squant.api.v1.backtest.BacktestService") as mock_service_class:
             mock_service = MagicMock()
             mock_service.list_runs = AsyncMock(return_value=([mock_backtest_run], 1))
             mock_service_class.return_value = mock_service
 
-            response = client.get("/api/v1/backtest?status=completed")
+            response = await client.get("/api/v1/backtest?status=completed")
 
             assert response.status_code == 200
 
-    def test_list_backtests_invalid_status(self, client: TestClient) -> None:
+    @pytest.mark.asyncio
+    async def test_list_backtests_invalid_status(self, client: AsyncClient) -> None:
         """Test listing backtests with invalid status."""
-        response = client.get("/api/v1/backtest?status=invalid")
+        response = await client.get("/api/v1/backtest?status=invalid")
 
         assert response.status_code == 400
 
-    def test_list_backtests_with_strategy_filter(
-        self, client: TestClient, mock_backtest_run
+    @pytest.mark.asyncio
+    async def test_list_backtests_with_strategy_filter(
+        self, client: AsyncClient, mock_backtest_run
     ) -> None:
         """Test listing backtests filtered by strategy."""
         strategy_id = uuid4()
@@ -280,18 +300,19 @@ class TestListBacktests:
             mock_service.list_runs = AsyncMock(return_value=([mock_backtest_run], 1))
             mock_service_class.return_value = mock_service
 
-            response = client.get(f"/api/v1/backtest?strategy_id={strategy_id}")
+            response = await client.get(f"/api/v1/backtest?strategy_id={strategy_id}")
 
             assert response.status_code == 200
 
-    def test_list_backtests_empty(self, client: TestClient) -> None:
+    @pytest.mark.asyncio
+    async def test_list_backtests_empty(self, client: AsyncClient) -> None:
         """Test listing backtests when none exist."""
         with patch("squant.api.v1.backtest.BacktestService") as mock_service_class:
             mock_service = MagicMock()
             mock_service.list_runs = AsyncMock(return_value=([], 0))
             mock_service_class.return_value = mock_service
 
-            response = client.get("/api/v1/backtest")
+            response = await client.get("/api/v1/backtest")
 
             assert response.status_code == 200
             data = response.json()
@@ -302,20 +323,22 @@ class TestListBacktests:
 class TestGetBacktest:
     """Tests for GET /api/v1/backtest/{run_id} endpoint."""
 
-    def test_get_backtest_success(self, client: TestClient, mock_backtest_run) -> None:
+    @pytest.mark.asyncio
+    async def test_get_backtest_success(self, client: AsyncClient, mock_backtest_run) -> None:
         """Test getting a backtest by ID."""
         with patch("squant.api.v1.backtest.BacktestService") as mock_service_class:
             mock_service = MagicMock()
             mock_service.get = AsyncMock(return_value=mock_backtest_run)
             mock_service_class.return_value = mock_service
 
-            response = client.get(f"/api/v1/backtest/{mock_backtest_run.id}")
+            response = await client.get(f"/api/v1/backtest/{mock_backtest_run.id}")
 
             assert response.status_code == 200
             data = response.json()
             assert data["code"] == 0
 
-    def test_get_backtest_not_found(self, client: TestClient) -> None:
+    @pytest.mark.asyncio
+    async def test_get_backtest_not_found(self, client: AsyncClient) -> None:
         """Test getting a non-existent backtest."""
         run_id = uuid4()
 
@@ -324,7 +347,7 @@ class TestGetBacktest:
             mock_service.get = AsyncMock(side_effect=BacktestNotFoundError(str(run_id)))
             mock_service_class.return_value = mock_service
 
-            response = client.get(f"/api/v1/backtest/{run_id}")
+            response = await client.get(f"/api/v1/backtest/{run_id}")
 
             assert response.status_code == 404
 
@@ -332,7 +355,8 @@ class TestGetBacktest:
 class TestGetBacktestDetail:
     """Tests for GET /api/v1/backtest/{run_id}/detail endpoint."""
 
-    def test_get_backtest_detail_success(self, client: TestClient, mock_backtest_run) -> None:
+    @pytest.mark.asyncio
+    async def test_get_backtest_detail_success(self, client: AsyncClient, mock_backtest_run) -> None:
         """Test getting backtest detail."""
         mock_equity_point = MagicMock()
         mock_equity_point.time = datetime.now(UTC)
@@ -347,7 +371,7 @@ class TestGetBacktestDetail:
             mock_service.get_equity_curve = AsyncMock(return_value=[mock_equity_point])
             mock_service_class.return_value = mock_service
 
-            response = client.get(f"/api/v1/backtest/{mock_backtest_run.id}/detail")
+            response = await client.get(f"/api/v1/backtest/{mock_backtest_run.id}/detail")
 
             assert response.status_code == 200
             data = response.json()
@@ -355,7 +379,8 @@ class TestGetBacktestDetail:
             assert "equity_curve" in data["data"]
             assert data["data"]["total_bars"] == 1
 
-    def test_get_backtest_detail_not_found(self, client: TestClient) -> None:
+    @pytest.mark.asyncio
+    async def test_get_backtest_detail_not_found(self, client: AsyncClient) -> None:
         """Test getting detail for non-existent backtest."""
         run_id = uuid4()
 
@@ -364,7 +389,7 @@ class TestGetBacktestDetail:
             mock_service.get = AsyncMock(side_effect=BacktestNotFoundError(str(run_id)))
             mock_service_class.return_value = mock_service
 
-            response = client.get(f"/api/v1/backtest/{run_id}/detail")
+            response = await client.get(f"/api/v1/backtest/{run_id}/detail")
 
             assert response.status_code == 404
 
@@ -372,7 +397,8 @@ class TestGetBacktestDetail:
 class TestGetEquityCurve:
     """Tests for GET /api/v1/backtest/{run_id}/equity-curve endpoint."""
 
-    def test_get_equity_curve_success(self, client: TestClient, mock_backtest_run) -> None:
+    @pytest.mark.asyncio
+    async def test_get_equity_curve_success(self, client: AsyncClient, mock_backtest_run) -> None:
         """Test getting equity curve."""
         mock_equity_point = MagicMock()
         mock_equity_point.time = datetime.now(UTC)
@@ -386,14 +412,15 @@ class TestGetEquityCurve:
             mock_service.get_equity_curve = AsyncMock(return_value=[mock_equity_point])
             mock_service_class.return_value = mock_service
 
-            response = client.get(f"/api/v1/backtest/{mock_backtest_run.id}/equity-curve")
+            response = await client.get(f"/api/v1/backtest/{mock_backtest_run.id}/equity-curve")
 
             assert response.status_code == 200
             data = response.json()
             assert data["code"] == 0
             assert len(data["data"]) == 1
 
-    def test_get_equity_curve_not_found(self, client: TestClient) -> None:
+    @pytest.mark.asyncio
+    async def test_get_equity_curve_not_found(self, client: AsyncClient) -> None:
         """Test getting equity curve for non-existent backtest."""
         run_id = uuid4()
 
@@ -404,7 +431,7 @@ class TestGetEquityCurve:
             )
             mock_service_class.return_value = mock_service
 
-            response = client.get(f"/api/v1/backtest/{run_id}/equity-curve")
+            response = await client.get(f"/api/v1/backtest/{run_id}/equity-curve")
 
             assert response.status_code == 404
 
@@ -412,20 +439,22 @@ class TestGetEquityCurve:
 class TestDeleteBacktest:
     """Tests for DELETE /api/v1/backtest/{run_id} endpoint."""
 
-    def test_delete_backtest_success(self, client: TestClient, mock_backtest_run) -> None:
+    @pytest.mark.asyncio
+    async def test_delete_backtest_success(self, client: AsyncClient, mock_backtest_run) -> None:
         """Test deleting a backtest."""
         with patch("squant.api.v1.backtest.BacktestService") as mock_service_class:
             mock_service = MagicMock()
             mock_service.delete = AsyncMock(return_value=None)
             mock_service_class.return_value = mock_service
 
-            response = client.delete(f"/api/v1/backtest/{mock_backtest_run.id}")
+            response = await client.delete(f"/api/v1/backtest/{mock_backtest_run.id}")
 
             assert response.status_code == 200
             data = response.json()
             assert data["message"] == "Backtest deleted"
 
-    def test_delete_backtest_not_found(self, client: TestClient) -> None:
+    @pytest.mark.asyncio
+    async def test_delete_backtest_not_found(self, client: AsyncClient) -> None:
         """Test deleting a non-existent backtest."""
         run_id = uuid4()
 
@@ -434,7 +463,7 @@ class TestDeleteBacktest:
             mock_service.delete = AsyncMock(side_effect=BacktestNotFoundError(str(run_id)))
             mock_service_class.return_value = mock_service
 
-            response = client.delete(f"/api/v1/backtest/{run_id}")
+            response = await client.delete(f"/api/v1/backtest/{run_id}")
 
             assert response.status_code == 404
 
@@ -442,7 +471,8 @@ class TestDeleteBacktest:
 class TestCheckDataAvailability:
     """Tests for POST /api/v1/backtest/data/check endpoint."""
 
-    def test_check_data_availability_success(self, client: TestClient) -> None:
+    @pytest.mark.asyncio
+    async def test_check_data_availability_success(self, client: AsyncClient) -> None:
         """Test checking data availability."""
         with patch("squant.api.v1.backtest.BacktestService") as mock_service_class:
             mock_service = MagicMock()
@@ -462,7 +492,7 @@ class TestCheckDataAvailability:
             )
             mock_service_class.return_value = mock_service
 
-            response = client.post(
+            response = await client.post(
                 "/api/v1/backtest/data/check",
                 json={
                     "exchange": "okx",
@@ -482,7 +512,8 @@ class TestCheckDataAvailability:
 class TestListAvailableSymbols:
     """Tests for GET /api/v1/backtest/data/symbols endpoint."""
 
-    def test_list_available_symbols_success(self, client: TestClient) -> None:
+    @pytest.mark.asyncio
+    async def test_list_available_symbols_success(self, client: AsyncClient) -> None:
         """Test listing available symbols."""
         with patch("squant.api.v1.backtest.DataLoader") as mock_loader_class:
             mock_loader = MagicMock()
@@ -500,21 +531,22 @@ class TestListAvailableSymbols:
             )
             mock_loader_class.return_value = mock_loader
 
-            response = client.get("/api/v1/backtest/data/symbols")
+            response = await client.get("/api/v1/backtest/data/symbols")
 
             assert response.status_code == 200
             data = response.json()
             assert data["code"] == 0
             assert len(data["data"]) == 1
 
-    def test_list_available_symbols_with_filters(self, client: TestClient) -> None:
+    @pytest.mark.asyncio
+    async def test_list_available_symbols_with_filters(self, client: AsyncClient) -> None:
         """Test listing symbols with filters."""
         with patch("squant.api.v1.backtest.DataLoader") as mock_loader_class:
             mock_loader = MagicMock()
             mock_loader.get_available_symbols = AsyncMock(return_value=[])
             mock_loader_class.return_value = mock_loader
 
-            response = client.get("/api/v1/backtest/data/symbols?exchange=okx&timeframe=1h")
+            response = await client.get("/api/v1/backtest/data/symbols?exchange=okx&timeframe=1h")
 
             assert response.status_code == 200
             mock_loader.get_available_symbols.assert_called_once_with(

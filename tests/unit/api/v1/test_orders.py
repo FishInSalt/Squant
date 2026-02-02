@@ -4,12 +4,13 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from decimal import Decimal
-from typing import Any
+from typing import Any, AsyncGenerator
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import pytest
-from fastapi.testclient import TestClient
+import pytest_asyncio
+from httpx import ASGITransport, AsyncClient
 
 from squant.api.deps import get_okx_exchange
 from squant.infra.database import get_session
@@ -35,9 +36,9 @@ def mock_exchange():
     return MagicMock()
 
 
-@pytest.fixture
-def client(mock_session, mock_exchange) -> TestClient:
-    """Create test client with mocked dependencies."""
+@pytest_asyncio.fixture
+async def client(mock_session, mock_exchange) -> AsyncGenerator[AsyncClient, None]:
+    """Create async test client with mocked dependencies."""
 
     async def override_get_session():
         yield mock_session
@@ -47,7 +48,10 @@ def client(mock_session, mock_exchange) -> TestClient:
 
     app.dependency_overrides[get_session] = override_get_session
     app.dependency_overrides[get_okx_exchange] = override_get_okx_exchange
-    yield TestClient(app)
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as ac:
+        yield ac
     app.dependency_overrides.clear()
 
 
@@ -105,8 +109,9 @@ def valid_create_request() -> dict[str, Any]:
 class TestCreateOrder:
     """Tests for POST /api/v1/orders endpoint."""
 
-    def test_create_order_success(
-        self, client: TestClient, valid_create_request: dict, mock_order
+    @pytest.mark.asyncio
+    async def test_create_order_success(
+        self, client: AsyncClient, valid_create_request: dict, mock_order
     ) -> None:
         """Test successful order creation."""
         with (
@@ -118,13 +123,14 @@ class TestCreateOrder:
             mock_service.create_order = AsyncMock(return_value=mock_order)
             mock_service_class.return_value = mock_service
 
-            response = client.post("/api/v1/orders", json=valid_create_request)
+            response = await client.post("/api/v1/orders", json=valid_create_request)
 
             assert response.status_code in [201, 500]
 
-    def test_create_order_missing_symbol(self, client: TestClient) -> None:
+    @pytest.mark.asyncio
+    async def test_create_order_missing_symbol(self, client: AsyncClient) -> None:
         """Test creating order without symbol."""
-        response = client.post(
+        response = await client.post(
             "/api/v1/orders",
             json={
                 "side": "buy",
@@ -137,9 +143,10 @@ class TestCreateOrder:
         # Pydantic validation should catch missing symbol
         assert response.status_code == 422
 
-    def test_create_order_missing_side(self, client: TestClient) -> None:
+    @pytest.mark.asyncio
+    async def test_create_order_missing_side(self, client: AsyncClient) -> None:
         """Test creating order without side."""
-        response = client.post(
+        response = await client.post(
             "/api/v1/orders",
             json={
                 "symbol": "BTC/USDT",
@@ -151,9 +158,10 @@ class TestCreateOrder:
 
         assert response.status_code == 422
 
-    def test_create_order_missing_amount(self, client: TestClient) -> None:
+    @pytest.mark.asyncio
+    async def test_create_order_missing_amount(self, client: AsyncClient) -> None:
         """Test creating order without amount."""
-        response = client.post(
+        response = await client.post(
             "/api/v1/orders",
             json={
                 "symbol": "BTC/USDT",
@@ -165,8 +173,9 @@ class TestCreateOrder:
 
         assert response.status_code == 422
 
-    def test_create_order_validation_error(
-        self, client: TestClient, valid_create_request: dict
+    @pytest.mark.asyncio
+    async def test_create_order_validation_error(
+        self, client: AsyncClient, valid_create_request: dict
     ) -> None:
         """Test order creation with validation error."""
         with (
@@ -180,11 +189,12 @@ class TestCreateOrder:
             )
             mock_service_class.return_value = mock_service
 
-            response = client.post("/api/v1/orders", json=valid_create_request)
+            response = await client.post("/api/v1/orders", json=valid_create_request)
 
             assert response.status_code in [400, 500]
 
-    def test_create_market_order_no_price(self, client: TestClient, mock_order) -> None:
+    @pytest.mark.asyncio
+    async def test_create_market_order_no_price(self, client: AsyncClient, mock_order) -> None:
         """Test creating market order without price."""
         with (
             patch("squant.api.v1.orders._get_or_create_default_account") as mock_account,
@@ -195,7 +205,7 @@ class TestCreateOrder:
             mock_service.create_order = AsyncMock(return_value=mock_order)
             mock_service_class.return_value = mock_service
 
-            response = client.post(
+            response = await client.post(
                 "/api/v1/orders",
                 json={
                     "symbol": "BTC/USDT",
@@ -211,7 +221,8 @@ class TestCreateOrder:
 class TestListOrders:
     """Tests for GET /api/v1/orders endpoint."""
 
-    def test_list_orders_success(self, client: TestClient, mock_order) -> None:
+    @pytest.mark.asyncio
+    async def test_list_orders_success(self, client: AsyncClient, mock_order) -> None:
         """Test listing orders."""
         with (
             patch("squant.api.v1.orders._get_or_create_default_account") as mock_account,
@@ -223,12 +234,13 @@ class TestListOrders:
             mock_service.count_orders = AsyncMock(return_value=1)
             mock_service_class.return_value = mock_service
 
-            response = client.get("/api/v1/orders")
+            response = await client.get("/api/v1/orders")
 
             # Accept success or dependency error (500 for OKX creds not configured)
             assert response.status_code in [200, 500]
 
-    def test_list_orders_with_pagination(self, client: TestClient, mock_order) -> None:
+    @pytest.mark.asyncio
+    async def test_list_orders_with_pagination(self, client: AsyncClient, mock_order) -> None:
         """Test listing orders with pagination."""
         with (
             patch("squant.api.v1.orders._get_or_create_default_account") as mock_account,
@@ -240,7 +252,7 @@ class TestListOrders:
             mock_service.count_orders = AsyncMock(return_value=50)
             mock_service_class.return_value = mock_service
 
-            response = client.get("/api/v1/orders?page=2&page_size=10")
+            response = await client.get("/api/v1/orders?page=2&page_size=10")
 
             assert response.status_code in [200, 500]
 
@@ -248,7 +260,8 @@ class TestListOrders:
 class TestGetOpenOrders:
     """Tests for GET /api/v1/orders/open endpoint."""
 
-    def test_get_open_orders_success(self, client: TestClient, mock_order) -> None:
+    @pytest.mark.asyncio
+    async def test_get_open_orders_success(self, client: AsyncClient, mock_order) -> None:
         """Test getting open orders."""
         mock_order.status = OrderStatus.SUBMITTED
 
@@ -261,11 +274,12 @@ class TestGetOpenOrders:
             mock_service.get_open_orders = AsyncMock(return_value=[mock_order])
             mock_service_class.return_value = mock_service
 
-            response = client.get("/api/v1/orders/open")
+            response = await client.get("/api/v1/orders/open")
 
             assert response.status_code in [200, 500]
 
-    def test_get_open_orders_with_symbol(self, client: TestClient, mock_order) -> None:
+    @pytest.mark.asyncio
+    async def test_get_open_orders_with_symbol(self, client: AsyncClient, mock_order) -> None:
         """Test getting open orders for specific symbol."""
         mock_order.status = OrderStatus.SUBMITTED
 
@@ -278,7 +292,7 @@ class TestGetOpenOrders:
             mock_service.get_open_orders = AsyncMock(return_value=[mock_order])
             mock_service_class.return_value = mock_service
 
-            response = client.get("/api/v1/orders/open?symbol=BTC/USDT")
+            response = await client.get("/api/v1/orders/open?symbol=BTC/USDT")
 
             assert response.status_code in [200, 500]
 
@@ -286,7 +300,8 @@ class TestGetOpenOrders:
 class TestGetOrderStats:
     """Tests for GET /api/v1/orders/stats endpoint."""
 
-    def test_get_order_stats_success(self, client: TestClient) -> None:
+    @pytest.mark.asyncio
+    async def test_get_order_stats_success(self, client: AsyncClient) -> None:
         """Test getting order statistics."""
         mock_stats = {
             "total": 100,
@@ -307,7 +322,7 @@ class TestGetOrderStats:
             mock_service.get_order_stats = AsyncMock(return_value=mock_stats)
             mock_service_class.return_value = mock_service
 
-            response = client.get("/api/v1/orders/stats")
+            response = await client.get("/api/v1/orders/stats")
 
             assert response.status_code in [200, 500]
 
@@ -315,7 +330,8 @@ class TestGetOrderStats:
 class TestGetOrder:
     """Tests for GET /api/v1/orders/{order_id} endpoint."""
 
-    def test_get_order_success(self, client: TestClient, mock_order, mock_trade) -> None:
+    @pytest.mark.asyncio
+    async def test_get_order_success(self, client: AsyncClient, mock_order, mock_trade) -> None:
         """Test getting an order by ID."""
         mock_order.trades = [mock_trade]
 
@@ -328,11 +344,12 @@ class TestGetOrder:
             mock_service.get_order = AsyncMock(return_value=mock_order)
             mock_service_class.return_value = mock_service
 
-            response = client.get(f"/api/v1/orders/{mock_order.id}")
+            response = await client.get(f"/api/v1/orders/{mock_order.id}")
 
             assert response.status_code in [200, 500]
 
-    def test_get_order_not_found(self, client: TestClient) -> None:
+    @pytest.mark.asyncio
+    async def test_get_order_not_found(self, client: AsyncClient) -> None:
         """Test getting non-existent order."""
         order_id = uuid4()
 
@@ -345,7 +362,7 @@ class TestGetOrder:
             mock_service.get_order = AsyncMock(side_effect=OrderNotFoundError(str(order_id)))
             mock_service_class.return_value = mock_service
 
-            response = client.get(f"/api/v1/orders/{order_id}")
+            response = await client.get(f"/api/v1/orders/{order_id}")
 
             assert response.status_code in [404, 500]
 
@@ -353,7 +370,8 @@ class TestGetOrder:
 class TestCancelOrder:
     """Tests for POST /api/v1/orders/{order_id}/cancel endpoint."""
 
-    def test_cancel_order_success(self, client: TestClient, mock_order) -> None:
+    @pytest.mark.asyncio
+    async def test_cancel_order_success(self, client: AsyncClient, mock_order) -> None:
         """Test cancelling an order."""
         mock_order.status = OrderStatus.CANCELLED
 
@@ -366,11 +384,12 @@ class TestCancelOrder:
             mock_service.cancel_order = AsyncMock(return_value=mock_order)
             mock_service_class.return_value = mock_service
 
-            response = client.post(f"/api/v1/orders/{mock_order.id}/cancel")
+            response = await client.post(f"/api/v1/orders/{mock_order.id}/cancel")
 
             assert response.status_code in [200, 500]
 
-    def test_cancel_order_not_found(self, client: TestClient) -> None:
+    @pytest.mark.asyncio
+    async def test_cancel_order_not_found(self, client: AsyncClient) -> None:
         """Test cancelling non-existent order."""
         order_id = uuid4()
 
@@ -383,11 +402,12 @@ class TestCancelOrder:
             mock_service.cancel_order = AsyncMock(side_effect=OrderNotFoundError(str(order_id)))
             mock_service_class.return_value = mock_service
 
-            response = client.post(f"/api/v1/orders/{order_id}/cancel")
+            response = await client.post(f"/api/v1/orders/{order_id}/cancel")
 
             assert response.status_code in [404, 500]
 
-    def test_cancel_order_validation_error(self, client: TestClient, mock_order) -> None:
+    @pytest.mark.asyncio
+    async def test_cancel_order_validation_error(self, client: AsyncClient, mock_order) -> None:
         """Test cancelling order with validation error."""
         with (
             patch("squant.api.v1.orders._get_or_create_default_account") as mock_account,
@@ -400,7 +420,7 @@ class TestCancelOrder:
             )
             mock_service_class.return_value = mock_service
 
-            response = client.post(f"/api/v1/orders/{mock_order.id}/cancel")
+            response = await client.post(f"/api/v1/orders/{mock_order.id}/cancel")
 
             assert response.status_code in [400, 500]
 
@@ -408,7 +428,8 @@ class TestCancelOrder:
 class TestSyncOrder:
     """Tests for POST /api/v1/orders/{order_id}/sync endpoint."""
 
-    def test_sync_order_success(self, client: TestClient, mock_order) -> None:
+    @pytest.mark.asyncio
+    async def test_sync_order_success(self, client: AsyncClient, mock_order) -> None:
         """Test syncing an order."""
         with (
             patch("squant.api.v1.orders._get_or_create_default_account") as mock_account,
@@ -419,11 +440,12 @@ class TestSyncOrder:
             mock_service.sync_order = AsyncMock(return_value=mock_order)
             mock_service_class.return_value = mock_service
 
-            response = client.post(f"/api/v1/orders/{mock_order.id}/sync")
+            response = await client.post(f"/api/v1/orders/{mock_order.id}/sync")
 
             assert response.status_code in [200, 500]
 
-    def test_sync_order_not_found(self, client: TestClient) -> None:
+    @pytest.mark.asyncio
+    async def test_sync_order_not_found(self, client: AsyncClient) -> None:
         """Test syncing non-existent order."""
         order_id = uuid4()
 
@@ -436,7 +458,7 @@ class TestSyncOrder:
             mock_service.sync_order = AsyncMock(side_effect=OrderNotFoundError(str(order_id)))
             mock_service_class.return_value = mock_service
 
-            response = client.post(f"/api/v1/orders/{order_id}/sync")
+            response = await client.post(f"/api/v1/orders/{order_id}/sync")
 
             assert response.status_code in [404, 500]
 
@@ -444,7 +466,8 @@ class TestSyncOrder:
 class TestSyncOpenOrders:
     """Tests for POST /api/v1/orders/sync endpoint."""
 
-    def test_sync_open_orders_success(self, client: TestClient, mock_order) -> None:
+    @pytest.mark.asyncio
+    async def test_sync_open_orders_success(self, client: AsyncClient, mock_order) -> None:
         """Test syncing all open orders."""
         with (
             patch("squant.api.v1.orders._get_or_create_default_account") as mock_account,
@@ -455,11 +478,12 @@ class TestSyncOpenOrders:
             mock_service.sync_open_orders = AsyncMock(return_value=[mock_order])
             mock_service_class.return_value = mock_service
 
-            response = client.post("/api/v1/orders/sync")
+            response = await client.post("/api/v1/orders/sync")
 
             assert response.status_code in [200, 500]
 
-    def test_sync_open_orders_with_symbol(self, client: TestClient, mock_order) -> None:
+    @pytest.mark.asyncio
+    async def test_sync_open_orders_with_symbol(self, client: AsyncClient, mock_order) -> None:
         """Test syncing open orders for specific symbol."""
         with (
             patch("squant.api.v1.orders._get_or_create_default_account") as mock_account,
@@ -470,6 +494,6 @@ class TestSyncOpenOrders:
             mock_service.sync_open_orders = AsyncMock(return_value=[mock_order])
             mock_service_class.return_value = mock_service
 
-            response = client.post("/api/v1/orders/sync?symbol=BTC/USDT")
+            response = await client.post("/api/v1/orders/sync?symbol=BTC/USDT")
 
             assert response.status_code in [200, 500]

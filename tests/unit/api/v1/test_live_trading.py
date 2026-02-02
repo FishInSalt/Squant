@@ -4,12 +4,13 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from decimal import Decimal
-from typing import Any
+from typing import Any, AsyncGenerator
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import pytest
-from fastapi.testclient import TestClient
+import pytest_asyncio
+from httpx import ASGITransport, AsyncClient
 
 from squant.main import app
 from squant.models.enums import RunMode, RunStatus
@@ -23,10 +24,13 @@ from squant.services.live_trading import (
 from squant.services.strategy import StrategyNotFoundError
 
 
-@pytest.fixture
-def client() -> TestClient:
-    """Create test client."""
-    return TestClient(app)
+@pytest_asyncio.fixture
+async def client() -> AsyncGenerator[AsyncClient, None]:
+    """Create async test client."""
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as ac:
+        yield ac
 
 
 @pytest.fixture
@@ -73,8 +77,9 @@ def valid_start_request() -> dict[str, Any]:
 class TestStartLiveTrading:
     """Tests for POST /api/v1/live endpoint."""
 
-    def test_start_live_trading_success(
-        self, client: TestClient, valid_start_request: dict, mock_run
+    @pytest.mark.asyncio
+    async def test_start_live_trading_success(
+        self, client: AsyncClient, valid_start_request: dict, mock_run
     ) -> None:
         """Test successful live trading start."""
         with patch("squant.api.v1.live_trading.LiveTradingService") as mock_service_class:
@@ -82,15 +87,16 @@ class TestStartLiveTrading:
             mock_service.start = AsyncMock(return_value=mock_run)
             mock_service_class.return_value = mock_service
 
-            response = client.post("/api/v1/live", json=valid_start_request)
+            response = await client.post("/api/v1/live", json=valid_start_request)
 
             assert response.status_code == 200
             data = response.json()
             assert data["code"] == 0
             assert data["data"]["symbol"] == "BTC/USDT"
 
-    def test_start_live_trading_strategy_not_found(
-        self, client: TestClient, valid_start_request: dict
+    @pytest.mark.asyncio
+    async def test_start_live_trading_strategy_not_found(
+        self, client: AsyncClient, valid_start_request: dict
     ) -> None:
         """Test starting live trading with non-existent strategy."""
         with patch("squant.api.v1.live_trading.LiveTradingService") as mock_service_class:
@@ -100,12 +106,13 @@ class TestStartLiveTrading:
             )
             mock_service_class.return_value = mock_service
 
-            response = client.post("/api/v1/live", json=valid_start_request)
+            response = await client.post("/api/v1/live", json=valid_start_request)
 
             assert response.status_code == 404
 
-    def test_start_live_trading_risk_config_error(
-        self, client: TestClient, valid_start_request: dict
+    @pytest.mark.asyncio
+    async def test_start_live_trading_risk_config_error(
+        self, client: AsyncClient, valid_start_request: dict
     ) -> None:
         """Test starting live trading with invalid risk config."""
         with patch("squant.api.v1.live_trading.LiveTradingService") as mock_service_class:
@@ -115,12 +122,13 @@ class TestStartLiveTrading:
             )
             mock_service_class.return_value = mock_service
 
-            response = client.post("/api/v1/live", json=valid_start_request)
+            response = await client.post("/api/v1/live", json=valid_start_request)
 
             assert response.status_code == 400
 
-    def test_start_live_trading_strategy_instantiation_error(
-        self, client: TestClient, valid_start_request: dict
+    @pytest.mark.asyncio
+    async def test_start_live_trading_strategy_instantiation_error(
+        self, client: AsyncClient, valid_start_request: dict
     ) -> None:
         """Test starting live trading with strategy instantiation error."""
         with patch("squant.api.v1.live_trading.LiveTradingService") as mock_service_class:
@@ -130,12 +138,13 @@ class TestStartLiveTrading:
             )
             mock_service_class.return_value = mock_service
 
-            response = client.post("/api/v1/live", json=valid_start_request)
+            response = await client.post("/api/v1/live", json=valid_start_request)
 
             assert response.status_code == 400
 
-    def test_start_live_trading_exchange_connection_error(
-        self, client: TestClient, valid_start_request: dict
+    @pytest.mark.asyncio
+    async def test_start_live_trading_exchange_connection_error(
+        self, client: AsyncClient, valid_start_request: dict
     ) -> None:
         """Test starting live trading with exchange connection error."""
         with patch("squant.api.v1.live_trading.LiveTradingService") as mock_service_class:
@@ -145,12 +154,13 @@ class TestStartLiveTrading:
             )
             mock_service_class.return_value = mock_service
 
-            response = client.post("/api/v1/live", json=valid_start_request)
+            response = await client.post("/api/v1/live", json=valid_start_request)
 
             assert response.status_code == 503
 
-    def test_start_live_trading_general_error(
-        self, client: TestClient, valid_start_request: dict
+    @pytest.mark.asyncio
+    async def test_start_live_trading_general_error(
+        self, client: AsyncClient, valid_start_request: dict
     ) -> None:
         """Test starting live trading with general error."""
         with patch("squant.api.v1.live_trading.LiveTradingService") as mock_service_class:
@@ -158,13 +168,14 @@ class TestStartLiveTrading:
             mock_service.start = AsyncMock(side_effect=LiveTradingError("General error"))
             mock_service_class.return_value = mock_service
 
-            response = client.post("/api/v1/live", json=valid_start_request)
+            response = await client.post("/api/v1/live", json=valid_start_request)
 
             assert response.status_code == 400
 
-    def test_start_live_trading_missing_risk_config(self, client: TestClient) -> None:
+    @pytest.mark.asyncio
+    async def test_start_live_trading_missing_risk_config(self, client: AsyncClient) -> None:
         """Test starting live trading without risk config."""
-        response = client.post(
+        response = await client.post(
             "/api/v1/live",
             json={
                 "strategy_id": str(uuid4()),
@@ -180,7 +191,8 @@ class TestStartLiveTrading:
 class TestStopLiveTrading:
     """Tests for POST /api/v1/live/{run_id}/stop endpoint."""
 
-    def test_stop_live_trading_success(self, client: TestClient, mock_run) -> None:
+    @pytest.mark.asyncio
+    async def test_stop_live_trading_success(self, client: AsyncClient, mock_run) -> None:
         """Test successful live trading stop."""
         mock_run.status = RunStatus.STOPPED.value
         mock_run.stopped_at = datetime.now(UTC)
@@ -190,13 +202,14 @@ class TestStopLiveTrading:
             mock_service.stop = AsyncMock(return_value=mock_run)
             mock_service_class.return_value = mock_service
 
-            response = client.post(f"/api/v1/live/{mock_run.id}/stop")
+            response = await client.post(f"/api/v1/live/{mock_run.id}/stop")
 
             assert response.status_code == 200
             data = response.json()
             assert data["data"]["status"] == "stopped"
 
-    def test_stop_live_trading_with_cancel_orders(self, client: TestClient, mock_run) -> None:
+    @pytest.mark.asyncio
+    async def test_stop_live_trading_with_cancel_orders(self, client: AsyncClient, mock_run) -> None:
         """Test stopping live trading with cancel orders option."""
         mock_run.status = RunStatus.STOPPED.value
 
@@ -205,7 +218,7 @@ class TestStopLiveTrading:
             mock_service.stop = AsyncMock(return_value=mock_run)
             mock_service_class.return_value = mock_service
 
-            response = client.post(
+            response = await client.post(
                 f"/api/v1/live/{mock_run.id}/stop",
                 json={"cancel_orders": False},
             )
@@ -213,7 +226,8 @@ class TestStopLiveTrading:
             assert response.status_code == 200
             mock_service.stop.assert_called_once()
 
-    def test_stop_live_trading_not_found(self, client: TestClient) -> None:
+    @pytest.mark.asyncio
+    async def test_stop_live_trading_not_found(self, client: AsyncClient) -> None:
         """Test stopping non-existent live trading session."""
         run_id = uuid4()
 
@@ -222,7 +236,7 @@ class TestStopLiveTrading:
             mock_service.stop = AsyncMock(side_effect=SessionNotFoundError(str(run_id)))
             mock_service_class.return_value = mock_service
 
-            response = client.post(f"/api/v1/live/{run_id}/stop")
+            response = await client.post(f"/api/v1/live/{run_id}/stop")
 
             assert response.status_code == 404
 
@@ -230,7 +244,8 @@ class TestStopLiveTrading:
 class TestEmergencyClose:
     """Tests for POST /api/v1/live/{run_id}/emergency-close endpoint."""
 
-    def test_emergency_close_success(self, client: TestClient, mock_run) -> None:
+    @pytest.mark.asyncio
+    async def test_emergency_close_success(self, client: AsyncClient, mock_run) -> None:
         """Test successful emergency close."""
         with patch("squant.api.v1.live_trading.LiveTradingService") as mock_service_class:
             mock_service = MagicMock()
@@ -244,7 +259,7 @@ class TestEmergencyClose:
             )
             mock_service_class.return_value = mock_service
 
-            response = client.post(f"/api/v1/live/{mock_run.id}/emergency-close")
+            response = await client.post(f"/api/v1/live/{mock_run.id}/emergency-close")
 
             assert response.status_code == 200
             data = response.json()
@@ -252,7 +267,8 @@ class TestEmergencyClose:
             assert data["data"]["orders_cancelled"] == 2
             assert data["data"]["positions_closed"] == 1
 
-    def test_emergency_close_not_found(self, client: TestClient) -> None:
+    @pytest.mark.asyncio
+    async def test_emergency_close_not_found(self, client: AsyncClient) -> None:
         """Test emergency close for non-existent session."""
         run_id = uuid4()
 
@@ -261,7 +277,7 @@ class TestEmergencyClose:
             mock_service.emergency_close = AsyncMock(side_effect=SessionNotFoundError(str(run_id)))
             mock_service_class.return_value = mock_service
 
-            response = client.post(f"/api/v1/live/{run_id}/emergency-close")
+            response = await client.post(f"/api/v1/live/{run_id}/emergency-close")
 
             assert response.status_code == 404
 
@@ -269,7 +285,8 @@ class TestEmergencyClose:
 class TestGetLiveTradingStatus:
     """Tests for GET /api/v1/live/{run_id}/status endpoint."""
 
-    def test_get_status_success(self, client: TestClient, mock_run) -> None:
+    @pytest.mark.asyncio
+    async def test_get_status_success(self, client: AsyncClient, mock_run) -> None:
         """Test getting live trading status."""
         mock_status = {
             "run_id": str(mock_run.id),
@@ -306,14 +323,15 @@ class TestGetLiveTradingStatus:
             mock_service.get_status = AsyncMock(return_value=mock_status)
             mock_service_class.return_value = mock_service
 
-            response = client.get(f"/api/v1/live/{mock_run.id}/status")
+            response = await client.get(f"/api/v1/live/{mock_run.id}/status")
 
             assert response.status_code == 200
             data = response.json()
             assert data["data"]["is_running"] is True
             assert data["data"]["risk_state"]["circuit_breaker_active"] is False
 
-    def test_get_status_not_found(self, client: TestClient) -> None:
+    @pytest.mark.asyncio
+    async def test_get_status_not_found(self, client: AsyncClient) -> None:
         """Test getting status for non-existent session."""
         run_id = uuid4()
 
@@ -322,7 +340,7 @@ class TestGetLiveTradingStatus:
             mock_service.get_status = AsyncMock(side_effect=SessionNotFoundError(str(run_id)))
             mock_service_class.return_value = mock_service
 
-            response = client.get(f"/api/v1/live/{run_id}/status")
+            response = await client.get(f"/api/v1/live/{run_id}/status")
 
             assert response.status_code == 404
 
@@ -330,7 +348,8 @@ class TestGetLiveTradingStatus:
 class TestListActiveSessions:
     """Tests for GET /api/v1/live endpoint."""
 
-    def test_list_active_sessions_success(self, client: TestClient, mock_run) -> None:
+    @pytest.mark.asyncio
+    async def test_list_active_sessions_success(self, client: AsyncClient, mock_run) -> None:
         """Test listing active live trading sessions."""
         mock_sessions = [
             {
@@ -351,20 +370,21 @@ class TestListActiveSessions:
             mock_service.get_run = AsyncMock(return_value=mock_run)
             mock_service_class.return_value = mock_service
 
-            response = client.get("/api/v1/live")
+            response = await client.get("/api/v1/live")
 
             assert response.status_code == 200
             data = response.json()
             assert len(data["data"]) == 1
 
-    def test_list_active_sessions_empty(self, client: TestClient) -> None:
+    @pytest.mark.asyncio
+    async def test_list_active_sessions_empty(self, client: AsyncClient) -> None:
         """Test listing active sessions when none exist."""
         with patch("squant.api.v1.live_trading.LiveTradingService") as mock_service_class:
             mock_service = MagicMock()
             mock_service.list_active = MagicMock(return_value=[])
             mock_service_class.return_value = mock_service
 
-            response = client.get("/api/v1/live")
+            response = await client.get("/api/v1/live")
 
             assert response.status_code == 200
             data = response.json()
@@ -374,40 +394,43 @@ class TestListActiveSessions:
 class TestListLiveTradingRuns:
     """Tests for GET /api/v1/live/runs endpoint."""
 
-    def test_list_runs_success(self, client: TestClient, mock_run) -> None:
+    @pytest.mark.asyncio
+    async def test_list_runs_success(self, client: AsyncClient, mock_run) -> None:
         """Test listing live trading runs with pagination."""
         with patch("squant.api.v1.live_trading.LiveTradingService") as mock_service_class:
             mock_service = MagicMock()
             mock_service.list_runs = AsyncMock(return_value=([mock_run], 1))
             mock_service_class.return_value = mock_service
 
-            response = client.get("/api/v1/live/runs")
+            response = await client.get("/api/v1/live/runs")
 
             assert response.status_code == 200
             data = response.json()
             assert data["data"]["total"] == 1
 
-    def test_list_runs_with_pagination(self, client: TestClient, mock_run) -> None:
+    @pytest.mark.asyncio
+    async def test_list_runs_with_pagination(self, client: AsyncClient, mock_run) -> None:
         """Test listing runs with pagination params."""
         with patch("squant.api.v1.live_trading.LiveTradingService") as mock_service_class:
             mock_service = MagicMock()
             mock_service.list_runs = AsyncMock(return_value=([mock_run], 50))
             mock_service_class.return_value = mock_service
 
-            response = client.get("/api/v1/live/runs?page=2&page_size=10")
+            response = await client.get("/api/v1/live/runs?page=2&page_size=10")
 
             assert response.status_code == 200
             data = response.json()
             assert data["data"]["page"] == 2
             assert data["data"]["page_size"] == 10
 
-    def test_list_runs_invalid_status(self, client: TestClient) -> None:
+    @pytest.mark.asyncio
+    async def test_list_runs_invalid_status(self, client: AsyncClient) -> None:
         """Test listing runs with invalid status."""
         with patch("squant.api.v1.live_trading.LiveTradingService") as mock_service_class:
             mock_service = MagicMock()
             mock_service_class.return_value = mock_service
 
-            response = client.get("/api/v1/live/runs?status=invalid")
+            response = await client.get("/api/v1/live/runs?status=invalid")
 
             assert response.status_code == 400
 
@@ -415,20 +438,22 @@ class TestListLiveTradingRuns:
 class TestGetLiveTradingRun:
     """Tests for GET /api/v1/live/{run_id} endpoint."""
 
-    def test_get_run_success(self, client: TestClient, mock_run) -> None:
+    @pytest.mark.asyncio
+    async def test_get_run_success(self, client: AsyncClient, mock_run) -> None:
         """Test getting a live trading run by ID."""
         with patch("squant.api.v1.live_trading.LiveTradingService") as mock_service_class:
             mock_service = MagicMock()
             mock_service.get_run = AsyncMock(return_value=mock_run)
             mock_service_class.return_value = mock_service
 
-            response = client.get(f"/api/v1/live/{mock_run.id}")
+            response = await client.get(f"/api/v1/live/{mock_run.id}")
 
             assert response.status_code == 200
             data = response.json()
             assert data["data"]["symbol"] == "BTC/USDT"
 
-    def test_get_run_not_found(self, client: TestClient) -> None:
+    @pytest.mark.asyncio
+    async def test_get_run_not_found(self, client: AsyncClient) -> None:
         """Test getting non-existent run."""
         run_id = uuid4()
 
@@ -437,7 +462,7 @@ class TestGetLiveTradingRun:
             mock_service.get_run = AsyncMock(side_effect=SessionNotFoundError(str(run_id)))
             mock_service_class.return_value = mock_service
 
-            response = client.get(f"/api/v1/live/{run_id}")
+            response = await client.get(f"/api/v1/live/{run_id}")
 
             assert response.status_code == 404
 
@@ -445,7 +470,8 @@ class TestGetLiveTradingRun:
 class TestGetEquityCurve:
     """Tests for GET /api/v1/live/{run_id}/equity-curve endpoint."""
 
-    def test_get_equity_curve_success(self, client: TestClient, mock_run) -> None:
+    @pytest.mark.asyncio
+    async def test_get_equity_curve_success(self, client: AsyncClient, mock_run) -> None:
         """Test getting equity curve."""
         mock_point = MagicMock()
         mock_point.time = datetime.now(UTC)
@@ -460,11 +486,12 @@ class TestGetEquityCurve:
             mock_service.get_equity_curve = AsyncMock(return_value=mock_curve)
             mock_service_class.return_value = mock_service
 
-            response = client.get(f"/api/v1/live/{mock_run.id}/equity-curve")
+            response = await client.get(f"/api/v1/live/{mock_run.id}/equity-curve")
 
             assert response.status_code == 200
 
-    def test_get_equity_curve_not_found(self, client: TestClient) -> None:
+    @pytest.mark.asyncio
+    async def test_get_equity_curve_not_found(self, client: AsyncClient) -> None:
         """Test getting equity curve for non-existent run."""
         run_id = uuid4()
 
@@ -473,7 +500,7 @@ class TestGetEquityCurve:
             mock_service.get_equity_curve = AsyncMock(side_effect=SessionNotFoundError(str(run_id)))
             mock_service_class.return_value = mock_service
 
-            response = client.get(f"/api/v1/live/{run_id}/equity-curve")
+            response = await client.get(f"/api/v1/live/{run_id}/equity-curve")
 
             assert response.status_code == 404
 
@@ -481,20 +508,22 @@ class TestGetEquityCurve:
 class TestPersistEquitySnapshots:
     """Tests for POST /api/v1/live/{run_id}/persist endpoint."""
 
-    def test_persist_success(self, client: TestClient, mock_run) -> None:
+    @pytest.mark.asyncio
+    async def test_persist_success(self, client: AsyncClient, mock_run) -> None:
         """Test persisting equity snapshots."""
         with patch("squant.api.v1.live_trading.LiveTradingService") as mock_service_class:
             mock_service = MagicMock()
             mock_service.persist_snapshots = AsyncMock(return_value=10)
             mock_service_class.return_value = mock_service
 
-            response = client.post(f"/api/v1/live/{mock_run.id}/persist")
+            response = await client.post(f"/api/v1/live/{mock_run.id}/persist")
 
             assert response.status_code == 200
             data = response.json()
             assert data["data"]["persisted_count"] == 10
 
-    def test_persist_not_found(self, client: TestClient) -> None:
+    @pytest.mark.asyncio
+    async def test_persist_not_found(self, client: AsyncClient) -> None:
         """Test persisting snapshots for non-existent session."""
         run_id = uuid4()
 
@@ -505,6 +534,6 @@ class TestPersistEquitySnapshots:
             )
             mock_service_class.return_value = mock_service
 
-            response = client.post(f"/api/v1/live/{run_id}/persist")
+            response = await client.post(f"/api/v1/live/{run_id}/persist")
 
             assert response.status_code == 404

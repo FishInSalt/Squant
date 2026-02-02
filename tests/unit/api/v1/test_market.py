@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from typing import AsyncGenerator
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from fastapi.testclient import TestClient
+import pytest_asyncio
+from httpx import ASGITransport, AsyncClient
 
 from squant.api.deps import get_exchange
 from squant.infra.exchange.types import Candlestick, Ticker
@@ -23,13 +25,18 @@ def mock_exchange():
     return exchange
 
 
-@pytest.fixture
-def client(mock_exchange) -> TestClient:
-    """Create test client with mocked exchange dependency."""
-    # Override the exchange dependency
-    app.dependency_overrides[get_exchange] = lambda: mock_exchange
-    yield TestClient(app)
-    # Clear overrides after test
+@pytest_asyncio.fixture
+async def client(mock_exchange) -> AsyncGenerator[AsyncClient, None]:
+    """Create async test client with mocked exchange dependency."""
+
+    async def override_exchange() -> AsyncGenerator[MagicMock, None]:
+        yield mock_exchange
+
+    app.dependency_overrides[get_exchange] = override_exchange
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as ac:
+        yield ac
     app.dependency_overrides.clear()
 
 
@@ -78,9 +85,10 @@ def mock_candles() -> list[Candlestick]:
 class TestGetExchangeConfig:
     """Tests for GET /api/v1/market/exchange endpoint."""
 
-    def test_get_exchange_config_success(self, client: TestClient) -> None:
+    @pytest.mark.asyncio
+    async def test_get_exchange_config_success(self, client: AsyncClient) -> None:
         """Test getting exchange configuration."""
-        response = client.get("/api/v1/market/exchange")
+        response = await client.get("/api/v1/market/exchange")
 
         assert response.status_code == 200
         data = response.json()
@@ -89,9 +97,10 @@ class TestGetExchangeConfig:
         assert "supported" in data["data"]
         assert isinstance(data["data"]["supported"], list)
 
-    def test_exchange_config_contains_okx(self, client: TestClient) -> None:
+    @pytest.mark.asyncio
+    async def test_exchange_config_contains_okx(self, client: AsyncClient) -> None:
         """Test that supported exchanges include OKX."""
-        response = client.get("/api/v1/market/exchange")
+        response = await client.get("/api/v1/market/exchange")
 
         data = response.json()
         assert "okx" in data["data"]["supported"]
@@ -100,40 +109,44 @@ class TestGetExchangeConfig:
 class TestSetExchange:
     """Tests for PUT /api/v1/market/exchange/{exchange_id} endpoint."""
 
-    def test_set_exchange_success(self, client: TestClient) -> None:
+    @pytest.mark.asyncio
+    async def test_set_exchange_success(self, client: AsyncClient) -> None:
         """Test switching to a valid exchange."""
         with patch("squant.api.v1.market.get_stream_manager") as mock_get_manager:
             mock_manager = MagicMock()
             mock_manager.switch_exchange = AsyncMock()
             mock_get_manager.return_value = mock_manager
 
-            response = client.put("/api/v1/market/exchange/binance")
+            response = await client.put("/api/v1/market/exchange/binance")
 
             assert response.status_code == 200
             data = response.json()
             assert data["code"] == 0
             assert data["data"]["current"] == "binance"
 
-    def test_set_exchange_invalid(self, client: TestClient) -> None:
+    @pytest.mark.asyncio
+    async def test_set_exchange_invalid(self, client: AsyncClient) -> None:
         """Test switching to an invalid exchange."""
-        response = client.put("/api/v1/market/exchange/invalid_exchange")
+        response = await client.put("/api/v1/market/exchange/invalid_exchange")
 
         assert response.status_code == 400
 
-    def test_set_exchange_case_insensitive(self, client: TestClient) -> None:
+    @pytest.mark.asyncio
+    async def test_set_exchange_case_insensitive(self, client: AsyncClient) -> None:
         """Test exchange ID is case insensitive."""
         with patch("squant.api.v1.market.get_stream_manager") as mock_get_manager:
             mock_manager = MagicMock()
             mock_manager.switch_exchange = AsyncMock()
             mock_get_manager.return_value = mock_manager
 
-            response = client.put("/api/v1/market/exchange/BINANCE")
+            response = await client.put("/api/v1/market/exchange/BINANCE")
 
             assert response.status_code == 200
             data = response.json()
             assert data["data"]["current"] == "binance"
 
-    def test_set_exchange_stream_manager_error(self, client: TestClient) -> None:
+    @pytest.mark.asyncio
+    async def test_set_exchange_stream_manager_error(self, client: AsyncClient) -> None:
         """Test switching exchange continues when stream manager fails."""
         with patch("squant.api.v1.market.get_stream_manager") as mock_get_manager:
             mock_manager = MagicMock()
@@ -141,7 +154,7 @@ class TestSetExchange:
             mock_get_manager.return_value = mock_manager
 
             # Should still succeed - REST API continues even if WebSocket fails
-            response = client.put("/api/v1/market/exchange/okx")
+            response = await client.put("/api/v1/market/exchange/okx")
 
             assert response.status_code == 200
 
@@ -149,13 +162,14 @@ class TestSetExchange:
 class TestGetTicker:
     """Tests for GET /api/v1/market/ticker/{symbol} endpoint."""
 
-    def test_get_ticker_success(
-        self, client: TestClient, mock_ticker: Ticker, mock_exchange
+    @pytest.mark.asyncio
+    async def test_get_ticker_success(
+        self, client: AsyncClient, mock_ticker: Ticker, mock_exchange
     ) -> None:
         """Test getting ticker for a symbol."""
         mock_exchange.get_ticker = AsyncMock(return_value=mock_ticker)
 
-        response = client.get("/api/v1/market/ticker/BTC/USDT")
+        response = await client.get("/api/v1/market/ticker/BTC/USDT")
 
         assert response.status_code == 200
         data = response.json()
@@ -166,7 +180,8 @@ class TestGetTicker:
         assert float(data["data"]["bid"]) == 42000.0
         assert float(data["data"]["ask"]) == 42001.0
 
-    def test_get_ticker_symbol_with_dash(self, client: TestClient, mock_exchange) -> None:
+    @pytest.mark.asyncio
+    async def test_get_ticker_symbol_with_dash(self, client: AsyncClient, mock_exchange) -> None:
         """Test getting ticker with dash-separated symbol."""
         mock_ticker_eth = Ticker(
             symbol="ETH/USDT",
@@ -183,19 +198,20 @@ class TestGetTicker:
         )
         mock_exchange.get_ticker = AsyncMock(return_value=mock_ticker_eth)
 
-        response = client.get("/api/v1/market/ticker/ETH/USDT")
+        response = await client.get("/api/v1/market/ticker/ETH/USDT")
 
         assert response.status_code == 200
         data = response.json()
         assert data["data"]["symbol"] == "ETH/USDT"
 
-    def test_get_ticker_exchange_error(self, client: TestClient, mock_exchange) -> None:
+    @pytest.mark.asyncio
+    async def test_get_ticker_exchange_error(self, client: AsyncClient, mock_exchange) -> None:
         """Test getting ticker when exchange returns error."""
         from squant.infra.exchange.exceptions import ExchangeError
 
         mock_exchange.get_ticker = AsyncMock(side_effect=ExchangeError("Symbol not found"))
 
-        response = client.get("/api/v1/market/ticker/INVALID/SYMBOL")
+        response = await client.get("/api/v1/market/ticker/INVALID/SYMBOL")
 
         assert response.status_code == 500
 
@@ -203,7 +219,8 @@ class TestGetTicker:
 class TestGetTickers:
     """Tests for GET /api/v1/market/tickers endpoint."""
 
-    def test_get_tickers_all(self, client: TestClient, mock_exchange) -> None:
+    @pytest.mark.asyncio
+    async def test_get_tickers_all(self, client: AsyncClient, mock_exchange) -> None:
         """Test getting all tickers."""
         mock_tickers = [
             Ticker(
@@ -235,14 +252,15 @@ class TestGetTickers:
         ]
         mock_exchange.get_tickers = AsyncMock(return_value=mock_tickers)
 
-        response = client.get("/api/v1/market/tickers")
+        response = await client.get("/api/v1/market/tickers")
 
         assert response.status_code == 200
         data = response.json()
         assert data["code"] == 0
         assert len(data["data"]) == 2
 
-    def test_get_tickers_filtered_by_symbols(self, client: TestClient, mock_exchange) -> None:
+    @pytest.mark.asyncio
+    async def test_get_tickers_filtered_by_symbols(self, client: AsyncClient, mock_exchange) -> None:
         """Test getting tickers filtered by symbols."""
         mock_ticker = Ticker(
             symbol="BTC/USDT",
@@ -259,14 +277,15 @@ class TestGetTickers:
         )
         mock_exchange.get_tickers = AsyncMock(return_value=[mock_ticker])
 
-        response = client.get("/api/v1/market/tickers?symbols=BTC/USDT")
+        response = await client.get("/api/v1/market/tickers?symbols=BTC/USDT")
 
         assert response.status_code == 200
         data = response.json()
         assert len(data["data"]) == 1
         assert data["data"][0]["symbol"] == "BTC/USDT"
 
-    def test_get_tickers_sorted_by_volume(self, client: TestClient, mock_exchange) -> None:
+    @pytest.mark.asyncio
+    async def test_get_tickers_sorted_by_volume(self, client: AsyncClient, mock_exchange) -> None:
         """Test getting tickers sorted by volume."""
         mock_tickers = [
             Ticker(
@@ -288,14 +307,15 @@ class TestGetTickers:
         ]
         mock_exchange.get_tickers = AsyncMock(return_value=mock_tickers)
 
-        response = client.get("/api/v1/market/tickers?sort_by=volume_quote_24h&order=desc")
+        response = await client.get("/api/v1/market/tickers?sort_by=volume_quote_24h&order=desc")
 
         assert response.status_code == 200
         data = response.json()
         # High volume should be first with descending order
         assert data["data"][0]["symbol"] == "HIGH/USDT"
 
-    def test_get_tickers_sorted_ascending(self, client: TestClient, mock_exchange) -> None:
+    @pytest.mark.asyncio
+    async def test_get_tickers_sorted_ascending(self, client: AsyncClient, mock_exchange) -> None:
         """Test getting tickers sorted in ascending order."""
         mock_tickers = [
             Ticker(
@@ -317,14 +337,15 @@ class TestGetTickers:
         ]
         mock_exchange.get_tickers = AsyncMock(return_value=mock_tickers)
 
-        response = client.get("/api/v1/market/tickers?sort_by=volume_quote_24h&order=asc")
+        response = await client.get("/api/v1/market/tickers?sort_by=volume_quote_24h&order=asc")
 
         assert response.status_code == 200
         data = response.json()
         # Low volume should be first with ascending order
         assert data["data"][0]["symbol"] == "LOW/USDT"
 
-    def test_get_tickers_with_limit(self, client: TestClient, mock_exchange) -> None:
+    @pytest.mark.asyncio
+    async def test_get_tickers_with_limit(self, client: AsyncClient, mock_exchange) -> None:
         """Test getting tickers with limit."""
         mock_tickers = [
             Ticker(
@@ -338,31 +359,33 @@ class TestGetTickers:
         ]
         mock_exchange.get_tickers = AsyncMock(return_value=mock_tickers)
 
-        response = client.get("/api/v1/market/tickers?limit=3")
+        response = await client.get("/api/v1/market/tickers?limit=3")
 
         assert response.status_code == 200
         data = response.json()
         assert len(data["data"]) == 3
 
-    def test_get_tickers_invalid_limit(self, client: TestClient) -> None:
+    @pytest.mark.asyncio
+    async def test_get_tickers_invalid_limit(self, client: AsyncClient) -> None:
         """Test getting tickers with invalid limit."""
-        response = client.get("/api/v1/market/tickers?limit=0")
+        response = await client.get("/api/v1/market/tickers?limit=0")
         assert response.status_code == 422
 
-        response = client.get("/api/v1/market/tickers?limit=501")
+        response = await client.get("/api/v1/market/tickers?limit=501")
         assert response.status_code == 422
 
 
 class TestGetCandles:
     """Tests for GET /api/v1/market/candles/{symbol} endpoint."""
 
-    def test_get_candles_success(
-        self, client: TestClient, mock_candles: list[Candlestick], mock_exchange
+    @pytest.mark.asyncio
+    async def test_get_candles_success(
+        self, client: AsyncClient, mock_candles: list[Candlestick], mock_exchange
     ) -> None:
         """Test getting candles for a symbol."""
         mock_exchange.get_candlesticks = AsyncMock(return_value=mock_candles)
 
-        response = client.get("/api/v1/market/candles/BTC/USDT?timeframe=1h")
+        response = await client.get("/api/v1/market/candles/BTC/USDT?timeframe=1h")
 
         assert response.status_code == 200
         data = response.json()
@@ -371,44 +394,48 @@ class TestGetCandles:
         assert data["data"]["timeframe"] == "1h"
         assert len(data["data"]["candles"]) == 2
 
-    def test_get_candles_default_timeframe(
-        self, client: TestClient, mock_candles: list[Candlestick], mock_exchange
+    @pytest.mark.asyncio
+    async def test_get_candles_default_timeframe(
+        self, client: AsyncClient, mock_candles: list[Candlestick], mock_exchange
     ) -> None:
         """Test getting candles with default timeframe."""
         mock_exchange.get_candlesticks = AsyncMock(return_value=mock_candles)
 
-        response = client.get("/api/v1/market/candles/BTC/USDT")
+        response = await client.get("/api/v1/market/candles/BTC/USDT")
 
         assert response.status_code == 200
         data = response.json()
         assert data["data"]["timeframe"] == "1h"
 
-    def test_get_candles_all_timeframes(
-        self, client: TestClient, mock_candles: list[Candlestick], mock_exchange
+    @pytest.mark.asyncio
+    async def test_get_candles_all_timeframes(
+        self, client: AsyncClient, mock_candles: list[Candlestick], mock_exchange
     ) -> None:
         """Test getting candles for all supported timeframes."""
         timeframes = ["1m", "5m", "15m", "30m", "1h", "4h", "1d", "1w"]
         mock_exchange.get_candlesticks = AsyncMock(return_value=mock_candles)
 
         for tf in timeframes:
-            response = client.get(f"/api/v1/market/candles/BTC/USDT?timeframe={tf}")
+            response = await client.get(f"/api/v1/market/candles/BTC/USDT?timeframe={tf}")
             assert response.status_code == 200, f"Failed for timeframe {tf}"
             data = response.json()
             assert data["data"]["timeframe"] == tf
 
-    def test_get_candles_invalid_timeframe(self, client: TestClient) -> None:
+    @pytest.mark.asyncio
+    async def test_get_candles_invalid_timeframe(self, client: AsyncClient) -> None:
         """Test getting candles with invalid timeframe."""
-        response = client.get("/api/v1/market/candles/BTC/USDT?timeframe=invalid")
+        response = await client.get("/api/v1/market/candles/BTC/USDT?timeframe=invalid")
 
         assert response.status_code == 400
 
-    def test_get_candles_with_limit(
-        self, client: TestClient, mock_candles: list[Candlestick], mock_exchange
+    @pytest.mark.asyncio
+    async def test_get_candles_with_limit(
+        self, client: AsyncClient, mock_candles: list[Candlestick], mock_exchange
     ) -> None:
         """Test getting candles with custom limit."""
         mock_exchange.get_candlesticks = AsyncMock(return_value=mock_candles)
 
-        response = client.get("/api/v1/market/candles/BTC/USDT?limit=50")
+        response = await client.get("/api/v1/market/candles/BTC/USDT?limit=50")
 
         assert response.status_code == 200
         # Verify limit was passed to exchange
@@ -416,21 +443,23 @@ class TestGetCandles:
         call_kwargs = mock_exchange.get_candlesticks.call_args[1]
         assert call_kwargs["limit"] == 50
 
-    def test_get_candles_invalid_limit(self, client: TestClient) -> None:
+    @pytest.mark.asyncio
+    async def test_get_candles_invalid_limit(self, client: AsyncClient) -> None:
         """Test getting candles with invalid limit."""
-        response = client.get("/api/v1/market/candles/BTC/USDT?limit=0")
+        response = await client.get("/api/v1/market/candles/BTC/USDT?limit=0")
         assert response.status_code == 422
 
-        response = client.get("/api/v1/market/candles/BTC/USDT?limit=301")
+        response = await client.get("/api/v1/market/candles/BTC/USDT?limit=301")
         assert response.status_code == 422
 
-    def test_get_candles_exchange_error(self, client: TestClient, mock_exchange) -> None:
+    @pytest.mark.asyncio
+    async def test_get_candles_exchange_error(self, client: AsyncClient, mock_exchange) -> None:
         """Test getting candles when exchange returns error."""
         from squant.infra.exchange.exceptions import ExchangeError
 
         mock_exchange.get_candlesticks = AsyncMock(side_effect=ExchangeError("Rate limit exceeded"))
 
-        response = client.get("/api/v1/market/candles/BTC/USDT")
+        response = await client.get("/api/v1/market/candles/BTC/USDT")
 
         assert response.status_code == 500
 
@@ -438,13 +467,14 @@ class TestGetCandles:
 class TestCandleDataIntegrity:
     """Tests for candle data structure and values."""
 
-    def test_candle_has_all_fields(
-        self, client: TestClient, mock_candles: list[Candlestick], mock_exchange
+    @pytest.mark.asyncio
+    async def test_candle_has_all_fields(
+        self, client: AsyncClient, mock_candles: list[Candlestick], mock_exchange
     ) -> None:
         """Test that candle response includes all OHLCV fields."""
         mock_exchange.get_candlesticks = AsyncMock(return_value=mock_candles)
 
-        response = client.get("/api/v1/market/candles/BTC/USDT")
+        response = await client.get("/api/v1/market/candles/BTC/USDT")
 
         assert response.status_code == 200
         data = response.json()
@@ -461,13 +491,14 @@ class TestCandleDataIntegrity:
 class TestTickerDataIntegrity:
     """Tests for ticker data structure and values."""
 
-    def test_ticker_has_all_fields(
-        self, client: TestClient, mock_ticker: Ticker, mock_exchange
+    @pytest.mark.asyncio
+    async def test_ticker_has_all_fields(
+        self, client: AsyncClient, mock_ticker: Ticker, mock_exchange
     ) -> None:
         """Test that ticker response includes all fields."""
         mock_exchange.get_ticker = AsyncMock(return_value=mock_ticker)
 
-        response = client.get("/api/v1/market/ticker/BTC/USDT")
+        response = await client.get("/api/v1/market/ticker/BTC/USDT")
 
         assert response.status_code == 200
         data = response.json()

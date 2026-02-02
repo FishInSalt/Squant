@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, AsyncGenerator
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import pytest
-from fastapi.testclient import TestClient
+import pytest_asyncio
+from httpx import ASGITransport, AsyncClient
 
 from squant.main import app
 from squant.models.enums import StrategyStatus
@@ -20,10 +21,13 @@ from squant.services.strategy import (
 )
 
 
-@pytest.fixture
-def client() -> TestClient:
-    """Create test client."""
-    return TestClient(app)
+@pytest_asyncio.fixture
+async def client() -> AsyncGenerator[AsyncClient, None]:
+    """Create async test client."""
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as ac:
+        yield ac
 
 
 @pytest.fixture
@@ -56,7 +60,8 @@ def valid_create_request() -> dict[str, Any]:
 class TestValidateStrategyCode:
     """Tests for POST /api/v1/strategies/validate endpoint."""
 
-    def test_validate_valid_code(self, client: TestClient) -> None:
+    @pytest.mark.asyncio
+    async def test_validate_valid_code(self, client: AsyncClient) -> None:
         """Test validating valid strategy code."""
         with patch("squant.engine.sandbox.validate_strategy_code") as mock_validate:
             mock_result = MagicMock()
@@ -65,7 +70,7 @@ class TestValidateStrategyCode:
             mock_result.warnings = []
             mock_validate.return_value = mock_result
 
-            response = client.post(
+            response = await client.post(
                 "/api/v1/strategies/validate",
                 json={"code": "class Strategy:\n    def on_bar(self, bar): pass"},
             )
@@ -76,7 +81,8 @@ class TestValidateStrategyCode:
             assert data["data"]["valid"] is True
             assert data["data"]["errors"] == []
 
-    def test_validate_invalid_code(self, client: TestClient) -> None:
+    @pytest.mark.asyncio
+    async def test_validate_invalid_code(self, client: AsyncClient) -> None:
         """Test validating invalid strategy code."""
         with patch("squant.engine.sandbox.validate_strategy_code") as mock_validate:
             mock_result = MagicMock()
@@ -85,7 +91,7 @@ class TestValidateStrategyCode:
             mock_result.warnings = []
             mock_validate.return_value = mock_result
 
-            response = client.post(
+            response = await client.post(
                 "/api/v1/strategies/validate",
                 json={"code": "def some_function(): pass"},
             )
@@ -95,7 +101,8 @@ class TestValidateStrategyCode:
             assert data["data"]["valid"] is False
             assert "Missing Strategy class" in data["data"]["errors"]
 
-    def test_validate_with_warnings(self, client: TestClient) -> None:
+    @pytest.mark.asyncio
+    async def test_validate_with_warnings(self, client: AsyncClient) -> None:
         """Test validating code that produces warnings."""
         with patch("squant.engine.sandbox.validate_strategy_code") as mock_validate:
             mock_result = MagicMock()
@@ -104,7 +111,7 @@ class TestValidateStrategyCode:
             mock_result.warnings = ["Unused variable 'x'"]
             mock_validate.return_value = mock_result
 
-            response = client.post(
+            response = await client.post(
                 "/api/v1/strategies/validate",
                 json={"code": "class Strategy:\n    def on_bar(self, bar): x = 1"},
             )
@@ -114,9 +121,10 @@ class TestValidateStrategyCode:
             assert data["data"]["valid"] is True
             assert len(data["data"]["warnings"]) > 0
 
-    def test_validate_missing_code(self, client: TestClient) -> None:
+    @pytest.mark.asyncio
+    async def test_validate_missing_code(self, client: AsyncClient) -> None:
         """Test validation request without code."""
-        response = client.post("/api/v1/strategies/validate", json={})
+        response = await client.post("/api/v1/strategies/validate", json={})
 
         assert response.status_code == 422
 
@@ -124,8 +132,9 @@ class TestValidateStrategyCode:
 class TestCreateStrategy:
     """Tests for POST /api/v1/strategies endpoint."""
 
-    def test_create_strategy_success(
-        self, client: TestClient, valid_create_request: dict, mock_strategy
+    @pytest.mark.asyncio
+    async def test_create_strategy_success(
+        self, client: AsyncClient, valid_create_request: dict, mock_strategy
     ) -> None:
         """Test successful strategy creation."""
         with patch("squant.api.v1.strategies.StrategyService") as mock_service_class:
@@ -133,15 +142,16 @@ class TestCreateStrategy:
             mock_service.create = AsyncMock(return_value=mock_strategy)
             mock_service_class.return_value = mock_service
 
-            response = client.post("/api/v1/strategies", json=valid_create_request)
+            response = await client.post("/api/v1/strategies", json=valid_create_request)
 
             assert response.status_code == 200
             data = response.json()
             assert data["code"] == 0
             assert data["data"]["name"] == "Test Strategy"
 
-    def test_create_strategy_name_exists(
-        self, client: TestClient, valid_create_request: dict
+    @pytest.mark.asyncio
+    async def test_create_strategy_name_exists(
+        self, client: AsyncClient, valid_create_request: dict
     ) -> None:
         """Test creating strategy with existing name."""
         with patch("squant.api.v1.strategies.StrategyService") as mock_service_class:
@@ -149,12 +159,13 @@ class TestCreateStrategy:
             mock_service.create = AsyncMock(side_effect=StrategyNameExistsError("Test Strategy"))
             mock_service_class.return_value = mock_service
 
-            response = client.post("/api/v1/strategies", json=valid_create_request)
+            response = await client.post("/api/v1/strategies", json=valid_create_request)
 
             assert response.status_code == 409
 
-    def test_create_strategy_validation_error(
-        self, client: TestClient, valid_create_request: dict
+    @pytest.mark.asyncio
+    async def test_create_strategy_validation_error(
+        self, client: AsyncClient, valid_create_request: dict
     ) -> None:
         """Test creating strategy with validation error."""
         with patch("squant.api.v1.strategies.StrategyService") as mock_service_class:
@@ -162,13 +173,14 @@ class TestCreateStrategy:
             mock_service.create = AsyncMock(side_effect=StrategyValidationError(["Invalid syntax"]))
             mock_service_class.return_value = mock_service
 
-            response = client.post("/api/v1/strategies", json=valid_create_request)
+            response = await client.post("/api/v1/strategies", json=valid_create_request)
 
             assert response.status_code == 400
 
-    def test_create_strategy_missing_name(self, client: TestClient) -> None:
+    @pytest.mark.asyncio
+    async def test_create_strategy_missing_name(self, client: AsyncClient) -> None:
         """Test creating strategy without name."""
-        response = client.post(
+        response = await client.post(
             "/api/v1/strategies",
             json={
                 "description": "No name",
@@ -178,9 +190,10 @@ class TestCreateStrategy:
 
         assert response.status_code == 422
 
-    def test_create_strategy_missing_code(self, client: TestClient) -> None:
+    @pytest.mark.asyncio
+    async def test_create_strategy_missing_code(self, client: AsyncClient) -> None:
         """Test creating strategy without code."""
-        response = client.post(
+        response = await client.post(
             "/api/v1/strategies",
             json={
                 "name": "Test",
@@ -194,14 +207,15 @@ class TestCreateStrategy:
 class TestListStrategies:
     """Tests for GET /api/v1/strategies endpoint."""
 
-    def test_list_strategies_success(self, client: TestClient, mock_strategy) -> None:
+    @pytest.mark.asyncio
+    async def test_list_strategies_success(self, client: AsyncClient, mock_strategy) -> None:
         """Test listing strategies."""
         with patch("squant.api.v1.strategies.StrategyService") as mock_service_class:
             mock_service = MagicMock()
             mock_service.list = AsyncMock(return_value=([mock_strategy], 1))
             mock_service_class.return_value = mock_service
 
-            response = client.get("/api/v1/strategies")
+            response = await client.get("/api/v1/strategies")
 
             assert response.status_code == 200
             data = response.json()
@@ -209,21 +223,23 @@ class TestListStrategies:
             assert data["data"]["total"] == 1
             assert len(data["data"]["items"]) == 1
 
-    def test_list_strategies_with_pagination(self, client: TestClient, mock_strategy) -> None:
+    @pytest.mark.asyncio
+    async def test_list_strategies_with_pagination(self, client: AsyncClient, mock_strategy) -> None:
         """Test listing strategies with pagination."""
         with patch("squant.api.v1.strategies.StrategyService") as mock_service_class:
             mock_service = MagicMock()
             mock_service.list = AsyncMock(return_value=([mock_strategy], 50))
             mock_service_class.return_value = mock_service
 
-            response = client.get("/api/v1/strategies?page=2&page_size=10")
+            response = await client.get("/api/v1/strategies?page=2&page_size=10")
 
             assert response.status_code == 200
             data = response.json()
             assert data["data"]["page"] == 2
             assert data["data"]["page_size"] == 10
 
-    def test_list_strategies_with_status_filter(self, client: TestClient, mock_strategy) -> None:
+    @pytest.mark.asyncio
+    async def test_list_strategies_with_status_filter(self, client: AsyncClient, mock_strategy) -> None:
         """Test listing strategies with status filter."""
         mock_strategy.status = StrategyStatus.ACTIVE
 
@@ -232,54 +248,59 @@ class TestListStrategies:
             mock_service.list = AsyncMock(return_value=([mock_strategy], 1))
             mock_service_class.return_value = mock_service
 
-            response = client.get("/api/v1/strategies?status=active")
+            response = await client.get("/api/v1/strategies?status=active")
 
             assert response.status_code == 200
             mock_service.list.assert_called_once()
 
-    def test_list_strategies_empty(self, client: TestClient) -> None:
+    @pytest.mark.asyncio
+    async def test_list_strategies_empty(self, client: AsyncClient) -> None:
         """Test listing strategies when none exist."""
         with patch("squant.api.v1.strategies.StrategyService") as mock_service_class:
             mock_service = MagicMock()
             mock_service.list = AsyncMock(return_value=([], 0))
             mock_service_class.return_value = mock_service
 
-            response = client.get("/api/v1/strategies")
+            response = await client.get("/api/v1/strategies")
 
             assert response.status_code == 200
             data = response.json()
             assert data["data"]["total"] == 0
             assert data["data"]["items"] == []
 
-    def test_list_strategies_invalid_page(self, client: TestClient) -> None:
+    @pytest.mark.asyncio
+    async def test_list_strategies_invalid_page(self, client: AsyncClient) -> None:
         """Test listing strategies with invalid page number."""
-        response = client.get("/api/v1/strategies?page=0")
+        response = await client.get("/api/v1/strategies?page=0")
         assert response.status_code == 422
 
-    def test_list_strategies_invalid_page_size(self, client: TestClient) -> None:
+    @pytest.mark.asyncio
+    async def test_list_strategies_invalid_page_size(self, client: AsyncClient) -> None:
         """Test listing strategies with invalid page size."""
-        response = client.get("/api/v1/strategies?page_size=101")
+        response = await client.get("/api/v1/strategies?page_size=101")
         assert response.status_code == 422
 
 
 class TestGetStrategy:
     """Tests for GET /api/v1/strategies/{strategy_id} endpoint."""
 
-    def test_get_strategy_success(self, client: TestClient, mock_strategy) -> None:
+    @pytest.mark.asyncio
+    async def test_get_strategy_success(self, client: AsyncClient, mock_strategy) -> None:
         """Test getting a strategy by ID."""
         with patch("squant.api.v1.strategies.StrategyService") as mock_service_class:
             mock_service = MagicMock()
             mock_service.get = AsyncMock(return_value=mock_strategy)
             mock_service_class.return_value = mock_service
 
-            response = client.get(f"/api/v1/strategies/{mock_strategy.id}")
+            response = await client.get(f"/api/v1/strategies/{mock_strategy.id}")
 
             assert response.status_code == 200
             data = response.json()
             assert data["code"] == 0
             assert data["data"]["name"] == "Test Strategy"
 
-    def test_get_strategy_not_found(self, client: TestClient) -> None:
+    @pytest.mark.asyncio
+    async def test_get_strategy_not_found(self, client: AsyncClient) -> None:
         """Test getting a non-existent strategy."""
         strategy_id = uuid4()
 
@@ -288,13 +309,14 @@ class TestGetStrategy:
             mock_service.get = AsyncMock(side_effect=StrategyNotFoundError(str(strategy_id)))
             mock_service_class.return_value = mock_service
 
-            response = client.get(f"/api/v1/strategies/{strategy_id}")
+            response = await client.get(f"/api/v1/strategies/{strategy_id}")
 
             assert response.status_code == 404
 
-    def test_get_strategy_invalid_id(self, client: TestClient) -> None:
+    @pytest.mark.asyncio
+    async def test_get_strategy_invalid_id(self, client: AsyncClient) -> None:
         """Test getting strategy with invalid ID format."""
-        response = client.get("/api/v1/strategies/invalid-uuid")
+        response = await client.get("/api/v1/strategies/invalid-uuid")
 
         assert response.status_code == 422
 
@@ -302,7 +324,8 @@ class TestGetStrategy:
 class TestUpdateStrategy:
     """Tests for PUT /api/v1/strategies/{strategy_id} endpoint."""
 
-    def test_update_strategy_success(self, client: TestClient, mock_strategy) -> None:
+    @pytest.mark.asyncio
+    async def test_update_strategy_success(self, client: AsyncClient, mock_strategy) -> None:
         """Test updating a strategy."""
         mock_strategy.name = "Updated Strategy"
 
@@ -311,7 +334,7 @@ class TestUpdateStrategy:
             mock_service.update = AsyncMock(return_value=mock_strategy)
             mock_service_class.return_value = mock_service
 
-            response = client.put(
+            response = await client.put(
                 f"/api/v1/strategies/{mock_strategy.id}",
                 json={"name": "Updated Strategy"},
             )
@@ -320,7 +343,8 @@ class TestUpdateStrategy:
             data = response.json()
             assert data["data"]["name"] == "Updated Strategy"
 
-    def test_update_strategy_not_found(self, client: TestClient) -> None:
+    @pytest.mark.asyncio
+    async def test_update_strategy_not_found(self, client: AsyncClient) -> None:
         """Test updating a non-existent strategy."""
         strategy_id = uuid4()
 
@@ -329,14 +353,15 @@ class TestUpdateStrategy:
             mock_service.update = AsyncMock(side_effect=StrategyNotFoundError(str(strategy_id)))
             mock_service_class.return_value = mock_service
 
-            response = client.put(
+            response = await client.put(
                 f"/api/v1/strategies/{strategy_id}",
                 json={"name": "New Name"},
             )
 
             assert response.status_code == 404
 
-    def test_update_strategy_name_exists(self, client: TestClient, mock_strategy) -> None:
+    @pytest.mark.asyncio
+    async def test_update_strategy_name_exists(self, client: AsyncClient, mock_strategy) -> None:
         """Test updating strategy with existing name."""
         with patch("squant.api.v1.strategies.StrategyService") as mock_service_class:
             mock_service = MagicMock()
@@ -345,21 +370,22 @@ class TestUpdateStrategy:
             )
             mock_service_class.return_value = mock_service
 
-            response = client.put(
+            response = await client.put(
                 f"/api/v1/strategies/{mock_strategy.id}",
                 json={"name": "Existing Strategy"},
             )
 
             assert response.status_code == 409
 
-    def test_update_strategy_validation_error(self, client: TestClient, mock_strategy) -> None:
+    @pytest.mark.asyncio
+    async def test_update_strategy_validation_error(self, client: AsyncClient, mock_strategy) -> None:
         """Test updating strategy with invalid code."""
         with patch("squant.api.v1.strategies.StrategyService") as mock_service_class:
             mock_service = MagicMock()
             mock_service.update = AsyncMock(side_effect=StrategyValidationError(["Syntax error"]))
             mock_service_class.return_value = mock_service
 
-            response = client.put(
+            response = await client.put(
                 f"/api/v1/strategies/{mock_strategy.id}",
                 json={"code": "invalid code"},
             )
@@ -370,20 +396,22 @@ class TestUpdateStrategy:
 class TestDeleteStrategy:
     """Tests for DELETE /api/v1/strategies/{strategy_id} endpoint."""
 
-    def test_delete_strategy_success(self, client: TestClient, mock_strategy) -> None:
+    @pytest.mark.asyncio
+    async def test_delete_strategy_success(self, client: AsyncClient, mock_strategy) -> None:
         """Test deleting a strategy."""
         with patch("squant.api.v1.strategies.StrategyService") as mock_service_class:
             mock_service = MagicMock()
             mock_service.delete = AsyncMock(return_value=None)
             mock_service_class.return_value = mock_service
 
-            response = client.delete(f"/api/v1/strategies/{mock_strategy.id}")
+            response = await client.delete(f"/api/v1/strategies/{mock_strategy.id}")
 
             assert response.status_code == 200
             data = response.json()
             assert data["message"] == "Strategy deleted"
 
-    def test_delete_strategy_not_found(self, client: TestClient) -> None:
+    @pytest.mark.asyncio
+    async def test_delete_strategy_not_found(self, client: AsyncClient) -> None:
         """Test deleting a non-existent strategy."""
         strategy_id = uuid4()
 
@@ -392,11 +420,12 @@ class TestDeleteStrategy:
             mock_service.delete = AsyncMock(side_effect=StrategyNotFoundError(str(strategy_id)))
             mock_service_class.return_value = mock_service
 
-            response = client.delete(f"/api/v1/strategies/{strategy_id}")
+            response = await client.delete(f"/api/v1/strategies/{strategy_id}")
 
             assert response.status_code == 404
 
-    def test_delete_running_strategy_returns_409(self, client: TestClient) -> None:
+    @pytest.mark.asyncio
+    async def test_delete_running_strategy_returns_409(self, client: AsyncClient) -> None:
         """Test deleting a running strategy returns 409 conflict (STR-024)."""
         strategy_id = uuid4()
 
@@ -407,7 +436,7 @@ class TestDeleteStrategy:
             )
             mock_service_class.return_value = mock_service
 
-            response = client.delete(f"/api/v1/strategies/{strategy_id}")
+            response = await client.delete(f"/api/v1/strategies/{strategy_id}")
 
             assert response.status_code == 409
             assert "running" in response.json()["detail"].lower()

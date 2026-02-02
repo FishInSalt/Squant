@@ -4,12 +4,13 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from decimal import Decimal
-from typing import Any
+from typing import Any, AsyncGenerator
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import pytest
-from fastapi.testclient import TestClient
+import pytest_asyncio
+from httpx import ASGITransport, AsyncClient
 
 from squant.main import app
 from squant.models.enums import RunMode, RunStatus
@@ -21,10 +22,13 @@ from squant.services.paper_trading import (
 from squant.services.strategy import StrategyNotFoundError
 
 
-@pytest.fixture
-def client() -> TestClient:
-    """Create test client."""
-    return TestClient(app)
+@pytest_asyncio.fixture
+async def client() -> AsyncGenerator[AsyncClient, None]:
+    """Create async test client."""
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as ac:
+        yield ac
 
 
 @pytest.fixture
@@ -67,8 +71,9 @@ def valid_start_request() -> dict[str, Any]:
 class TestStartPaperTrading:
     """Tests for POST /api/v1/paper-trading endpoint."""
 
-    def test_start_paper_trading_success(
-        self, client: TestClient, valid_start_request: dict, mock_run
+    @pytest.mark.asyncio
+    async def test_start_paper_trading_success(
+        self, client: AsyncClient, valid_start_request: dict, mock_run
     ) -> None:
         """Test successful paper trading start."""
         with patch("squant.api.v1.paper_trading.PaperTradingService") as mock_service_class:
@@ -76,7 +81,7 @@ class TestStartPaperTrading:
             mock_service.start = AsyncMock(return_value=mock_run)
             mock_service_class.return_value = mock_service
 
-            response = client.post("/api/v1/paper", json=valid_start_request)
+            response = await client.post("/api/v1/paper", json=valid_start_request)
 
             assert response.status_code == 200
             data = response.json()
@@ -84,8 +89,9 @@ class TestStartPaperTrading:
             assert data["data"]["symbol"] == "BTC/USDT"
             assert data["data"]["mode"] == "paper"
 
-    def test_start_paper_trading_strategy_not_found(
-        self, client: TestClient, valid_start_request: dict
+    @pytest.mark.asyncio
+    async def test_start_paper_trading_strategy_not_found(
+        self, client: AsyncClient, valid_start_request: dict
     ) -> None:
         """Test starting paper trading with non-existent strategy."""
         with patch("squant.api.v1.paper_trading.PaperTradingService") as mock_service_class:
@@ -95,12 +101,13 @@ class TestStartPaperTrading:
             )
             mock_service_class.return_value = mock_service
 
-            response = client.post("/api/v1/paper", json=valid_start_request)
+            response = await client.post("/api/v1/paper", json=valid_start_request)
 
             assert response.status_code == 404
 
-    def test_start_paper_trading_instantiation_error(
-        self, client: TestClient, valid_start_request: dict
+    @pytest.mark.asyncio
+    async def test_start_paper_trading_instantiation_error(
+        self, client: AsyncClient, valid_start_request: dict
     ) -> None:
         """Test starting paper trading with strategy instantiation error."""
         with patch("squant.api.v1.paper_trading.PaperTradingService") as mock_service_class:
@@ -110,12 +117,13 @@ class TestStartPaperTrading:
             )
             mock_service_class.return_value = mock_service
 
-            response = client.post("/api/v1/paper", json=valid_start_request)
+            response = await client.post("/api/v1/paper", json=valid_start_request)
 
             assert response.status_code == 400
 
-    def test_start_paper_trading_general_error(
-        self, client: TestClient, valid_start_request: dict
+    @pytest.mark.asyncio
+    async def test_start_paper_trading_general_error(
+        self, client: AsyncClient, valid_start_request: dict
     ) -> None:
         """Test starting paper trading with general error."""
         with patch("squant.api.v1.paper_trading.PaperTradingService") as mock_service_class:
@@ -123,13 +131,14 @@ class TestStartPaperTrading:
             mock_service.start = AsyncMock(side_effect=PaperTradingError("General error"))
             mock_service_class.return_value = mock_service
 
-            response = client.post("/api/v1/paper", json=valid_start_request)
+            response = await client.post("/api/v1/paper", json=valid_start_request)
 
             assert response.status_code == 400
 
-    def test_start_paper_trading_missing_fields(self, client: TestClient) -> None:
+    @pytest.mark.asyncio
+    async def test_start_paper_trading_missing_fields(self, client: AsyncClient) -> None:
         """Test starting paper trading with missing required fields."""
-        response = client.post(
+        response = await client.post(
             "/api/v1/paper",
             json={"symbol": "BTC/USDT"},
         )
@@ -140,7 +149,8 @@ class TestStartPaperTrading:
 class TestStopPaperTrading:
     """Tests for POST /api/v1/paper-trading/{run_id}/stop endpoint."""
 
-    def test_stop_paper_trading_success(self, client: TestClient, mock_run) -> None:
+    @pytest.mark.asyncio
+    async def test_stop_paper_trading_success(self, client: AsyncClient, mock_run) -> None:
         """Test successful paper trading stop."""
         mock_run.status = RunStatus.STOPPED.value
         mock_run.stopped_at = datetime.now(UTC)
@@ -150,13 +160,14 @@ class TestStopPaperTrading:
             mock_service.stop = AsyncMock(return_value=mock_run)
             mock_service_class.return_value = mock_service
 
-            response = client.post(f"/api/v1/paper/{mock_run.id}/stop")
+            response = await client.post(f"/api/v1/paper/{mock_run.id}/stop")
 
             assert response.status_code == 200
             data = response.json()
             assert data["data"]["status"] == "stopped"
 
-    def test_stop_paper_trading_not_found(self, client: TestClient) -> None:
+    @pytest.mark.asyncio
+    async def test_stop_paper_trading_not_found(self, client: AsyncClient) -> None:
         """Test stopping non-existent paper trading session."""
         run_id = uuid4()
 
@@ -165,13 +176,14 @@ class TestStopPaperTrading:
             mock_service.stop = AsyncMock(side_effect=SessionNotFoundError(str(run_id)))
             mock_service_class.return_value = mock_service
 
-            response = client.post(f"/api/v1/paper/{run_id}/stop")
+            response = await client.post(f"/api/v1/paper/{run_id}/stop")
 
             assert response.status_code == 404
 
-    def test_stop_paper_trading_invalid_uuid(self, client: TestClient) -> None:
+    @pytest.mark.asyncio
+    async def test_stop_paper_trading_invalid_uuid(self, client: AsyncClient) -> None:
         """Test stopping with invalid UUID format."""
-        response = client.post("/api/v1/paper/invalid-uuid/stop")
+        response = await client.post("/api/v1/paper/invalid-uuid/stop")
 
         assert response.status_code == 422
 
@@ -179,7 +191,8 @@ class TestStopPaperTrading:
 class TestGetPaperTradingStatus:
     """Tests for GET /api/v1/paper-trading/{run_id}/status endpoint."""
 
-    def test_get_status_success(self, client: TestClient, mock_run) -> None:
+    @pytest.mark.asyncio
+    async def test_get_status_success(self, client: AsyncClient, mock_run) -> None:
         """Test getting paper trading status."""
         mock_status = {
             "run_id": str(mock_run.id),
@@ -205,14 +218,15 @@ class TestGetPaperTradingStatus:
             mock_service.get_status = AsyncMock(return_value=mock_status)
             mock_service_class.return_value = mock_service
 
-            response = client.get(f"/api/v1/paper/{mock_run.id}/status")
+            response = await client.get(f"/api/v1/paper/{mock_run.id}/status")
 
             assert response.status_code == 200
             data = response.json()
             assert data["data"]["is_running"] is True
             assert data["data"]["bar_count"] == 100
 
-    def test_get_status_not_found(self, client: TestClient) -> None:
+    @pytest.mark.asyncio
+    async def test_get_status_not_found(self, client: AsyncClient) -> None:
         """Test getting status for non-existent session."""
         run_id = uuid4()
 
@@ -221,7 +235,7 @@ class TestGetPaperTradingStatus:
             mock_service.get_status = AsyncMock(side_effect=SessionNotFoundError(str(run_id)))
             mock_service_class.return_value = mock_service
 
-            response = client.get(f"/api/v1/paper/{run_id}/status")
+            response = await client.get(f"/api/v1/paper/{run_id}/status")
 
             assert response.status_code == 404
 
@@ -229,7 +243,8 @@ class TestGetPaperTradingStatus:
 class TestListActiveSessions:
     """Tests for GET /api/v1/paper-trading endpoint."""
 
-    def test_list_active_sessions_success(self, client: TestClient, mock_run) -> None:
+    @pytest.mark.asyncio
+    async def test_list_active_sessions_success(self, client: AsyncClient, mock_run) -> None:
         """Test listing active paper trading sessions."""
         mock_sessions = [
             {
@@ -250,21 +265,22 @@ class TestListActiveSessions:
             mock_service.get_run = AsyncMock(return_value=mock_run)
             mock_service_class.return_value = mock_service
 
-            response = client.get("/api/v1/paper")
+            response = await client.get("/api/v1/paper")
 
             assert response.status_code == 200
             data = response.json()
             assert data["code"] == 0
             assert len(data["data"]) == 1
 
-    def test_list_active_sessions_empty(self, client: TestClient) -> None:
+    @pytest.mark.asyncio
+    async def test_list_active_sessions_empty(self, client: AsyncClient) -> None:
         """Test listing active sessions when none exist."""
         with patch("squant.api.v1.paper_trading.PaperTradingService") as mock_service_class:
             mock_service = MagicMock()
             mock_service.list_active = MagicMock(return_value=[])
             mock_service_class.return_value = mock_service
 
-            response = client.get("/api/v1/paper")
+            response = await client.get("/api/v1/paper")
 
             assert response.status_code == 200
             data = response.json()
@@ -274,52 +290,56 @@ class TestListActiveSessions:
 class TestListPaperTradingRuns:
     """Tests for GET /api/v1/paper/runs endpoint."""
 
-    def test_list_runs_success(self, client: TestClient, mock_run) -> None:
+    @pytest.mark.asyncio
+    async def test_list_runs_success(self, client: AsyncClient, mock_run) -> None:
         """Test listing paper trading runs with pagination."""
         with patch("squant.api.v1.paper_trading.PaperTradingService") as mock_service_class:
             mock_service = MagicMock()
             mock_service.list_runs = AsyncMock(return_value=([mock_run], 1))
             mock_service_class.return_value = mock_service
 
-            response = client.get("/api/v1/paper/runs")
+            response = await client.get("/api/v1/paper/runs")
 
             assert response.status_code == 200
             data = response.json()
             assert data["data"]["total"] == 1
             assert len(data["data"]["items"]) == 1
 
-    def test_list_runs_with_pagination(self, client: TestClient, mock_run) -> None:
+    @pytest.mark.asyncio
+    async def test_list_runs_with_pagination(self, client: AsyncClient, mock_run) -> None:
         """Test listing runs with pagination params."""
         with patch("squant.api.v1.paper_trading.PaperTradingService") as mock_service_class:
             mock_service = MagicMock()
             mock_service.list_runs = AsyncMock(return_value=([mock_run], 50))
             mock_service_class.return_value = mock_service
 
-            response = client.get("/api/v1/paper/runs?page=2&page_size=10")
+            response = await client.get("/api/v1/paper/runs?page=2&page_size=10")
 
             assert response.status_code == 200
             data = response.json()
             assert data["data"]["page"] == 2
             assert data["data"]["page_size"] == 10
 
-    def test_list_runs_with_status_filter(self, client: TestClient, mock_run) -> None:
+    @pytest.mark.asyncio
+    async def test_list_runs_with_status_filter(self, client: AsyncClient, mock_run) -> None:
         """Test listing runs with status filter."""
         with patch("squant.api.v1.paper_trading.PaperTradingService") as mock_service_class:
             mock_service = MagicMock()
             mock_service.list_runs = AsyncMock(return_value=([mock_run], 1))
             mock_service_class.return_value = mock_service
 
-            response = client.get("/api/v1/paper/runs?status=running")
+            response = await client.get("/api/v1/paper/runs?status=running")
 
             assert response.status_code == 200
 
-    def test_list_runs_invalid_status(self, client: TestClient) -> None:
+    @pytest.mark.asyncio
+    async def test_list_runs_invalid_status(self, client: AsyncClient) -> None:
         """Test listing runs with invalid status."""
         with patch("squant.api.v1.paper_trading.PaperTradingService") as mock_service_class:
             mock_service = MagicMock()
             mock_service_class.return_value = mock_service
 
-            response = client.get("/api/v1/paper/runs?status=invalid")
+            response = await client.get("/api/v1/paper/runs?status=invalid")
 
             assert response.status_code == 400
 
@@ -327,20 +347,22 @@ class TestListPaperTradingRuns:
 class TestGetPaperTradingRun:
     """Tests for GET /api/v1/paper-trading/{run_id} endpoint."""
 
-    def test_get_run_success(self, client: TestClient, mock_run) -> None:
+    @pytest.mark.asyncio
+    async def test_get_run_success(self, client: AsyncClient, mock_run) -> None:
         """Test getting a paper trading run by ID."""
         with patch("squant.api.v1.paper_trading.PaperTradingService") as mock_service_class:
             mock_service = MagicMock()
             mock_service.get_run = AsyncMock(return_value=mock_run)
             mock_service_class.return_value = mock_service
 
-            response = client.get(f"/api/v1/paper/{mock_run.id}")
+            response = await client.get(f"/api/v1/paper/{mock_run.id}")
 
             assert response.status_code == 200
             data = response.json()
             assert data["data"]["symbol"] == "BTC/USDT"
 
-    def test_get_run_not_found(self, client: TestClient) -> None:
+    @pytest.mark.asyncio
+    async def test_get_run_not_found(self, client: AsyncClient) -> None:
         """Test getting non-existent run."""
         run_id = uuid4()
 
@@ -349,7 +371,7 @@ class TestGetPaperTradingRun:
             mock_service.get_run = AsyncMock(side_effect=SessionNotFoundError(str(run_id)))
             mock_service_class.return_value = mock_service
 
-            response = client.get(f"/api/v1/paper/{run_id}")
+            response = await client.get(f"/api/v1/paper/{run_id}")
 
             assert response.status_code == 404
 
@@ -357,7 +379,8 @@ class TestGetPaperTradingRun:
 class TestGetEquityCurve:
     """Tests for GET /api/v1/paper-trading/{run_id}/equity-curve endpoint."""
 
-    def test_get_equity_curve_success(self, client: TestClient, mock_run) -> None:
+    @pytest.mark.asyncio
+    async def test_get_equity_curve_success(self, client: AsyncClient, mock_run) -> None:
         """Test getting equity curve."""
         mock_point = MagicMock()
         mock_point.time = datetime.now(UTC)
@@ -372,11 +395,12 @@ class TestGetEquityCurve:
             mock_service.get_equity_curve = AsyncMock(return_value=mock_curve)
             mock_service_class.return_value = mock_service
 
-            response = client.get(f"/api/v1/paper/{mock_run.id}/equity-curve")
+            response = await client.get(f"/api/v1/paper/{mock_run.id}/equity-curve")
 
             assert response.status_code == 200
 
-    def test_get_equity_curve_not_found(self, client: TestClient) -> None:
+    @pytest.mark.asyncio
+    async def test_get_equity_curve_not_found(self, client: AsyncClient) -> None:
         """Test getting equity curve for non-existent run."""
         run_id = uuid4()
 
@@ -385,7 +409,7 @@ class TestGetEquityCurve:
             mock_service.get_equity_curve = AsyncMock(side_effect=SessionNotFoundError(str(run_id)))
             mock_service_class.return_value = mock_service
 
-            response = client.get(f"/api/v1/paper/{run_id}/equity-curve")
+            response = await client.get(f"/api/v1/paper/{run_id}/equity-curve")
 
             assert response.status_code == 404
 
@@ -393,20 +417,22 @@ class TestGetEquityCurve:
 class TestPersistEquitySnapshots:
     """Tests for POST /api/v1/paper-trading/{run_id}/persist endpoint."""
 
-    def test_persist_success(self, client: TestClient, mock_run) -> None:
+    @pytest.mark.asyncio
+    async def test_persist_success(self, client: AsyncClient, mock_run) -> None:
         """Test persisting equity snapshots."""
         with patch("squant.api.v1.paper_trading.PaperTradingService") as mock_service_class:
             mock_service = MagicMock()
             mock_service.persist_snapshots = AsyncMock(return_value=10)
             mock_service_class.return_value = mock_service
 
-            response = client.post(f"/api/v1/paper/{mock_run.id}/persist")
+            response = await client.post(f"/api/v1/paper/{mock_run.id}/persist")
 
             assert response.status_code == 200
             data = response.json()
             assert data["data"]["persisted_count"] == 10
 
-    def test_persist_not_found(self, client: TestClient) -> None:
+    @pytest.mark.asyncio
+    async def test_persist_not_found(self, client: AsyncClient) -> None:
         """Test persisting snapshots for non-existent session."""
         run_id = uuid4()
 
@@ -417,6 +443,6 @@ class TestPersistEquitySnapshots:
             )
             mock_service_class.return_value = mock_service
 
-            response = client.post(f"/api/v1/paper/{run_id}/persist")
+            response = await client.post(f"/api/v1/paper/{run_id}/persist")
 
             assert response.status_code == 404
