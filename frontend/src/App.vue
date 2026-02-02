@@ -30,6 +30,9 @@ onMounted(async () => {
   // 加载交易所列表
   await marketStore.loadExchanges()
 
+  // 加载自选列表
+  await marketStore.loadWatchlist()
+
   // 加载运行中的会话
   await tradingStore.loadAllRunningSessions()
 

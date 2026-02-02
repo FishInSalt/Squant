@@ -1,30 +1,8 @@
-import type { WatchlistItem } from '@/types'
-
 const STORAGE_KEYS = {
-  WATCHLIST: 'squant_watchlist',
   THEME: 'squant_theme',
   LAST_EXCHANGE: 'squant_last_exchange',
   RECENT_SYMBOLS: 'squant_recent_symbols',
 } as const
-
-// 自选列表
-export function getWatchlist(): WatchlistItem[] {
-  try {
-    const data = localStorage.getItem(STORAGE_KEYS.WATCHLIST)
-    return data ? JSON.parse(data) : []
-  } catch (error) {
-    console.error('Failed to load watchlist:', error)
-    return []
-  }
-}
-
-export function saveWatchlist(watchlist: WatchlistItem[]): void {
-  try {
-    localStorage.setItem(STORAGE_KEYS.WATCHLIST, JSON.stringify(watchlist))
-  } catch (error) {
-    console.error('Failed to save watchlist:', error)
-  }
-}
 
 // 主题
 export function getTheme(): 'light' | 'dark' {
