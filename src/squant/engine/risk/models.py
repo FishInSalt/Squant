@@ -17,7 +17,8 @@ class RiskRuleType(str, Enum):
     MAX_POSITION_SIZE = "max_position_size"  # RSK-001
     MAX_ORDER_SIZE = "max_order_size"  # RSK-002
     DAILY_TRADE_LIMIT = "daily_trade_limit"  # RSK-003
-    DAILY_LOSS_LIMIT = "daily_loss_limit"  # RSK-004
+    DAILY_LOSS_LIMIT = "daily_loss_limit"  # RSK-003 (daily)
+    TOTAL_LOSS_LIMIT = "total_loss_limit"  # RSK-004 (cumulative)
     PRICE_DEVIATION_LIMIT = "price_deviation_limit"  # RSK-005
     CIRCUIT_BREAKER = "circuit_breaker"  # RSK-006
 
@@ -77,7 +78,7 @@ class RiskConfig(BaseModel):
         description="Minimum order value in quote currency",
     )
 
-    # Daily limits (RSK-003, RSK-004)
+    # Daily limits (RSK-003)
     daily_trade_limit: int = Field(
         default=100,
         description="Maximum number of trades per day",
@@ -89,6 +90,16 @@ class RiskConfig(BaseModel):
     daily_loss_limit_absolute: Decimal | None = Field(
         default=None,
         description="Maximum daily loss in quote currency (absolute limit)",
+    )
+
+    # Total/cumulative loss limits (RSK-004)
+    total_loss_limit: Decimal = Field(
+        default=Decimal("0.20"),
+        description="Maximum total/cumulative loss as fraction of initial equity (0.20 = 20%)",
+    )
+    total_loss_limit_absolute: Decimal | None = Field(
+        default=None,
+        description="Maximum total loss in quote currency (absolute limit)",
     )
 
     # Price limits (RSK-005)
@@ -209,6 +220,10 @@ class RiskState(BaseModel):
     daily_start_equity: Decimal = Decimal("0")
     daily_reset_time: datetime | None = None
 
+    # Total/cumulative tracking (RSK-004)
+    total_pnl: Decimal = Decimal("0")
+    total_loss_limit_triggered: bool = False
+
     # Consecutive loss tracking (circuit breaker)
     consecutive_losses: int = 0
     circuit_breaker_triggered: bool = False
@@ -236,6 +251,7 @@ class RiskState(BaseModel):
         """
         self.daily_trade_count += 1
         self.daily_pnl += pnl
+        self.total_pnl += pnl  # Track cumulative PnL (RSK-004)
 
         # Track consecutive losses
         if pnl < 0:

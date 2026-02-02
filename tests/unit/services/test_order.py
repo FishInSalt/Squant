@@ -653,3 +653,93 @@ class TestOrderService:
 
         assert len(result) == 1
         assert result[0] == sample_order
+
+    @pytest.mark.asyncio
+    async def test_cancel_partial_filled_order_success(self, service, sample_order, exchange_response):
+        """Test cancelling a partially filled order succeeds (ORD-004 edge case)."""
+        # Setup: Order is partially filled
+        sample_order.status = OrderStatus.PARTIAL
+        sample_order.filled = Decimal("0.05")
+        exchange_response.status = OrderStatus.CANCELLED
+        exchange_response.filled = Decimal("0.05")
+
+        service.order_repo.get = AsyncMock(return_value=sample_order)
+        service.order_repo.update = AsyncMock(return_value=sample_order)
+        service.exchange.cancel_order.return_value = exchange_response
+
+        result = await service.cancel_order(sample_order.id)
+
+        # Verify order was cancelled (partial orders can be cancelled)
+        assert result == sample_order
+        service.exchange.cancel_order.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_cancel_order_already_cancelled(self, service, sample_order):
+        """Test cannot cancel already cancelled order."""
+        sample_order.status = OrderStatus.CANCELLED
+        service.order_repo.get = AsyncMock(return_value=sample_order)
+
+        with pytest.raises(OrderValidationError, match="Cannot cancel"):
+            await service.cancel_order(sample_order.id)
+
+    @pytest.mark.asyncio
+    async def test_cancel_order_already_rejected(self, service, sample_order):
+        """Test cannot cancel rejected order."""
+        sample_order.status = OrderStatus.REJECTED
+        service.order_repo.get = AsyncMock(return_value=sample_order)
+
+        with pytest.raises(OrderValidationError, match="Cannot cancel"):
+            await service.cancel_order(sample_order.id)
+
+    @pytest.mark.asyncio
+    async def test_cancel_order_exchange_error(self, service, sample_order):
+        """Test cancel order handles exchange API error."""
+        sample_order.status = OrderStatus.SUBMITTED
+        service.order_repo.get = AsyncMock(return_value=sample_order)
+        service.exchange.cancel_order.side_effect = Exception("Exchange timeout")
+
+        with pytest.raises(Exception, match="Exchange timeout"):
+            await service.cancel_order(sample_order.id)
+
+    @pytest.mark.asyncio
+    async def test_create_order_with_run_id(self, service, sample_order, exchange_response):
+        """Test order creation with strategy run ID."""
+        run_id = uuid4()
+        service.order_repo.create = AsyncMock(return_value=sample_order)
+        service.order_repo.update = AsyncMock(return_value=sample_order)
+        service.exchange.place_order.return_value = exchange_response
+
+        result = await service.create_order(
+            symbol="BTC/USDT",
+            side=OrderSide.BUY,
+            order_type=OrderType.LIMIT,
+            amount=Decimal("0.1"),
+            price=Decimal("50000"),
+            run_id=run_id,
+        )
+
+        assert result == sample_order
+        # Verify run_id was passed to create
+        call_kwargs = service.order_repo.create.call_args[1]
+        assert call_kwargs["run_id"] == str(run_id)
+
+    @pytest.mark.asyncio
+    async def test_create_order_with_client_order_id(self, service, sample_order, exchange_response):
+        """Test order creation with client order ID."""
+        client_oid = "my-custom-order-123"
+        service.order_repo.create = AsyncMock(return_value=sample_order)
+        service.order_repo.update = AsyncMock(return_value=sample_order)
+        service.exchange.place_order.return_value = exchange_response
+
+        result = await service.create_order(
+            symbol="BTC/USDT",
+            side=OrderSide.BUY,
+            order_type=OrderType.MARKET,
+            amount=Decimal("0.1"),
+            client_order_id=client_oid,
+        )
+
+        assert result == sample_order
+        # Verify client_order_id was passed to exchange
+        request = service.exchange.place_order.call_args[0][0]
+        assert request.client_order_id == client_oid

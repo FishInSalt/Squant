@@ -198,30 +198,37 @@ class TestPositionSizeValidation:
         assert result.passed is False
         assert result.rule_type == RiskRuleType.MAX_POSITION_SIZE
 
-    def test_sell_reduces_position(self, risk_manager):
-        """Test that sells reduce position, allowing large orders."""
-        # Current position: 0.1 BTC = $5000 = 50% (would exceed limit normally)
-        # Sell order: 0.05 BTC
-        # New position: 0.05 BTC = $2500 = 25%
-        # But 25% still exceeds 10% limit
+    def test_sell_resulting_position_still_exceeds_limit_rejected(self, risk_manager):
+        """Test that sell orders are rejected if resulting position still exceeds limit.
+
+        Even when selling (reducing position), if the remaining position would still
+        exceed the maximum position size limit, the order should be rejected.
+
+        Note: We use a lower price so the order size check passes first, then
+        position check can be triggered.
+        """
+        # Config: max_position_size = 10% of $10,000 equity = $1,000
+        #         max_order_size = 5% of $10,000 equity = $500
+        # Use price $10,000 so order value is manageable
+        # Current position: 0.15 BTC at $10,000 = $1,500 = 15% of equity (exceeds limit)
+        # Sell order: 0.04 BTC at $10,000 = $400 (4% of equity, passes order size check)
+        # Resulting position: 0.11 BTC at $10,000 = $1,100 = 11% of equity
+        # Since 11% > 10% max position limit, order should be rejected
         order = OrderRequest(
             symbol="BTC/USDT",
             side=OrderSide.SELL,
             type=OrderType.MARKET,
-            amount=Decimal("0.05"),
+            amount=Decimal("0.04"),
         )
-        current_price = Decimal("50000")
+        current_price = Decimal("10000")
 
-        # This should pass because the resulting position is smaller
-        # Even though 25% > 10%, we're reducing position
-        # Actually, let's check: new_position = 0.1 - 0.05 = 0.05 BTC = $2500 = 25%
-        # This still exceeds 10% limit, so it should fail
         result = risk_manager.validate_order(
-            order, current_price, current_position_amount=Decimal("0.1")
+            order, current_price, current_position_amount=Decimal("0.15")
         )
 
-        # 25% > 10%, should fail
+        # 11% > 10% limit, should fail due to position size
         assert result.passed is False
+        assert result.rule_type == RiskRuleType.MAX_POSITION_SIZE
 
     def test_sell_to_close_position_passes(self, risk_manager):
         """Test that selling entire position passes."""
@@ -238,6 +245,32 @@ class TestPositionSizeValidation:
         )
 
         # Resulting position = 0, passes
+        assert result.passed is True
+
+    def test_sell_reduces_position_within_limit_passes(self, risk_manager):
+        """Test that selling to reduce position within limit passes.
+
+        When selling reduces position to within the maximum allowed size,
+        the order should be approved.
+        """
+        # Config: max_position_size = 10% of $10,000 equity = $1,000
+        # Current position: 0.015 BTC at $50,000 = $750 = 7.5% of equity
+        # Sell order: 0.01 BTC
+        # Resulting position: 0.005 BTC at $50,000 = $250 = 2.5% of equity
+        # Since 2.5% < 10% limit, order should pass
+        order = OrderRequest(
+            symbol="BTC/USDT",
+            side=OrderSide.SELL,
+            type=OrderType.MARKET,
+            amount=Decimal("0.01"),
+        )
+        current_price = Decimal("50000")
+
+        result = risk_manager.validate_order(
+            order, current_price, current_position_amount=Decimal("0.015")
+        )
+
+        # 2.5% < 10% limit, should pass
         assert result.passed is True
 
 
@@ -318,6 +351,221 @@ class TestDailyLossLimitValidation:
 
         assert result.passed is False
         assert result.rule_type == RiskRuleType.DAILY_LOSS_LIMIT
+
+    def test_loss_exactly_at_limit_rejected(self, risk_manager):
+        """Test that loss exactly at limit is rejected (boundary test).
+
+        When daily loss is exactly at the configured limit (5%),
+        further orders should be rejected.
+        """
+        order = OrderRequest(
+            symbol="BTC/USDT",
+            side=OrderSide.BUY,
+            type=OrderType.MARKET,
+            amount=Decimal("0.01"),
+        )
+        current_price = Decimal("50000")
+
+        # Loss exactly at 5% limit: -$500 / $10000 = -5%
+        risk_manager.state.daily_pnl = Decimal("-500")
+
+        result = risk_manager.validate_order(order, current_price)
+
+        assert result.passed is False
+        assert result.rule_type == RiskRuleType.DAILY_LOSS_LIMIT
+
+    def test_loss_just_below_limit_passes(self, risk_manager):
+        """Test that loss just below limit passes (boundary test).
+
+        When daily loss is just below the configured limit,
+        orders should still be allowed.
+        """
+        order = OrderRequest(
+            symbol="BTC/USDT",
+            side=OrderSide.BUY,
+            type=OrderType.MARKET,
+            amount=Decimal("0.01"),
+        )
+        current_price = Decimal("50000")
+
+        # Loss just below 5% limit: -$499.99 / $10000 = -4.9999%
+        risk_manager.state.daily_pnl = Decimal("-499.99")
+
+        result = risk_manager.validate_order(order, current_price)
+
+        assert result.passed is True
+
+
+class TestTotalLossLimitValidation:
+    """Tests for total/cumulative loss limit validation (RSK-004)."""
+
+    def test_within_total_loss_limit_passes(self, risk_manager):
+        """Test that trades within total loss limit pass."""
+        order = OrderRequest(
+            symbol="BTC/USDT",
+            side=OrderSide.BUY,
+            type=OrderType.MARKET,
+            amount=Decimal("0.01"),
+        )
+        current_price = Decimal("50000")
+
+        # Simulate some cumulative losses (15% loss, below 20% limit)
+        risk_manager.state.total_pnl = Decimal("-1500")
+
+        result = risk_manager.validate_order(order, current_price)
+
+        assert result.passed is True
+
+    def test_exceeds_total_loss_limit_rejected(self, risk_manager):
+        """Test that exceeding total loss limit is rejected (RSK-004-1)."""
+        order = OrderRequest(
+            symbol="BTC/USDT",
+            side=OrderSide.BUY,
+            type=OrderType.MARKET,
+            amount=Decimal("0.01"),
+        )
+        current_price = Decimal("50000")
+
+        # Hit the total loss limit (20% of $10000 = $2000)
+        risk_manager.state.total_pnl = Decimal("-2000")
+
+        result = risk_manager.validate_order(order, current_price)
+
+        assert result.passed is False
+        assert result.rule_type == RiskRuleType.TOTAL_LOSS_LIMIT
+        assert risk_manager.state.total_loss_limit_triggered is True
+
+    def test_total_loss_exactly_at_limit_rejected(self, risk_manager):
+        """Test that total loss exactly at limit is rejected (boundary test)."""
+        order = OrderRequest(
+            symbol="BTC/USDT",
+            side=OrderSide.BUY,
+            type=OrderType.MARKET,
+            amount=Decimal("0.01"),
+        )
+        current_price = Decimal("50000")
+
+        # Loss exactly at 20% limit: -$2000 / $10000 = -20%
+        risk_manager.state.total_pnl = Decimal("-2000")
+
+        result = risk_manager.validate_order(order, current_price)
+
+        assert result.passed is False
+        assert result.rule_type == RiskRuleType.TOTAL_LOSS_LIMIT
+
+    def test_total_loss_just_below_limit_passes(self, risk_manager):
+        """Test that total loss just below limit passes (boundary test)."""
+        order = OrderRequest(
+            symbol="BTC/USDT",
+            side=OrderSide.BUY,
+            type=OrderType.MARKET,
+            amount=Decimal("0.01"),
+        )
+        current_price = Decimal("50000")
+
+        # Loss just below 20% limit: -$1999.99 / $10000 = -19.9999%
+        risk_manager.state.total_pnl = Decimal("-1999.99")
+
+        result = risk_manager.validate_order(order, current_price)
+
+        assert result.passed is True
+
+    def test_total_loss_limit_triggered_rejects_all_orders(self, risk_manager):
+        """Test that once triggered, total loss limit rejects all orders."""
+        order = OrderRequest(
+            symbol="BTC/USDT",
+            side=OrderSide.BUY,
+            type=OrderType.MARKET,
+            amount=Decimal("0.01"),
+        )
+        current_price = Decimal("50000")
+
+        # Manually set triggered flag
+        risk_manager.state.total_loss_limit_triggered = True
+
+        result = risk_manager.validate_order(order, current_price)
+
+        assert result.passed is False
+        assert result.rule_type == RiskRuleType.TOTAL_LOSS_LIMIT
+        assert "reset" in result.reason.lower()
+
+    def test_total_loss_accumulates_across_trades(self):
+        """Test that total loss accumulates correctly across trades."""
+        # Use custom config with disabled circuit breaker to avoid interference
+        config = RiskConfig(
+            circuit_breaker_enabled=False,
+            daily_loss_limit=Decimal("0.5"),  # 50% to avoid triggering
+            total_loss_limit=Decimal("0.20"),  # 20% total loss limit
+        )
+        rm = RiskManager(config=config, initial_equity=Decimal("10000"))
+
+        # Record some losses
+        rm.record_trade_result(Decimal("-500"))
+        rm.record_trade_result(Decimal("-700"))
+        rm.record_trade_result(Decimal("-300"))
+
+        # Total loss should be $1500 (15%)
+        assert rm.state.total_pnl == Decimal("-1500")
+
+        order = OrderRequest(
+            symbol="BTC/USDT",
+            side=OrderSide.BUY,
+            type=OrderType.MARKET,
+            amount=Decimal("0.01"),
+        )
+        current_price = Decimal("50000")
+
+        # Should still pass (15% < 20%)
+        result = rm.validate_order(order, current_price)
+        assert result.passed is True
+
+        # Add more loss to exceed limit
+        rm.record_trade_result(Decimal("-600"))  # Total now $2100 (21%)
+
+        result = rm.validate_order(order, current_price)
+        assert result.passed is False
+        assert result.rule_type == RiskRuleType.TOTAL_LOSS_LIMIT
+
+    def test_total_loss_with_absolute_limit(self):
+        """Test total loss limit with absolute value configuration."""
+        config = RiskConfig(
+            total_loss_limit=Decimal("0.5"),  # 50% relative (won't trigger)
+            total_loss_limit_absolute=Decimal("1500"),  # $1500 absolute
+            daily_loss_limit=Decimal("0.5"),  # High to avoid triggering
+        )
+        rm = RiskManager(config=config, initial_equity=Decimal("10000"))
+
+        order = OrderRequest(
+            symbol="BTC/USDT",
+            side=OrderSide.BUY,
+            type=OrderType.MARKET,
+            amount=Decimal("0.01"),
+        )
+        current_price = Decimal("50000")
+
+        # Set total loss just below absolute limit
+        rm.state.total_pnl = Decimal("-1400")
+        result = rm.validate_order(order, current_price)
+        assert result.passed is True
+
+        # Set total loss at absolute limit
+        rm.state.total_pnl = Decimal("-1500")
+        result = rm.validate_order(order, current_price)
+        assert result.passed is False
+        assert result.rule_type == RiskRuleType.TOTAL_LOSS_LIMIT
+
+    def test_total_loss_does_not_reset_daily(self, risk_manager):
+        """Test that total loss does NOT reset when daily stats reset."""
+        # Accumulate some total loss
+        risk_manager.state.total_pnl = Decimal("-1000")
+        risk_manager.state.daily_pnl = Decimal("-300")
+
+        # Reset daily stats (simulating new day)
+        risk_manager.state.reset_daily_stats(Decimal("9700"))
+
+        # Daily should reset, but total should NOT
+        assert risk_manager.state.daily_pnl == Decimal("0")
+        assert risk_manager.state.total_pnl == Decimal("-1000")
 
 
 class TestPriceDeviationValidation:
@@ -540,6 +788,7 @@ class TestStateSummary:
         # Do some activity
         risk_manager.state.daily_trade_count = 5
         risk_manager.state.daily_pnl = Decimal("-100")
+        risk_manager.state.total_pnl = Decimal("-500")
         risk_manager.state.consecutive_losses = 2
 
         summary = risk_manager.get_state_summary()
@@ -547,6 +796,9 @@ class TestStateSummary:
         assert summary["daily_trade_count"] == 5
         assert summary["daily_trade_limit"] == 100
         assert summary["daily_pnl"] == -100.0
+        assert summary["total_pnl"] == -500.0
+        assert summary["total_loss_limit_pct"] == 0.2  # 20% default
+        assert summary["total_loss_limit_triggered"] is False
         assert summary["current_equity"] == 10000.0
         assert summary["consecutive_losses"] == 2
         assert summary["circuit_breaker_triggered"] is False

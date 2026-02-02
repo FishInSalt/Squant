@@ -58,7 +58,8 @@ class RiskManager:
             f"RiskManager initialized with equity={initial_equity}, "
             f"max_position={config.max_position_size}, "
             f"max_order={config.max_order_size}, "
-            f"daily_loss_limit={config.daily_loss_limit}"
+            f"daily_loss_limit={config.daily_loss_limit}, "
+            f"total_loss_limit={config.total_loss_limit}"
         )
 
     def update_equity(self, equity: Decimal) -> None:
@@ -142,8 +143,13 @@ class RiskManager:
         if not result.passed:
             return result
 
-        # Check daily loss limit (RSK-004)
+        # Check daily loss limit (RSK-003)
         result = self._check_daily_loss_limit()
+        if not result.passed:
+            return result
+
+        # Check total/cumulative loss limit (RSK-004)
+        result = self._check_total_loss_limit()
         if not result.passed:
             return result
 
@@ -239,6 +245,63 @@ class RiskManager:
                     f"(limit: {self.config.daily_loss_limit_absolute})",
                     current_loss=float(-self.state.daily_pnl),
                     limit=float(self.config.daily_loss_limit_absolute),
+                )
+
+        return RiskCheckResult.ok()
+
+    def _check_total_loss_limit(self) -> RiskCheckResult:
+        """Check total/cumulative loss limit (RSK-004).
+
+        This check ensures the strategy stops when cumulative losses
+        reach the configured threshold (e.g., 20% of initial equity).
+
+        Returns:
+            RiskCheckResult for total loss limit check.
+        """
+        # If already triggered, reject all orders
+        if self.state.total_loss_limit_triggered:
+            return RiskCheckResult.reject(
+                rule_type=RiskRuleType.TOTAL_LOSS_LIMIT,
+                reason="Total loss limit already triggered. Strategy must be reset.",
+                total_pnl=float(self.state.total_pnl),
+            )
+
+        # Check relative limit against initial equity
+        if self._initial_equity > 0:
+            loss_pct = -self.state.total_pnl / self._initial_equity
+            if loss_pct >= self.config.total_loss_limit:
+                self.state.total_loss_limit_triggered = True
+                logger.critical(
+                    f"TOTAL LOSS LIMIT TRIGGERED: {loss_pct:.2%} loss "
+                    f"(limit: {self.config.total_loss_limit:.2%}). "
+                    f"Strategy should be stopped."
+                )
+                return RiskCheckResult.reject(
+                    rule_type=RiskRuleType.TOTAL_LOSS_LIMIT,
+                    reason=f"Total loss limit reached: {loss_pct:.2%} "
+                    f"(limit: {self.config.total_loss_limit:.2%}). Strategy stopped.",
+                    current_loss_pct=float(loss_pct),
+                    limit_pct=float(self.config.total_loss_limit),
+                    total_pnl=float(self.state.total_pnl),
+                    initial_equity=float(self._initial_equity),
+                )
+
+        # Check absolute limit if configured
+        if self.config.total_loss_limit_absolute is not None:
+            if -self.state.total_pnl >= self.config.total_loss_limit_absolute:
+                self.state.total_loss_limit_triggered = True
+                logger.critical(
+                    f"TOTAL LOSS LIMIT TRIGGERED: {-self.state.total_pnl} loss "
+                    f"(limit: {self.config.total_loss_limit_absolute}). "
+                    f"Strategy should be stopped."
+                )
+                return RiskCheckResult.reject(
+                    rule_type=RiskRuleType.TOTAL_LOSS_LIMIT,
+                    reason=f"Total loss limit reached: {-self.state.total_pnl} "
+                    f"(limit: {self.config.total_loss_limit_absolute}). Strategy stopped.",
+                    current_loss=float(-self.state.total_pnl),
+                    limit=float(self.config.total_loss_limit_absolute),
+                    total_pnl=float(self.state.total_pnl),
                 )
 
         return RiskCheckResult.ok()
@@ -401,6 +464,9 @@ class RiskManager:
             "daily_trade_limit": self.config.daily_trade_limit,
             "daily_pnl": float(self.state.daily_pnl),
             "daily_loss_limit_pct": float(self.config.daily_loss_limit),
+            "total_pnl": float(self.state.total_pnl),
+            "total_loss_limit_pct": float(self.config.total_loss_limit),
+            "total_loss_limit_triggered": self.state.total_loss_limit_triggered,
             "current_equity": float(self._current_equity),
             "initial_equity": float(self._initial_equity),
             "consecutive_losses": self.state.consecutive_losses,

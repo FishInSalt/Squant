@@ -69,6 +69,7 @@ Thumbs.db
 data/
 strategies/user_strategies/
 !strategies/examples/
+plan/
 
 # Frontend
 frontend/node_modules/

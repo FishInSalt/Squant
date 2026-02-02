@@ -583,6 +583,112 @@ class TestEmergencyClose:
         assert engine.is_running is False
         assert "Emergency close" in engine.error_message
 
+    @pytest.mark.asyncio
+    async def test_emergency_close_with_exchange_error(self, engine, mock_adapter):
+        """Test emergency close when exchange API fails (TRD-038).
+
+        When the exchange API is unavailable, the error should be recorded
+        and reported in the results.
+        """
+        await engine.start()
+
+        # Simulate a position
+        engine.context._positions["BTC/USDT"] = MagicMock()
+        engine.context._positions["BTC/USDT"].is_open = True
+        engine.context._positions["BTC/USDT"].amount = Decimal("0.5")
+
+        # Mock exchange failure
+        mock_adapter.place_order.side_effect = Exception("Exchange API unavailable")
+
+        results = await engine.emergency_close()
+
+        # Should record the error
+        assert len(results["errors"]) == 1
+        assert "BTC/USDT" in results["errors"][0]["symbol"]
+        assert "Exchange API unavailable" in results["errors"][0]["error"]
+        assert results["positions_closed"] == 0
+
+    @pytest.mark.asyncio
+    async def test_emergency_close_partial_success(self, engine, mock_adapter):
+        """Test emergency close with partial success (TRD-038).
+
+        When some positions fail to close but others succeed, results should
+        reflect both successes and failures.
+        """
+        await engine.start()
+
+        # Simulate two positions
+        engine.context._positions["BTC/USDT"] = MagicMock()
+        engine.context._positions["BTC/USDT"].is_open = True
+        engine.context._positions["BTC/USDT"].amount = Decimal("0.5")
+
+        engine.context._positions["ETH/USDT"] = MagicMock()
+        engine.context._positions["ETH/USDT"].is_open = True
+        engine.context._positions["ETH/USDT"].amount = Decimal("2.0")
+
+        # First call succeeds, second fails
+        mock_adapter.place_order.side_effect = [
+            MagicMock(),  # BTC/USDT succeeds
+            Exception("Network timeout"),  # ETH/USDT fails
+        ]
+
+        results = await engine.emergency_close()
+
+        # Should have partial success
+        assert results["positions_closed"] == 1
+        assert len(results["errors"]) == 1
+
+    @pytest.mark.asyncio
+    async def test_emergency_close_cancel_order_failure(self, engine, mock_adapter):
+        """Test emergency close when order cancellation fails.
+
+        Order cancellation failures should be logged but not prevent
+        position closing attempts.
+        """
+        await engine.start()
+
+        # Simulate an open order
+        engine._live_orders["order-1"] = LiveOrder(
+            internal_id="order-1",
+            exchange_order_id="exchange-1",
+            symbol="BTC/USDT",
+            side=OrderSide.BUY,
+            order_type="limit",
+            amount=Decimal("0.1"),
+            price=Decimal("40000"),
+            status=OrderStatus.SUBMITTED,
+        )
+
+        # Simulate a position
+        engine.context._positions["BTC/USDT"] = MagicMock()
+        engine.context._positions["BTC/USDT"].is_open = True
+        engine.context._positions["BTC/USDT"].amount = Decimal("0.5")
+
+        # Cancel fails but place_order should still be called
+        mock_adapter.cancel_order.side_effect = Exception("Cannot cancel")
+
+        results = await engine.emergency_close()
+
+        # Cancel attempt made but failed
+        mock_adapter.cancel_order.assert_called_once()
+        # Position close should still be attempted
+        mock_adapter.place_order.assert_called()
+
+    @pytest.mark.asyncio
+    async def test_emergency_close_no_positions(self, engine, mock_adapter):
+        """Test emergency close when there are no positions to close."""
+        await engine.start()
+
+        # No positions set up
+
+        results = await engine.emergency_close()
+
+        assert results["positions_closed"] == 0
+        assert results["orders_cancelled"] == 0
+        assert results["errors"] == []
+        # Engine should still be stopped
+        assert engine.is_running is False
+
 
 class TestOrderUpdates:
     """Tests for WebSocket order updates."""
