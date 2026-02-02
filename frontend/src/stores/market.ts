@@ -2,7 +2,6 @@ import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import type { Ticker, WatchlistItem, Timeframe } from '@/types'
 import * as marketApi from '@/api/market'
-import { getWatchlist, saveWatchlist } from '@/utils/storage'
 
 export const useMarketStore = defineStore('market', () => {
   // State
@@ -10,7 +9,8 @@ export const useMarketStore = defineStore('market', () => {
   const currentExchange = ref<string>('okx')
   const supportedExchanges = ref<string[]>(['okx', 'binance', 'bybit'])
   const tickers = ref<Map<string, Ticker>>(new Map())
-  const watchlist = ref<WatchlistItem[]>(getWatchlist())
+  const watchlist = ref<WatchlistItem[]>([])
+  const watchlistLoading = ref(false)
   const timeframes = ref<Timeframe[]>(['1m', '5m', '15m', '30m', '1h', '4h', '1d'])
   const loading = ref(false)
   const exchangeSwitching = ref(false)
@@ -162,31 +162,74 @@ export const useMarketStore = defineStore('market', () => {
     }
   }
 
-  function addToWatchlist(exchange: string, symbol: string) {
-    if (!isInWatchlist.value(exchange, symbol)) {
-      watchlist.value.push({
-        exchange,
-        symbol,
-        addedAt: Date.now(),
-      })
-      saveWatchlist(watchlist.value)
+  // 从后端加载自选列表
+  async function loadWatchlist() {
+    watchlistLoading.value = true
+    try {
+      const response = await marketApi.getWatchlistApi()
+      watchlist.value = response.data
+    } catch (error) {
+      console.error('Failed to load watchlist:', error)
+    } finally {
+      watchlistLoading.value = false
     }
   }
 
-  function removeFromWatchlist(exchange: string, symbol: string) {
-    const index = watchlist.value.findIndex(
+  // 添加到自选列表
+  async function addToWatchlist(exchange: string, symbol: string) {
+    if (isInWatchlist.value(exchange, symbol)) {
+      return
+    }
+    try {
+      const response = await marketApi.addWatchlistItem(exchange, symbol)
+      watchlist.value.push(response.data)
+    } catch (error) {
+      console.error('Failed to add to watchlist:', error)
+      throw error
+    }
+  }
+
+  // 从自选列表移除
+  async function removeFromWatchlist(exchange: string, symbol: string) {
+    const item = watchlist.value.find(
       (item) => item.exchange === exchange && item.symbol === symbol
     )
-    if (index !== -1) {
-      watchlist.value.splice(index, 1)
-      saveWatchlist(watchlist.value)
+    if (!item) {
+      return
+    }
+    try {
+      await marketApi.removeWatchlistItem(item.id)
+      const index = watchlist.value.findIndex((i) => i.id === item.id)
+      if (index !== -1) {
+        watchlist.value.splice(index, 1)
+      }
+    } catch (error) {
+      console.error('Failed to remove from watchlist:', error)
+      throw error
     }
   }
 
-  function reorderWatchlist(fromIndex: number, toIndex: number) {
+  // 重新排序自选列表
+  async function reorderWatchlist(fromIndex: number, toIndex: number) {
+    // 先在本地更新顺序以提供即时反馈
     const item = watchlist.value.splice(fromIndex, 1)[0]
     watchlist.value.splice(toIndex, 0, item)
-    saveWatchlist(watchlist.value)
+
+    // 计算新的 sort_order 并同步到后端
+    const reorderItems = watchlist.value.map((item, index) => ({
+      id: item.id,
+      sort_order: index,
+    }))
+
+    try {
+      const response = await marketApi.reorderWatchlistApi(reorderItems)
+      watchlist.value = response.data
+    } catch (error) {
+      console.error('Failed to reorder watchlist:', error)
+      // 回滚本地更改 - 重新加载
+      await loadWatchlist()
+      throw error
+    }
   }
 
   function setCurrentExchange(exchange: string) {
@@ -250,6 +293,7 @@ export const useMarketStore = defineStore('market', () => {
     supportedExchanges,
     tickers,
     watchlist,
+    watchlistLoading,
     timeframes,
     loading,
     exchangeSwitching,
@@ -263,6 +307,7 @@ export const useMarketStore = defineStore('market', () => {
     loadCurrentExchange,
     loadTickers,
     loadAllTickers,
+    loadWatchlist,
     updateTicker,
     updateTickerPrice,
     addToWatchlist,

@@ -15,6 +15,7 @@ from squant.api.v1 import (
     risk,
     risk_triggers,
     strategies,
+    watchlist,
 )
 from squant.websocket.handlers import router as ws_router
 
@@ -59,6 +60,9 @@ api_router.include_router(risk_triggers.router, prefix="/risk-triggers", tags=["
 api_router.include_router(
     circuit_breaker.router, prefix="/circuit-breaker", tags=["Circuit Breaker"]
 )
+
+# Watchlist endpoints
+api_router.include_router(watchlist.router, prefix="/watchlist", tags=["Watchlist"])
 
 # WebSocket endpoints for real-time data
 api_router.include_router(ws_router, prefix="/ws", tags=["WebSocket"])

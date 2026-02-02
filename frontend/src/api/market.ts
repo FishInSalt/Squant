@@ -1,5 +1,5 @@
-import { get, put } from './index'
-import type { Ticker, TickerResponse, Candle, Timeframe } from '@/types'
+import { get, put, post, del } from './index'
+import type { Ticker, TickerResponse, Candle, Timeframe, WatchlistItem } from '@/types'
 
 // 后端返回的原始 K 线类型（timestamp 是 ISO 字符串）
 interface CandlestickItemResponse {
@@ -170,3 +170,23 @@ export const getTimeframes = async (_exchange?: string) => ({
   code: 0,
   message: 'success',
 })
+
+// ============ 自选列表 API ============
+
+// 获取自选列表
+export const getWatchlistApi = () => get<WatchlistItem[]>('/watchlist')
+
+// 添加到自选列表
+export const addWatchlistItem = (exchange: string, symbol: string) =>
+  post<WatchlistItem>('/watchlist', { exchange, symbol })
+
+// 从自选列表移除
+export const removeWatchlistItem = (id: string) => del<void>(`/watchlist/${id}`)
+
+// 检查是否在自选列表
+export const checkWatchlistItem = (exchange: string, symbol: string) =>
+  get<{ in_watchlist: boolean; item_id: string | null }>('/watchlist/check', { exchange, symbol })
+
+// 重新排序自选列表
+export const reorderWatchlistApi = (items: { id: string; sort_order: number }[]) =>
+  put<WatchlistItem[]>('/watchlist/reorder', { items })

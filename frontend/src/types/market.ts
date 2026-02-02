@@ -41,9 +41,11 @@ export interface Candle {
 export type Timeframe = '1m' | '5m' | '15m' | '30m' | '1h' | '4h' | '1d' | '1w'
 
 export interface WatchlistItem {
+  id: string           // 后端 UUID
   exchange: string
   symbol: string
-  addedAt: number
+  sort_order: number
+  created_at?: string  // ISO 字符串格式
 }
 
 export interface MarketOverview {
