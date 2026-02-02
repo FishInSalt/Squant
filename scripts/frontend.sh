@@ -98,8 +98,8 @@ cmd_start() {
 
     log_info "Starting frontend dev server..."
 
-    # Start vite in background with explicit port
-    nohup npm run dev -- --port "$PORT" > "$LOG_FILE" 2>&1 &
+    # Start vite in background with explicit port and host
+    nohup npm run dev -- --host --port "$PORT" > "$LOG_FILE" 2>&1 &
 
     local new_pid=$!
     echo "$new_pid" > "$PID_FILE"
