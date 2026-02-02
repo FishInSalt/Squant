@@ -543,3 +543,181 @@ class InplaceStrategy(Strategy):
         exec(compiled.code_object, compiled.restricted_globals, local_namespace)
 
         assert "InplaceStrategy" in local_namespace
+
+
+# =============================================================================
+# Parameterized Tests - Best Practice Examples
+# =============================================================================
+
+
+class TestDisallowedModulesParameterized:
+    """Parameterized tests for all disallowed modules.
+
+    This demonstrates the recommended pattern for testing similar behaviors
+    across multiple inputs, reducing code duplication significantly.
+    """
+
+    # Key security-critical modules that must be blocked
+    CRITICAL_MODULES = [
+        "os",
+        "sys",
+        "subprocess",
+        "socket",
+        "pickle",
+        "shutil",
+        "pathlib",
+        "ctypes",
+        "multiprocessing",
+        "threading",
+    ]
+
+    @pytest.mark.parametrize("module", CRITICAL_MODULES)
+    def test_critical_module_import_blocked(self, module: str) -> None:
+        """Test that critical security modules are blocked via import statement."""
+        code = f"""
+import {module}
+
+class TestStrategy(Strategy):
+    def on_bar(self, bar):
+        pass
+"""
+        result = validate_strategy_code(code)
+        assert result.valid is False, f"Module '{module}' should be blocked"
+        assert any(
+            module in err for err in result.errors
+        ), f"Error should mention '{module}'"
+
+    @pytest.mark.parametrize("module", CRITICAL_MODULES)
+    def test_critical_module_from_import_blocked(self, module: str) -> None:
+        """Test that critical modules are blocked via from-import statement."""
+        code = f"""
+from {module} import *
+
+class TestStrategy(Strategy):
+    def on_bar(self, bar):
+        pass
+"""
+        result = validate_strategy_code(code)
+        assert result.valid is False, f"Module '{module}' should be blocked via from-import"
+
+
+class TestDisallowedBuiltinsParameterized:
+    """Parameterized tests for dangerous builtin functions."""
+
+    DANGEROUS_BUILTINS = [
+        ("eval", "eval('1+1')"),
+        ("exec", "exec('x=1')"),
+        ("open", "open('file.txt')"),
+        ("compile", "compile('x=1', '', 'exec')"),
+        ("__import__", "__import__('os')"),
+    ]
+
+    @pytest.mark.parametrize("builtin_name,code_snippet", DANGEROUS_BUILTINS)
+    def test_dangerous_builtin_blocked(
+        self, builtin_name: str, code_snippet: str
+    ) -> None:
+        """Test that dangerous builtin functions are blocked."""
+        code = f"""
+class TestStrategy(Strategy):
+    def on_bar(self, bar):
+        {code_snippet}
+"""
+        result = validate_strategy_code(code)
+        assert result.valid is False, f"Builtin '{builtin_name}' should be blocked"
+        assert any(
+            builtin_name in err for err in result.errors
+        ), f"Error should mention '{builtin_name}'"
+
+
+class TestInplaceOperatorsParameterized:
+    """Parameterized tests for inplace operators."""
+
+    OPERATORS = [
+        ("+=", 5, 3, 8),
+        ("-=", 10, 3, 7),
+        ("*=", 4, 5, 20),
+        ("/=", 10, 2, 5.0),
+        ("//=", 10, 3, 3),
+        ("%=", 10, 3, 1),
+        ("**=", 2, 3, 8),
+    ]
+
+    @pytest.mark.parametrize("operator,left,right,expected", OPERATORS)
+    def test_inplace_operator(
+        self, operator: str, left: int, right: int, expected: float
+    ) -> None:
+        """Test inplace operator produces correct result."""
+        result = _inplacevar_(operator, left, right)
+        assert result == expected, f"{left} {operator} {right} should equal {expected}"
+
+
+class TestSafeBuiltinsParameterized:
+    """Parameterized tests for allowed safe builtins."""
+
+    MATH_FUNCTIONS = ["abs", "round", "pow", "min", "max", "sum", "divmod"]
+    TYPE_CONVERSIONS = ["int", "float", "str", "bool"]
+    COLLECTION_FUNCTIONS = ["len", "list", "dict", "set", "tuple", "frozenset"]
+    ITERATION_FUNCTIONS = ["range", "enumerate", "zip", "map", "filter", "sorted", "reversed"]
+
+    @pytest.mark.parametrize("func", MATH_FUNCTIONS)
+    def test_math_function_allowed(self, func: str) -> None:
+        """Test math functions are in SAFE_BUILTINS."""
+        assert func in SAFE_BUILTINS, f"Math function '{func}' should be allowed"
+
+    @pytest.mark.parametrize("func", TYPE_CONVERSIONS)
+    def test_type_conversion_allowed(self, func: str) -> None:
+        """Test type conversion functions are in SAFE_BUILTINS."""
+        assert func in SAFE_BUILTINS, f"Type conversion '{func}' should be allowed"
+
+    @pytest.mark.parametrize("func", COLLECTION_FUNCTIONS)
+    def test_collection_function_allowed(self, func: str) -> None:
+        """Test collection functions are in SAFE_BUILTINS."""
+        assert func in SAFE_BUILTINS, f"Collection function '{func}' should be allowed"
+
+    @pytest.mark.parametrize("func", ITERATION_FUNCTIONS)
+    def test_iteration_function_allowed(self, func: str) -> None:
+        """Test iteration functions are in SAFE_BUILTINS."""
+        assert func in SAFE_BUILTINS, f"Iteration function '{func}' should be allowed"
+
+
+class TestStrategyValidationParameterized:
+    """Parameterized tests for strategy validation scenarios."""
+
+    INVALID_STRATEGY_CASES = [
+        (
+            "empty_code",
+            "",
+            "empty",
+        ),
+        (
+            "whitespace_only",
+            "   \n\t  ",
+            "empty",
+        ),
+        (
+            "no_strategy_class",
+            "class NotStrategy:\n    pass",
+            "Strategy",
+        ),
+        (
+            "no_on_bar_method",
+            "class MyStrategy(Strategy):\n    pass",
+            "on_bar",
+        ),
+        (
+            "syntax_error",
+            "class MyStrategy(Strategy)\n    def on_bar(self): pass",
+            "syntax",
+        ),
+    ]
+
+    @pytest.mark.parametrize("case_name,code,expected_error", INVALID_STRATEGY_CASES)
+    def test_invalid_strategy_rejected(
+        self, case_name: str, code: str, expected_error: str
+    ) -> None:
+        """Test that invalid strategy code is rejected with appropriate error."""
+        result = validate_strategy_code(code)
+        assert result.valid is False, f"Case '{case_name}' should fail validation"
+        assert any(
+            expected_error.lower() in err.lower() for err in result.errors
+        ), f"Case '{case_name}' error should mention '{expected_error}'"

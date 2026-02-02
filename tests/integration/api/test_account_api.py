@@ -468,18 +468,19 @@ class TestEditDeleteAPIConfiguration:
 
         assert get_response.status_code == 404
 
-    @pytest.mark.skip(
-        reason="Foreign key constraint tested at DB level - requires async session transaction handling fix"
-    )
     @pytest.mark.asyncio
     async def test_prevent_deletion_if_strategy_uses_account(
         self, client, db_session, sample_exchange_account, sample_strategy
     ):
-        """Test ACC-006-3: Prevent deletion if strategy is using account."""
-        # Create a strategy run using this account
+        """Test ACC-006-3: Prevent deletion if strategy is using account.
+
+        This test verifies that accounts with associated strategy runs cannot be deleted
+        due to the foreign key constraint with ondelete="RESTRICT".
+        """
         from squant.models.enums import RunStatus
         from squant.models.strategy import StrategyRun
 
+        # Create a strategy run using this account
         run = StrategyRun(
             id=uuid4(),
             strategy_id=sample_strategy.id,
@@ -494,6 +495,10 @@ class TestEditDeleteAPIConfiguration:
         db_session.add(run)
         await db_session.commit()
 
+        # Ensure the run is persisted and visible
+        await db_session.refresh(run)
+
+        # Attempt to delete the account - should fail with 409 Conflict
         response = await client.delete(f"/api/v1/exchange-accounts/{sample_exchange_account.id}")
 
         # Should prevent deletion (409 Conflict)

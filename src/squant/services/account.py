@@ -314,9 +314,10 @@ class ExchangeAccountService:
         if not exists:
             raise AccountNotFoundError(account_id)
 
-        await self.repository.delete(account_id)
-
         try:
+            # repository.delete() does flush(), which may raise IntegrityError
+            # for FK constraint violations with IMMEDIATE constraints
+            await self.repository.delete(account_id)
             await self.session.commit()
         except IntegrityError as e:
             await self.session.rollback()

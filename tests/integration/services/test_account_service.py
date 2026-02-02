@@ -301,19 +301,41 @@ class TestExchangeAccountDeletion:
         with pytest.raises(AccountNotFoundError):
             await account_service.get(account_id)
 
-    @pytest.mark.skip(
-        reason="Requires complex setup with Strategy model - foreign key constraint tested at DB level"
-    )
     @pytest.mark.asyncio
     async def test_delete_account_with_active_runs_raises_error(
-        self, account_service, sample_exchange_account, db_session
+        self, account_service, sample_exchange_account, sample_strategy, db_session
     ):
-        """Test that deleting account with active runs raises error."""
-        # This test requires creating a Strategy first (with valid code, etc.)
-        # then creating a StrategyRun linked to both the Strategy and Account.
-        # The foreign key constraint will prevent deletion and raise AccountInUseError.
-        # This is already tested at the database constraint level.
-        pass
+        """Test that deleting account with active runs raises error.
+
+        This test verifies that the foreign key constraint prevents deletion
+        of accounts that are referenced by strategy runs.
+        """
+        from uuid import uuid4
+
+        from squant.models.enums import RunStatus
+        from squant.models.strategy import StrategyRun
+
+        # Create a strategy run using this account
+        run = StrategyRun(
+            id=uuid4(),
+            strategy_id=sample_strategy.id,
+            account_id=sample_exchange_account.id,
+            mode="live",
+            exchange="okx",
+            symbol="BTC/USDT",
+            timeframe="1m",
+            initial_capital=10000.0,
+            status=RunStatus.RUNNING,
+        )
+        db_session.add(run)
+        await db_session.commit()
+
+        # Ensure the run is persisted
+        await db_session.refresh(run)
+
+        # Attempt to delete the account - should fail with AccountInUseError
+        with pytest.raises(AccountInUseError):
+            await account_service.delete(sample_exchange_account.id)
 
     @pytest.mark.asyncio
     async def test_delete_nonexistent_account_raises_error(self, account_service):

@@ -193,6 +193,11 @@ class TestStrategyService:
         """Test successful strategy deletion."""
         strategy_id = uuid4()
 
+        # Mock no running sessions
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.all.return_value = []
+        mock_session.execute.return_value = mock_result
+
         with patch.object(service.repository, "exists", new_callable=AsyncMock) as mock_exists:
             mock_exists.return_value = True
 
