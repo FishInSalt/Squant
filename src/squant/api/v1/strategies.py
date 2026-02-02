@@ -18,6 +18,7 @@ from squant.schemas.strategy import (
     ValidationResultResponse,
 )
 from squant.services.strategy import (
+    StrategyInUseError,
     StrategyNameExistsError,
     StrategyNotFoundError,
     StrategyService,
@@ -201,7 +202,7 @@ async def delete_strategy(
         Success response.
 
     Raises:
-        HTTPException: 404 if not found.
+        HTTPException: 404 if not found, 409 if strategy is running.
     """
     service = StrategyService(session)
 
@@ -210,3 +211,5 @@ async def delete_strategy(
         return ApiResponse(data=None, message="Strategy deleted")
     except StrategyNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
+    except StrategyInUseError as e:
+        raise HTTPException(status_code=409, detail=str(e))

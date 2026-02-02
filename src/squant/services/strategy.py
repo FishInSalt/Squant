@@ -9,8 +9,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from squant.engine.sandbox import ValidationResult, validate_strategy_code
 from squant.infra.repository import BaseRepository
-from squant.models.enums import StrategyStatus
-from squant.models.strategy import Strategy
+from squant.models.enums import RunStatus, StrategyStatus
+from squant.models.strategy import Strategy, StrategyRun
 from squant.schemas.strategy import CreateStrategyRequest, UpdateStrategyRequest
 
 
@@ -36,6 +36,18 @@ class StrategyValidationError(Exception):
     def __init__(self, errors: list[str]):
         self.errors = errors
         super().__init__(f"Strategy validation failed: {'; '.join(errors)}")
+
+
+class StrategyInUseError(Exception):
+    """Strategy is currently in use and cannot be deleted."""
+
+    def __init__(self, strategy_id: str | UUID, running_count: int = 1):
+        self.strategy_id = str(strategy_id)
+        self.running_count = running_count
+        super().__init__(
+            f"Strategy {strategy_id} is currently running "
+            f"({running_count} active session(s)). Stop all sessions before deleting."
+        )
 
 
 class StrategyRepository(BaseRepository[Strategy]):
@@ -190,10 +202,23 @@ class StrategyService:
 
         Raises:
             StrategyNotFoundError: If strategy not found.
+            StrategyInUseError: If strategy has running sessions.
         """
         exists = await self.repository.exists(strategy_id)
         if not exists:
             raise StrategyNotFoundError(strategy_id)
+
+        # Check for running sessions (STR-024: cannot delete running strategy)
+        running_stmt = (
+            select(StrategyRun)
+            .where(StrategyRun.strategy_id == str(strategy_id))
+            .where(StrategyRun.status == RunStatus.RUNNING)
+        )
+        result = await self.session.execute(running_stmt)
+        running_sessions = list(result.scalars().all())
+
+        if running_sessions:
+            raise StrategyInUseError(strategy_id, len(running_sessions))
 
         await self.repository.delete(strategy_id)
         await self.session.commit()

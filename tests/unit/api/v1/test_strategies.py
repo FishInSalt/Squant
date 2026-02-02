@@ -13,6 +13,7 @@ from fastapi.testclient import TestClient
 from squant.main import app
 from squant.models.enums import StrategyStatus
 from squant.services.strategy import (
+    StrategyInUseError,
     StrategyNameExistsError,
     StrategyNotFoundError,
     StrategyValidationError,
@@ -394,3 +395,19 @@ class TestDeleteStrategy:
             response = client.delete(f"/api/v1/strategies/{strategy_id}")
 
             assert response.status_code == 404
+
+    def test_delete_running_strategy_returns_409(self, client: TestClient) -> None:
+        """Test deleting a running strategy returns 409 conflict (STR-024)."""
+        strategy_id = uuid4()
+
+        with patch("squant.api.v1.strategies.StrategyService") as mock_service_class:
+            mock_service = MagicMock()
+            mock_service.delete = AsyncMock(
+                side_effect=StrategyInUseError(str(strategy_id), running_count=2)
+            )
+            mock_service_class.return_value = mock_service
+
+            response = client.delete(f"/api/v1/strategies/{strategy_id}")
+
+            assert response.status_code == 409
+            assert "running" in response.json()["detail"].lower()

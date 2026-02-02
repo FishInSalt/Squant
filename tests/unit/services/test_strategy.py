@@ -11,7 +11,10 @@ import pytest
 from squant.models.enums import StrategyStatus
 from squant.models.strategy import Strategy
 from squant.schemas.strategy import CreateStrategyRequest, UpdateStrategyRequest
+from squant.models.enums import RunStatus
+from squant.models.strategy import StrategyRun
 from squant.services.strategy import (
+    StrategyInUseError,
     StrategyNameExistsError,
     StrategyNotFoundError,
     StrategyRepository,
@@ -68,6 +71,28 @@ class TestStrategyValidationError:
         assert "Missing init method" in str(error)
         assert "Invalid import" in str(error)
         assert len(error.errors) == 2
+
+
+class TestStrategyInUseError:
+    """Tests for StrategyInUseError exception (STR-024)."""
+
+    def test_error_message(self):
+        """Test error message contains strategy ID and running count."""
+        strategy_id = uuid4()
+        error = StrategyInUseError(strategy_id, running_count=2)
+
+        assert str(strategy_id) in str(error)
+        assert "2" in str(error)
+        assert "running" in str(error).lower()
+        assert error.strategy_id == str(strategy_id)
+        assert error.running_count == 2
+
+    def test_default_running_count(self):
+        """Test default running count is 1."""
+        error = StrategyInUseError("test-id")
+
+        assert error.running_count == 1
+        assert "1" in str(error)
 
 
 class TestStrategyRepository:
@@ -362,12 +387,20 @@ class TestStrategyService:
         assert call_args[1]["status"] == StrategyStatus.ARCHIVED
 
     @pytest.mark.asyncio
-    async def test_delete_success(self, service):
-        """Test successful strategy deletion."""
+    async def test_delete_success(self, service, mock_session):
+        """Test successful strategy deletion when no running sessions."""
+        strategy_id = uuid4()
         service.repository.exists = AsyncMock(return_value=True)
         service.repository.delete = AsyncMock()
 
-        await service.delete(uuid4())
+        # Mock no running sessions
+        mock_scalars = MagicMock()
+        mock_scalars.all.return_value = []
+        mock_result = MagicMock()
+        mock_result.scalars.return_value = mock_scalars
+        mock_session.execute.return_value = mock_result
+
+        await service.delete(strategy_id)
 
         service.repository.delete.assert_called_once()
         service.session.commit.assert_called_once()
@@ -379,6 +412,50 @@ class TestStrategyService:
 
         with pytest.raises(StrategyNotFoundError):
             await service.delete(uuid4())
+
+    @pytest.mark.asyncio
+    async def test_delete_running_strategy_fails(self, service, mock_session):
+        """Test delete fails when strategy has running sessions (STR-024)."""
+        strategy_id = uuid4()
+        service.repository.exists = AsyncMock(return_value=True)
+
+        # Mock one running session
+        running_session = MagicMock(spec=StrategyRun)
+        running_session.status = RunStatus.RUNNING
+        mock_scalars = MagicMock()
+        mock_scalars.all.return_value = [running_session]
+        mock_result = MagicMock()
+        mock_result.scalars.return_value = mock_scalars
+        mock_session.execute.return_value = mock_result
+
+        with pytest.raises(StrategyInUseError) as exc_info:
+            await service.delete(strategy_id)
+
+        assert exc_info.value.running_count == 1
+        assert str(strategy_id) in str(exc_info.value)
+
+    @pytest.mark.asyncio
+    async def test_delete_multiple_running_sessions_fails(self, service, mock_session):
+        """Test delete fails with correct count when multiple sessions running."""
+        strategy_id = uuid4()
+        service.repository.exists = AsyncMock(return_value=True)
+
+        # Mock multiple running sessions
+        running_sessions = [
+            MagicMock(spec=StrategyRun, status=RunStatus.RUNNING),
+            MagicMock(spec=StrategyRun, status=RunStatus.RUNNING),
+            MagicMock(spec=StrategyRun, status=RunStatus.RUNNING),
+        ]
+        mock_scalars = MagicMock()
+        mock_scalars.all.return_value = running_sessions
+        mock_result = MagicMock()
+        mock_result.scalars.return_value = mock_scalars
+        mock_session.execute.return_value = mock_result
+
+        with pytest.raises(StrategyInUseError) as exc_info:
+            await service.delete(strategy_id)
+
+        assert exc_info.value.running_count == 3
 
     @pytest.mark.asyncio
     async def test_get_success(self, service, sample_strategy):
