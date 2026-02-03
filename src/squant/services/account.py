@@ -252,7 +252,14 @@ class ExchangeAccountService:
             crypto = get_crypto_manager()
 
             # Decrypt existing credentials if not being updated
-            existing_creds = self.get_decrypted_credentials(account)
+            try:
+                existing_creds = self.get_decrypted_credentials(account)
+            except DecryptionError as e:
+                logger.error(f"Failed to decrypt existing credentials for account {account_id}: {e}")
+                raise ValueError(
+                    "Cannot update account: existing credentials are corrupted. "
+                    "Please delete and recreate the account."
+                ) from e
 
             api_key = (
                 request.api_key.get_secret_value() if request.api_key else existing_creds["api_key"]
@@ -273,12 +280,22 @@ class ExchangeAccountService:
             update_data["nonce"] = nonce
 
             # Handle passphrase
+            # - If passphrase is provided and non-empty: encrypt and store it
+            # - If passphrase is provided but empty string: remove it (set to None)
+            # - If passphrase is not provided (None): preserve existing passphrase
             if request.passphrase is not None:
-                passphrase_enc = crypto.encrypt_with_derived_nonce(
-                    request.passphrase.get_secret_value(), nonce, index=2
-                )
-                update_data["passphrase_enc"] = passphrase_enc
+                passphrase_value = request.passphrase.get_secret_value()
+                if passphrase_value:
+                    # Non-empty passphrase: encrypt and store
+                    passphrase_enc = crypto.encrypt_with_derived_nonce(
+                        passphrase_value, nonce, index=2
+                    )
+                    update_data["passphrase_enc"] = passphrase_enc
+                else:
+                    # Empty string: explicitly remove passphrase
+                    update_data["passphrase_enc"] = None
             elif existing_creds.get("passphrase"):
+                # Preserve existing passphrase (re-encrypt with new nonce)
                 passphrase_enc = crypto.encrypt_with_derived_nonce(
                     existing_creds["passphrase"], nonce, index=2
                 )
@@ -367,11 +384,19 @@ class ExchangeAccountService:
             account_id: Account ID.
 
         Returns:
-            Dict with success status and balance count.
+            Dict with keys:
+            - success (bool): Whether connection was successful
+            - message (str | None): Error message if failed, None if successful
+            - balance_count (int | None): Number of balances if successful
 
         Raises:
             AccountNotFoundError: If account not found.
-            ConnectionTestError: If connection test fails.
+            ConnectionTestError: If credentials cannot be decrypted or exchange is unknown.
+
+        Note:
+            Exchange-related errors (authentication, connection, API errors) are returned
+            in the response dict rather than raised as exceptions, allowing the API layer
+            to provide user-friendly error messages.
         """
         account = await self.repository.get(account_id)
         if not account:
