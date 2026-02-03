@@ -8,16 +8,19 @@ import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from squant.main import app
-
 
 @pytest_asyncio.fixture
 async def client(db_session: AsyncSession):
     """Create async HTTP client for FastAPI testing.
 
     Overrides the database session dependency to use test session.
+
+    Note: We import squant modules inside the fixture to ensure
+    environment variables are set correctly by conftest.py first.
     """
+    # Delayed import to ensure env vars are set
     from squant.infra.database import get_session
+    from squant.main import app
 
     # Override database dependency
     async def override_get_session():
