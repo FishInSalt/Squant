@@ -3,14 +3,17 @@
 
 集成测试需要真实的数据库和Redis连接。
 
-在 devcontainer 环境中运行:
-    uv run pytest tests/integration -v
+运行方式（两种环境现在使用相同的地址格式 localhost:5433/6380）:
 
-使用独立测试环境 (docker-compose.test.yml):
+1. 在 DevContainer 外部（本地主机）:
     docker compose -f docker-compose.test.yml up -d
-    # 设置环境变量指向 localhost:5433 和 localhost:6380
     uv run pytest tests/integration -v
     docker compose -f docker-compose.test.yml down -v
+
+2. 在 CI/GitHub Actions:
+    workflow 自动设置 services 和环境变量
+
+注意：.env.test 现在使用 localhost 格式，兼容两种环境。
 """
 
 import asyncio
@@ -30,9 +33,8 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 # 检测是否在 CI 环境中运行
 _IS_CI = os.environ.get("CI") == "true" or os.environ.get("GITHUB_ACTIONS") == "true"
 
-# 必须覆盖的测试环境关键变量（仅在非 CI 环境中覆盖）
-# 在 CI 中，这些变量由 workflow 设置，不应被 .env.test 覆盖
-_OVERRIDE_KEYS = {
+# 测试环境关键变量
+_TEST_ENV_KEYS = {
     "DATABASE_URL",
     "REDIS_URL",
     "SECRET_KEY",
@@ -47,16 +49,11 @@ def _load_env_file(env_file: Path, override_keys: set[str] | None = None) -> Non
     Args:
         env_file: .env 文件路径
         override_keys: 需要强制覆盖的变量名集合，这些变量即使已存在也会被覆盖
-                      （在 CI 环境中会被忽略，以保持 CI 设置的值优先）
     """
     if not env_file.exists():
         return
 
     override_keys = override_keys or set()
-
-    # 在 CI 环境中，不强制覆盖已设置的环境变量
-    if _IS_CI:
-        override_keys = set()
 
     with open(env_file) as f:
         for line in f:
@@ -75,28 +72,30 @@ def _load_env_file(env_file: Path, override_keys: set[str] | None = None) -> Non
 
 
 def _setup_test_environment() -> None:
-    """设置测试环境变量并清除配置缓存"""
+    """设置测试环境变量并清除配置缓存
+
+    CI 和本地环境现在使用相同的地址格式（localhost:5433/6380），
+    但 CI 优先使用 workflow 设置的环境变量。
+    """
     project_root = Path(__file__).parent.parent.parent
 
     if _IS_CI:
-        # 在 CI 环境中，workflow 已设置了正确的环境变量
-        # 不从任何 .env 文件加载配置，避免覆盖 CI 环境变量
-        # 只打印调试信息确认环境变量已正确设置
-        print(f"[CI] DATABASE_URL: {os.environ.get('DATABASE_URL', 'NOT SET')[:50]}...")
-        print(f"[CI] REDIS_URL: {os.environ.get('REDIS_URL', 'NOT SET')}")
+        # CI 环境：workflow 已设置正确的环境变量
+        # .env.test 作为备用（现在地址格式一致）
+        env_test_path = project_root / ".env.test"
+        _load_env_file(env_test_path)  # 不覆盖已设置的变量
     else:
-        # 非 CI 环境（本地开发）
+        # 本地环境
         # 1. 先加载 .env（用户本地配置，包含敏感凭证如 OKX API keys）
         env_path = project_root / ".env"
         _load_env_file(env_path)
 
-        # 2. 再加载 .env.test（测试特定配置，如测试数据库URL）
-        #    _OVERRIDE_KEYS 中的变量会强制使用 .env.test 的值
+        # 2. 再加载 .env.test（测试特定配置）
+        #    _TEST_ENV_KEYS 中的变量会强制使用 .env.test 的值
         env_test_path = project_root / ".env.test"
-        _load_env_file(env_test_path, override_keys=_OVERRIDE_KEYS)
+        _load_env_file(env_test_path, override_keys=_TEST_ENV_KEYS)
 
     # 清除 get_settings 缓存以使用新的环境变量
-    # 需要延迟导入以避免循环导入
     try:
         from squant.config import get_settings
 
@@ -145,13 +144,6 @@ async def engine(test_settings):
         if hasattr(test_settings.database.url, "get_secret_value")
         else str(test_settings.database.url)
     )
-    # Debug: print actual database URL being used
-    if _IS_CI:
-        # Mask password in URL for security
-        import re
-
-        masked_url = re.sub(r":([^:@]+)@", r":***@", db_url)
-        print(f"[CI] Engine using DATABASE_URL: {masked_url}")
     engine = create_async_engine(
         db_url,
         echo=False,
