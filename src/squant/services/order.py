@@ -518,6 +518,9 @@ class OrderService:
 
         Returns:
             Updated Order.
+
+        Raises:
+            OrderNotFoundError: If order no longer exists in database.
         """
         update_data: dict = {
             "exchange_oid": response.order_id,
@@ -533,4 +536,7 @@ class OrderService:
             update_data["price"] = response.price
 
         updated = await self.order_repo.update(order.id, **update_data)
-        return updated or order
+        if updated is None:
+            # Order was deleted between exchange call and database update
+            raise OrderNotFoundError(order.id)
+        return updated
