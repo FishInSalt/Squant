@@ -67,8 +67,16 @@ def _load_env_file(env_file: Path, override_keys: set[str] | None = None) -> Non
 
 def _setup_test_environment() -> None:
     """设置测试环境变量并清除配置缓存"""
-    # 加载 .env.test 配置
-    env_test_path = Path(__file__).parent.parent.parent / ".env.test"
+    project_root = Path(__file__).parent.parent.parent
+
+    # 1. 先加载 .env（用户本地配置，包含敏感凭证如 OKX API keys）
+    #    这些值不会被 .env.test 覆盖（除非在 _OVERRIDE_KEYS 中）
+    env_path = project_root / ".env"
+    _load_env_file(env_path)
+
+    # 2. 再加载 .env.test（测试特定配置，如测试数据库URL）
+    #    _OVERRIDE_KEYS 中的变量会强制使用 .env.test 的值
+    env_test_path = project_root / ".env.test"
     _load_env_file(env_test_path, override_keys=_OVERRIDE_KEYS)
 
     # 清除 get_settings 缓存以使用新的环境变量

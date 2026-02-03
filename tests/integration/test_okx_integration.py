@@ -17,6 +17,7 @@ Skip private tests (no credentials):
     conda run -n squant python -m pytest tests/integration/test_okx_integration.py -v -m "not okx_private"
 """
 
+import os
 from decimal import Decimal
 
 import pytest
@@ -45,13 +46,17 @@ def get_okx_credentials() -> tuple[str, str, str] | None:
 # Check if credentials are available
 HAS_CREDENTIALS = get_okx_credentials() is not None
 
+# Check if running in CI environment
+IS_CI = os.getenv("CI") == "true" or os.getenv("GITHUB_ACTIONS") == "true"
+
 # Custom markers
 pytestmark = pytest.mark.integration
 
 # Skip marker for tests requiring credentials
+# Skip in CI environment to avoid flaky tests due to network/credential issues
 okx_private = pytest.mark.skipif(
-    not HAS_CREDENTIALS,
-    reason="OKX API credentials not configured (OKX_API_KEY, OKX_API_SECRET, OKX_PASSPHRASE)",
+    not HAS_CREDENTIALS or IS_CI,
+    reason="OKX private tests skipped: no credentials or running in CI environment",
 )
 
 

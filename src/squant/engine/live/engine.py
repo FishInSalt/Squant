@@ -512,6 +512,7 @@ class LiveTradingEngine:
 
         # Update order state
         old_status = live_order.status
+        old_filled = live_order.filled_amount  # Save before updating
         live_order.status = new_status
         live_order.filled_amount = update.filled_size
         live_order.avg_fill_price = update.avg_price
@@ -525,12 +526,14 @@ class LiveTradingEngine:
         )
 
         # Process fills and track trade PnL for risk management
-        if new_status in (OrderStatus.PARTIAL, OrderStatus.FILLED):
+        # Only process if there's new fill amount (incremental delta)
+        fill_delta = update.filled_size - old_filled
+        if new_status in (OrderStatus.PARTIAL, OrderStatus.FILLED) and fill_delta > 0:
             # Record trade count before processing to detect new completed trades
             trades_before = len(self._context.trades)
             circuit_breaker_before = self._risk_manager.state.circuit_breaker_triggered
 
-            self._process_order_fill(live_order, update)
+            self._process_order_fill(live_order, update, fill_delta)
 
             # Check if a trade was completed and record its PnL
             trades_after = len(self._context.trades)
@@ -614,18 +617,29 @@ class LiveTradingEngine:
             fill_amount = response.filled - old_filled
             self._process_incremental_fill(live_order, fill_amount, response)
 
-    def _process_order_fill(self, live_order: LiveOrder, update: WSOrderUpdate) -> None:
-        """Process order fill from WebSocket update."""
+    def _process_order_fill(
+        self,
+        live_order: LiveOrder,
+        update: WSOrderUpdate,
+        fill_delta: Decimal,
+    ) -> None:
+        """Process order fill from WebSocket update.
+
+        Args:
+            live_order: The live order being filled.
+            update: WebSocket order update with current state.
+            fill_delta: The incremental fill amount (new fills only).
+        """
         if not update.avg_price:
             return
 
-        # Create fill record
+        # Create fill record with incremental amount (not total)
         fill = Fill(
             order_id=live_order.internal_id,
             symbol=live_order.symbol,
             side=live_order.side,
             price=update.avg_price,
-            amount=update.filled_size,
+            amount=fill_delta,
             fee=update.fee or Decimal("0"),
             timestamp=datetime.now(UTC),
         )

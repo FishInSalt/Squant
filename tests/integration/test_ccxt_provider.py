@@ -32,7 +32,7 @@ class TestCCXTProviderConnection:
             assert provider.is_connected is False
 
     @pytest.mark.asyncio
-    @pytest.mark.skipif(os.getenv("CI") == "true", reason="Binance blocks GitHub Actions runners")
+    @pytest.mark.skip(reason="Binance blocks access from many cloud providers and regions")
     async def test_connect_binance(self) -> None:
         """Test connecting to Binance (public channels only)."""
         provider = CCXTStreamProvider("binance")
@@ -45,7 +45,7 @@ class TestCCXTProviderConnection:
             assert provider.is_connected is False
 
     @pytest.mark.asyncio
-    @pytest.mark.skipif(os.getenv("CI") == "true", reason="Bybit blocks GitHub Actions runners")
+    @pytest.mark.skip(reason="Bybit blocks access from many cloud providers and regions")
     async def test_connect_bybit(self) -> None:
         """Test connecting to Bybit (public channels only)."""
         provider = CCXTStreamProvider("bybit")

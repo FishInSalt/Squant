@@ -99,6 +99,9 @@ class BacktestContext:
         # Total fees paid
         self._total_fees = Decimal("0")
 
+        # Price cache for multi-symbol equity calculation
+        self._last_prices: dict[str, Decimal] = {}
+
     # =========================================================================
     # Public Properties
     # =========================================================================
@@ -437,6 +440,8 @@ class BacktestContext:
     def _set_current_bar(self, bar: Bar) -> None:
         """Set the current bar being processed."""
         self._current_bar = bar
+        # Update price cache for multi-symbol equity calculation
+        self._last_prices[bar.symbol] = bar.close
 
     def _add_bar_to_history(self, bar: Bar) -> None:
         """Add a bar to the history buffer."""
@@ -633,30 +638,34 @@ class BacktestContext:
         self._equity_curve.append(snapshot)
 
     def _get_position_value(self) -> Decimal:
-        """Calculate total position value at current market price."""
-        if not self._current_bar:
-            return Decimal("0")
+        """Calculate total position value at current market price.
 
+        Uses cached prices for multi-symbol strategies.
+        """
         total = Decimal("0")
         for symbol, position in self._positions.items():
-            if position.is_open and symbol == self._current_bar.symbol:
-                total += position.amount * self._current_bar.close
+            if position.is_open:
+                price = self._last_prices.get(symbol)
+                if price is not None:
+                    total += position.amount * price
         return total
 
     def _get_unrealized_pnl(self) -> Decimal:
-        """Calculate unrealized PnL for all positions."""
-        if not self._current_bar:
-            return Decimal("0")
+        """Calculate unrealized PnL for all positions.
 
+        Uses cached prices for multi-symbol strategies.
+        """
         total = Decimal("0")
         for symbol, position in self._positions.items():
-            if position.is_open and symbol == self._current_bar.symbol:
-                if position.amount > 0:
-                    # Long position
-                    total += (self._current_bar.close - position.avg_entry_price) * position.amount
-                else:
-                    # Short position
-                    total += (position.avg_entry_price - self._current_bar.close) * abs(
-                        position.amount
-                    )
+            if position.is_open:
+                price = self._last_prices.get(symbol)
+                if price is not None:
+                    if position.amount > 0:
+                        # Long position
+                        total += (price - position.avg_entry_price) * position.amount
+                    else:
+                        # Short position
+                        total += (position.avg_entry_price - price) * abs(
+                            position.amount
+                        )
         return total
