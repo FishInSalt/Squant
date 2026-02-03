@@ -175,6 +175,9 @@ class LiveTradingEngine:
         self._pending_snapshots: list[EquitySnapshot] = []
         self._snapshot_batch_size = 10
 
+        # Risk trigger events for persistence (Issue 010)
+        self._pending_risk_triggers: list[dict[str, Any]] = []
+
     @property
     def run_id(self) -> UUID:
         """Get the strategy run ID."""
@@ -690,6 +693,20 @@ class LiveTradingEngine:
                 order.status = OrderStatus.REJECTED
                 self._context._completed_orders.append(order)
                 self._context._pending_orders.remove(order)
+
+                # Record risk trigger for persistence (Issue 010)
+                self._pending_risk_triggers.append({
+                    "rule_type": risk_result.rule_type.value if risk_result.rule_type else "unknown",
+                    "trigger_type": "order_rejected",
+                    "details": {
+                        "reason": risk_result.reason,
+                        "order_symbol": order.symbol,
+                        "order_side": order.side.value,
+                        "order_amount": str(order.amount),
+                        "order_price": str(order.price) if order.price else None,
+                        "metadata": risk_result.metadata,
+                    },
+                })
                 continue
 
             # Submit order to exchange
@@ -782,6 +799,20 @@ class LiveTradingEngine:
     def should_persist_snapshots(self) -> bool:
         """Check if snapshots should be persisted."""
         return len(self._pending_snapshots) >= self._snapshot_batch_size
+
+    def get_pending_risk_triggers(self) -> list[dict[str, Any]]:
+        """Get and clear pending risk trigger events (Issue 010).
+
+        Returns:
+            List of risk trigger data dictionaries.
+        """
+        triggers = self._pending_risk_triggers.copy()
+        self._pending_risk_triggers.clear()
+        return triggers
+
+    def has_pending_risk_triggers(self) -> bool:
+        """Check if there are pending risk triggers to persist."""
+        return len(self._pending_risk_triggers) > 0
 
     def get_state_snapshot(self) -> dict[str, Any]:
         """Get current engine state snapshot."""

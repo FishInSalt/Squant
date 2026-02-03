@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 from uuid import UUID
 
 from sqlalchemy import func, select
@@ -292,15 +292,52 @@ class RiskTriggerRepository(BaseRepository[RiskTrigger]):
 
 
 class RiskTriggerService:
-    """Service for risk trigger queries (RSK-008).
+    """Service for risk trigger operations (RSK-008).
 
-    Provides read-only access to risk trigger records for audit
-    and monitoring purposes.
+    Provides access to risk trigger records for audit, monitoring,
+    and recording new triggers.
     """
 
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
         self.repository = RiskTriggerRepository(session)
+
+    async def record_trigger(
+        self,
+        rule_type: str,
+        trigger_type: str,
+        details: dict,
+        *,
+        run_id: UUID | None = None,
+        rule_id: UUID | None = None,
+    ) -> RiskTrigger:
+        """Record a risk trigger event (Issue 010).
+
+        This is called when a risk rule rejects an order or when
+        risk limits are breached.
+
+        Args:
+            rule_type: Type of risk rule that was triggered.
+            trigger_type: Type of trigger (order_rejected, limit_breached, etc.).
+            details: Additional context about the trigger.
+            run_id: Optional strategy run ID.
+            rule_id: Optional rule ID (if linked to a RiskRule record).
+
+        Returns:
+            Created RiskTrigger record.
+        """
+        trigger = await self.repository.create(
+            time=datetime.now(UTC),
+            rule_id=str(rule_id) if rule_id else None,
+            run_id=str(run_id) if run_id else None,
+            trigger_type=trigger_type,
+            details={
+                "rule_type": rule_type,
+                **details,
+            },
+        )
+        await self.session.commit()
+        return trigger
 
     async def list_triggers(
         self,

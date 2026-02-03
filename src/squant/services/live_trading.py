@@ -468,6 +468,9 @@ class LiveTradingService:
             # Persist any pending snapshots
             await self._persist_snapshots(str(run_id), engine.get_pending_snapshots())
 
+            # Persist any pending risk triggers (Issue 010)
+            await self.persist_risk_triggers(run_id)
+
             # Stop engine
             await engine.stop(cancel_orders=cancel_orders)
 
@@ -732,6 +735,40 @@ class LiveTradingService:
             for snapshot in snapshots
         ]
         await self.equity_repo.bulk_create(records)
+
+    async def persist_risk_triggers(self, run_id: UUID) -> int:
+        """Persist pending risk triggers for a session (Issue 010).
+
+        Called periodically or on demand to save risk trigger events.
+
+        Args:
+            run_id: Run ID.
+
+        Returns:
+            Number of triggers persisted.
+        """
+        from squant.services.risk import RiskTriggerService
+
+        session_manager = get_live_session_manager()
+        engine = session_manager.get(run_id)
+
+        if not engine:
+            return 0
+
+        triggers = engine.get_pending_risk_triggers()
+        if not triggers:
+            return 0
+
+        trigger_service = RiskTriggerService(self.session)
+        for trigger_data in triggers:
+            await trigger_service.record_trigger(
+                rule_type=trigger_data["rule_type"],
+                trigger_type=trigger_data["trigger_type"],
+                details=trigger_data["details"],
+                run_id=run_id,
+            )
+
+        return len(triggers)
 
     async def mark_orphaned_sessions(self) -> int:
         """Mark orphaned RUNNING sessions as ERROR.

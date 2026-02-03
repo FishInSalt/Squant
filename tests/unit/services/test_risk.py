@@ -565,3 +565,95 @@ class TestRiskTriggerService:
         result = await service.get_trigger(uuid4())
 
         assert result is None
+
+
+class TestRecordTrigger:
+    """Tests for risk trigger recording (Issue 010)."""
+
+    @pytest.fixture
+    def mock_session(self):
+        """Create mock async session."""
+        session = MagicMock()
+        session.execute = AsyncMock()
+        session.commit = AsyncMock()
+        return session
+
+    @pytest.fixture
+    def service(self, mock_session):
+        """Create service with mock session."""
+        return RiskTriggerService(mock_session)
+
+    @pytest.mark.asyncio
+    async def test_record_trigger_with_all_fields(self, service):
+        """Test recording a trigger with all optional fields."""
+        mock_trigger = MagicMock(spec=RiskTrigger)
+        mock_trigger.id = uuid4()
+        service.repository.create = AsyncMock(return_value=mock_trigger)
+
+        run_id = uuid4()
+        rule_id = uuid4()
+        result = await service.record_trigger(
+            rule_type="daily_loss_limit",
+            trigger_type="order_rejected",
+            details={"reason": "Daily loss limit reached"},
+            run_id=run_id,
+            rule_id=rule_id,
+        )
+
+        assert result == mock_trigger
+        service.repository.create.assert_called_once()
+        call_kwargs = service.repository.create.call_args[1]
+        assert call_kwargs["trigger_type"] == "order_rejected"
+        assert call_kwargs["run_id"] == str(run_id)
+        assert call_kwargs["rule_id"] == str(rule_id)
+        assert call_kwargs["details"]["rule_type"] == "daily_loss_limit"
+
+    @pytest.mark.asyncio
+    async def test_record_trigger_without_rule_id(self, service):
+        """Test recording a trigger without rule_id (in-memory risk check)."""
+        mock_trigger = MagicMock(spec=RiskTrigger)
+        mock_trigger.id = uuid4()
+        service.repository.create = AsyncMock(return_value=mock_trigger)
+
+        run_id = uuid4()
+        result = await service.record_trigger(
+            rule_type="max_position_size",
+            trigger_type="order_rejected",
+            details={"position_size_pct": 0.15, "max_size_pct": 0.1},
+            run_id=run_id,
+        )
+
+        assert result == mock_trigger
+        call_kwargs = service.repository.create.call_args[1]
+        assert call_kwargs["rule_id"] is None
+
+    @pytest.mark.asyncio
+    async def test_record_trigger_without_run_id(self, service):
+        """Test recording a trigger without run_id (standalone check)."""
+        mock_trigger = MagicMock(spec=RiskTrigger)
+        service.repository.create = AsyncMock(return_value=mock_trigger)
+
+        result = await service.record_trigger(
+            rule_type="circuit_breaker",
+            trigger_type="auto_triggered",
+            details={"consecutive_losses": 5},
+        )
+
+        assert result == mock_trigger
+        call_kwargs = service.repository.create.call_args[1]
+        assert call_kwargs["run_id"] is None
+        assert call_kwargs["rule_id"] is None
+
+    @pytest.mark.asyncio
+    async def test_record_trigger_commits_session(self, service, mock_session):
+        """Test that recording a trigger commits the session."""
+        mock_trigger = MagicMock(spec=RiskTrigger)
+        service.repository.create = AsyncMock(return_value=mock_trigger)
+
+        await service.record_trigger(
+            rule_type="test_rule",
+            trigger_type="test",
+            details={},
+        )
+
+        mock_session.commit.assert_called_once()
