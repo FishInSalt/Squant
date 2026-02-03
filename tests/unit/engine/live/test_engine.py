@@ -971,3 +971,218 @@ class TestCancelAllOrders:
 
         # Order should not be cancelled
         mock_adapter.cancel_order.assert_not_called()
+
+
+class TestCircuitBreakerIntegration:
+    """Tests for circuit breaker integration with risk manager (RSK-012)."""
+
+    @pytest.fixture
+    def circuit_breaker_config(self):
+        """Create a risk config with circuit breaker enabled and low threshold."""
+        return RiskConfig(
+            max_position_size=Decimal("0.5"),
+            max_order_size=Decimal("0.1"),
+            daily_trade_limit=100,
+            daily_loss_limit=Decimal("0.1"),
+            max_price_deviation=Decimal("0.05"),
+            circuit_breaker_enabled=True,
+            circuit_breaker_loss_count=3,  # Trigger after 3 consecutive losses
+            circuit_breaker_cooldown_minutes=30,
+        )
+
+    @pytest.fixture
+    def engine_with_circuit_breaker(self, run_id, strategy, circuit_breaker_config, mock_adapter):
+        """Create a live trading engine with circuit breaker config."""
+        with patch("squant.config.get_settings") as mock_settings:
+            settings = MagicMock()
+            settings.paper_max_equity_curve_size = 10000
+            settings.paper_max_completed_orders = 1000
+            settings.paper_max_fills = 1000
+            settings.paper_max_trades = 1000
+            settings.paper_max_logs = 1000
+            mock_settings.return_value = settings
+
+            return LiveTradingEngine(
+                run_id=run_id,
+                strategy=strategy,
+                symbol="BTC/USDT",
+                timeframe="1m",
+                adapter=mock_adapter,
+                risk_config=circuit_breaker_config,
+                initial_equity=Decimal("10000"),
+                params={"threshold": Decimal("50000")},
+            )
+
+    def test_circuit_breaker_flag_initially_false(self, engine_with_circuit_breaker):
+        """Test circuit breaker flag is initially False."""
+        assert engine_with_circuit_breaker.circuit_breaker_triggered is False
+
+    def test_circuit_breaker_property(self, engine_with_circuit_breaker):
+        """Test circuit_breaker_triggered property accessor."""
+        engine = engine_with_circuit_breaker
+
+        # Initially false
+        assert engine.circuit_breaker_triggered is False
+
+        # Set internal flag
+        engine._circuit_breaker_triggered = True
+
+        # Property should reflect internal state
+        assert engine.circuit_breaker_triggered is True
+
+    @pytest.mark.asyncio
+    async def test_on_order_update_records_trade_pnl(self, engine_with_circuit_breaker, mock_adapter):
+        """Test that on_order_update records trade PnL for risk management."""
+        engine = engine_with_circuit_breaker
+        await engine.start()
+
+        # Set up an order
+        internal_id = "order-1"
+        exchange_id = "exchange-123"
+        engine._live_orders[internal_id] = LiveOrder(
+            internal_id=internal_id,
+            exchange_order_id=exchange_id,
+            symbol="BTC/USDT",
+            side=OrderSide.BUY,
+            order_type="market",
+            amount=Decimal("0.1"),
+            price=None,
+            status=OrderStatus.SUBMITTED,
+        )
+        engine._exchange_order_map[exchange_id] = internal_id
+
+        # Mock a completed trade with a loss
+        with patch.object(engine._context, "_process_fill"), \
+             patch.object(engine._context, "_move_completed_orders"):
+            # Simulate trades list growing (indicating new trade completed)
+            mock_trade = MagicMock()
+            mock_trade.pnl = Decimal("-100")  # Loss
+
+            engine._context._trades = []  # Before: 0 trades
+
+            # Create order update
+            update = WSOrderUpdate(
+                order_id=exchange_id,
+                client_order_id=None,
+                status="filled",
+                symbol="BTC/USDT",
+                side="buy",
+                order_type="market",
+                price=Decimal("50000"),
+                size=Decimal("0.1"),
+                filled_size=Decimal("0.1"),
+                avg_price=Decimal("50000"),
+                fee=Decimal("0.05"),
+                fee_currency="USDT",
+                timestamp=datetime.now(UTC),
+            )
+
+            # Patch trades to return mock trade after processing
+            def mock_process_fill(*args, **kwargs):
+                engine._context._trades = [mock_trade]
+
+            with patch.object(engine._context, "_process_fill", side_effect=mock_process_fill), \
+                 patch.object(engine._context, "_move_completed_orders"):
+                engine.on_order_update(update)
+
+            # Check that consecutive_losses increased
+            assert engine._risk_manager.state.consecutive_losses == 1
+
+    @pytest.mark.asyncio
+    async def test_circuit_breaker_triggered_after_consecutive_losses(
+        self, engine_with_circuit_breaker, mock_adapter
+    ):
+        """Test circuit breaker triggers after configured consecutive losses."""
+        engine = engine_with_circuit_breaker
+        await engine.start()
+
+        # Simulate consecutive losses by directly calling risk manager
+        for i in range(3):  # circuit_breaker_loss_count = 3
+            engine._risk_manager.record_trade_result(Decimal("-100"))
+
+        # Circuit breaker should be triggered in risk manager
+        assert engine._risk_manager.state.circuit_breaker_triggered is True
+
+    @pytest.mark.asyncio
+    async def test_process_candle_stops_when_circuit_breaker_triggered(
+        self, engine_with_circuit_breaker, mock_adapter
+    ):
+        """Test that process_candle stops engine when circuit breaker is triggered."""
+        engine = engine_with_circuit_breaker
+        await engine.start()
+
+        assert engine.is_running is True
+
+        # Manually set circuit breaker flag (simulating it was set in on_order_update)
+        engine._circuit_breaker_triggered = True
+
+        # Create a candle
+        candle = WSCandle(
+            symbol="BTC/USDT",
+            timeframe="1m",
+            timestamp=datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC),
+            open=Decimal("45000"),
+            high=Decimal("46000"),
+            low=Decimal("44000"),
+            close=Decimal("45500"),
+            volume=Decimal("100"),
+            is_closed=True,
+        )
+
+        # Process candle - should stop engine due to circuit breaker
+        await engine.process_candle(candle)
+
+        # Engine should be stopped
+        assert engine.is_running is False
+        assert "Circuit breaker triggered" in engine.error_message
+
+    @pytest.mark.asyncio
+    async def test_process_candle_continues_without_circuit_breaker(
+        self, engine_with_circuit_breaker, mock_adapter
+    ):
+        """Test that process_candle continues normally without circuit breaker."""
+        engine = engine_with_circuit_breaker
+        await engine.start()
+
+        assert engine.is_running is True
+        assert engine._circuit_breaker_triggered is False
+
+        # Create a candle
+        candle = WSCandle(
+            symbol="BTC/USDT",
+            timeframe="1m",
+            timestamp=datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC),
+            open=Decimal("45000"),
+            high=Decimal("46000"),
+            low=Decimal("44000"),
+            close=Decimal("45500"),
+            volume=Decimal("100"),
+            is_closed=True,
+        )
+
+        # Process candle - should continue normally
+        await engine.process_candle(candle)
+
+        # Engine should still be running
+        assert engine.is_running is True
+        assert engine.bar_count == 1
+
+    @pytest.mark.asyncio
+    async def test_winning_trade_resets_consecutive_losses(
+        self, engine_with_circuit_breaker, mock_adapter
+    ):
+        """Test that a winning trade resets consecutive loss count."""
+        engine = engine_with_circuit_breaker
+        await engine.start()
+
+        # Record some losses
+        engine._risk_manager.record_trade_result(Decimal("-100"))
+        engine._risk_manager.record_trade_result(Decimal("-100"))
+        assert engine._risk_manager.state.consecutive_losses == 2
+
+        # Record a win
+        engine._risk_manager.record_trade_result(Decimal("100"))
+
+        # Consecutive losses should be reset
+        assert engine._risk_manager.state.consecutive_losses == 0
+        assert engine._risk_manager.state.circuit_breaker_triggered is False

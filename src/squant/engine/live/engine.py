@@ -159,6 +159,7 @@ class LiveTradingEngine:
         self._error_message: str | None = None
         self._bar_count = 0
         self._last_active_at: datetime | None = None
+        self._circuit_breaker_triggered = False  # Set when risk manager triggers circuit breaker
 
         # Live order tracking
         self._live_orders: dict[str, LiveOrder] = {}  # internal_id -> LiveOrder
@@ -208,6 +209,11 @@ class LiveTradingEngine:
     def error_message(self) -> str | None:
         """Get error message if any."""
         return self._error_message
+
+    @property
+    def circuit_breaker_triggered(self) -> bool:
+        """Check if circuit breaker was triggered due to consecutive losses."""
+        return self._circuit_breaker_triggered
 
     @property
     def bar_count(self) -> int:
@@ -377,6 +383,14 @@ class LiveTradingEngine:
         if not self._is_running:
             return
 
+        # Check if circuit breaker was triggered by order update (RSK-012)
+        if self._circuit_breaker_triggered:
+            logger.warning(
+                f"Circuit breaker active for session {self._run_id}, stopping trading"
+            )
+            await self.stop(error="Circuit breaker triggered due to consecutive losses")
+            return
+
         # Only process closed candles
         if not candle.is_closed:
             return
@@ -468,15 +482,37 @@ class LiveTradingEngine:
             f"filled={update.filled_size}/{live_order.amount}"
         )
 
-        # Process fills
+        # Process fills and track trade PnL for risk management
         if new_status in (OrderStatus.PARTIAL, OrderStatus.FILLED):
+            # Record trade count before processing to detect new completed trades
+            trades_before = len(self._context.trades)
+            circuit_breaker_before = self._risk_manager.state.circuit_breaker_triggered
+
             self._process_order_fill(live_order, update)
 
-        # Record trade result for risk tracking
-        if new_status == OrderStatus.FILLED and live_order.avg_fill_price:
-            # Calculate PnL for completed trade
-            # Note: Simplified - full PnL tracking would need more context
-            pass
+            # Check if a trade was completed and record its PnL
+            trades_after = len(self._context.trades)
+            if trades_after > trades_before:
+                # A new trade was completed - get its PnL
+                completed_trade = self._context.trades[-1]
+                if completed_trade.pnl is not None:
+                    self._risk_manager.record_trade_result(completed_trade.pnl)
+                    logger.info(
+                        f"Recorded trade result: PnL={completed_trade.pnl}, "
+                        f"consecutive_losses={self._risk_manager.state.consecutive_losses}"
+                    )
+
+                    # Check if circuit breaker was just triggered (RSK-012)
+                    if (
+                        not circuit_breaker_before
+                        and self._risk_manager.state.circuit_breaker_triggered
+                    ):
+                        logger.warning(
+                            f"Circuit breaker triggered for session {self._run_id} "
+                            f"after {self._risk_manager.state.consecutive_losses} consecutive losses"
+                        )
+                        # Set flag for async handling - actual stop happens in main loop
+                        self._circuit_breaker_triggered = True
 
     def _candle_to_bar(self, candle: WSCandle) -> Bar:
         """Convert WSCandle to Bar."""
