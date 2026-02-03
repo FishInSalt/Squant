@@ -305,9 +305,17 @@ class OKXAdapter(ExchangeAdapter):
                 exchange="okx",
             )
 
+        # Validate that ordId is present in response (Issue 028)
+        order_id = order_data.get("ordId")
+        if not order_id:
+            raise ExchangeAPIError(
+                message="No ordId in order placement response",
+                exchange="okx",
+            )
+
         # Return basic response; full details require get_order
         return OrderResponse(
-            order_id=order_data.get("ordId", ""),
+            order_id=order_id,
             client_order_id=order_data.get("clOrdId"),
             symbol=request.symbol,
             side=request.side,

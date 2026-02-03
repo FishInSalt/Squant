@@ -337,6 +337,7 @@ class BacktestService:
 
         Raises:
             BacktestNotFoundError: If run not found.
+            StrategyNotFoundError: If strategy not found.
             InsufficientDataError: If no historical data available.
             IncompleteDataError: If data doesn't cover full range
                 (unless allow_partial_data=True).
@@ -348,10 +349,12 @@ class BacktestService:
             raise BacktestNotFoundError(run_id)
 
         # Load strategy
-        from squant.services.strategy import StrategyRepository
+        from squant.services.strategy import StrategyNotFoundError, StrategyRepository
 
         strategy_repo = StrategyRepository(self.session)
         strategy = await strategy_repo.get(run.strategy_id)
+        if not strategy:
+            raise StrategyNotFoundError(run.strategy_id)
 
         # Check data availability
         availability = await self.data_loader.check_data_availability(

@@ -164,7 +164,10 @@ class CCXTRestAdapter(ExchangeAdapter):
     async def get_ticker(self, symbol: str) -> Ticker:
         """Get ticker for a trading pair."""
         if not self._exchange:
-            raise RuntimeError("Exchange not connected. Call connect() first.")
+            raise ExchangeConnectionError(
+                message="Exchange not connected. Call connect() first.",
+                exchange=self._exchange_id,
+            )
 
         try:
             ticker = await self._exchange.fetch_ticker(symbol)
@@ -183,7 +186,10 @@ class CCXTRestAdapter(ExchangeAdapter):
     async def get_tickers(self, symbols: Sequence[str] | None = None) -> list[Ticker]:
         """Get tickers for multiple trading pairs."""
         if not self._exchange:
-            raise RuntimeError("Exchange not connected. Call connect() first.")
+            raise ExchangeConnectionError(
+                message="Exchange not connected. Call connect() first.",
+                exchange=self._exchange_id,
+            )
 
         try:
             # Fetch all tickers if no symbols specified
@@ -219,7 +225,10 @@ class CCXTRestAdapter(ExchangeAdapter):
     ) -> list[Candlestick]:
         """Get OHLCV candlestick data."""
         if not self._exchange:
-            raise RuntimeError("Exchange not connected. Call connect() first.")
+            raise ExchangeConnectionError(
+                message="Exchange not connected. Call connect() first.",
+                exchange=self._exchange_id,
+            )
 
         # Convert TimeFrame enum to CCXT timeframe string
         ccxt_timeframe = TIMEFRAME_MAP.get(timeframe.value)
@@ -265,7 +274,10 @@ class CCXTRestAdapter(ExchangeAdapter):
     async def get_balance(self) -> AccountBalance:
         """Get account balance for all currencies."""
         if not self._exchange:
-            raise RuntimeError("Exchange not connected. Call connect() first.")
+            raise ExchangeConnectionError(
+                message="Exchange not connected. Call connect() first.",
+                exchange=self._exchange_id,
+            )
 
         if not self._credentials:
             raise ExchangeAuthenticationError(
@@ -318,7 +330,10 @@ class CCXTRestAdapter(ExchangeAdapter):
     async def place_order(self, request: OrderRequest) -> OrderResponse:
         """Place a new order."""
         if not self._exchange:
-            raise RuntimeError("Exchange not connected. Call connect() first.")
+            raise ExchangeConnectionError(
+                message="Exchange not connected. Call connect() first.",
+                exchange=self._exchange_id,
+            )
 
         if not self._credentials:
             raise ExchangeAuthenticationError(
@@ -358,7 +373,10 @@ class CCXTRestAdapter(ExchangeAdapter):
     async def cancel_order(self, request: CancelOrderRequest) -> OrderResponse:
         """Cancel an existing order."""
         if not self._exchange:
-            raise RuntimeError("Exchange not connected. Call connect() first.")
+            raise ExchangeConnectionError(
+                message="Exchange not connected. Call connect() first.",
+                exchange=self._exchange_id,
+            )
 
         if not self._credentials:
             raise ExchangeAuthenticationError(
@@ -393,7 +411,10 @@ class CCXTRestAdapter(ExchangeAdapter):
     async def get_order(self, symbol: str, order_id: str) -> OrderResponse:
         """Get order details by ID."""
         if not self._exchange:
-            raise RuntimeError("Exchange not connected. Call connect() first.")
+            raise ExchangeConnectionError(
+                message="Exchange not connected. Call connect() first.",
+                exchange=self._exchange_id,
+            )
 
         if not self._credentials:
             raise ExchangeAuthenticationError(
@@ -423,7 +444,10 @@ class CCXTRestAdapter(ExchangeAdapter):
     async def get_open_orders(self, symbol: str | None = None) -> list[OrderResponse]:
         """Get all open (unfilled) orders."""
         if not self._exchange:
-            raise RuntimeError("Exchange not connected. Call connect() first.")
+            raise ExchangeConnectionError(
+                message="Exchange not connected. Call connect() first.",
+                exchange=self._exchange_id,
+            )
 
         if not self._credentials:
             raise ExchangeAuthenticationError(
