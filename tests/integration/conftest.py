@@ -78,16 +78,22 @@ def _setup_test_environment() -> None:
     """设置测试环境变量并清除配置缓存"""
     project_root = Path(__file__).parent.parent.parent
 
-    # 1. 先加载 .env（用户本地配置，包含敏感凭证如 OKX API keys）
-    #    这些值不会被 .env.test 覆盖（除非在 _OVERRIDE_KEYS 中且非 CI 环境）
-    env_path = project_root / ".env"
-    _load_env_file(env_path)
+    if _IS_CI:
+        # 在 CI 环境中，workflow 已设置了正确的环境变量
+        # 不从任何 .env 文件加载配置，避免覆盖 CI 环境变量
+        # 只打印调试信息确认环境变量已正确设置
+        print(f"[CI] DATABASE_URL: {os.environ.get('DATABASE_URL', 'NOT SET')[:50]}...")
+        print(f"[CI] REDIS_URL: {os.environ.get('REDIS_URL', 'NOT SET')}")
+    else:
+        # 非 CI 环境（本地开发）
+        # 1. 先加载 .env（用户本地配置，包含敏感凭证如 OKX API keys）
+        env_path = project_root / ".env"
+        _load_env_file(env_path)
 
-    # 2. 再加载 .env.test（测试特定配置，如测试数据库URL）
-    #    在非 CI 环境中，_OVERRIDE_KEYS 中的变量会强制使用 .env.test 的值
-    #    在 CI 环境中，保持 workflow 设置的环境变量优先
-    env_test_path = project_root / ".env.test"
-    _load_env_file(env_test_path, override_keys=_OVERRIDE_KEYS)
+        # 2. 再加载 .env.test（测试特定配置，如测试数据库URL）
+        #    _OVERRIDE_KEYS 中的变量会强制使用 .env.test 的值
+        env_test_path = project_root / ".env.test"
+        _load_env_file(env_test_path, override_keys=_OVERRIDE_KEYS)
 
     # 清除 get_settings 缓存以使用新的环境变量
     # 需要延迟导入以避免循环导入
@@ -139,6 +145,13 @@ async def engine(test_settings):
         if hasattr(test_settings.database.url, "get_secret_value")
         else str(test_settings.database.url)
     )
+    # Debug: print actual database URL being used
+    if _IS_CI:
+        # Mask password in URL for security
+        import re
+
+        masked_url = re.sub(r":([^:@]+)@", r":***@", db_url)
+        print(f"[CI] Engine using DATABASE_URL: {masked_url}")
     engine = create_async_engine(
         db_url,
         echo=False,

@@ -3,13 +3,16 @@ FROM node:20-alpine AS builder
 
 WORKDIR /app
 
+# 安装 pnpm
+RUN corepack enable && corepack prepare pnpm@latest --activate
+
 # 安装依赖
-COPY package.json package-lock.json ./
-RUN npm ci
+COPY package.json pnpm-lock.yaml ./
+RUN pnpm install --frozen-lockfile
 
 # 复制源代码并构建
 COPY . .
-RUN npm run build
+RUN pnpm run build
 
 # ============ 生产阶段 ============
 FROM nginx:alpine AS production
