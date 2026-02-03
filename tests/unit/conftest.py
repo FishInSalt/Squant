@@ -39,7 +39,7 @@ from uuid import uuid4
 import pytest
 
 if TYPE_CHECKING:
-    from squant.infra.exchange.types import Candlestick, Ticker
+    pass
 
 
 # ============================================================================

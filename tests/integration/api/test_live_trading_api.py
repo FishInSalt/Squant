@@ -4,11 +4,12 @@ Tests organized by acceptance criteria (TRD-033, TRD-034, TRD-035, TRD-036, TRD-
 dev-docs/requirements/acceptance-criteria/03-trading.md
 """
 
-import pytest
-from datetime import datetime, UTC
+from datetime import UTC, datetime
 from decimal import Decimal
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
+
+import pytest
 
 from squant.models.enums import RunStatus
 

@@ -1,10 +1,8 @@
 """Unit tests for model __repr__ methods."""
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from decimal import Decimal
 from uuid import uuid4
-
-import pytest
 
 from squant.models.enums import (
     LogLevel,
@@ -84,7 +82,7 @@ class TestKlineRepr:
 
     def test_repr_includes_exchange_symbol_timeframe_time(self) -> None:
         """Test that __repr__ includes exchange, symbol, timeframe, and time."""
-        timestamp = datetime(2024, 1, 1, 12, 0, tzinfo=timezone.utc)
+        timestamp = datetime(2024, 1, 1, 12, 0, tzinfo=UTC)
         kline = Kline(
             time=timestamp,
             exchange="binance",
@@ -112,7 +110,7 @@ class TestEquityCurveRepr:
     def test_repr_includes_key_fields(self) -> None:
         """Test that __repr__ includes run_id, time, and equity."""
         run_id = uuid4()
-        timestamp = datetime(2024, 1, 1, 12, 0, tzinfo=timezone.utc)
+        timestamp = datetime(2024, 1, 1, 12, 0, tzinfo=UTC)
         curve = EquityCurve(
             run_id=str(run_id),
             time=timestamp,
@@ -134,7 +132,7 @@ class TestBalanceSnapshotRepr:
     def test_repr_includes_key_fields(self) -> None:
         """Test that __repr__ includes account_id, currency, and time."""
         account_id = uuid4()
-        timestamp = datetime(2024, 1, 1, 12, 0, tzinfo=timezone.utc)
+        timestamp = datetime(2024, 1, 1, 12, 0, tzinfo=UTC)
         snapshot = BalanceSnapshot(
             account_id=str(account_id),
             currency="USDT",
@@ -185,7 +183,7 @@ class TestTradeRepr:
         """Test that __repr__ includes id, price, and amount."""
         trade_id = uuid4()
         order_id = uuid4()
-        timestamp = datetime(2024, 1, 1, 12, 0, tzinfo=timezone.utc)
+        timestamp = datetime(2024, 1, 1, 12, 0, tzinfo=UTC)
         trade = Trade(
             id=trade_id,
             order_id=str(order_id),
@@ -232,7 +230,7 @@ class TestRiskTriggerRepr:
         rule_id = uuid4()
         trigger = RiskTrigger(
             id=trigger_id,
-            time=datetime(2024, 1, 1, 12, 0, tzinfo=timezone.utc),
+            time=datetime(2024, 1, 1, 12, 0, tzinfo=UTC),
             rule_id=str(rule_id),
             trigger_type="position_limit",
             details={"current": 150, "limit": 100},
@@ -252,7 +250,7 @@ class TestCircuitBreakerEventRepr:
     def test_repr_includes_key_fields(self) -> None:
         """Test that __repr__ includes id, time, and trigger_type."""
         event_id = uuid4()
-        timestamp = datetime(2024, 1, 1, 12, 0, tzinfo=timezone.utc)
+        timestamp = datetime(2024, 1, 1, 12, 0, tzinfo=UTC)
         event = CircuitBreakerEvent(
             id=event_id,
             time=timestamp,

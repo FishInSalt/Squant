@@ -25,7 +25,7 @@ def sample_tickers():
     symbols = ["BTC/USDT", "ETH/USDT", "BNB/USDT", "SOL/USDT", "XRP/USDT"]
     volumes_quote = [50000000, 30000000, 20000000, 15000000, 10000000]  # Descending by quote volume
 
-    for symbol, volume_quote in zip(symbols, volumes_quote):
+    for symbol, volume_quote in zip(symbols, volumes_quote, strict=True):
         ticker = Ticker(
             symbol=symbol,
             bid=Decimal("40000.0") if "BTC" in symbol else Decimal("2500.0"),

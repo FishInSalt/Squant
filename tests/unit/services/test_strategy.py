@@ -8,11 +8,9 @@ from uuid import uuid4
 
 import pytest
 
-from squant.models.enums import StrategyStatus
-from squant.models.strategy import Strategy
+from squant.models.enums import RunStatus, StrategyStatus
+from squant.models.strategy import Strategy, StrategyRun
 from squant.schemas.strategy import CreateStrategyRequest, UpdateStrategyRequest
-from squant.models.enums import RunStatus
-from squant.models.strategy import StrategyRun
 from squant.services.strategy import (
     StrategyInUseError,
     StrategyNameExistsError,

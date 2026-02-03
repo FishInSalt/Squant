@@ -7,21 +7,18 @@ Tests account service functionality with real database integration:
 - Account validation and connection testing
 """
 
-import os
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import pytest
 import pytest_asyncio
 
-from squant.models.exchange import ExchangeAccount
 from squant.schemas.account import CreateExchangeAccountRequest, UpdateExchangeAccountRequest
 from squant.services.account import (
     AccountInUseError,
     AccountNotFoundError,
     ExchangeAccountService,
 )
-from squant.utils.crypto import get_crypto_manager
 
 
 @pytest_asyncio.fixture

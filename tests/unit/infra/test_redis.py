@@ -1,7 +1,7 @@
 """Unit tests for Redis connection management."""
 
 import socket
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from redis.asyncio import Redis

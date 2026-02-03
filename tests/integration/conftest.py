@@ -27,7 +27,11 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 # 加载测试环境变量 (必须在导入 squant 模块之前)
 # ==========================================================================
 
-# 必须覆盖的测试环境关键变量
+# 检测是否在 CI 环境中运行
+_IS_CI = os.environ.get("CI") == "true" or os.environ.get("GITHUB_ACTIONS") == "true"
+
+# 必须覆盖的测试环境关键变量（仅在非 CI 环境中覆盖）
+# 在 CI 中，这些变量由 workflow 设置，不应被 .env.test 覆盖
 _OVERRIDE_KEYS = {
     "DATABASE_URL",
     "REDIS_URL",
@@ -43,11 +47,16 @@ def _load_env_file(env_file: Path, override_keys: set[str] | None = None) -> Non
     Args:
         env_file: .env 文件路径
         override_keys: 需要强制覆盖的变量名集合，这些变量即使已存在也会被覆盖
+                      （在 CI 环境中会被忽略，以保持 CI 设置的值优先）
     """
     if not env_file.exists():
         return
 
     override_keys = override_keys or set()
+
+    # 在 CI 环境中，不强制覆盖已设置的环境变量
+    if _IS_CI:
+        override_keys = set()
 
     with open(env_file) as f:
         for line in f:
@@ -70,12 +79,13 @@ def _setup_test_environment() -> None:
     project_root = Path(__file__).parent.parent.parent
 
     # 1. 先加载 .env（用户本地配置，包含敏感凭证如 OKX API keys）
-    #    这些值不会被 .env.test 覆盖（除非在 _OVERRIDE_KEYS 中）
+    #    这些值不会被 .env.test 覆盖（除非在 _OVERRIDE_KEYS 中且非 CI 环境）
     env_path = project_root / ".env"
     _load_env_file(env_path)
 
     # 2. 再加载 .env.test（测试特定配置，如测试数据库URL）
-    #    _OVERRIDE_KEYS 中的变量会强制使用 .env.test 的值
+    #    在非 CI 环境中，_OVERRIDE_KEYS 中的变量会强制使用 .env.test 的值
+    #    在 CI 环境中，保持 workflow 设置的环境变量优先
     env_test_path = project_root / ".env.test"
     _load_env_file(env_test_path, override_keys=_OVERRIDE_KEYS)
 
@@ -91,8 +101,8 @@ def _setup_test_environment() -> None:
 # 立即设置环境变量（conftest.py 在测试模块之前被导入）
 _setup_test_environment()
 
-from squant.config import get_settings
-from squant.models.base import Base
+from squant.config import get_settings  # noqa: E402
+from squant.models.base import Base  # noqa: E402
 
 # ============================================================================
 # 测试环境配置

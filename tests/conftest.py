@@ -5,7 +5,6 @@ from pathlib import Path
 
 import pytest
 
-
 # ==========================================================================
 # 集成测试环境配置
 # ==========================================================================
@@ -64,5 +63,6 @@ def pytest_configure(config):
 def client():
     """Create test client (延迟导入)."""
     from fastapi.testclient import TestClient
+
     from squant.main import app
     return TestClient(app)

@@ -8,7 +8,6 @@ Mark with pytest.mark.integration to skip in quick test runs.
 """
 
 import asyncio
-import os
 
 import pytest
 

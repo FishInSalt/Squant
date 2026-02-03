@@ -10,7 +10,7 @@ Tests validate acceptance criteria from dev-docs/requirements/acceptance-criteri
 
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 from uuid import uuid4
 
 import pytest
@@ -30,7 +30,7 @@ async def sample_orders(db_session, sample_exchange_account):
             id=uuid4(),
             account_id=sample_exchange_account.id,
             exchange_oid=f"ORDER_{i}",
-            symbol=f"BTC/USDT" if i < 2 else "ETH/USDT",
+            symbol="BTC/USDT" if i < 2 else "ETH/USDT",
             side=OrderSide.BUY if i % 2 == 0 else OrderSide.SELL,
             type=OrderType.LIMIT,
             amount=Decimal("0.01"),
@@ -475,7 +475,7 @@ class TestManualOrderCancellation:
     @pytest.mark.asyncio
     async def test_cancel_filled_order_error(self, client, sample_orders):
         """Test ORD-004-3: Cannot cancel already filled order."""
-        from squant.services.order import OrderValidationError, OrderService
+        from squant.services.order import OrderService, OrderValidationError
 
         filled_order = [o for o in sample_orders if o.status == OrderStatus.FILLED][0]
 

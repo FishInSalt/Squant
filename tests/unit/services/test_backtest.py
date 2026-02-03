@@ -622,7 +622,7 @@ class TestIncompleteDataValidation:
             service.data_loader.load_bars = mock_load_bars
 
             # Should not raise with allow_partial_data=True
-            result = await service.run(run_id, allow_partial_data=True)
+            await service.run(run_id, allow_partial_data=True)
 
             # Verify warning was logged
             mock_logger.warning.assert_called_once()

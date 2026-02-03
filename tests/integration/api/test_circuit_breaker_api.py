@@ -7,7 +7,6 @@ from datetime import UTC, datetime
 from unittest.mock import AsyncMock, patch
 
 import pytest
-from fastapi import HTTPException
 
 
 @pytest.mark.asyncio

@@ -215,7 +215,7 @@ class LiveTradingService:
             RiskConfigurationError: If risk config is invalid.
             ExchangeConnectionError: If exchange connection fails.
         """
-        from squant.services.account import ExchangeAccountRepository, ExchangeAccountService
+        from squant.services.account import ExchangeAccountRepository
         from squant.services.strategy import StrategyNotFoundError, StrategyRepository
 
         # Validate risk configuration

@@ -667,7 +667,7 @@ class TestEmergencyClose:
         # Cancel fails but place_order should still be called
         mock_adapter.cancel_order.side_effect = Exception("Cannot cancel")
 
-        results = await engine.emergency_close()
+        await engine.emergency_close()
 
         # Cancel attempt made but failed
         mock_adapter.cancel_order.assert_called_once()

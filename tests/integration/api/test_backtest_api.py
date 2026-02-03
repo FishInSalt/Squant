@@ -691,7 +691,7 @@ class TestBacktestListAndManagement:
                 strategy_id=sample_strategy.id,
                 mode="backtest",
                 exchange="okx",
-                symbol=f"BTC/USDT" if i % 2 == 0 else "ETH/USDT",
+                symbol="BTC/USDT" if i % 2 == 0 else "ETH/USDT",
                 timeframe="1h",
                 status=RunStatus.COMPLETED if i % 3 == 0 else RunStatus.PENDING,
                 backtest_start=datetime.now(UTC) - timedelta(days=30),

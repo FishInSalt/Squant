@@ -3,10 +3,11 @@
 Tests CRUD operations for risk rules that protect against excessive losses.
 """
 
-import pytest
-from datetime import datetime, UTC
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
+
+import pytest
 
 from squant.models.enums import RiskRuleType
 

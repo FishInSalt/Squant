@@ -10,13 +10,12 @@ Tests validate acceptance criteria from dev-docs/requirements/acceptance-criteri
 - ACC-006: Edit/delete API configuration
 """
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 from uuid import uuid4
 
 import pytest
 from pydantic import SecretStr
 
-from squant.models.exchange import ExchangeAccount
 from squant.schemas.account import CreateExchangeAccountRequest
 
 

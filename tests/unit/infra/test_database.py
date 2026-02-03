@@ -1,9 +1,8 @@
 """Unit tests for database connection management."""
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
-from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from squant.infra import database as db_module
@@ -136,7 +135,7 @@ class TestGetSessionContext:
     async def test_re_raises_exception(self) -> None:
         """Test that exceptions are re-raised after rollback."""
         with pytest.raises(ValueError, match="Test error"):
-            async with db_module.get_session_context() as session:
+            async with db_module.get_session_context() as _session:
                 raise ValueError("Test error")
 
 

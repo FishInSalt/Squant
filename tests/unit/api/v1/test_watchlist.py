@@ -1,7 +1,7 @@
 """Unit tests for watchlist API endpoints."""
 
+from collections.abc import AsyncGenerator
 from datetime import UTC, datetime
-from typing import AsyncGenerator
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 

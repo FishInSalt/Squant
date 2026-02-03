@@ -15,8 +15,6 @@ from typing import Any
 from uuid import UUID
 
 from sqlalchemy import delete, func, select
-
-logger = logging.getLogger(__name__)
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from squant.engine.backtest.runner import BacktestError, BacktestRunner
@@ -26,6 +24,8 @@ from squant.models.enums import RunMode, RunStatus
 from squant.models.metrics import EquityCurve
 from squant.models.strategy import StrategyRun
 from squant.services.data_loader import DataLoader
+
+logger = logging.getLogger(__name__)
 
 
 class BacktestNotFoundError(Exception):

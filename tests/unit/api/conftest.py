@@ -27,7 +27,8 @@ Notes:
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, AsyncGenerator, Callable
+from collections.abc import AsyncGenerator, Callable
+from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -37,7 +38,7 @@ from squant.api.deps import get_exchange, get_okx_exchange, get_session
 from squant.main import app
 
 if TYPE_CHECKING:
-    from squant.infra.exchange.types import Ticker
+    pass
 
 
 # ============================================================================
