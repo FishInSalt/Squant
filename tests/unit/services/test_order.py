@@ -655,7 +655,9 @@ class TestOrderService:
         assert result[0] == sample_order
 
     @pytest.mark.asyncio
-    async def test_cancel_partial_filled_order_success(self, service, sample_order, exchange_response):
+    async def test_cancel_partial_filled_order_success(
+        self, service, sample_order, exchange_response
+    ):
         """Test cancelling a partially filled order succeeds (ORD-004 edge case)."""
         # Setup: Order is partially filled
         sample_order.status = OrderStatus.PARTIAL
@@ -724,7 +726,9 @@ class TestOrderService:
         assert call_kwargs["run_id"] == str(run_id)
 
     @pytest.mark.asyncio
-    async def test_create_order_with_client_order_id(self, service, sample_order, exchange_response):
+    async def test_create_order_with_client_order_id(
+        self, service, sample_order, exchange_response
+    ):
         """Test order creation with client order ID."""
         client_oid = "my-custom-order-123"
         service.order_repo.create = AsyncMock(return_value=sample_order)

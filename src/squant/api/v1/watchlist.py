@@ -112,9 +112,7 @@ async def check_watchlist(
     """
     service = WatchlistService(session)
     in_watchlist, item_id = await service.check(exchange, symbol)
-    return ApiResponse(
-        data=WatchlistCheckResponse(in_watchlist=in_watchlist, item_id=item_id)
-    )
+    return ApiResponse(data=WatchlistCheckResponse(in_watchlist=in_watchlist, item_id=item_id))
 
 
 @router.put("/reorder", response_model=ApiResponse[list[WatchlistItemResponse]])

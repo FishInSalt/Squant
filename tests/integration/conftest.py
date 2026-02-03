@@ -93,6 +93,7 @@ def _setup_test_environment() -> None:
     # 需要延迟导入以避免循环导入
     try:
         from squant.config import get_settings
+
         get_settings.cache_clear()
     except ImportError:
         pass  # squant.config 尚未导入

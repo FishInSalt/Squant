@@ -194,7 +194,9 @@ class MyStrategy(Strategy):
 
         result = data["data"]
         assert result["valid"] is False
-        assert any("import" in error.lower() or "subprocess" in error.lower() for error in result["errors"])
+        assert any(
+            "import" in error.lower() or "subprocess" in error.lower() for error in result["errors"]
+        )
 
     @pytest.mark.asyncio
     async def test_reject_eval_function(self, client):
@@ -254,7 +256,9 @@ class MyStrategy(Strategy):
 
         result = data["data"]
         # Should pass security checks (may have other warnings/errors)
-        assert result["valid"] is True or all("forbidden" not in error.lower() for error in result["errors"])
+        assert result["valid"] is True or all(
+            "forbidden" not in error.lower() for error in result["errors"]
+        )
 
 
 class TestAutoSaveToLibrary:
@@ -445,7 +449,10 @@ class TestStrategyDetailsView:
         assert result["name"] == "Detailed Strategy"
         assert result["version"] == "2.0.0"
         assert result["description"] == "This is a detailed strategy"
-        assert result["params_schema"] == {"type": "object", "properties": {"param1": {"type": "number"}}}
+        assert result["params_schema"] == {
+            "type": "object",
+            "properties": {"param1": {"type": "number"}},
+        }
         assert result["default_params"] == {"param1": 10}
 
     @pytest.mark.asyncio
@@ -595,9 +602,7 @@ class TestStrategyUpdate:
         db_session.add(strategy)
         await db_session.commit()
 
-        update_data = {
-            "code": "this is not valid python code !!!"
-        }
+        update_data = {"code": "this is not valid python code !!!"}
 
         response = await client.put(f"/api/v1/strategies/{strategy_id}", json=update_data)
 

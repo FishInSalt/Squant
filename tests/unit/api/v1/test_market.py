@@ -33,9 +33,7 @@ async def client(mock_exchange) -> AsyncGenerator[AsyncClient, None]:
         yield mock_exchange
 
     app.dependency_overrides[get_exchange] = override_exchange
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
-    ) as ac:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
         yield ac
     app.dependency_overrides.clear()
 
@@ -260,7 +258,9 @@ class TestGetTickers:
         assert len(data["data"]) == 2
 
     @pytest.mark.asyncio
-    async def test_get_tickers_filtered_by_symbols(self, client: AsyncClient, mock_exchange) -> None:
+    async def test_get_tickers_filtered_by_symbols(
+        self, client: AsyncClient, mock_exchange
+    ) -> None:
         """Test getting tickers filtered by symbols."""
         mock_ticker = Ticker(
             symbol="BTC/USDT",

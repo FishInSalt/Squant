@@ -291,6 +291,7 @@ class TestCryptoManagerEdgeCases:
 
     def test_encrypt_wraps_generic_exception(self, crypto_manager: CryptoManager) -> None:
         """Test that generic exceptions during encryption are wrapped."""
+
         # Create a custom object that raises exception on encode()
         class BadString:
             def __str__(self):

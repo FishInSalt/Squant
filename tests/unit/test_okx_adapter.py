@@ -652,9 +652,7 @@ class TestCancelOrderAdapterValidation:
             assert response.status == OrderStatus.CANCELLED
 
     @pytest.mark.asyncio
-    async def test_cancel_order_success_with_client_order_id(
-        self, adapter: OKXAdapter
-    ) -> None:
+    async def test_cancel_order_success_with_client_order_id(self, adapter: OKXAdapter) -> None:
         """Test successful cancel order with client_order_id."""
         cancel_response = {
             "code": "0",

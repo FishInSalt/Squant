@@ -3,12 +3,9 @@
 import pytest
 from sqlalchemy import text
 
-from squant.infra.database import get_session_context
-
 
 @pytest.mark.asyncio
-async def test_database_connection():
+async def test_database_connection(db_session):
     """Test database connection works."""
-    async with get_session_context() as session:
-        result = await session.execute(text("SELECT 1"))
-        assert result.scalar() == 1
+    result = await db_session.execute(text("SELECT 1"))
+    assert result.scalar() == 1

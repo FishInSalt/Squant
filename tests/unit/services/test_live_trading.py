@@ -603,7 +603,10 @@ class TestStartSession:
 
     @pytest.mark.asyncio
     async def test_start_strategy_not_found(
-        self, service: LiveTradingService, valid_risk_config: RiskConfig, mock_exchange_account: MagicMock
+        self,
+        service: LiveTradingService,
+        valid_risk_config: RiskConfig,
+        mock_exchange_account: MagicMock,
     ) -> None:
         """Test error when strategy not found."""
         strategy_id = uuid4()
@@ -654,7 +657,10 @@ class TestStartSession:
 
     @pytest.mark.asyncio
     async def test_start_exchange_connection_error(
-        self, service: LiveTradingService, valid_risk_config: RiskConfig, mock_exchange_account: MagicMock
+        self,
+        service: LiveTradingService,
+        valid_risk_config: RiskConfig,
+        mock_exchange_account: MagicMock,
     ) -> None:
         """Test error when exchange connection fails."""
         strategy_id = uuid4()

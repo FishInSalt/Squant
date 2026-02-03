@@ -49,9 +49,7 @@ async def client(mock_session, mock_exchange) -> AsyncGenerator[AsyncClient, Non
 
     app.dependency_overrides[get_session] = override_get_session
     app.dependency_overrides[get_okx_exchange] = override_get_okx_exchange
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
-    ) as ac:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
         yield ac
     app.dependency_overrides.clear()
 

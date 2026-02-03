@@ -117,7 +117,9 @@ class TestOrderCreation:
         reason="Requires creating StrategyRun with foreign key to Strategy - complex setup"
     )
     @pytest.mark.asyncio
-    async def test_create_order_with_run_id(self, order_service, mock_exchange_adapter, sample_strategy):
+    async def test_create_order_with_run_id(
+        self, order_service, mock_exchange_adapter, sample_strategy
+    ):
         """Test creating order associated with a strategy run."""
         # Requires creating a StrategyRun first, which requires a Strategy
         # Foreign key constraint will fail without proper setup
@@ -457,7 +459,11 @@ class TestOrderRetrieval:
                 side=OrderSide.BUY,
                 type=OrderType.LIMIT,
                 amount=Decimal("0.01"),
-                filled=Decimal("0.01") if status == OrderStatus.FILLED else Decimal("0.005") if status == OrderStatus.PARTIAL else Decimal("0"),
+                filled=Decimal("0.01")
+                if status == OrderStatus.FILLED
+                else Decimal("0.005")
+                if status == OrderStatus.PARTIAL
+                else Decimal("0"),
                 price=Decimal("40000"),
                 avg_price=Decimal("40000") if status == OrderStatus.FILLED else None,
                 status=status,

@@ -29,9 +29,7 @@ def app() -> FastAPI:
 @pytest_asyncio.fixture
 async def client(app: FastAPI) -> AsyncGenerator[AsyncClient, None]:
     """Create async test client."""
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
-    ) as ac:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
         yield ac
 
 
@@ -75,16 +73,12 @@ class TestAddToWatchlist:
                 assert data["data"]["exchange"] == "okx"
 
     @pytest.mark.asyncio
-    async def test_add_to_watchlist_duplicate_returns_409(
-        self, client: AsyncClient
-    ) -> None:
+    async def test_add_to_watchlist_duplicate_returns_409(self, client: AsyncClient) -> None:
         """Test adding duplicate item returns 409."""
         with patch("squant.api.v1.watchlist.get_session"):
             with patch("squant.api.v1.watchlist.WatchlistService") as MockService:
                 service = MockService.return_value
-                service.add = AsyncMock(
-                    side_effect=WatchlistItemExistsError("okx", "BTC/USDT")
-                )
+                service.add = AsyncMock(side_effect=WatchlistItemExistsError("okx", "BTC/USDT"))
 
                 response = await client.post(
                     "/watchlist",
@@ -155,18 +149,14 @@ class TestRemoveFromWatchlist:
                 assert data["message"] == "Item removed from watchlist"
 
     @pytest.mark.asyncio
-    async def test_remove_from_watchlist_not_found_returns_404(
-        self, client: AsyncClient
-    ) -> None:
+    async def test_remove_from_watchlist_not_found_returns_404(self, client: AsyncClient) -> None:
         """Test removing non-existent item returns 404."""
         item_id = uuid4()
 
         with patch("squant.api.v1.watchlist.get_session"):
             with patch("squant.api.v1.watchlist.WatchlistService") as MockService:
                 service = MockService.return_value
-                service.remove = AsyncMock(
-                    side_effect=WatchlistItemNotFoundError(item_id)
-                )
+                service.remove = AsyncMock(side_effect=WatchlistItemNotFoundError(item_id))
 
                 response = await client.delete(f"/watchlist/{item_id}")
 

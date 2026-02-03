@@ -28,9 +28,7 @@ from squant.services.strategy import StrategyNotFoundError
 @pytest_asyncio.fixture
 async def client() -> AsyncGenerator[AsyncClient, None]:
     """Create async test client."""
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
-    ) as ac:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
         yield ac
 
 
@@ -210,7 +208,9 @@ class TestStopLiveTrading:
             assert data["data"]["status"] == "stopped"
 
     @pytest.mark.asyncio
-    async def test_stop_live_trading_with_cancel_orders(self, client: AsyncClient, mock_run) -> None:
+    async def test_stop_live_trading_with_cancel_orders(
+        self, client: AsyncClient, mock_run
+    ) -> None:
         """Test stopping live trading with cancel orders option."""
         mock_run.status = RunStatus.STOPPED.value
 

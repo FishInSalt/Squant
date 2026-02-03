@@ -16,7 +16,7 @@ class DualMAStrategy:  # (Strategy)
     """
 
     # 策略参数
-    fast_period: int = 5   # 短期均线周期
+    fast_period: int = 5  # 短期均线周期
     slow_period: int = 20  # 长期均线周期
 
     def on_init(self) -> None:
@@ -32,7 +32,7 @@ class DualMAStrategy:  # (Strategy)
         if len(closes) < self.slow_period:
             return
 
-        fast_ma = sum(closes[-self.fast_period:]) / self.fast_period
+        fast_ma = sum(closes[-self.fast_period :]) / self.fast_period
         slow_ma = sum(closes) / self.slow_period
 
         self.fast_ma.append(fast_ma)

@@ -89,9 +89,7 @@ class SessionManager:
 
             logger.info(f"Unregistered engine {run_id}, remaining sessions: {len(self._sessions)}")
 
-    async def unregister_and_check_subscription(
-        self, run_id: UUID
-    ) -> tuple[str, str] | None:
+    async def unregister_and_check_subscription(self, run_id: UUID) -> tuple[str, str] | None:
         """Unregister an engine and atomically check if subscription can be removed.
 
         This is an atomic operation that prevents race conditions between
@@ -118,10 +116,7 @@ class SessionManager:
                 if not self._subscriptions[key]:
                     # No other sessions need this subscription
                     del self._subscriptions[key]
-                    logger.info(
-                        f"Unregistered engine {run_id}, "
-                        f"subscription {key} can be removed"
-                    )
+                    logger.info(f"Unregistered engine {run_id}, subscription {key} can be removed")
                     return key
                 else:
                     logger.info(

@@ -23,7 +23,9 @@ class ReorderWatchlistItem(BaseModel):
 class ReorderWatchlistRequest(BaseModel):
     """Request to reorder the watchlist."""
 
-    items: list[ReorderWatchlistItem] = Field(..., description="Reordered items with new sort_order")
+    items: list[ReorderWatchlistItem] = Field(
+        ..., description="Reordered items with new sort_order"
+    )
 
 
 class WatchlistItemResponse(BaseModel):

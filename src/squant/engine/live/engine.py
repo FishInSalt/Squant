@@ -254,8 +254,7 @@ class LiveTradingEngine:
         )
 
         logger.critical(
-            f"GLOBAL CIRCUIT BREAKER TRIGGERED: {reason} | "
-            f"Stopping all trading sessions for safety"
+            f"GLOBAL CIRCUIT BREAKER TRIGGERED: {reason} | Stopping all trading sessions for safety"
         )
 
         # Stop all live sessions (except this one which is already stopped)
@@ -422,9 +421,7 @@ class LiveTradingEngine:
 
         # Check if circuit breaker was triggered by order update (RSK-012)
         if self._circuit_breaker_triggered:
-            logger.warning(
-                f"Circuit breaker active for session {self._run_id}, stopping trading"
-            )
+            logger.warning(f"Circuit breaker active for session {self._run_id}, stopping trading")
             await self.stop(error="Circuit breaker triggered due to consecutive losses")
 
             # Trigger global circuit breaker to stop all sessions (Issue 033 fix)
@@ -709,18 +706,22 @@ class LiveTradingEngine:
                 self._context._pending_orders.remove(order)
 
                 # Record risk trigger for persistence (Issue 010)
-                self._pending_risk_triggers.append({
-                    "rule_type": risk_result.rule_type.value if risk_result.rule_type else "unknown",
-                    "trigger_type": "order_rejected",
-                    "details": {
-                        "reason": risk_result.reason,
-                        "order_symbol": order.symbol,
-                        "order_side": order.side.value,
-                        "order_amount": str(order.amount),
-                        "order_price": str(order.price) if order.price else None,
-                        "metadata": risk_result.metadata,
-                    },
-                })
+                self._pending_risk_triggers.append(
+                    {
+                        "rule_type": risk_result.rule_type.value
+                        if risk_result.rule_type
+                        else "unknown",
+                        "trigger_type": "order_rejected",
+                        "details": {
+                            "reason": risk_result.reason,
+                            "order_symbol": order.symbol,
+                            "order_side": order.side.value,
+                            "order_amount": str(order.amount),
+                            "order_price": str(order.price) if order.price else None,
+                            "metadata": risk_result.metadata,
+                        },
+                    }
+                )
                 continue
 
             # Submit order to exchange

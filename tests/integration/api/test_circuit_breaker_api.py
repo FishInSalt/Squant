@@ -140,9 +140,7 @@ class TestTriggerCircuitBreaker:
         assert response.status_code == 422
 
         # Reason too long (> 256 chars)
-        response = await client.post(
-            "/api/v1/circuit-breaker/trigger", json={"reason": "x" * 257}
-        )
+        response = await client.post("/api/v1/circuit-breaker/trigger", json={"reason": "x" * 257})
         assert response.status_code == 422
 
         # Invalid cooldown (< 1)

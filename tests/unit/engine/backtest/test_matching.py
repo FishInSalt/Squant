@@ -346,9 +346,7 @@ class TestMultipleOrders:
 class TestFilledOrdersSkipped:
     """Tests for skipping already processed orders."""
 
-    def test_filled_order_not_processed(
-        self, engine: MatchingEngine, sample_bar: Bar
-    ) -> None:
+    def test_filled_order_not_processed(self, engine: MatchingEngine, sample_bar: Bar) -> None:
         """Test that filled orders are skipped."""
         order = SimulatedOrder.create(
             symbol="BTC/USDT",
@@ -362,9 +360,7 @@ class TestFilledOrdersSkipped:
 
         assert len(fills) == 0
 
-    def test_cancelled_order_not_processed(
-        self, engine: MatchingEngine, sample_bar: Bar
-    ) -> None:
+    def test_cancelled_order_not_processed(self, engine: MatchingEngine, sample_bar: Bar) -> None:
         """Test that cancelled orders are skipped."""
         order = SimulatedOrder.create(
             symbol="BTC/USDT",

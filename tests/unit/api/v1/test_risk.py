@@ -19,9 +19,7 @@ from squant.services.risk import RiskRuleNotFoundError
 @pytest_asyncio.fixture
 async def client() -> AsyncGenerator[AsyncClient, None]:
     """Create async test client."""
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
-    ) as ac:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
         yield ac
 
 
@@ -131,7 +129,9 @@ class TestListRiskRules:
             assert len(data["data"]["items"]) == 1
 
     @pytest.mark.asyncio
-    async def test_list_risk_rules_with_pagination(self, client: AsyncClient, mock_risk_rule) -> None:
+    async def test_list_risk_rules_with_pagination(
+        self, client: AsyncClient, mock_risk_rule
+    ) -> None:
         """Test listing risk rules with pagination."""
         with patch("squant.api.v1.risk.RiskRuleService") as mock_service_class:
             mock_service = MagicMock()
@@ -146,7 +146,9 @@ class TestListRiskRules:
             assert data["data"]["page_size"] == 10
 
     @pytest.mark.asyncio
-    async def test_list_risk_rules_with_enabled_filter(self, client: AsyncClient, mock_risk_rule) -> None:
+    async def test_list_risk_rules_with_enabled_filter(
+        self, client: AsyncClient, mock_risk_rule
+    ) -> None:
         """Test listing risk rules with enabled filter."""
         with patch("squant.api.v1.risk.RiskRuleService") as mock_service_class:
             mock_service = MagicMock()

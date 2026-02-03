@@ -432,7 +432,9 @@ def assert_api_success():
         Raises:
             AssertionError: If response format is invalid
         """
-        assert response.status_code == expected_status, f"Expected {expected_status}, got {response.status_code}: {response.text}"
+        assert response.status_code == expected_status, (
+            f"Expected {expected_status}, got {response.status_code}: {response.text}"
+        )
         json_data = response.json()
         assert json_data.get("code") == 0, f"Expected code 0, got {json_data.get('code')}"
         return json_data.get("data")
@@ -471,7 +473,9 @@ def assert_api_error():
         Raises:
             AssertionError: If response doesn't match expectations
         """
-        assert response.status_code == expected_status, f"Expected {expected_status}, got {response.status_code}"
+        assert response.status_code == expected_status, (
+            f"Expected {expected_status}, got {response.status_code}"
+        )
         json_data = response.json()
         if message_contains:
             detail = json_data.get("detail", "")

@@ -24,9 +24,7 @@ class TestTriggerCircuitBreaker:
     @pytest_asyncio.fixture
     async def client(self) -> AsyncGenerator[AsyncClient, None]:
         """Create async test client."""
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as ac:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
             yield ac
 
     @pytest.fixture
@@ -38,7 +36,9 @@ class TestTriggerCircuitBreaker:
         }
 
     @pytest.mark.asyncio
-    async def test_trigger_success(self, client: AsyncClient, valid_request: dict[str, Any]) -> None:
+    async def test_trigger_success(
+        self, client: AsyncClient, valid_request: dict[str, Any]
+    ) -> None:
         """Test successful circuit breaker trigger."""
         now = datetime.now(UTC)
         mock_result = {
@@ -112,9 +112,7 @@ class TestCloseAllPositions:
     @pytest_asyncio.fixture
     async def client(self) -> AsyncGenerator[AsyncClient, None]:
         """Create async test client."""
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as ac:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
             yield ac
 
     @pytest.mark.asyncio
@@ -190,9 +188,7 @@ class TestGetStatus:
     @pytest_asyncio.fixture
     async def client(self) -> AsyncGenerator[AsyncClient, None]:
         """Create async test client."""
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as ac:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
             yield ac
 
     @pytest.mark.asyncio
@@ -254,9 +250,7 @@ class TestResetCircuitBreaker:
     @pytest_asyncio.fixture
     async def client(self) -> AsyncGenerator[AsyncClient, None]:
         """Create async test client."""
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as ac:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
             yield ac
 
     @pytest.mark.asyncio

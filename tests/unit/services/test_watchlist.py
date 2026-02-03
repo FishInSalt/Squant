@@ -123,9 +123,7 @@ class TestWatchlistService:
         return WatchlistService(mock_session)
 
     @pytest.mark.asyncio
-    async def test_add_success(
-        self, service: WatchlistService, mock_session: AsyncMock
-    ) -> None:
+    async def test_add_success(self, service: WatchlistService, mock_session: AsyncMock) -> None:
         """Test successful addition to watchlist."""
         request = AddToWatchlistRequest(exchange="okx", symbol="BTC/USDT")
 
@@ -160,9 +158,7 @@ class TestWatchlistService:
                     )
 
     @pytest.mark.asyncio
-    async def test_add_duplicate_raises_error(
-        self, service: WatchlistService
-    ) -> None:
+    async def test_add_duplicate_raises_error(self, service: WatchlistService) -> None:
         """Test that adding duplicate item raises error."""
         request = AddToWatchlistRequest(exchange="okx", symbol="BTC/USDT")
 
@@ -178,20 +174,14 @@ class TestWatchlistService:
             assert "okx" in str(exc_info.value)
 
     @pytest.mark.asyncio
-    async def test_remove_success(
-        self, service: WatchlistService, mock_session: AsyncMock
-    ) -> None:
+    async def test_remove_success(self, service: WatchlistService, mock_session: AsyncMock) -> None:
         """Test successful removal from watchlist."""
         item_id = uuid4()
 
-        with patch.object(
-            service.repository, "exists", new_callable=AsyncMock
-        ) as mock_exists:
+        with patch.object(service.repository, "exists", new_callable=AsyncMock) as mock_exists:
             mock_exists.return_value = True
 
-            with patch.object(
-                service.repository, "delete", new_callable=AsyncMock
-            ) as mock_delete:
+            with patch.object(service.repository, "delete", new_callable=AsyncMock) as mock_delete:
                 mock_delete.return_value = True
 
                 await service.remove(item_id)
@@ -199,15 +189,11 @@ class TestWatchlistService:
                 mock_session.commit.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_remove_not_found_raises_error(
-        self, service: WatchlistService
-    ) -> None:
+    async def test_remove_not_found_raises_error(self, service: WatchlistService) -> None:
         """Test that removing non-existent item raises error."""
         item_id = uuid4()
 
-        with patch.object(
-            service.repository, "exists", new_callable=AsyncMock
-        ) as mock_exists:
+        with patch.object(service.repository, "exists", new_callable=AsyncMock) as mock_exists:
             mock_exists.return_value = False
 
             with pytest.raises(WatchlistItemNotFoundError) as exc_info:
@@ -260,9 +246,7 @@ class TestWatchlistService:
             assert item_id is None
 
     @pytest.mark.asyncio
-    async def test_reorder(
-        self, service: WatchlistService, mock_session: AsyncMock
-    ) -> None:
+    async def test_reorder(self, service: WatchlistService, mock_session: AsyncMock) -> None:
         """Test reordering watchlist items."""
         id1 = uuid4()
         id2 = uuid4()
@@ -274,9 +258,7 @@ class TestWatchlistService:
 
         mock_items = [MagicMock(spec=Watchlist), MagicMock(spec=Watchlist)]
 
-        with patch.object(
-            service.repository, "update", new_callable=AsyncMock
-        ) as mock_update:
+        with patch.object(service.repository, "update", new_callable=AsyncMock) as mock_update:
             with patch.object(
                 service.repository, "list_all_ordered", new_callable=AsyncMock
             ) as mock_list:

@@ -583,9 +583,7 @@ class TestStrategy(Strategy):
 """
         result = validate_strategy_code(code)
         assert result.valid is False, f"Module '{module}' should be blocked"
-        assert any(
-            module in err for err in result.errors
-        ), f"Error should mention '{module}'"
+        assert any(module in err for err in result.errors), f"Error should mention '{module}'"
 
     @pytest.mark.parametrize("module", CRITICAL_MODULES)
     def test_critical_module_from_import_blocked(self, module: str) -> None:
@@ -613,9 +611,7 @@ class TestDisallowedBuiltinsParameterized:
     ]
 
     @pytest.mark.parametrize("builtin_name,code_snippet", DANGEROUS_BUILTINS)
-    def test_dangerous_builtin_blocked(
-        self, builtin_name: str, code_snippet: str
-    ) -> None:
+    def test_dangerous_builtin_blocked(self, builtin_name: str, code_snippet: str) -> None:
         """Test that dangerous builtin functions are blocked."""
         code = f"""
 class TestStrategy(Strategy):
@@ -624,9 +620,9 @@ class TestStrategy(Strategy):
 """
         result = validate_strategy_code(code)
         assert result.valid is False, f"Builtin '{builtin_name}' should be blocked"
-        assert any(
-            builtin_name in err for err in result.errors
-        ), f"Error should mention '{builtin_name}'"
+        assert any(builtin_name in err for err in result.errors), (
+            f"Error should mention '{builtin_name}'"
+        )
 
 
 class TestInplaceOperatorsParameterized:
@@ -643,9 +639,7 @@ class TestInplaceOperatorsParameterized:
     ]
 
     @pytest.mark.parametrize("operator,left,right,expected", OPERATORS)
-    def test_inplace_operator(
-        self, operator: str, left: int, right: int, expected: float
-    ) -> None:
+    def test_inplace_operator(self, operator: str, left: int, right: int, expected: float) -> None:
         """Test inplace operator produces correct result."""
         result = _inplacevar_(operator, left, right)
         assert result == expected, f"{left} {operator} {right} should equal {expected}"
@@ -718,9 +712,9 @@ class TestStrategyValidationParameterized:
         """Test that invalid strategy code is rejected with appropriate error."""
         result = validate_strategy_code(code)
         assert result.valid is False, f"Case '{case_name}' should fail validation"
-        assert any(
-            expected_error.lower() in err.lower() for err in result.errors
-        ), f"Case '{case_name}' error should mention '{expected_error}'"
+        assert any(expected_error.lower() in err.lower() for err in result.errors), (
+            f"Case '{case_name}' error should mention '{expected_error}'"
+        )
 
 
 # =============================================================================
@@ -751,11 +745,11 @@ class TestAttributeAccessBypass:
 
         def _try_attack(attack_code: str) -> bool:
             """Try to compile and execute attack code. Returns True if blocked."""
-            code = f'''
+            code = f"""
 class AttackStrategy(Strategy):
     def on_bar(self, bar):
         {attack_code}
-'''
+"""
             try:
                 compiled = compile_strategy(code)
                 local_namespace: dict = {}
@@ -826,11 +820,11 @@ class AttackStrategy(Strategy):
     ]
 
     @pytest.mark.parametrize("pattern_name,attack_code", ESCAPE_PATTERNS)
-    def test_escape_pattern_blocked(
-        self, try_attack, pattern_name: str, attack_code: str
-    ) -> None:
+    def test_escape_pattern_blocked(self, try_attack, pattern_name: str, attack_code: str) -> None:
         """Test that known sandbox escape patterns are blocked."""
-        assert try_attack(f"x = {attack_code}"), f"Escape pattern '{pattern_name}' should be blocked"
+        assert try_attack(f"x = {attack_code}"), (
+            f"Escape pattern '{pattern_name}' should be blocked"
+        )
 
 
 class TestFormatStringAttacks:
@@ -849,12 +843,12 @@ class TestFormatStringAttacks:
 
         def _try_attack(format_code: str) -> bool:
             """Try to compile and execute format attack. Returns True if blocked."""
-            code = f'''
+            code = f"""
 class FormatAttackStrategy(Strategy):
     def on_bar(self, bar):
         obj = self
         {format_code}
-'''
+"""
             try:
                 compiled = compile_strategy(code)
                 local_namespace: dict = {}
@@ -880,28 +874,33 @@ class FormatAttackStrategy(Strategy):
 
     def test_format_class_access_blocked(self, try_format_attack):
         """Test that format string __class__ access is blocked."""
-        assert try_format_attack('result = "{0.__class__}".format(obj)'), \
+        assert try_format_attack('result = "{0.__class__}".format(obj)'), (
             "Format string __class__ access should be blocked"
+        )
 
     def test_format_bases_access_blocked(self, try_format_attack):
         """Test that format string __bases__ access is blocked."""
-        assert try_format_attack('result = "{0.__class__.__bases__}".format(obj)'), \
+        assert try_format_attack('result = "{0.__class__.__bases__}".format(obj)'), (
             "Format string __bases__ access should be blocked"
+        )
 
     def test_format_init_globals_blocked(self, try_format_attack):
         """Test that format string __init__.__globals__ access is blocked."""
-        assert try_format_attack('result = "{0.__init__.__globals__}".format(obj)'), \
+        assert try_format_attack('result = "{0.__init__.__globals__}".format(obj)'), (
             "Format string __init__.__globals__ access should be blocked"
+        )
 
     def test_fstring_class_access_blocked(self, try_format_attack):
         """Test that f-string __class__ access is blocked."""
-        assert try_format_attack('result = f"{obj.__class__}"'), \
+        assert try_format_attack('result = f"{obj.__class__}"'), (
             "F-string __class__ access should be blocked"
+        )
 
     def test_fstring_nested_access_blocked(self, try_format_attack):
         """Test that f-string nested attribute access is blocked."""
-        assert try_format_attack('result = f"{obj.__class__.__bases__}"'), \
+        assert try_format_attack('result = f"{obj.__class__.__bases__}"'), (
             "F-string nested attribute access should be blocked"
+        )
 
     # Common format string attack patterns
     FORMAT_ATTACK_PATTERNS = [
@@ -917,8 +916,9 @@ class FormatAttackStrategy(Strategy):
         self, try_format_attack, attack_name: str, attack_code: str
     ) -> None:
         """Test that format string attack patterns are blocked."""
-        assert try_format_attack(f"result = {attack_code}"), \
+        assert try_format_attack(f"result = {attack_code}"), (
             f"Format attack '{attack_name}' should be blocked"
+        )
 
 
 class TestAdditionalSecurityChecks:
@@ -1005,4 +1005,6 @@ class AttackStrategy(Strategy):
         # Blocked at compile time due to __subclasses__ attribute access
         assert result.valid is False
         # Error message mentions the invalid attribute pattern
-        assert any("__subclasses__" in err or "invalid attribute" in err.lower() for err in result.errors)
+        assert any(
+            "__subclasses__" in err or "invalid attribute" in err.lower() for err in result.errors
+        )

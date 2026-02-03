@@ -1031,7 +1031,9 @@ class TestCircuitBreakerIntegration:
         assert engine.circuit_breaker_triggered is True
 
     @pytest.mark.asyncio
-    async def test_on_order_update_records_trade_pnl(self, engine_with_circuit_breaker, mock_adapter):
+    async def test_on_order_update_records_trade_pnl(
+        self, engine_with_circuit_breaker, mock_adapter
+    ):
         """Test that on_order_update records trade PnL for risk management."""
         engine = engine_with_circuit_breaker
         await engine.start()
@@ -1052,8 +1054,10 @@ class TestCircuitBreakerIntegration:
         engine._exchange_order_map[exchange_id] = internal_id
 
         # Mock a completed trade with a loss
-        with patch.object(engine._context, "_process_fill"), \
-             patch.object(engine._context, "_move_completed_orders"):
+        with (
+            patch.object(engine._context, "_process_fill"),
+            patch.object(engine._context, "_move_completed_orders"),
+        ):
             # Simulate trades list growing (indicating new trade completed)
             mock_trade = MagicMock()
             mock_trade.pnl = Decimal("-100")  # Loss
@@ -1081,8 +1085,10 @@ class TestCircuitBreakerIntegration:
             def mock_process_fill(*args, **kwargs):
                 engine._context._trades = [mock_trade]
 
-            with patch.object(engine._context, "_process_fill", side_effect=mock_process_fill), \
-                 patch.object(engine._context, "_move_completed_orders"):
+            with (
+                patch.object(engine._context, "_process_fill", side_effect=mock_process_fill),
+                patch.object(engine._context, "_move_completed_orders"),
+            ):
                 engine.on_order_update(update)
 
             # Check that consecutive_losses increased
@@ -1196,9 +1202,10 @@ class TestCircuitBreakerIntegration:
         await engine.start()
 
         # Mock the session managers - patch at the import source
-        with patch("squant.engine.live.manager.get_live_session_manager") as mock_get_live, \
-             patch("squant.engine.paper.manager.get_session_manager") as mock_get_paper:
-
+        with (
+            patch("squant.engine.live.manager.get_live_session_manager") as mock_get_live,
+            patch("squant.engine.paper.manager.get_session_manager") as mock_get_paper,
+        ):
             mock_live_manager = MagicMock()
             mock_live_manager.stop_all = AsyncMock()
             mock_get_live.return_value = mock_live_manager

@@ -33,9 +33,7 @@ async def client(mock_exchange) -> AsyncGenerator[AsyncClient, None]:
         yield mock_exchange
 
     app.dependency_overrides[get_okx_exchange] = override_get_okx_exchange
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
-    ) as ac:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
         yield ac
     app.dependency_overrides.clear()
 
@@ -102,7 +100,9 @@ class TestGetBalance:
         assert data["data"]["balances"] == []
 
     @pytest.mark.asyncio
-    async def test_get_balance_authentication_error(self, client: AsyncClient, mock_exchange) -> None:
+    async def test_get_balance_authentication_error(
+        self, client: AsyncClient, mock_exchange
+    ) -> None:
         """Test balance retrieval with authentication error."""
         mock_exchange.get_balance = AsyncMock(
             side_effect=ExchangeAuthenticationError("Invalid API key")
@@ -183,7 +183,9 @@ class TestGetBalanceCurrency:
         assert response.status_code == 401
 
     @pytest.mark.asyncio
-    async def test_get_balance_currency_connection_error(self, client: AsyncClient, mock_exchange) -> None:
+    async def test_get_balance_currency_connection_error(
+        self, client: AsyncClient, mock_exchange
+    ) -> None:
         """Test currency balance retrieval with connection error."""
         mock_exchange.get_balance_currency = AsyncMock(
             side_effect=ExchangeConnectionError("Connection timeout")

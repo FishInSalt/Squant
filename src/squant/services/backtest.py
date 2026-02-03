@@ -373,12 +373,8 @@ class BacktestService:
 
         # Check if data covers the full requested range (Issue 029)
         if not availability.is_complete:
-            first_bar_str = (
-                availability.first_bar.isoformat() if availability.first_bar else "N/A"
-            )
-            last_bar_str = (
-                availability.last_bar.isoformat() if availability.last_bar else "N/A"
-            )
+            first_bar_str = availability.first_bar.isoformat() if availability.first_bar else "N/A"
+            last_bar_str = availability.last_bar.isoformat() if availability.last_bar else "N/A"
             message = (
                 f"Data doesn't cover the full requested range for "
                 f"{run.exchange}:{run.symbol}:{run.timeframe}. "
@@ -388,9 +384,7 @@ class BacktestService:
                 f"Running backtest on partial data may produce misleading results."
             )
             if allow_partial_data:
-                logger.warning(
-                    f"Proceeding with partial data (allow_partial_data=True): {message}"
-                )
+                logger.warning(f"Proceeding with partial data (allow_partial_data=True): {message}")
             else:
                 raise IncompleteDataError(
                     message,

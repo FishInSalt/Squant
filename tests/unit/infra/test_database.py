@@ -155,7 +155,7 @@ class TestInitDb:
         mock_begin_ctx.__aexit__.return_value = None
 
         # Patch the engine at module level
-        with patch.object(db_module, 'engine') as mock_engine:
+        with patch.object(db_module, "engine") as mock_engine:
             mock_engine.begin.return_value = mock_begin_ctx
 
             await db_module.init_db()
@@ -168,7 +168,7 @@ class TestInitDb:
     async def test_raises_on_connection_failure(self) -> None:
         """Test that init_db raises exception on connection failure."""
         # Patch the engine at module level
-        with patch.object(db_module, 'engine') as mock_engine:
+        with patch.object(db_module, "engine") as mock_engine:
             mock_engine.begin.side_effect = Exception("Connection failed")
 
             with pytest.raises(Exception, match="Connection failed"):
@@ -182,7 +182,7 @@ class TestCloseDb:
     async def test_disposes_engine(self) -> None:
         """Test that close_db disposes the engine."""
         # Patch the engine at module level
-        with patch.object(db_module, 'engine') as mock_engine:
+        with patch.object(db_module, "engine") as mock_engine:
             mock_engine.dispose = AsyncMock()
 
             await db_module.close_db()
@@ -193,7 +193,7 @@ class TestCloseDb:
     async def test_handles_dispose_error(self) -> None:
         """Test that close_db handles disposal errors gracefully."""
         # Patch the engine at module level
-        with patch.object(db_module, 'engine') as mock_engine:
+        with patch.object(db_module, "engine") as mock_engine:
             mock_engine.dispose = AsyncMock(side_effect=Exception("Disposal failed"))
 
             # Should raise the exception
@@ -225,7 +225,7 @@ class TestEngineConfiguration:
         assert isinstance(session, AsyncSession)
         # Verify session was created successfully
         assert session is not None
-        assert hasattr(session, 'bind')
+        assert hasattr(session, "bind")
 
 
 class TestLifecycle:
@@ -244,7 +244,7 @@ class TestLifecycle:
         mock_begin_ctx.__aexit__.return_value = None
 
         # Patch the engine at module level
-        with patch.object(db_module, 'engine') as mock_engine:
+        with patch.object(db_module, "engine") as mock_engine:
             mock_engine.begin.return_value = mock_begin_ctx
             mock_engine.dispose = AsyncMock()
 

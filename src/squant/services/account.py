@@ -255,7 +255,9 @@ class ExchangeAccountService:
             try:
                 existing_creds = self.get_decrypted_credentials(account)
             except DecryptionError as e:
-                logger.error(f"Failed to decrypt existing credentials for account {account_id}: {e}")
+                logger.error(
+                    f"Failed to decrypt existing credentials for account {account_id}: {e}"
+                )
                 raise ValueError(
                     "Cannot update account: existing credentials are corrupted. "
                     "Please delete and recreate the account."

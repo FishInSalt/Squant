@@ -28,9 +28,7 @@ class TestSystemLogRepr:
 
     def test_repr_includes_key_fields(self) -> None:
         """Test that __repr__ includes id, level, and module."""
-        log = SystemLog(
-            id=123, level=LogLevel.INFO, module="test_module", message="Test message"
-        )
+        log = SystemLog(id=123, level=LogLevel.INFO, module="test_module", message="Test message")
 
         repr_str = repr(log)
 

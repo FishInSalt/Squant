@@ -516,9 +516,7 @@ class TestPaperTradingList:
                 return_value=mock_run,
             ):
                 # Mock the service instance
-                with patch(
-                    "squant.services.paper_trading.PaperTradingService"
-                ) as MockService:
+                with patch("squant.services.paper_trading.PaperTradingService") as MockService:
                     mock_service = MockService.return_value
                     mock_service.list_active.return_value = mock_sessions
                     mock_service.get_run = AsyncMock(return_value=mock_run)

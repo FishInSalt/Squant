@@ -51,9 +51,7 @@ class StartLiveTradingRequest(BaseModel):
     symbol: str = Field(
         ..., min_length=1, max_length=32, description="Trading symbol (e.g., BTC/USDT)"
     )
-    exchange_account_id: UUID = Field(
-        ..., description="Exchange account ID with API credentials"
-    )
+    exchange_account_id: UUID = Field(..., description="Exchange account ID with API credentials")
     timeframe: str = Field(
         ..., min_length=1, max_length=8, description="Candle timeframe (e.g., 1m)"
     )

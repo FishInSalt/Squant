@@ -25,9 +25,7 @@ from squant.services.strategy import (
 @pytest_asyncio.fixture
 async def client() -> AsyncGenerator[AsyncClient, None]:
     """Create async test client."""
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
-    ) as ac:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
         yield ac
 
 
@@ -225,7 +223,9 @@ class TestListStrategies:
             assert len(data["data"]["items"]) == 1
 
     @pytest.mark.asyncio
-    async def test_list_strategies_with_pagination(self, client: AsyncClient, mock_strategy) -> None:
+    async def test_list_strategies_with_pagination(
+        self, client: AsyncClient, mock_strategy
+    ) -> None:
         """Test listing strategies with pagination."""
         with patch("squant.api.v1.strategies.StrategyService") as mock_service_class:
             mock_service = MagicMock()
@@ -240,7 +240,9 @@ class TestListStrategies:
             assert data["data"]["page_size"] == 10
 
     @pytest.mark.asyncio
-    async def test_list_strategies_with_status_filter(self, client: AsyncClient, mock_strategy) -> None:
+    async def test_list_strategies_with_status_filter(
+        self, client: AsyncClient, mock_strategy
+    ) -> None:
         """Test listing strategies with status filter."""
         mock_strategy.status = StrategyStatus.ACTIVE
 
@@ -379,7 +381,9 @@ class TestUpdateStrategy:
             assert response.status_code == 409
 
     @pytest.mark.asyncio
-    async def test_update_strategy_validation_error(self, client: AsyncClient, mock_strategy) -> None:
+    async def test_update_strategy_validation_error(
+        self, client: AsyncClient, mock_strategy
+    ) -> None:
         """Test updating strategy with invalid code."""
         with patch("squant.api.v1.strategies.StrategyService") as mock_service_class:
             mock_service = MagicMock()

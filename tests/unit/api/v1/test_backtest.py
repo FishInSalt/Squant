@@ -21,9 +21,7 @@ from squant.services.strategy import StrategyNotFoundError
 @pytest_asyncio.fixture
 async def client() -> AsyncGenerator[AsyncClient, None]:
     """Create async test client."""
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
-    ) as ac:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
         yield ac
 
 
@@ -255,7 +253,9 @@ class TestListBacktests:
             assert len(data["data"]["items"]) == 1
 
     @pytest.mark.asyncio
-    async def test_list_backtests_with_pagination(self, client: AsyncClient, mock_backtest_run) -> None:
+    async def test_list_backtests_with_pagination(
+        self, client: AsyncClient, mock_backtest_run
+    ) -> None:
         """Test listing backtests with pagination."""
         with patch("squant.api.v1.backtest.BacktestService") as mock_service_class:
             mock_service = MagicMock()
@@ -270,7 +270,9 @@ class TestListBacktests:
             assert data["data"]["page_size"] == 10
 
     @pytest.mark.asyncio
-    async def test_list_backtests_with_status_filter(self, client: AsyncClient, mock_backtest_run) -> None:
+    async def test_list_backtests_with_status_filter(
+        self, client: AsyncClient, mock_backtest_run
+    ) -> None:
         """Test listing backtests with status filter."""
         with patch("squant.api.v1.backtest.BacktestService") as mock_service_class:
             mock_service = MagicMock()
@@ -356,7 +358,9 @@ class TestGetBacktestDetail:
     """Tests for GET /api/v1/backtest/{run_id}/detail endpoint."""
 
     @pytest.mark.asyncio
-    async def test_get_backtest_detail_success(self, client: AsyncClient, mock_backtest_run) -> None:
+    async def test_get_backtest_detail_success(
+        self, client: AsyncClient, mock_backtest_run
+    ) -> None:
         """Test getting backtest detail."""
         mock_equity_point = MagicMock()
         mock_equity_point.time = datetime.now(UTC)

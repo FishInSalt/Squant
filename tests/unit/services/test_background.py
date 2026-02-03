@@ -195,9 +195,7 @@ class TestPersistSnapshots:
 
         mock_service = MagicMock()
         # First call raises exception, second succeeds
-        mock_service.persist_snapshots = AsyncMock(
-            side_effect=[Exception("Database error"), 3]
-        )
+        mock_service.persist_snapshots = AsyncMock(side_effect=[Exception("Database error"), 3])
 
         mock_db_session = AsyncMock()
 

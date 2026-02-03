@@ -665,7 +665,5 @@ class BacktestContext:
                         total += (price - position.avg_entry_price) * position.amount
                     else:
                         # Short position
-                        total += (position.avg_entry_price - price) * abs(
-                            position.amount
-                        )
+                        total += (position.avg_entry_price - price) * abs(position.amount)
         return total

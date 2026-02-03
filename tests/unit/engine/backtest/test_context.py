@@ -101,9 +101,7 @@ class TestOrderPlacement:
         assert order.side == OrderSide.SELL
         assert order.amount == Decimal("0.5")
 
-    def test_sell_without_position_raises(
-        self, context: BacktestContext, sample_bar: Bar
-    ) -> None:
+    def test_sell_without_position_raises(self, context: BacktestContext, sample_bar: Bar) -> None:
         """Test that sell without position raises error (spot trading - no short selling)."""
         context._set_current_bar(sample_bar)
 
@@ -123,9 +121,7 @@ class TestOrderPlacement:
         with pytest.raises(ValueError, match="Insufficient position"):
             context.sell("BTC/USDT", Decimal("1.5"))
 
-    def test_sell_considers_pending_orders(
-        self, context: BacktestContext, sample_bar: Bar
-    ) -> None:
+    def test_sell_considers_pending_orders(self, context: BacktestContext, sample_bar: Bar) -> None:
         """Test that sell considers pending sell orders when validating position."""
         context._set_current_bar(sample_bar)
 

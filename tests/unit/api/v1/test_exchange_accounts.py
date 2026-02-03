@@ -30,9 +30,7 @@ def app() -> FastAPI:
 @pytest_asyncio.fixture
 async def client(app: FastAPI) -> AsyncGenerator[AsyncClient, None]:
     """Create async test client."""
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
-    ) as ac:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
         yield ac
 
 
@@ -54,7 +52,9 @@ class TestCreateExchangeAccount:
     """Tests for POST /exchange-accounts."""
 
     @pytest.mark.asyncio
-    async def test_create_okx_account_success(self, client: AsyncClient, mock_account: MagicMock) -> None:
+    async def test_create_okx_account_success(
+        self, client: AsyncClient, mock_account: MagicMock
+    ) -> None:
         """Test successful OKX account creation."""
         with patch("squant.api.v1.exchange_accounts.get_session"):
             with patch("squant.api.v1.exchange_accounts.ExchangeAccountService") as MockService:
@@ -163,7 +163,9 @@ class TestListExchangeAccounts:
                 assert len(data["data"]) == 1
 
     @pytest.mark.asyncio
-    async def test_list_with_exchange_filter(self, client: AsyncClient, mock_account: MagicMock) -> None:
+    async def test_list_with_exchange_filter(
+        self, client: AsyncClient, mock_account: MagicMock
+    ) -> None:
         """Test listing accounts with exchange filter."""
         with patch("squant.api.v1.exchange_accounts.get_session"):
             with patch("squant.api.v1.exchange_accounts.ExchangeAccountService") as MockService:
@@ -212,7 +214,9 @@ class TestUpdateExchangeAccount:
     """Tests for PUT /exchange-accounts/{id}."""
 
     @pytest.mark.asyncio
-    async def test_update_account_success(self, client: AsyncClient, mock_account: MagicMock) -> None:
+    async def test_update_account_success(
+        self, client: AsyncClient, mock_account: MagicMock
+    ) -> None:
         """Test successful account update."""
         with patch("squant.api.v1.exchange_accounts.get_session"):
             with patch("squant.api.v1.exchange_accounts.ExchangeAccountService") as MockService:
@@ -265,7 +269,9 @@ class TestDeleteExchangeAccount:
     """Tests for DELETE /exchange-accounts/{id}."""
 
     @pytest.mark.asyncio
-    async def test_delete_account_success(self, client: AsyncClient, mock_account: MagicMock) -> None:
+    async def test_delete_account_success(
+        self, client: AsyncClient, mock_account: MagicMock
+    ) -> None:
         """Test successful account deletion."""
         with patch("squant.api.v1.exchange_accounts.get_session"):
             with patch("squant.api.v1.exchange_accounts.ExchangeAccountService") as MockService:
@@ -314,7 +320,9 @@ class TestConnectionTest:
     """Tests for POST /exchange-accounts/{id}/test."""
 
     @pytest.mark.asyncio
-    async def test_connection_test_success(self, client: AsyncClient, mock_account: MagicMock) -> None:
+    async def test_connection_test_success(
+        self, client: AsyncClient, mock_account: MagicMock
+    ) -> None:
         """Test successful connection test."""
         with patch("squant.api.v1.exchange_accounts.get_session"):
             with patch("squant.api.v1.exchange_accounts.ExchangeAccountService") as MockService:
@@ -335,7 +343,9 @@ class TestConnectionTest:
                 assert data["data"]["balance_count"] == 5
 
     @pytest.mark.asyncio
-    async def test_connection_test_failure(self, client: AsyncClient, mock_account: MagicMock) -> None:
+    async def test_connection_test_failure(
+        self, client: AsyncClient, mock_account: MagicMock
+    ) -> None:
         """Test failed connection test."""
         with patch("squant.api.v1.exchange_accounts.get_session"):
             with patch("squant.api.v1.exchange_accounts.ExchangeAccountService") as MockService:

@@ -118,7 +118,9 @@ class TestBinanceExchangeSupport:
         assert "passphrase" not in binance_data
 
     @pytest.mark.asyncio
-    async def test_binance_connection_test_success(self, client, db_session, sample_exchange_account):
+    async def test_binance_connection_test_success(
+        self, client, db_session, sample_exchange_account
+    ):
         """Test ACC-002-2: Test Binance connection with correct API."""
         # Update sample account to be Binance
         sample_exchange_account.exchange = "binance"

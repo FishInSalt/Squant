@@ -67,6 +67,7 @@ jobs:
         DATABASE_URL: postgresql+asyncpg://squant_test:squant_test@localhost:5433/squant_test
         REDIS_URL: redis://localhost:6380
         SECRET_KEY: test-secret-key-for-integration-testing-min-32-chars
+        ENCRYPTION_KEY: cTYK1ELdwLfxoLdD6z2YqraA0vasUEED
       run: |
         uv run pytest tests/e2e -v --cov=src/squant --cov-report=xml --cov-report=term
 

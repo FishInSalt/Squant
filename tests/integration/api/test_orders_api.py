@@ -356,9 +356,7 @@ class TestOrderDetailsView:
         assert "fee" in trade
         assert float(trade["fee"]) == 0.4
 
-    @pytest.mark.skip(
-        reason="Mock order requires trades relationship - tested at service level"
-    )
+    @pytest.mark.skip(reason="Mock order requires trades relationship - tested at service level")
     @pytest.mark.asyncio
     async def test_order_details_includes_run_id(self, client, sample_exchange_account):
         """Test ORD-003-2: Order details include associated strategy run."""

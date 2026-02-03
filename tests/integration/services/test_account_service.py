@@ -408,9 +408,7 @@ class TestCredentialDecryption:
     """Tests for credential decryption when using accounts."""
 
     @pytest.mark.asyncio
-    async def test_credentials_decrypted_for_exchange_adapter(
-        self, account_service, db_session
-    ):
+    async def test_credentials_decrypted_for_exchange_adapter(self, account_service, db_session):
         """Test that credentials are properly decrypted when accessing them."""
         from pydantic import SecretStr
 
