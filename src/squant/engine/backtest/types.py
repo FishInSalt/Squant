@@ -75,10 +75,15 @@ class Position:
     def update(self, filled_amount: Decimal, fill_price: Decimal, side: OrderSide) -> None:
         """Update position after a fill.
 
+        This is a SPOT trading system - short positions are not allowed.
+
         Args:
             filled_amount: Amount filled (always positive).
             fill_price: Price at which the fill occurred.
             side: Order side (buy/sell).
+
+        Raises:
+            ValueError: If sell would result in negative position (short selling).
         """
         if side == OrderSide.BUY:
             # Buying increases position
@@ -90,14 +95,17 @@ class Position:
             self.amount = new_amount
         else:
             # Selling decreases position
-            self.amount = self.amount - filled_amount
-            if self.amount <= Decimal("0"):
-                # Position closed or reversed
-                if self.amount < Decimal("0"):
-                    # Short position opened
-                    self.avg_entry_price = fill_price
-                else:
-                    self.avg_entry_price = Decimal("0")
+            new_amount = self.amount - filled_amount
+            if new_amount < Decimal("0"):
+                # SPOT trading: short selling is not allowed
+                raise ValueError(
+                    f"Cannot sell more than current position: "
+                    f"position={self.amount}, sell_amount={filled_amount}"
+                )
+            self.amount = new_amount
+            if self.amount == Decimal("0"):
+                # Position fully closed
+                self.avg_entry_price = Decimal("0")
 
 
 @dataclass

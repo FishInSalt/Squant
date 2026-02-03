@@ -24,6 +24,7 @@ from squant.schemas.live_trading import (
     StopLiveTradingRequest,
 )
 from squant.services.live_trading import (
+    ExchangeAccountNotFoundError,
     ExchangeConnectionError,
     LiveTradingError,
     LiveTradingService,
@@ -80,7 +81,7 @@ async def start_live_trading(
         run = await service.start(
             strategy_id=request.strategy_id,
             symbol=request.symbol,
-            exchange=request.exchange,
+            exchange_account_id=request.exchange_account_id,
             timeframe=request.timeframe,
             risk_config=risk_config,
             initial_equity=request.initial_equity,
@@ -88,6 +89,8 @@ async def start_live_trading(
         )
         return ApiResponse(data=LiveTradingRunResponse.model_validate(run))
     except StrategyNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except ExchangeAccountNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except RiskConfigurationError as e:
         raise HTTPException(status_code=400, detail=f"Risk configuration error: {e}")

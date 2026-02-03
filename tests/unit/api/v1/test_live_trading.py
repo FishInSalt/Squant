@@ -62,7 +62,7 @@ def valid_start_request() -> dict[str, Any]:
     return {
         "strategy_id": str(uuid4()),
         "symbol": "BTC/USDT",
-        "exchange": "okx",
+        "exchange_account_id": str(uuid4()),
         "timeframe": "1m",
         "risk_config": {
             "max_position_size": "0.1",

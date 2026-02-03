@@ -353,33 +353,128 @@ class TestCreateAdapter:
         mock_session = MagicMock()
         return LiveTradingService(mock_session)
 
-    def test_create_okx_adapter(self, service: LiveTradingService) -> None:
-        """Test creating OKX adapter."""
-        with patch("squant.services.live_trading.OKXAdapter") as mock_adapter_class:
+    @pytest.fixture
+    def mock_okx_account(self) -> MagicMock:
+        """Create mock OKX exchange account."""
+        account = MagicMock()
+        account.exchange = "okx"
+        account.testnet = False
+        account.api_key_enc = b"encrypted_key"
+        account.api_secret_enc = b"encrypted_secret"
+        account.passphrase_enc = b"encrypted_pass"
+        account.nonce = b"nonce123"
+        return account
+
+    @pytest.fixture
+    def mock_binance_account(self) -> MagicMock:
+        """Create mock Binance exchange account."""
+        account = MagicMock()
+        account.exchange = "binance"
+        account.testnet = False
+        account.api_key_enc = b"encrypted_key"
+        account.api_secret_enc = b"encrypted_secret"
+        account.passphrase_enc = None
+        account.nonce = b"nonce123"
+        return account
+
+    def test_create_okx_adapter(
+        self, service: LiveTradingService, mock_okx_account: MagicMock
+    ) -> None:
+        """Test creating OKX adapter with decrypted credentials."""
+        with (
+            patch("squant.services.live_trading.OKXAdapter") as mock_adapter_class,
+            patch("squant.services.account.ExchangeAccountService") as mock_service_class,
+        ):
             mock_adapter = MagicMock()
             mock_adapter_class.return_value = mock_adapter
 
-            adapter = service._create_adapter("okx")
+            mock_account_service = MagicMock()
+            mock_account_service.get_decrypted_credentials.return_value = {
+                "api_key": "test_key",
+                "api_secret": "test_secret",
+                "passphrase": "test_pass",
+            }
+            mock_service_class.return_value = mock_account_service
+
+            adapter = service._create_adapter(mock_okx_account)
 
             assert adapter == mock_adapter
-            mock_adapter_class.assert_called_once()
+            mock_adapter_class.assert_called_once_with(
+                api_key="test_key",
+                api_secret="test_secret",
+                passphrase="test_pass",
+                testnet=False,
+            )
 
-    def test_create_okx_adapter_case_insensitive(self, service: LiveTradingService) -> None:
+    def test_create_okx_adapter_case_insensitive(
+        self, service: LiveTradingService, mock_okx_account: MagicMock
+    ) -> None:
         """Test creating OKX adapter is case insensitive."""
-        with patch("squant.services.live_trading.OKXAdapter") as mock_adapter_class:
+        mock_okx_account.exchange = "OKX"  # uppercase
+
+        with (
+            patch("squant.services.live_trading.OKXAdapter") as mock_adapter_class,
+            patch("squant.services.account.ExchangeAccountService") as mock_service_class,
+        ):
             mock_adapter = MagicMock()
             mock_adapter_class.return_value = mock_adapter
 
-            adapter = service._create_adapter("OKX")
+            mock_account_service = MagicMock()
+            mock_account_service.get_decrypted_credentials.return_value = {
+                "api_key": "test_key",
+                "api_secret": "test_secret",
+                "passphrase": "test_pass",
+            }
+            mock_service_class.return_value = mock_account_service
+
+            adapter = service._create_adapter(mock_okx_account)
 
             assert adapter == mock_adapter
+
+    def test_create_binance_adapter(
+        self, service: LiveTradingService, mock_binance_account: MagicMock
+    ) -> None:
+        """Test creating Binance adapter."""
+        with (
+            patch("squant.services.live_trading.BinanceAdapter") as mock_adapter_class,
+            patch("squant.services.account.ExchangeAccountService") as mock_service_class,
+        ):
+            mock_adapter = MagicMock()
+            mock_adapter_class.return_value = mock_adapter
+
+            mock_account_service = MagicMock()
+            mock_account_service.get_decrypted_credentials.return_value = {
+                "api_key": "test_key",
+                "api_secret": "test_secret",
+            }
+            mock_service_class.return_value = mock_account_service
+
+            adapter = service._create_adapter(mock_binance_account)
+
+            assert adapter == mock_adapter
+            mock_adapter_class.assert_called_once_with(
+                api_key="test_key",
+                api_secret="test_secret",
+                testnet=False,
+            )
 
     def test_create_unsupported_exchange(self, service: LiveTradingService) -> None:
         """Test error for unsupported exchange."""
-        with pytest.raises(ValueError) as exc_info:
-            service._create_adapter("binance")
+        mock_account = MagicMock()
+        mock_account.exchange = "unknown_exchange"
 
-        assert "Unsupported exchange" in str(exc_info.value)
+        with patch("squant.services.account.ExchangeAccountService") as mock_service_class:
+            mock_account_service = MagicMock()
+            mock_account_service.get_decrypted_credentials.return_value = {
+                "api_key": "test_key",
+                "api_secret": "test_secret",
+            }
+            mock_service_class.return_value = mock_account_service
+
+            with pytest.raises(ValueError) as exc_info:
+                service._create_adapter(mock_account)
+
+            assert "Unsupported exchange" in str(exc_info.value)
 
 
 class TestInstantiateStrategy:
@@ -492,17 +587,38 @@ class TestStartSession:
             daily_loss_limit=Decimal("0.05"),
         )
 
+    @pytest.fixture
+    def mock_exchange_account(self) -> MagicMock:
+        """Create mock exchange account."""
+        account = MagicMock()
+        account.id = uuid4()
+        account.exchange = "okx"
+        account.testnet = False
+        account.is_active = True
+        account.api_key_enc = b"encrypted_key"
+        account.api_secret_enc = b"encrypted_secret"
+        account.passphrase_enc = b"encrypted_pass"
+        account.nonce = b"nonce123"
+        return account
+
     @pytest.mark.asyncio
     async def test_start_strategy_not_found(
-        self, service: LiveTradingService, valid_risk_config: RiskConfig
+        self, service: LiveTradingService, valid_risk_config: RiskConfig, mock_exchange_account: MagicMock
     ) -> None:
         """Test error when strategy not found."""
         strategy_id = uuid4()
 
-        with patch("squant.services.strategy.StrategyRepository") as mock_repo_class:
-            mock_repo = MagicMock()
-            mock_repo.get = AsyncMock(return_value=None)
-            mock_repo_class.return_value = mock_repo
+        with (
+            patch("squant.services.strategy.StrategyRepository") as mock_strat_repo_class,
+            patch("squant.services.account.ExchangeAccountRepository") as mock_acct_repo_class,
+        ):
+            mock_strat_repo = MagicMock()
+            mock_strat_repo.get = AsyncMock(return_value=None)
+            mock_strat_repo_class.return_value = mock_strat_repo
+
+            mock_acct_repo = MagicMock()
+            mock_acct_repo.get = AsyncMock(return_value=mock_exchange_account)
+            mock_acct_repo_class.return_value = mock_acct_repo
 
             from squant.services.strategy import StrategyNotFoundError
 
@@ -510,13 +626,15 @@ class TestStartSession:
                 await service.start(
                     strategy_id=strategy_id,
                     symbol="BTC/USDT",
-                    exchange="okx",
+                    exchange_account_id=mock_exchange_account.id,
                     timeframe="1m",
                     risk_config=valid_risk_config,
                 )
 
     @pytest.mark.asyncio
-    async def test_start_invalid_risk_config(self, service: LiveTradingService) -> None:
+    async def test_start_invalid_risk_config(
+        self, service: LiveTradingService, mock_exchange_account: MagicMock
+    ) -> None:
         """Test error with invalid risk configuration."""
         invalid_config = RiskConfig(
             max_position_size=Decimal("0"),  # Invalid
@@ -529,40 +647,56 @@ class TestStartSession:
             await service.start(
                 strategy_id=uuid4(),
                 symbol="BTC/USDT",
-                exchange="okx",
+                exchange_account_id=mock_exchange_account.id,
                 timeframe="1m",
                 risk_config=invalid_config,
             )
 
     @pytest.mark.asyncio
     async def test_start_exchange_connection_error(
-        self, service: LiveTradingService, valid_risk_config: RiskConfig
+        self, service: LiveTradingService, valid_risk_config: RiskConfig, mock_exchange_account: MagicMock
     ) -> None:
         """Test error when exchange connection fails."""
         strategy_id = uuid4()
 
-        with patch("squant.services.strategy.StrategyRepository") as mock_repo_class:
-            mock_repo = MagicMock()
+        with (
+            patch("squant.services.strategy.StrategyRepository") as mock_strat_repo_class,
+            patch("squant.services.account.ExchangeAccountRepository") as mock_acct_repo_class,
+            patch("squant.services.account.ExchangeAccountService") as mock_acct_svc_class,
+            patch("squant.services.live_trading.OKXAdapter") as mock_adapter_class,
+        ):
+            mock_strat_repo = MagicMock()
             mock_strategy = MagicMock()
             mock_strategy.code = "class MyStrategy(Strategy): pass"
-            mock_repo.get = AsyncMock(return_value=mock_strategy)
-            mock_repo_class.return_value = mock_repo
+            mock_strat_repo.get = AsyncMock(return_value=mock_strategy)
+            mock_strat_repo_class.return_value = mock_strat_repo
 
-            with patch("squant.services.live_trading.OKXAdapter") as mock_adapter_class:
-                mock_adapter = MagicMock()
-                mock_adapter.connect = AsyncMock(side_effect=Exception("Connection refused"))
-                mock_adapter_class.return_value = mock_adapter
+            mock_acct_repo = MagicMock()
+            mock_acct_repo.get = AsyncMock(return_value=mock_exchange_account)
+            mock_acct_repo_class.return_value = mock_acct_repo
 
-                with pytest.raises(ExchangeConnectionError) as exc_info:
-                    await service.start(
-                        strategy_id=strategy_id,
-                        symbol="BTC/USDT",
-                        exchange="okx",
-                        timeframe="1m",
-                        risk_config=valid_risk_config,
-                    )
+            mock_acct_svc = MagicMock()
+            mock_acct_svc.get_decrypted_credentials.return_value = {
+                "api_key": "test_key",
+                "api_secret": "test_secret",
+                "passphrase": "test_pass",
+            }
+            mock_acct_svc_class.return_value = mock_acct_svc
 
-                assert "Connection refused" in str(exc_info.value)
+            mock_adapter = MagicMock()
+            mock_adapter.connect = AsyncMock(side_effect=Exception("Connection refused"))
+            mock_adapter_class.return_value = mock_adapter
+
+            with pytest.raises(ExchangeConnectionError) as exc_info:
+                await service.start(
+                    strategy_id=strategy_id,
+                    symbol="BTC/USDT",
+                    exchange_account_id=mock_exchange_account.id,
+                    timeframe="1m",
+                    risk_config=valid_risk_config,
+                )
+
+            assert "Connection refused" in str(exc_info.value)
 
 
 class TestStopSession:

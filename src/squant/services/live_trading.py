@@ -24,9 +24,11 @@ from squant.engine.live.engine import LiveTradingEngine
 from squant.engine.live.manager import get_live_session_manager
 from squant.engine.risk import RiskConfig
 from squant.engine.sandbox import compile_strategy
+from squant.infra.exchange.binance.adapter import BinanceAdapter
 from squant.infra.exchange.okx.adapter import OKXAdapter
 from squant.infra.repository import BaseRepository
 from squant.models.enums import RunMode, RunStatus
+from squant.models.exchange import ExchangeAccount
 from squant.models.metrics import EquityCurve
 from squant.models.strategy import StrategyRun
 
@@ -74,6 +76,15 @@ class ExchangeConnectionError(LiveTradingError):
     """Error connecting to exchange."""
 
     pass
+
+
+class ExchangeAccountNotFoundError(LiveTradingError):
+    """Exchange account not found or not active."""
+
+    def __init__(self, account_id: str | UUID, reason: str = "not found"):
+        self.account_id = str(account_id)
+        self.reason = reason
+        super().__init__(f"Exchange account {account_id}: {reason}")
 
 
 class LiveStrategyRunRepository(BaseRepository[StrategyRun]):
@@ -177,7 +188,7 @@ class LiveTradingService:
         self,
         strategy_id: UUID,
         symbol: str,
-        exchange: str,
+        exchange_account_id: UUID,
         timeframe: str,
         risk_config: RiskConfig,
         initial_equity: Decimal | None = None,
@@ -188,7 +199,7 @@ class LiveTradingService:
         Args:
             strategy_id: Strategy ID to run.
             symbol: Trading symbol.
-            exchange: Exchange name.
+            exchange_account_id: Exchange account ID with API credentials.
             timeframe: Candle timeframe.
             risk_config: Risk management configuration.
             initial_equity: Initial equity for risk calculations (fetched from exchange if None).
@@ -199,10 +210,12 @@ class LiveTradingService:
 
         Raises:
             StrategyNotFoundError: If strategy not found.
+            ExchangeAccountNotFoundError: If exchange account not found or not active.
             StrategyInstantiationError: If strategy cannot be instantiated.
             RiskConfigurationError: If risk config is invalid.
             ExchangeConnectionError: If exchange connection fails.
         """
+        from squant.services.account import ExchangeAccountRepository, ExchangeAccountService
         from squant.services.strategy import StrategyNotFoundError, StrategyRepository
 
         # Validate risk configuration
@@ -214,8 +227,16 @@ class LiveTradingService:
         if not strategy:
             raise StrategyNotFoundError(strategy_id)
 
-        # Create exchange adapter
-        adapter = self._create_adapter(exchange)
+        # Fetch and validate exchange account
+        account_repo = ExchangeAccountRepository(self.session)
+        exchange_account = await account_repo.get(exchange_account_id)
+        if not exchange_account:
+            raise ExchangeAccountNotFoundError(exchange_account_id, "not found")
+        if not exchange_account.is_active:
+            raise ExchangeAccountNotFoundError(exchange_account_id, "account is not active")
+
+        # Create exchange adapter with credentials
+        adapter = self._create_adapter(exchange_account)
 
         # Connect to exchange and get initial equity if not provided
         try:
@@ -234,7 +255,7 @@ class LiveTradingService:
             strategy_id=str(strategy_id),
             mode=RunMode.LIVE,
             symbol=symbol,
-            exchange=exchange,
+            exchange=exchange_account.exchange,
             timeframe=timeframe,
             initial_capital=initial_equity,
             commission_rate=Decimal("0"),  # Real fees from exchange
@@ -329,20 +350,44 @@ class LiveTradingService:
         if config.daily_loss_limit <= 0:
             raise RiskConfigurationError("daily_loss_limit must be positive")
 
-    def _create_adapter(self, exchange: str) -> ExchangeAdapter:
-        """Create exchange adapter.
+    def _create_adapter(self, account: ExchangeAccount) -> ExchangeAdapter:
+        """Create exchange adapter with account credentials.
 
         Args:
-            exchange: Exchange name.
+            account: Exchange account with encrypted credentials.
 
         Returns:
-            Exchange adapter instance.
+            Exchange adapter instance with injected credentials.
 
         Raises:
             ValueError: If exchange not supported.
+            ExchangeConnectionError: If credentials cannot be decrypted.
         """
-        if exchange.lower() == "okx":
-            return OKXAdapter()
+        from squant.services.account import ExchangeAccountService
+        from squant.utils.crypto import DecryptionError
+
+        # Decrypt credentials
+        try:
+            account_service = ExchangeAccountService(self.session)
+            credentials = account_service.get_decrypted_credentials(account)
+        except DecryptionError as e:
+            raise ExchangeConnectionError(f"Failed to decrypt credentials: {e}") from e
+
+        exchange = account.exchange.lower()
+
+        if exchange == "okx":
+            return OKXAdapter(
+                api_key=credentials["api_key"],
+                api_secret=credentials["api_secret"],
+                passphrase=credentials.get("passphrase", ""),
+                testnet=account.testnet,
+            )
+        elif exchange == "binance":
+            return BinanceAdapter(
+                api_key=credentials["api_key"],
+                api_secret=credentials["api_secret"],
+                testnet=account.testnet,
+            )
         raise ValueError(f"Unsupported exchange: {exchange}")
 
     def _instantiate_strategy(self, code: str) -> Strategy:

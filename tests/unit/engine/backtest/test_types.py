@@ -151,6 +151,25 @@ class TestPosition:
         assert pos.amount == Decimal("0")
         assert pos.is_open is False
 
+    def test_position_short_selling_blocked(self) -> None:
+        """Test that short selling is blocked (spot trading only)."""
+        pos = Position(
+            symbol="BTC/USDT",
+            amount=Decimal("1"),
+            avg_entry_price=Decimal("42000"),
+        )
+        # Try to sell more than position
+        with pytest.raises(ValueError, match="Cannot sell more than current position"):
+            pos.update(Decimal("2"), Decimal("43000"), OrderSide.SELL)
+
+    def test_position_short_from_zero_blocked(self) -> None:
+        """Test that short selling from zero position is blocked."""
+        pos = Position(symbol="BTC/USDT")
+        assert pos.amount == Decimal("0")
+
+        with pytest.raises(ValueError, match="Cannot sell more than current position"):
+            pos.update(Decimal("1"), Decimal("43000"), OrderSide.SELL)
+
 
 class TestSimulatedOrder:
     """Tests for SimulatedOrder dataclass."""

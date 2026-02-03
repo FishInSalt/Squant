@@ -37,7 +37,7 @@ def sample_live_config(sample_strategy):
     return {
         "strategy_id": str(sample_strategy.id),
         "symbol": "BTC/USDT",
-        "exchange": "okx",
+        "exchange_account_id": str(uuid4()),
         "timeframe": "1h",
         "risk_config": {
             "max_position_size": "0.5",
