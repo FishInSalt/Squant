@@ -37,10 +37,10 @@ class RiskTrigger(Base, UUIDMixin):
     __tablename__ = "risk_triggers"
 
     time: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    rule_id: Mapped[str] = mapped_column(
+    rule_id: Mapped[str | None] = mapped_column(
         UUID(as_uuid=False),
         ForeignKey("risk_rules.id", ondelete="CASCADE"),
-        nullable=False,
+        nullable=True,  # Nullable to support in-memory risk checks without DB rules
     )
     run_id: Mapped[str | None] = mapped_column(
         UUID(as_uuid=False),
@@ -51,7 +51,7 @@ class RiskTrigger(Base, UUIDMixin):
     details: Mapped[dict] = mapped_column(JSONB, nullable=False)
 
     # Relationships
-    rule: Mapped["RiskRule"] = relationship(back_populates="triggers")
+    rule: Mapped["RiskRule | None"] = relationship(back_populates="triggers")
     run: Mapped["StrategyRun | None"] = relationship()
 
     __table_args__ = (

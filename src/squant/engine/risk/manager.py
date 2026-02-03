@@ -383,7 +383,18 @@ class RiskManager:
         else:
             new_position_amount = current_position_amount - order.amount
 
-        new_position_value = abs(new_position_amount) * price
+        # Issue 011: Check for negative position (spot trading - no short selling)
+        if new_position_amount < 0:
+            return RiskCheckResult.reject(
+                rule_type=RiskRuleType.MAX_POSITION_SIZE,
+                reason=f"Sell order would result in negative position: {new_position_amount} "
+                f"(current: {current_position_amount}, selling: {order.amount})",
+                new_position_amount=float(new_position_amount),
+                current_position=float(current_position_amount),
+                sell_amount=float(order.amount),
+            )
+
+        new_position_value = new_position_amount * price
 
         # Check absolute position value limit
         if self.config.max_position_value is not None:

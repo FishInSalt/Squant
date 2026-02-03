@@ -1,26 +1,95 @@
 """
 集成测试配置和fixtures
 
-集成测试需要真实的数据库和Redis连接，使用docker-compose.test.yml启动测试环境。
+集成测试需要真实的数据库和Redis连接。
 
-运行集成测试前，请先启动测试环境:
-    docker compose -f docker-compose.test.yml up -d
-
-运行集成测试:
+在 devcontainer 环境中运行:
     uv run pytest tests/integration -v
 
-停止测试环境:
+使用独立测试环境 (docker-compose.test.yml):
+    docker compose -f docker-compose.test.yml up -d
+    # 设置环境变量指向 localhost:5433 和 localhost:6380
+    uv run pytest tests/integration -v
     docker compose -f docker-compose.test.yml down -v
 """
 
 import asyncio
 import os
 from collections.abc import AsyncGenerator
+from pathlib import Path
 
 import pytest
 import pytest_asyncio
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+
+# ==========================================================================
+# 加载测试环境变量 (必须在导入 squant 模块之前)
+# ==========================================================================
+
+# 必须覆盖的测试环境关键变量
+_OVERRIDE_KEYS = {
+    "DATABASE_URL",
+    "REDIS_URL",
+    "SECRET_KEY",
+    "ENCRYPTION_KEY",
+    "APP_ENV",
+}
+
+
+def _load_env_file(env_file: Path, override_keys: set[str] | None = None) -> None:
+    """从 .env 文件加载环境变量
+
+    Args:
+        env_file: .env 文件路径
+        override_keys: 需要强制覆盖的变量名集合，这些变量即使已存在也会被覆盖
+    """
+    if not env_file.exists():
+        return
+
+    override_keys = override_keys or set()
+
+    with open(env_file) as f:
+        for line in f:
+            line = line.strip()
+            # 跳过空行和注释
+            if not line or line.startswith("#"):
+                continue
+            # 解析 KEY=VALUE
+            if "=" in line:
+                key, _, value = line.partition("=")
+                key = key.strip()
+                value = value.strip()
+                # 如果是覆盖键或环境变量未设置，则设置
+                if key and (key in override_keys or key not in os.environ):
+                    os.environ[key] = value
+
+
+def _setup_test_environment() -> None:
+    """设置测试环境变量并清除配置缓存"""
+    project_root = Path(__file__).parent.parent.parent
+
+    # 1. 先加载 .env（用户本地配置，包含敏感凭证如 OKX API keys）
+    #    这些值不会被 .env.test 覆盖（除非在 _OVERRIDE_KEYS 中）
+    env_path = project_root / ".env"
+    _load_env_file(env_path)
+
+    # 2. 再加载 .env.test（测试特定配置，如测试数据库URL）
+    #    _OVERRIDE_KEYS 中的变量会强制使用 .env.test 的值
+    env_test_path = project_root / ".env.test"
+    _load_env_file(env_test_path, override_keys=_OVERRIDE_KEYS)
+
+    # 清除 get_settings 缓存以使用新的环境变量
+    # 需要延迟导入以避免循环导入
+    try:
+        from squant.config import get_settings
+        get_settings.cache_clear()
+    except ImportError:
+        pass  # squant.config 尚未导入
+
+
+# 立即设置环境变量（conftest.py 在测试模块之前被导入）
+_setup_test_environment()
 
 from squant.config import get_settings
 from squant.models.base import Base

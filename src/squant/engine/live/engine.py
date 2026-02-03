@@ -159,6 +159,7 @@ class LiveTradingEngine:
         self._error_message: str | None = None
         self._bar_count = 0
         self._last_active_at: datetime | None = None
+        self._circuit_breaker_triggered = False  # Set when risk manager triggers circuit breaker
 
         # Live order tracking
         self._live_orders: dict[str, LiveOrder] = {}  # internal_id -> LiveOrder
@@ -173,6 +174,9 @@ class LiveTradingEngine:
         # Equity snapshots for persistence
         self._pending_snapshots: list[EquitySnapshot] = []
         self._snapshot_batch_size = 10
+
+        # Risk trigger events for persistence (Issue 010)
+        self._pending_risk_triggers: list[dict[str, Any]] = []
 
     @property
     def run_id(self) -> UUID:
@@ -210,6 +214,11 @@ class LiveTradingEngine:
         return self._error_message
 
     @property
+    def circuit_breaker_triggered(self) -> bool:
+        """Check if circuit breaker was triggered due to consecutive losses."""
+        return self._circuit_breaker_triggered
+
+    @property
     def bar_count(self) -> int:
         """Get number of bars processed."""
         return self._bar_count
@@ -228,6 +237,40 @@ class LiveTradingEngine:
     def risk_manager(self) -> RiskManager:
         """Get the risk manager."""
         return self._risk_manager
+
+    async def _trigger_global_circuit_breaker(self) -> None:
+        """Trigger global circuit breaker to stop all trading sessions.
+
+        Called when this session's local circuit breaker triggers due to
+        consecutive losses. This ensures all sessions stop for safety,
+        implementing the global risk synchronization (Issue 033 fix).
+        """
+        from squant.engine.live.manager import get_live_session_manager
+        from squant.engine.paper.manager import get_session_manager
+
+        reason = (
+            f"Auto-triggered by session {self._run_id}: "
+            f"{self._risk_manager.state.consecutive_losses} consecutive losses"
+        )
+
+        logger.critical(
+            f"GLOBAL CIRCUIT BREAKER TRIGGERED: {reason} | "
+            f"Stopping all trading sessions for safety"
+        )
+
+        # Stop all live sessions (except this one which is already stopped)
+        live_manager = get_live_session_manager()
+        try:
+            await live_manager.stop_all(reason=f"Circuit breaker: {reason}")
+        except Exception as e:
+            logger.exception(f"Error stopping live sessions: {e}")
+
+        # Stop all paper sessions
+        paper_manager = get_session_manager()
+        try:
+            await paper_manager.stop_all(reason=f"Circuit breaker: {reason}")
+        except Exception as e:
+            logger.exception(f"Error stopping paper sessions: {e}")
 
     def is_healthy(self, timeout_seconds: int = 300) -> bool:
         """Check if engine is healthy (recently active).
@@ -377,6 +420,19 @@ class LiveTradingEngine:
         if not self._is_running:
             return
 
+        # Check if circuit breaker was triggered by order update (RSK-012)
+        if self._circuit_breaker_triggered:
+            logger.warning(
+                f"Circuit breaker active for session {self._run_id}, stopping trading"
+            )
+            await self.stop(error="Circuit breaker triggered due to consecutive losses")
+
+            # Trigger global circuit breaker to stop all sessions (Issue 033 fix)
+            # This ensures that when one session triggers circuit breaker due to
+            # consecutive losses, all sessions are stopped for safety
+            await self._trigger_global_circuit_breaker()
+            return
+
         # Only process closed candles
         if not candle.is_closed:
             return
@@ -456,6 +512,7 @@ class LiveTradingEngine:
 
         # Update order state
         old_status = live_order.status
+        old_filled = live_order.filled_amount  # Save before updating
         live_order.status = new_status
         live_order.filled_amount = update.filled_size
         live_order.avg_fill_price = update.avg_price
@@ -468,15 +525,39 @@ class LiveTradingEngine:
             f"filled={update.filled_size}/{live_order.amount}"
         )
 
-        # Process fills
-        if new_status in (OrderStatus.PARTIAL, OrderStatus.FILLED):
-            self._process_order_fill(live_order, update)
+        # Process fills and track trade PnL for risk management
+        # Only process if there's new fill amount (incremental delta)
+        fill_delta = update.filled_size - old_filled
+        if new_status in (OrderStatus.PARTIAL, OrderStatus.FILLED) and fill_delta > 0:
+            # Record trade count before processing to detect new completed trades
+            trades_before = len(self._context.trades)
+            circuit_breaker_before = self._risk_manager.state.circuit_breaker_triggered
 
-        # Record trade result for risk tracking
-        if new_status == OrderStatus.FILLED and live_order.avg_fill_price:
-            # Calculate PnL for completed trade
-            # Note: Simplified - full PnL tracking would need more context
-            pass
+            self._process_order_fill(live_order, update, fill_delta)
+
+            # Check if a trade was completed and record its PnL
+            trades_after = len(self._context.trades)
+            if trades_after > trades_before:
+                # A new trade was completed - get its PnL
+                completed_trade = self._context.trades[-1]
+                if completed_trade.pnl is not None:
+                    self._risk_manager.record_trade_result(completed_trade.pnl)
+                    logger.info(
+                        f"Recorded trade result: PnL={completed_trade.pnl}, "
+                        f"consecutive_losses={self._risk_manager.state.consecutive_losses}"
+                    )
+
+                    # Check if circuit breaker was just triggered (RSK-012)
+                    if (
+                        not circuit_breaker_before
+                        and self._risk_manager.state.circuit_breaker_triggered
+                    ):
+                        logger.warning(
+                            f"Circuit breaker triggered for session {self._run_id} "
+                            f"after {self._risk_manager.state.consecutive_losses} consecutive losses"
+                        )
+                        # Set flag for async handling - actual stop happens in main loop
+                        self._circuit_breaker_triggered = True
 
     def _candle_to_bar(self, candle: WSCandle) -> Bar:
         """Convert WSCandle to Bar."""
@@ -536,18 +617,29 @@ class LiveTradingEngine:
             fill_amount = response.filled - old_filled
             self._process_incremental_fill(live_order, fill_amount, response)
 
-    def _process_order_fill(self, live_order: LiveOrder, update: WSOrderUpdate) -> None:
-        """Process order fill from WebSocket update."""
+    def _process_order_fill(
+        self,
+        live_order: LiveOrder,
+        update: WSOrderUpdate,
+        fill_delta: Decimal,
+    ) -> None:
+        """Process order fill from WebSocket update.
+
+        Args:
+            live_order: The live order being filled.
+            update: WebSocket order update with current state.
+            fill_delta: The incremental fill amount (new fills only).
+        """
         if not update.avg_price:
             return
 
-        # Create fill record
+        # Create fill record with incremental amount (not total)
         fill = Fill(
             order_id=live_order.internal_id,
             symbol=live_order.symbol,
             side=live_order.side,
             price=update.avg_price,
-            amount=update.filled_size,
+            amount=fill_delta,
             fee=update.fee or Decimal("0"),
             timestamp=datetime.now(UTC),
         )
@@ -615,6 +707,20 @@ class LiveTradingEngine:
                 order.status = OrderStatus.REJECTED
                 self._context._completed_orders.append(order)
                 self._context._pending_orders.remove(order)
+
+                # Record risk trigger for persistence (Issue 010)
+                self._pending_risk_triggers.append({
+                    "rule_type": risk_result.rule_type.value if risk_result.rule_type else "unknown",
+                    "trigger_type": "order_rejected",
+                    "details": {
+                        "reason": risk_result.reason,
+                        "order_symbol": order.symbol,
+                        "order_side": order.side.value,
+                        "order_amount": str(order.amount),
+                        "order_price": str(order.price) if order.price else None,
+                        "metadata": risk_result.metadata,
+                    },
+                })
                 continue
 
             # Submit order to exchange
@@ -707,6 +813,20 @@ class LiveTradingEngine:
     def should_persist_snapshots(self) -> bool:
         """Check if snapshots should be persisted."""
         return len(self._pending_snapshots) >= self._snapshot_batch_size
+
+    def get_pending_risk_triggers(self) -> list[dict[str, Any]]:
+        """Get and clear pending risk trigger events (Issue 010).
+
+        Returns:
+            List of risk trigger data dictionaries.
+        """
+        triggers = self._pending_risk_triggers.copy()
+        self._pending_risk_triggers.clear()
+        return triggers
+
+    def has_pending_risk_triggers(self) -> bool:
+        """Check if there are pending risk triggers to persist."""
+        return len(self._pending_risk_triggers) > 0
 
     def get_state_snapshot(self) -> dict[str, Any]:
         """Get current engine state snapshot."""

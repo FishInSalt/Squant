@@ -721,3 +721,288 @@ class TestStrategyValidationParameterized:
         assert any(
             expected_error.lower() in err.lower() for err in result.errors
         ), f"Case '{case_name}' error should mention '{expected_error}'"
+
+
+# =============================================================================
+# Security Attack Tests - Issue 004 & 005
+# =============================================================================
+
+
+class TestAttributeAccessBypass:
+    """Security tests for attribute access bypass attempts (Issue 004).
+
+    These tests verify that RestrictedPython blocks access to dangerous
+    dunder attributes that could be used to escape the sandbox.
+
+    RestrictedPython provides two layers of protection:
+    1. Compile-time: Syntax validation blocks attributes starting with "_"
+    2. Runtime: safer_getattr blocks dangerous attribute access
+
+    Both mechanisms are valid security measures - we test that at least
+    one blocks the attack.
+    """
+
+    @pytest.fixture
+    def try_attack(self):
+        """Helper to attempt an attack and verify it's blocked.
+
+        Returns True if attack was blocked (either at compile time or runtime).
+        """
+
+        def _try_attack(attack_code: str) -> bool:
+            """Try to compile and execute attack code. Returns True if blocked."""
+            code = f'''
+class AttackStrategy(Strategy):
+    def on_bar(self, bar):
+        {attack_code}
+'''
+            try:
+                compiled = compile_strategy(code)
+                local_namespace: dict = {}
+                exec(compiled.code_object, compiled.restricted_globals, local_namespace)
+
+                # Try to instantiate and run
+                from unittest.mock import MagicMock
+
+                strategy_class = local_namespace["AttackStrategy"]
+                instance = strategy_class.__new__(strategy_class)
+                instance.ctx = MagicMock()
+
+                bar = MagicMock()
+                bar.close = 100
+                bar.open = 99
+                bar.symbol = "BTC/USDT"
+
+                instance.on_bar(bar)
+                # If we get here without exception, attack succeeded
+                return False
+            except (ValueError, AttributeError, TypeError, NameError, KeyError):
+                # Blocked at compile time (ValueError) or runtime (others)
+                return True
+            except Exception:
+                # Any other exception also counts as blocked
+                return True
+
+        return _try_attack
+
+    def test_class_attribute_blocked(self, try_attack):
+        """Test that __class__ access is blocked."""
+        assert try_attack("x = self.__class__"), "__class__ access should be blocked"
+
+    def test_bases_attribute_blocked(self, try_attack):
+        """Test that __bases__ access is blocked."""
+        assert try_attack("x = self.__class__.__bases__"), "__bases__ access should be blocked"
+
+    def test_mro_attribute_blocked(self, try_attack):
+        """Test that __mro__ access is blocked."""
+        assert try_attack("x = self.__class__.__mro__"), "__mro__ access should be blocked"
+
+    def test_subclasses_method_blocked(self, try_attack):
+        """Test that __subclasses__() access is blocked."""
+        assert try_attack("x = object.__subclasses__()"), "__subclasses__() should be blocked"
+
+    def test_globals_attribute_blocked(self, try_attack):
+        """Test that __globals__ access is blocked."""
+        assert try_attack("x = self.on_bar.__globals__"), "__globals__ access should be blocked"
+
+    def test_code_attribute_blocked(self, try_attack):
+        """Test that __code__ access is blocked."""
+        assert try_attack("x = self.on_bar.__code__"), "__code__ access should be blocked"
+
+    def test_dict_attribute_on_class_blocked(self, try_attack):
+        """Test that __dict__ access on classes is blocked."""
+        assert try_attack("x = self.__class__.__dict__"), "__dict__ on class should be blocked"
+
+    def test_builtins_access_blocked(self, try_attack):
+        """Test that accessing __builtins__ is blocked."""
+        assert try_attack("x = __builtins__"), "__builtins__ access should be blocked"
+
+    # Parameterized test for common escape patterns
+    ESCAPE_PATTERNS = [
+        ("class_bases_chain", "self.__class__.__bases__[0].__subclasses__()"),
+        ("mro_escape", "self.__class__.__mro__[1]"),
+        ("func_globals", "(lambda: None).__globals__"),
+        ("func_code", "(lambda: None).__code__"),
+    ]
+
+    @pytest.mark.parametrize("pattern_name,attack_code", ESCAPE_PATTERNS)
+    def test_escape_pattern_blocked(
+        self, try_attack, pattern_name: str, attack_code: str
+    ) -> None:
+        """Test that known sandbox escape patterns are blocked."""
+        assert try_attack(f"x = {attack_code}"), f"Escape pattern '{pattern_name}' should be blocked"
+
+
+class TestFormatStringAttacks:
+    """Security tests for format string attacks (Issue 005).
+
+    These tests verify that format string attacks that try to access
+    dangerous attributes through string formatting are blocked.
+
+    Format string attacks can bypass attribute guards if not properly handled.
+    RestrictedPython should block these at compile time or runtime.
+    """
+
+    @pytest.fixture
+    def try_format_attack(self):
+        """Helper to attempt a format string attack and verify it's blocked."""
+
+        def _try_attack(format_code: str) -> bool:
+            """Try to compile and execute format attack. Returns True if blocked."""
+            code = f'''
+class FormatAttackStrategy(Strategy):
+    def on_bar(self, bar):
+        obj = self
+        {format_code}
+'''
+            try:
+                compiled = compile_strategy(code)
+                local_namespace: dict = {}
+                exec(compiled.code_object, compiled.restricted_globals, local_namespace)
+
+                from unittest.mock import MagicMock
+
+                strategy_class = local_namespace["FormatAttackStrategy"]
+                instance = strategy_class.__new__(strategy_class)
+                instance.ctx = MagicMock()
+
+                bar = MagicMock()
+                bar.close = 100
+                bar.open = 99
+                bar.symbol = "BTC/USDT"
+
+                instance.on_bar(bar)
+                return False  # Attack succeeded
+            except Exception:
+                return True  # Attack blocked
+
+        return _try_attack
+
+    def test_format_class_access_blocked(self, try_format_attack):
+        """Test that format string __class__ access is blocked."""
+        assert try_format_attack('result = "{0.__class__}".format(obj)'), \
+            "Format string __class__ access should be blocked"
+
+    def test_format_bases_access_blocked(self, try_format_attack):
+        """Test that format string __bases__ access is blocked."""
+        assert try_format_attack('result = "{0.__class__.__bases__}".format(obj)'), \
+            "Format string __bases__ access should be blocked"
+
+    def test_format_init_globals_blocked(self, try_format_attack):
+        """Test that format string __init__.__globals__ access is blocked."""
+        assert try_format_attack('result = "{0.__init__.__globals__}".format(obj)'), \
+            "Format string __init__.__globals__ access should be blocked"
+
+    def test_fstring_class_access_blocked(self, try_format_attack):
+        """Test that f-string __class__ access is blocked."""
+        assert try_format_attack('result = f"{obj.__class__}"'), \
+            "F-string __class__ access should be blocked"
+
+    def test_fstring_nested_access_blocked(self, try_format_attack):
+        """Test that f-string nested attribute access is blocked."""
+        assert try_format_attack('result = f"{obj.__class__.__bases__}"'), \
+            "F-string nested attribute access should be blocked"
+
+    # Common format string attack patterns
+    FORMAT_ATTACK_PATTERNS = [
+        ("format_class", '"{0.__class__}".format(obj)'),
+        ("format_subclasses", '"{0.__class__.__subclasses__}".format(obj)'),
+        ("format_mro", '"{0.__class__.__mro__}".format(obj)'),
+        ("fstring_class", 'f"{obj.__class__}"'),
+        ("fstring_dict", 'f"{obj.__dict__}"'),
+    ]
+
+    @pytest.mark.parametrize("attack_name,attack_code", FORMAT_ATTACK_PATTERNS)
+    def test_format_attack_pattern_blocked(
+        self, try_format_attack, attack_name: str, attack_code: str
+    ) -> None:
+        """Test that format string attack patterns are blocked."""
+        assert try_format_attack(f"result = {attack_code}"), \
+            f"Format attack '{attack_name}' should be blocked"
+
+
+class TestAdditionalSecurityChecks:
+    """Additional security tests for edge cases."""
+
+    def test_getattr_builtin_blocked_in_validation(self):
+        """Test that getattr builtin is blocked at validation time."""
+        code = """
+class AttackStrategy(Strategy):
+    def on_bar(self, bar):
+        x = getattr(self, '__class__')
+"""
+        result = validate_strategy_code(code)
+        assert result.valid is False
+        assert any("getattr" in err for err in result.errors)
+
+    def test_setattr_builtin_blocked_in_validation(self):
+        """Test that setattr builtin is blocked at validation time."""
+        code = """
+class AttackStrategy(Strategy):
+    def on_bar(self, bar):
+        setattr(self, 'evil', True)
+"""
+        result = validate_strategy_code(code)
+        assert result.valid is False
+        assert any("setattr" in err for err in result.errors)
+
+    def test_delattr_builtin_blocked_in_validation(self):
+        """Test that delattr builtin is blocked at validation time."""
+        code = """
+class AttackStrategy(Strategy):
+    def on_bar(self, bar):
+        delattr(self, 'ctx')
+"""
+        result = validate_strategy_code(code)
+        assert result.valid is False
+        assert any("delattr" in err for err in result.errors)
+
+    def test_vars_builtin_blocked_in_validation(self):
+        """Test that vars builtin is blocked at validation time."""
+        code = """
+class AttackStrategy(Strategy):
+    def on_bar(self, bar):
+        x = vars(self)
+"""
+        result = validate_strategy_code(code)
+        assert result.valid is False
+        assert any("vars" in err for err in result.errors)
+
+    def test_dir_builtin_blocked_in_validation(self):
+        """Test that dir builtin is blocked at validation time."""
+        code = """
+class AttackStrategy(Strategy):
+    def on_bar(self, bar):
+        x = dir(self)
+"""
+        result = validate_strategy_code(code)
+        assert result.valid is False
+        assert any("dir" in err for err in result.errors)
+
+    def test_type_builtin_blocked_in_validation(self):
+        """Test that type builtin is blocked at validation time."""
+        code = """
+class AttackStrategy(Strategy):
+    def on_bar(self, bar):
+        x = type(self)
+"""
+        result = validate_strategy_code(code)
+        assert result.valid is False
+        assert any("type" in err for err in result.errors)
+
+    def test_object_subclasses_blocked_by_attribute_guard(self):
+        """Test that object.__subclasses__() is blocked by RestrictedPython.
+
+        Note: 'object' itself may pass validation, but RestrictedPython
+        blocks access to __subclasses__ (dunder attribute) at compile time.
+        """
+        code = """
+class AttackStrategy(Strategy):
+    def on_bar(self, bar):
+        x = object.__subclasses__()
+"""
+        result = validate_strategy_code(code)
+        # Blocked at compile time due to __subclasses__ attribute access
+        assert result.valid is False
+        # Error message mentions the invalid attribute pattern
+        assert any("__subclasses__" in err or "invalid attribute" in err.lower() for err in result.errors)

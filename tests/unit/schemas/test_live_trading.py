@@ -168,13 +168,13 @@ class TestStartLiveTradingRequest:
         request = StartLiveTradingRequest(
             strategy_id=uuid4(),
             symbol="BTC/USDT",
-            exchange="okx",
+            exchange_account_id=uuid4(),
             timeframe="1m",
             risk_config=risk_config,
         )
 
         assert request.symbol == "BTC/USDT"
-        assert request.exchange == "okx"
+        assert request.exchange_account_id is not None
         assert request.initial_equity is None
         assert request.params is None
 
@@ -190,7 +190,7 @@ class TestStartLiveTradingRequest:
         request = StartLiveTradingRequest(
             strategy_id=uuid4(),
             symbol="ETH/USDT",
-            exchange="binance",
+            exchange_account_id=uuid4(),
             timeframe="5m",
             risk_config=risk_config,
             initial_equity=Decimal("10000"),
@@ -213,13 +213,13 @@ class TestStartLiveTradingRequest:
             StartLiveTradingRequest(
                 strategy_id=uuid4(),
                 symbol="",
-                exchange="okx",
+                exchange_account_id=uuid4(),
                 timeframe="1m",
                 risk_config=risk_config,
             )
 
-    def test_exchange_validation(self):
-        """Test exchange field validation."""
+    def test_exchange_account_id_required(self):
+        """Test exchange_account_id field is required."""
         risk_config = RiskConfigRequest(
             max_position_size=Decimal("0.5"),
             max_order_size=Decimal("0.1"),
@@ -231,7 +231,7 @@ class TestStartLiveTradingRequest:
             StartLiveTradingRequest(
                 strategy_id=uuid4(),
                 symbol="BTC/USDT",
-                exchange="",
+                # Missing exchange_account_id
                 timeframe="1m",
                 risk_config=risk_config,
             )
@@ -249,7 +249,7 @@ class TestStartLiveTradingRequest:
             StartLiveTradingRequest(
                 strategy_id=uuid4(),
                 symbol="BTC/USDT",
-                exchange="okx",
+                exchange_account_id=uuid4(),
                 timeframe="1m",
                 risk_config=risk_config,
                 initial_equity=Decimal("-100"),

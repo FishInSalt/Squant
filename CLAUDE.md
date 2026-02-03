@@ -8,7 +8,7 @@ Squant is a personal quantitative trading system for cryptocurrency. It supports
 
 ## Development Commands
 
-### Backend (Python with uv)
+### Backend (Python 3.12+ with uv)
 
 ```bash
 # Start dev dependencies (PostgreSQL + TimescaleDB, Redis)

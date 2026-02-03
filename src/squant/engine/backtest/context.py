@@ -99,6 +99,9 @@ class BacktestContext:
         # Total fees paid
         self._total_fees = Decimal("0")
 
+        # Price cache for multi-symbol equity calculation
+        self._last_prices: dict[str, Decimal] = {}
+
     # =========================================================================
     # Public Properties
     # =========================================================================
@@ -245,6 +248,9 @@ class BacktestContext:
     ) -> str:
         """Place a sell order.
 
+        This is a SPOT trading system - short selling is not allowed.
+        You can only sell what you own.
+
         Args:
             symbol: Trading symbol.
             amount: Amount to sell (must be positive).
@@ -254,17 +260,36 @@ class BacktestContext:
             Order ID.
 
         Raises:
-            ValueError: If amount is not positive.
+            ValueError: If amount is not positive or exceeds position.
         """
         if amount <= 0:
             raise ValueError("Amount must be positive")
+
+        amount = Decimal(str(amount))
+
+        # Validate sufficient position (spot trading - no short selling)
+        position = self._positions.get(symbol)
+        current_position = position.amount if position else Decimal("0")
+
+        # Calculate total pending sell amount for this symbol
+        pending_sell_amount = Decimal("0")
+        for order in self._pending_orders:
+            if order.symbol == symbol and order.side == OrderSide.SELL:
+                pending_sell_amount += order.remaining
+
+        available_to_sell = current_position - pending_sell_amount
+        if amount > available_to_sell:
+            raise ValueError(
+                f"Insufficient position for sell order: available={available_to_sell}, "
+                f"requested={amount} (position={current_position}, pending_sells={pending_sell_amount})"
+            )
 
         order_type = OrderType.LIMIT if price is not None else OrderType.MARKET
         order = SimulatedOrder.create(
             symbol=symbol,
             side=OrderSide.SELL,
             order_type=order_type,
-            amount=Decimal(str(amount)),
+            amount=amount,
             price=Decimal(str(price)) if price is not None else None,
             created_at=self._current_bar.time if self._current_bar else None,
         )
@@ -415,6 +440,8 @@ class BacktestContext:
     def _set_current_bar(self, bar: Bar) -> None:
         """Set the current bar being processed."""
         self._current_bar = bar
+        # Update price cache for multi-symbol equity calculation
+        self._last_prices[bar.symbol] = bar.close
 
     def _add_bar_to_history(self, bar: Bar) -> None:
         """Add a bar to the history buffer."""
@@ -431,11 +458,10 @@ class BacktestContext:
 
         Args:
             fill: Fill event to process.
-        """
-        # Record the fill
-        self._fills.append(fill)
-        self._total_fees += fill.fee
 
+        Raises:
+            ValueError: If insufficient cash for buy order or insufficient position for sell.
+        """
         # Update position
         if fill.symbol not in self._positions:
             self._positions[fill.symbol] = Position(fill.symbol)
@@ -443,15 +469,31 @@ class BacktestContext:
         position = self._positions[fill.symbol]
         prev_amount = position.amount
 
-        # Calculate trade cost/proceeds
+        # Calculate trade cost/proceeds and validate
         if fill.side == OrderSide.BUY:
             cost = fill.price * fill.amount + fill.fee
+            # Validate sufficient cash before executing
+            if self._cash < cost:
+                raise ValueError(
+                    f"Insufficient cash for fill: available={self._cash}, "
+                    f"required={cost} (price={fill.price}, amount={fill.amount}, fee={fill.fee})"
+                )
             self._cash -= cost
         else:
+            # Validate sufficient position before executing (spot trading - no short)
+            if position.amount < fill.amount:
+                raise ValueError(
+                    f"Insufficient position for sell fill: position={position.amount}, "
+                    f"fill_amount={fill.amount}"
+                )
             proceeds = fill.price * fill.amount - fill.fee
             self._cash += proceeds
 
-        # Update position
+        # Record the fill (only after validation passes)
+        self._fills.append(fill)
+        self._total_fees += fill.fee
+
+        # Update position (this may also raise if trying to go short)
         position.update(fill.amount, fill.price, fill.side)
 
         # Track trades (entry/exit)
@@ -596,30 +638,34 @@ class BacktestContext:
         self._equity_curve.append(snapshot)
 
     def _get_position_value(self) -> Decimal:
-        """Calculate total position value at current market price."""
-        if not self._current_bar:
-            return Decimal("0")
+        """Calculate total position value at current market price.
 
+        Uses cached prices for multi-symbol strategies.
+        """
         total = Decimal("0")
         for symbol, position in self._positions.items():
-            if position.is_open and symbol == self._current_bar.symbol:
-                total += position.amount * self._current_bar.close
+            if position.is_open:
+                price = self._last_prices.get(symbol)
+                if price is not None:
+                    total += position.amount * price
         return total
 
     def _get_unrealized_pnl(self) -> Decimal:
-        """Calculate unrealized PnL for all positions."""
-        if not self._current_bar:
-            return Decimal("0")
+        """Calculate unrealized PnL for all positions.
 
+        Uses cached prices for multi-symbol strategies.
+        """
         total = Decimal("0")
         for symbol, position in self._positions.items():
-            if position.is_open and symbol == self._current_bar.symbol:
-                if position.amount > 0:
-                    # Long position
-                    total += (self._current_bar.close - position.avg_entry_price) * position.amount
-                else:
-                    # Short position
-                    total += (position.avg_entry_price - self._current_bar.close) * abs(
-                        position.amount
-                    )
+            if position.is_open:
+                price = self._last_prices.get(symbol)
+                if price is not None:
+                    if position.amount > 0:
+                        # Long position
+                        total += (price - position.avg_entry_price) * position.amount
+                    else:
+                        # Short position
+                        total += (position.avg_entry_price - price) * abs(
+                            position.amount
+                        )
         return total

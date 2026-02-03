@@ -434,7 +434,7 @@ class TestCCXTRestAdapterMarketData:
         """Test get_ticker when not connected raises error."""
         adapter = CCXTRestAdapter("okx")
 
-        with pytest.raises(RuntimeError, match="not connected"):
+        with pytest.raises(ExchangeConnectionError, match="not connected"):
             await adapter.get_ticker("BTC/USDT")
 
     @pytest.mark.asyncio

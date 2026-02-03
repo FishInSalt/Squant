@@ -9,6 +9,7 @@ from squant.engine.backtest.matching import MatchingEngine
 from squant.engine.backtest.types import (
     Bar,
     OrderSide,
+    OrderStatus,
     OrderType,
     SimulatedOrder,
 )
@@ -125,6 +126,62 @@ class TestSlippage:
         # Expected: 42000 * 0.999 = 41958
         assert fills[0].price == Decimal("41958")
 
+    def test_slippage_clamped_to_bar_high(self) -> None:
+        """Test that buy slippage is clamped to bar's high price."""
+        # Create a bar with tight range
+        bar = Bar(
+            time=datetime(2024, 1, 1, tzinfo=UTC),
+            symbol="BTC/USDT",
+            open=Decimal("42000"),
+            high=Decimal("42010"),  # Very tight high
+            low=Decimal("41990"),
+            close=Decimal("42005"),
+            volume=Decimal("1000"),
+        )
+        engine = MatchingEngine(
+            commission_rate=Decimal("0.001"),
+            slippage=Decimal("0.01"),  # 1% slippage would exceed high
+        )
+        order = SimulatedOrder.create(
+            symbol="BTC/USDT",
+            side=OrderSide.BUY,
+            order_type=OrderType.MARKET,
+            amount=Decimal("1"),
+        )
+
+        fills = engine.process_bar(bar, [order])
+
+        # Slippage would be 42000 * 1.01 = 42420, but clamped to high
+        assert fills[0].price == Decimal("42010")
+
+    def test_slippage_clamped_to_bar_low(self) -> None:
+        """Test that sell slippage is clamped to bar's low price."""
+        # Create a bar with tight range
+        bar = Bar(
+            time=datetime(2024, 1, 1, tzinfo=UTC),
+            symbol="BTC/USDT",
+            open=Decimal("42000"),
+            high=Decimal("42010"),
+            low=Decimal("41990"),  # Very tight low
+            close=Decimal("42005"),
+            volume=Decimal("1000"),
+        )
+        engine = MatchingEngine(
+            commission_rate=Decimal("0.001"),
+            slippage=Decimal("0.01"),  # 1% slippage would go below low
+        )
+        order = SimulatedOrder.create(
+            symbol="BTC/USDT",
+            side=OrderSide.SELL,
+            order_type=OrderType.MARKET,
+            amount=Decimal("1"),
+        )
+
+        fills = engine.process_bar(bar, [order])
+
+        # Slippage would be 42000 * 0.99 = 41580, but clamped to low
+        assert fills[0].price == Decimal("41990")
+
 
 class TestLimitOrders:
     """Tests for limit order matching."""
@@ -221,6 +278,32 @@ class TestLimitOrders:
         assert len(fills) == 1
         assert fills[0].price == Decimal("40000")
 
+    def test_sell_limit_better_fill_on_gap_up(self, engine: MatchingEngine) -> None:
+        """Test that sell limit gets better price on gap up."""
+        # Bar opens above limit price
+        bar = Bar(
+            time=datetime(2024, 1, 1, tzinfo=UTC),
+            symbol="BTC/USDT",
+            open=Decimal("45000"),  # Gap up above limit
+            high=Decimal("46000"),
+            low=Decimal("44500"),
+            close=Decimal("45500"),
+            volume=Decimal("1000"),
+        )
+        order = SimulatedOrder.create(
+            symbol="BTC/USDT",
+            side=OrderSide.SELL,
+            order_type=OrderType.LIMIT,
+            amount=Decimal("1"),
+            price=Decimal("44000"),  # Limit below open
+        )
+
+        fills = engine.process_bar(bar, [order])
+
+        # Should fill at open (better than limit)
+        assert len(fills) == 1
+        assert fills[0].price == Decimal("45000")
+
 
 class TestMultipleOrders:
     """Tests for multiple order processing."""
@@ -260,6 +343,42 @@ class TestMultipleOrders:
         assert len(fills) == 0
 
 
+class TestFilledOrdersSkipped:
+    """Tests for skipping already processed orders."""
+
+    def test_filled_order_not_processed(
+        self, engine: MatchingEngine, sample_bar: Bar
+    ) -> None:
+        """Test that filled orders are skipped."""
+        order = SimulatedOrder.create(
+            symbol="BTC/USDT",
+            side=OrderSide.BUY,
+            order_type=OrderType.MARKET,
+            amount=Decimal("1"),
+        )
+        order.status = OrderStatus.FILLED
+
+        fills = engine.process_bar(sample_bar, [order])
+
+        assert len(fills) == 0
+
+    def test_cancelled_order_not_processed(
+        self, engine: MatchingEngine, sample_bar: Bar
+    ) -> None:
+        """Test that cancelled orders are skipped."""
+        order = SimulatedOrder.create(
+            symbol="BTC/USDT",
+            side=OrderSide.BUY,
+            order_type=OrderType.MARKET,
+            amount=Decimal("1"),
+        )
+        order.status = OrderStatus.CANCELLED
+
+        fills = engine.process_bar(sample_bar, [order])
+
+        assert len(fills) == 0
+
+
 class TestOrderValidation:
     """Tests for order validation."""
 
@@ -290,3 +409,44 @@ class TestOrderValidation:
         is_valid, error = engine.validate_order(order, Decimal("1000"))  # Not enough
         assert is_valid is False
         assert "Insufficient cash" in error
+
+    def test_validate_zero_amount(self, engine: MatchingEngine) -> None:
+        """Test validation fails for zero amount order."""
+        order = SimulatedOrder(
+            id="test",
+            symbol="BTC/USDT",
+            side=OrderSide.BUY,
+            type=OrderType.MARKET,
+            amount=Decimal("0"),
+        )
+
+        is_valid, error = engine.validate_order(order, Decimal("100000"))
+        assert is_valid is False
+        assert "positive" in error.lower()
+
+    def test_validate_negative_amount(self, engine: MatchingEngine) -> None:
+        """Test validation fails for negative amount order."""
+        order = SimulatedOrder(
+            id="test",
+            symbol="BTC/USDT",
+            side=OrderSide.BUY,
+            type=OrderType.MARKET,
+            amount=Decimal("-1"),
+        )
+
+        is_valid, error = engine.validate_order(order, Decimal("100000"))
+        assert is_valid is False
+        assert "positive" in error.lower()
+
+    def test_validate_sell_order_passes(self, engine: MatchingEngine) -> None:
+        """Test that sell orders pass validation without cash check."""
+        order = SimulatedOrder.create(
+            symbol="BTC/USDT",
+            side=OrderSide.SELL,
+            order_type=OrderType.MARKET,
+            amount=Decimal("1"),
+        )
+
+        is_valid, error = engine.validate_order(order, Decimal("0"))  # No cash
+        assert is_valid is True
+        assert error == ""

@@ -85,8 +85,13 @@ class TestOrderPlacement:
     def test_sell_order_creates_pending_order(
         self, context: BacktestContext, sample_bar: Bar
     ) -> None:
-        """Test that sell creates a pending order."""
+        """Test that sell creates a pending order when position exists."""
         context._set_current_bar(sample_bar)
+
+        # First establish a position (spot trading requires owning before selling)
+        from squant.engine.backtest.types import Position
+
+        context._positions["BTC/USDT"] = Position("BTC/USDT", Decimal("1"), Decimal("40000"))
 
         order_id = context.sell("BTC/USDT", Decimal("0.5"))
 
@@ -95,6 +100,45 @@ class TestOrderPlacement:
         assert order.id == order_id
         assert order.side == OrderSide.SELL
         assert order.amount == Decimal("0.5")
+
+    def test_sell_without_position_raises(
+        self, context: BacktestContext, sample_bar: Bar
+    ) -> None:
+        """Test that sell without position raises error (spot trading - no short selling)."""
+        context._set_current_bar(sample_bar)
+
+        with pytest.raises(ValueError, match="Insufficient position"):
+            context.sell("BTC/USDT", Decimal("0.5"))
+
+    def test_sell_more_than_position_raises(
+        self, context: BacktestContext, sample_bar: Bar
+    ) -> None:
+        """Test that selling more than position raises error (spot trading - no short selling)."""
+        context._set_current_bar(sample_bar)
+
+        from squant.engine.backtest.types import Position
+
+        context._positions["BTC/USDT"] = Position("BTC/USDT", Decimal("1"), Decimal("40000"))
+
+        with pytest.raises(ValueError, match="Insufficient position"):
+            context.sell("BTC/USDT", Decimal("1.5"))
+
+    def test_sell_considers_pending_orders(
+        self, context: BacktestContext, sample_bar: Bar
+    ) -> None:
+        """Test that sell considers pending sell orders when validating position."""
+        context._set_current_bar(sample_bar)
+
+        from squant.engine.backtest.types import Position
+
+        context._positions["BTC/USDT"] = Position("BTC/USDT", Decimal("1"), Decimal("40000"))
+
+        # First sell order for 0.7
+        context.sell("BTC/USDT", Decimal("0.7"))
+
+        # Second sell order should fail because only 0.3 available
+        with pytest.raises(ValueError, match="Insufficient position"):
+            context.sell("BTC/USDT", Decimal("0.5"))
 
     def test_limit_buy_order(self, context: BacktestContext, sample_bar: Bar) -> None:
         """Test limit buy order placement."""
@@ -209,6 +253,53 @@ class TestFillProcessing:
         assert pos is not None
         assert pos.amount == Decimal("1")
         assert pos.avg_entry_price == Decimal("42000")
+
+    def test_buy_fill_insufficient_cash_raises(
+        self, context: BacktestContext, sample_bar: Bar
+    ) -> None:
+        """Test that buy fill with insufficient cash raises error."""
+        context._set_current_bar(sample_bar)
+        context._add_bar_to_history(sample_bar)
+
+        # Try to fill an order that costs more than available cash
+        fill = Fill(
+            order_id="test-order",
+            symbol="BTC/USDT",
+            side=OrderSide.BUY,
+            price=Decimal("100000"),  # Price that exceeds cash
+            amount=Decimal("2"),  # 200,000 total cost > 100,000 cash
+            fee=Decimal("200"),
+            timestamp=sample_bar.time,
+        )
+
+        with pytest.raises(ValueError, match="Insufficient cash"):
+            context._process_fill(fill)
+
+    def test_sell_fill_insufficient_position_raises(
+        self, context: BacktestContext, sample_bar: Bar
+    ) -> None:
+        """Test that sell fill with insufficient position raises error (spot - no short)."""
+        context._set_current_bar(sample_bar)
+        context._add_bar_to_history(sample_bar)
+
+        # Create a small position
+        from squant.engine.backtest.types import Position
+
+        context._positions["BTC/USDT"] = Position("BTC/USDT", Decimal("0.5"), Decimal("40000"))
+
+        # Try to fill a sell order for more than position
+        fill = Fill(
+            order_id="test-order",
+            symbol="BTC/USDT",
+            side=OrderSide.SELL,
+            price=Decimal("42000"),
+            amount=Decimal("1"),  # More than 0.5 position
+            fee=Decimal("42"),
+            timestamp=sample_bar.time,
+        )
+
+        with pytest.raises(ValueError, match="Insufficient position"):
+            context._process_fill(fill)
 
 
 class TestMarketDataAccess:

@@ -305,9 +305,17 @@ class OKXAdapter(ExchangeAdapter):
                 exchange="okx",
             )
 
+        # Validate that ordId is present in response (Issue 028)
+        order_id = order_data.get("ordId")
+        if not order_id:
+            raise ExchangeAPIError(
+                message="No ordId in order placement response",
+                exchange="okx",
+            )
+
         # Return basic response; full details require get_order
         return OrderResponse(
-            order_id=order_data.get("ordId", ""),
+            order_id=order_id,
             client_order_id=order_data.get("clOrdId"),
             symbol=request.symbol,
             side=request.side,
@@ -321,6 +329,14 @@ class OKXAdapter(ExchangeAdapter):
 
     async def cancel_order(self, request: CancelOrderRequest) -> OrderResponse:
         """Cancel an existing order."""
+        # Validate that at least one identifier is provided (Issue 026)
+        if not request.order_id and not request.client_order_id:
+            raise InvalidOrderError(
+                message="Either order_id or client_order_id is required to cancel an order",
+                exchange="okx",
+                field="order_id",
+            )
+
         okx_symbol = self._to_okx_symbol(request.symbol)
 
         body: dict[str, Any] = {
@@ -361,8 +377,14 @@ class OKXAdapter(ExchangeAdapter):
                 code=error_code,
             )
 
-        # Get full order details
-        order_id = order_data.get("ordId", request.order_id or "")
+        # Get full order details using the order_id from response or request
+        order_id = order_data.get("ordId") or request.order_id
+        if not order_id:
+            # This shouldn't happen if validation passed, but handle it gracefully
+            raise ExchangeAPIError(
+                message="No order_id in cancel response and none provided in request",
+                exchange="okx",
+            )
         return await self.get_order(request.symbol, order_id)
 
     async def get_order(self, symbol: str, order_id: str) -> OrderResponse:
