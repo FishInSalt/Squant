@@ -586,3 +586,122 @@ class TestCancelOrderRequestValidation:
             client_order_id="my-order-1",
         )
         assert request.client_order_id == "my-order-1"
+
+
+class TestCancelOrderAdapterValidation:
+    """Tests for adapter-level cancel order validation (Issue 026)."""
+
+    @pytest.fixture
+    def adapter(self) -> OKXAdapter:
+        """Create test adapter."""
+        return OKXAdapter(
+            api_key="test-key",
+            api_secret="test-secret",
+            passphrase="test-passphrase",
+        )
+
+    @pytest.mark.asyncio
+    async def test_cancel_order_success_with_order_id(self, adapter: OKXAdapter) -> None:
+        """Test successful cancel order with order_id."""
+        cancel_response = {
+            "code": "0",
+            "msg": "",
+            "data": [
+                {
+                    "ordId": "1234567890",
+                    "sCode": "0",
+                    "sMsg": "",
+                }
+            ],
+        }
+        get_order_response = {
+            "code": "0",
+            "msg": "",
+            "data": [
+                {
+                    "ordId": "1234567890",
+                    "instId": "BTC-USDT",
+                    "side": "buy",
+                    "ordType": "limit",
+                    "state": "canceled",
+                    "px": "42000.0",
+                    "sz": "0.1",
+                    "accFillSz": "0",
+                    "cTime": "1705315800000",
+                    "uTime": "1705315900000",
+                }
+            ],
+        }
+
+        with (
+            patch.object(adapter._client, "post", new_callable=AsyncMock) as mock_post,
+            patch.object(adapter._client, "get", new_callable=AsyncMock) as mock_get,
+        ):
+            mock_post.return_value = cancel_response
+            mock_get.return_value = get_order_response
+
+            request = CancelOrderRequest(
+                symbol="BTC/USDT",
+                order_id="1234567890",
+            )
+
+            response = await adapter.cancel_order(request)
+
+            assert isinstance(response, OrderResponse)
+            assert response.order_id == "1234567890"
+            assert response.status == OrderStatus.CANCELLED
+
+    @pytest.mark.asyncio
+    async def test_cancel_order_success_with_client_order_id(
+        self, adapter: OKXAdapter
+    ) -> None:
+        """Test successful cancel order with client_order_id."""
+        cancel_response = {
+            "code": "0",
+            "msg": "",
+            "data": [
+                {
+                    "ordId": "1234567890",
+                    "clOrdId": "my-client-order",
+                    "sCode": "0",
+                    "sMsg": "",
+                }
+            ],
+        }
+        get_order_response = {
+            "code": "0",
+            "msg": "",
+            "data": [
+                {
+                    "ordId": "1234567890",
+                    "clOrdId": "my-client-order",
+                    "instId": "BTC-USDT",
+                    "side": "buy",
+                    "ordType": "limit",
+                    "state": "canceled",
+                    "px": "42000.0",
+                    "sz": "0.1",
+                    "accFillSz": "0",
+                    "cTime": "1705315800000",
+                    "uTime": "1705315900000",
+                }
+            ],
+        }
+
+        with (
+            patch.object(adapter._client, "post", new_callable=AsyncMock) as mock_post,
+            patch.object(adapter._client, "get", new_callable=AsyncMock) as mock_get,
+        ):
+            mock_post.return_value = cancel_response
+            mock_get.return_value = get_order_response
+
+            request = CancelOrderRequest(
+                symbol="BTC/USDT",
+                client_order_id="my-client-order",
+            )
+
+            response = await adapter.cancel_order(request)
+
+            assert isinstance(response, OrderResponse)
+            assert response.order_id == "1234567890"
+            assert response.client_order_id == "my-client-order"

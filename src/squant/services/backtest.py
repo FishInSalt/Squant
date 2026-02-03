@@ -8,12 +8,15 @@ Provides high-level operations for:
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
 from uuid import UUID
 
 from sqlalchemy import delete, func, select
+
+logger = logging.getLogger(__name__)
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from squant.engine.backtest.runner import BacktestError, BacktestRunner
@@ -38,6 +41,30 @@ class InsufficientDataError(Exception):
 
     def __init__(self, message: str):
         self.message = message
+        super().__init__(message)
+
+
+class IncompleteDataError(Exception):
+    """Historical data doesn't cover the full requested range.
+
+    This is different from InsufficientDataError - we have some data,
+    but it doesn't span the entire requested period.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        first_bar: str | None = None,
+        last_bar: str | None = None,
+        requested_start: str | None = None,
+        requested_end: str | None = None,
+    ):
+        self.message = message
+        self.first_bar = first_bar
+        self.last_bar = last_bar
+        self.requested_start = requested_start
+        self.requested_end = requested_end
         super().__init__(message)
 
 
@@ -171,6 +198,8 @@ class BacktestService:
         commission_rate: Decimal = Decimal("0.001"),
         slippage: Decimal = Decimal("0"),
         params: dict[str, Any] | None = None,
+        *,
+        allow_partial_data: bool = False,
     ) -> StrategyRun:
         """Create and execute a backtest.
 
@@ -185,13 +214,18 @@ class BacktestService:
             commission_rate: Commission rate.
             slippage: Slippage rate.
             params: Strategy parameters.
+            allow_partial_data: If True, allow running backtest with incomplete
+                data coverage. A warning will be logged but no error raised.
+                Default is False (strict validation).
 
         Returns:
             StrategyRun with backtest results.
 
         Raises:
             StrategyNotFoundError: If strategy not found.
-            InsufficientDataError: If not enough historical data.
+            InsufficientDataError: If no historical data available.
+            IncompleteDataError: If data doesn't cover full range
+                (unless allow_partial_data=True).
             BacktestError: If backtest execution fails.
         """
         # Create the run record
@@ -210,7 +244,7 @@ class BacktestService:
 
         # Execute the backtest
         try:
-            run = await self.run(UUID(run.id))
+            run = await self.run(UUID(run.id), allow_partial_data=allow_partial_data)
         except Exception as e:
             # Update run status to error
             await self.run_repo.update(
@@ -284,18 +318,28 @@ class BacktestService:
         await self.session.commit()
         return run
 
-    async def run(self, run_id: UUID) -> StrategyRun:
+    async def run(
+        self,
+        run_id: UUID,
+        *,
+        allow_partial_data: bool = False,
+    ) -> StrategyRun:
         """Execute a pending backtest.
 
         Args:
             run_id: StrategyRun ID.
+            allow_partial_data: If True, allow running backtest with incomplete
+                data coverage. A warning will be logged but no error raised.
+                Default is False (strict validation).
 
         Returns:
             Updated StrategyRun with results.
 
         Raises:
             BacktestNotFoundError: If run not found.
-            InsufficientDataError: If not enough historical data.
+            InsufficientDataError: If no historical data available.
+            IncompleteDataError: If data doesn't cover full range
+                (unless allow_partial_data=True).
             BacktestError: If backtest execution fails.
         """
         # Get run record
@@ -323,6 +367,35 @@ class BacktestService:
                 f"No data available for {run.exchange}:{run.symbol}:{run.timeframe} "
                 f"between {run.backtest_start} and {run.backtest_end}"
             )
+
+        # Check if data covers the full requested range (Issue 029)
+        if not availability.is_complete:
+            first_bar_str = (
+                availability.first_bar.isoformat() if availability.first_bar else "N/A"
+            )
+            last_bar_str = (
+                availability.last_bar.isoformat() if availability.last_bar else "N/A"
+            )
+            message = (
+                f"Data doesn't cover the full requested range for "
+                f"{run.exchange}:{run.symbol}:{run.timeframe}. "
+                f"Requested: {run.backtest_start.isoformat()} to {run.backtest_end.isoformat()}, "
+                f"Available: {first_bar_str} to {last_bar_str} "
+                f"({availability.total_bars} bars). "
+                f"Running backtest on partial data may produce misleading results."
+            )
+            if allow_partial_data:
+                logger.warning(
+                    f"Proceeding with partial data (allow_partial_data=True): {message}"
+                )
+            else:
+                raise IncompleteDataError(
+                    message,
+                    first_bar=first_bar_str,
+                    last_bar=last_bar_str,
+                    requested_start=run.backtest_start.isoformat(),
+                    requested_end=run.backtest_end.isoformat(),
+                )
 
         # Update status to running
         await self.run_repo.update(

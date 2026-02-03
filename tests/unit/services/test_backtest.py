@@ -14,6 +14,7 @@ from squant.services.backtest import (
     BacktestNotFoundError,
     BacktestService,
     EquityCurveRepository,
+    IncompleteDataError,
     InsufficientDataError,
     StrategyRunRepository,
 )
@@ -36,7 +37,12 @@ def mock_strategy():
     strategy = MagicMock()
     strategy.id = str(uuid4())
     strategy.name = "Test Strategy"
-    strategy.code = "class Strategy:\n    def on_bar(self, bar): pass"
+    strategy.code = """from squant.engine.sandbox import Strategy
+
+class TestStrategy(Strategy):
+    def on_bar(self, bar):
+        pass
+"""
     return strategy
 
 
@@ -82,18 +88,53 @@ def mock_equity_curve():
 
 @pytest.fixture
 def mock_data_availability():
-    """Create a mock data availability object."""
+    """Create a mock data availability object with complete data."""
+    now = datetime.now(UTC)
+    start = now - timedelta(days=30)
     availability = MagicMock()
     availability.has_data = True
+    availability.is_complete = True  # Data covers full range
     availability.total_bars = 720
-    availability.first_bar = datetime.now(UTC) - timedelta(days=30)
-    availability.last_bar = datetime.now(UTC)
+    availability.first_bar = start
+    availability.last_bar = now
+    availability.requested_start = start
+    availability.requested_end = now
     availability.to_dict = MagicMock(
         return_value={
             "has_data": True,
+            "is_complete": True,
             "total_bars": 720,
-            "first_bar": (datetime.now(UTC) - timedelta(days=30)).isoformat(),
-            "last_bar": datetime.now(UTC).isoformat(),
+            "first_bar": start.isoformat(),
+            "last_bar": now.isoformat(),
+        }
+    )
+    return availability
+
+
+@pytest.fixture
+def mock_incomplete_data_availability():
+    """Create a mock data availability object with incomplete data coverage."""
+    now = datetime.now(UTC)
+    requested_start = now - timedelta(days=30)
+    requested_end = now
+    # Data only covers 15 days instead of 30
+    actual_start = now - timedelta(days=15)
+    actual_end = now
+    availability = MagicMock()
+    availability.has_data = True
+    availability.is_complete = False  # Data doesn't cover full range
+    availability.total_bars = 360
+    availability.first_bar = actual_start
+    availability.last_bar = actual_end
+    availability.requested_start = requested_start
+    availability.requested_end = requested_end
+    availability.to_dict = MagicMock(
+        return_value={
+            "has_data": True,
+            "is_complete": False,
+            "total_bars": 360,
+            "first_bar": actual_start.isoformat(),
+            "last_bar": actual_end.isoformat(),
         }
     )
     return availability
@@ -466,3 +507,179 @@ class TestInsufficientDataError:
 
         assert message in str(error)
         assert error.message == message
+
+
+class TestIncompleteDataError:
+    """Tests for IncompleteDataError (Issue 029)."""
+
+    def test_error_message(self):
+        """Test error message formatting."""
+        message = "Data doesn't cover the full range"
+        error = IncompleteDataError(
+            message,
+            first_bar="2024-01-15T00:00:00+00:00",
+            last_bar="2024-01-31T00:00:00+00:00",
+            requested_start="2024-01-01T00:00:00+00:00",
+            requested_end="2024-01-31T00:00:00+00:00",
+        )
+
+        assert message in str(error)
+        assert error.message == message
+        assert error.first_bar == "2024-01-15T00:00:00+00:00"
+        assert error.last_bar == "2024-01-31T00:00:00+00:00"
+        assert error.requested_start == "2024-01-01T00:00:00+00:00"
+        assert error.requested_end == "2024-01-31T00:00:00+00:00"
+
+
+class TestIncompleteDataValidation:
+    """Tests for incomplete data validation in backtest run (Issue 029)."""
+
+    @pytest.mark.asyncio
+    async def test_run_incomplete_data_raises_error(
+        self, mock_session, mock_run, mock_strategy, mock_incomplete_data_availability
+    ):
+        """Test running backtest with incomplete data raises IncompleteDataError."""
+        run_id = uuid4()
+        mock_run.id = str(run_id)
+
+        with (
+            patch.object(StrategyRunRepository, "get", new_callable=AsyncMock) as mock_get,
+            patch("squant.services.strategy.StrategyRepository") as mock_strategy_repo_class,
+            patch.object(BacktestService, "__init__", lambda x, y: None),
+        ):
+            mock_get.return_value = mock_run
+
+            mock_strategy_repo = MagicMock()
+            mock_strategy_repo.get = AsyncMock(return_value=mock_strategy)
+            mock_strategy_repo_class.return_value = mock_strategy_repo
+
+            service = BacktestService.__new__(BacktestService)
+            service.session = mock_session
+            service.run_repo = StrategyRunRepository(mock_session)
+            service.run_repo.get = mock_get
+            service.data_loader = MagicMock()
+            service.data_loader.check_data_availability = AsyncMock(
+                return_value=mock_incomplete_data_availability
+            )
+
+            with pytest.raises(IncompleteDataError) as exc_info:
+                await service.run(run_id)
+
+            # Verify error contains useful information
+            error = exc_info.value
+            assert "doesn't cover the full requested range" in str(error)
+            assert error.first_bar is not None
+            assert error.last_bar is not None
+
+    @pytest.mark.asyncio
+    async def test_run_incomplete_data_with_allow_partial_succeeds(
+        self, mock_session, mock_run, mock_strategy, mock_incomplete_data_availability
+    ):
+        """Test running backtest with allow_partial_data=True logs warning but continues."""
+        run_id = uuid4()
+        mock_run.id = str(run_id)
+
+        with (
+            patch.object(StrategyRunRepository, "get", new_callable=AsyncMock) as mock_get,
+            patch.object(StrategyRunRepository, "update", new_callable=AsyncMock) as mock_update,
+            patch("squant.services.strategy.StrategyRepository") as mock_strategy_repo_class,
+            # Patch at import location in the service module
+            patch("squant.services.backtest.BacktestRunner") as mock_runner_class,
+            patch.object(BacktestService, "__init__", lambda x, y: None),
+            patch("squant.services.backtest.logger") as mock_logger,
+        ):
+            mock_get.return_value = mock_run
+            mock_update.return_value = mock_run
+
+            mock_strategy_repo = MagicMock()
+            mock_strategy_repo.get = AsyncMock(return_value=mock_strategy)
+            mock_strategy_repo_class.return_value = mock_strategy_repo
+
+            # Mock backtest runner
+            mock_runner = MagicMock()
+            mock_result = MagicMock()
+            mock_result.metrics = {"total_return": 0.1}
+            mock_result.equity_curve = []
+            mock_runner.run = AsyncMock(return_value=mock_result)
+            mock_runner_class.return_value = mock_runner
+
+            service = BacktestService.__new__(BacktestService)
+            service.session = mock_session
+            service.run_repo = StrategyRunRepository(mock_session)
+            service.run_repo.get = mock_get
+            service.run_repo.update = mock_update
+            service.equity_repo = EquityCurveRepository(mock_session)
+            service.data_loader = MagicMock()
+            service.data_loader.check_data_availability = AsyncMock(
+                return_value=mock_incomplete_data_availability
+            )
+
+            # Mock load_bars as an async generator
+            async def mock_load_bars(*args, **kwargs):
+                return
+                yield  # Make it an async generator
+
+            service.data_loader.load_bars = mock_load_bars
+
+            # Should not raise with allow_partial_data=True
+            result = await service.run(run_id, allow_partial_data=True)
+
+            # Verify warning was logged
+            mock_logger.warning.assert_called_once()
+            warning_msg = mock_logger.warning.call_args[0][0]
+            assert "Proceeding with partial data" in warning_msg
+            assert "allow_partial_data=True" in warning_msg
+
+    @pytest.mark.asyncio
+    async def test_run_complete_data_succeeds(
+        self, mock_session, mock_run, mock_strategy, mock_data_availability
+    ):
+        """Test running backtest with complete data coverage succeeds."""
+        run_id = uuid4()
+        mock_run.id = str(run_id)
+
+        with (
+            patch.object(StrategyRunRepository, "get", new_callable=AsyncMock) as mock_get,
+            patch.object(StrategyRunRepository, "update", new_callable=AsyncMock) as mock_update,
+            patch("squant.services.strategy.StrategyRepository") as mock_strategy_repo_class,
+            # Patch at import location in the service module
+            patch("squant.services.backtest.BacktestRunner") as mock_runner_class,
+            patch.object(BacktestService, "__init__", lambda x, y: None),
+        ):
+            mock_get.return_value = mock_run
+            mock_update.return_value = mock_run
+
+            mock_strategy_repo = MagicMock()
+            mock_strategy_repo.get = AsyncMock(return_value=mock_strategy)
+            mock_strategy_repo_class.return_value = mock_strategy_repo
+
+            # Mock backtest runner
+            mock_runner = MagicMock()
+            mock_result = MagicMock()
+            mock_result.metrics = {"total_return": 0.1}
+            mock_result.equity_curve = []
+            mock_runner.run = AsyncMock(return_value=mock_result)
+            mock_runner_class.return_value = mock_runner
+
+            service = BacktestService.__new__(BacktestService)
+            service.session = mock_session
+            service.run_repo = StrategyRunRepository(mock_session)
+            service.run_repo.get = mock_get
+            service.run_repo.update = mock_update
+            service.equity_repo = EquityCurveRepository(mock_session)
+            service.data_loader = MagicMock()
+            service.data_loader.check_data_availability = AsyncMock(
+                return_value=mock_data_availability
+            )
+
+            # Mock load_bars as an async generator
+            async def mock_load_bars(*args, **kwargs):
+                return
+                yield  # Make it an async generator
+
+            service.data_loader.load_bars = mock_load_bars
+
+            # Should succeed with complete data
+            result = await service.run(run_id)
+
+            assert result == mock_run
