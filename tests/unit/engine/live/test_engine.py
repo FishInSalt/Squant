@@ -1186,3 +1186,50 @@ class TestCircuitBreakerIntegration:
         # Consecutive losses should be reset
         assert engine._risk_manager.state.consecutive_losses == 0
         assert engine._risk_manager.state.circuit_breaker_triggered is False
+
+    @pytest.mark.asyncio
+    async def test_circuit_breaker_triggers_global_stop(
+        self, engine_with_circuit_breaker, mock_adapter
+    ):
+        """Test that circuit breaker triggers global stop of all sessions (Issue 033)."""
+        engine = engine_with_circuit_breaker
+        await engine.start()
+
+        # Mock the session managers - patch at the import source
+        with patch("squant.engine.live.manager.get_live_session_manager") as mock_get_live, \
+             patch("squant.engine.paper.manager.get_session_manager") as mock_get_paper:
+
+            mock_live_manager = MagicMock()
+            mock_live_manager.stop_all = AsyncMock()
+            mock_get_live.return_value = mock_live_manager
+
+            mock_paper_manager = MagicMock()
+            mock_paper_manager.stop_all = AsyncMock()
+            mock_get_paper.return_value = mock_paper_manager
+
+            # Set circuit breaker flag
+            engine._circuit_breaker_triggered = True
+
+            # Create a candle
+            candle = WSCandle(
+                symbol="BTC/USDT",
+                timeframe="1m",
+                timestamp=datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC),
+                open=Decimal("45000"),
+                high=Decimal("46000"),
+                low=Decimal("44000"),
+                close=Decimal("45500"),
+                volume=Decimal("100"),
+                is_closed=True,
+            )
+
+            # Process candle - should trigger global circuit breaker
+            await engine.process_candle(candle)
+
+            # Both managers should have stop_all called
+            mock_live_manager.stop_all.assert_called_once()
+            mock_paper_manager.stop_all.assert_called_once()
+
+            # Verify reason contains the run_id
+            live_call_args = mock_live_manager.stop_all.call_args
+            assert str(engine.run_id) in live_call_args.kwargs.get("reason", "")

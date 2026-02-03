@@ -235,6 +235,40 @@ class LiveTradingEngine:
         """Get the risk manager."""
         return self._risk_manager
 
+    async def _trigger_global_circuit_breaker(self) -> None:
+        """Trigger global circuit breaker to stop all trading sessions.
+
+        Called when this session's local circuit breaker triggers due to
+        consecutive losses. This ensures all sessions stop for safety,
+        implementing the global risk synchronization (Issue 033 fix).
+        """
+        from squant.engine.live.manager import get_live_session_manager
+        from squant.engine.paper.manager import get_session_manager
+
+        reason = (
+            f"Auto-triggered by session {self._run_id}: "
+            f"{self._risk_manager.state.consecutive_losses} consecutive losses"
+        )
+
+        logger.critical(
+            f"GLOBAL CIRCUIT BREAKER TRIGGERED: {reason} | "
+            f"Stopping all trading sessions for safety"
+        )
+
+        # Stop all live sessions (except this one which is already stopped)
+        live_manager = get_live_session_manager()
+        try:
+            await live_manager.stop_all(reason=f"Circuit breaker: {reason}")
+        except Exception as e:
+            logger.exception(f"Error stopping live sessions: {e}")
+
+        # Stop all paper sessions
+        paper_manager = get_session_manager()
+        try:
+            await paper_manager.stop_all(reason=f"Circuit breaker: {reason}")
+        except Exception as e:
+            logger.exception(f"Error stopping paper sessions: {e}")
+
     def is_healthy(self, timeout_seconds: int = 300) -> bool:
         """Check if engine is healthy (recently active).
 
@@ -389,6 +423,11 @@ class LiveTradingEngine:
                 f"Circuit breaker active for session {self._run_id}, stopping trading"
             )
             await self.stop(error="Circuit breaker triggered due to consecutive losses")
+
+            # Trigger global circuit breaker to stop all sessions (Issue 033 fix)
+            # This ensures that when one session triggers circuit breaker due to
+            # consecutive losses, all sessions are stopped for safety
+            await self._trigger_global_circuit_breaker()
             return
 
         # Only process closed candles
