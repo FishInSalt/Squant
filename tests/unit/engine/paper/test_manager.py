@@ -391,6 +391,81 @@ class TestGetSessionsNeedingPersistence:
         assert result == []
 
 
+class TestUnregisterAndCheckSubscription:
+    """Tests for atomic unregister and subscription check (Issue 019 fix)."""
+
+    @pytest.mark.asyncio
+    async def test_returns_key_when_last_session(self, session_manager):
+        """Test returns subscription key when last session using it."""
+        engine = MagicMock()
+        engine.run_id = uuid4()
+        engine.symbol = "BTC/USDT"
+        engine.timeframe = "1m"
+
+        await session_manager.register(engine)
+
+        result = await session_manager.unregister_and_check_subscription(engine.run_id)
+
+        assert result == ("BTC/USDT", "1m")
+        assert session_manager.session_count == 0
+        assert ("BTC/USDT", "1m") not in session_manager.get_subscribed_symbols()
+
+    @pytest.mark.asyncio
+    async def test_returns_none_when_other_sessions_exist(self, session_manager):
+        """Test returns None when other sessions still need subscription."""
+        engine1 = MagicMock()
+        engine1.run_id = uuid4()
+        engine1.symbol = "BTC/USDT"
+        engine1.timeframe = "1m"
+
+        engine2 = MagicMock()
+        engine2.run_id = uuid4()
+        engine2.symbol = "BTC/USDT"  # Same subscription
+        engine2.timeframe = "1m"
+
+        await session_manager.register(engine1)
+        await session_manager.register(engine2)
+
+        # Unregister first engine
+        result = await session_manager.unregister_and_check_subscription(engine1.run_id)
+
+        # Should return None because engine2 still needs it
+        assert result is None
+        assert session_manager.session_count == 1
+        assert ("BTC/USDT", "1m") in session_manager.get_subscribed_symbols()
+
+    @pytest.mark.asyncio
+    async def test_returns_none_for_unknown_engine(self, session_manager):
+        """Test returns None for unknown engine ID."""
+        result = await session_manager.unregister_and_check_subscription(uuid4())
+
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_handles_different_subscriptions(self, session_manager):
+        """Test correctly handles engines with different subscriptions."""
+        engine1 = MagicMock()
+        engine1.run_id = uuid4()
+        engine1.symbol = "BTC/USDT"
+        engine1.timeframe = "1m"
+
+        engine2 = MagicMock()
+        engine2.run_id = uuid4()
+        engine2.symbol = "ETH/USDT"  # Different symbol
+        engine2.timeframe = "1m"
+
+        await session_manager.register(engine1)
+        await session_manager.register(engine2)
+
+        # Unregister first engine
+        result = await session_manager.unregister_and_check_subscription(engine1.run_id)
+
+        # Should return the key since no other session uses BTC/USDT
+        assert result == ("BTC/USDT", "1m")
+        # ETH/USDT should still be subscribed
+        assert ("ETH/USDT", "1m") in session_manager.get_subscribed_symbols()
+
+
 class TestSingleton:
     """Tests for singleton behavior."""
 

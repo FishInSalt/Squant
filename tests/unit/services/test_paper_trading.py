@@ -380,8 +380,8 @@ class TestPaperTradingService:
 
             mock_manager = MagicMock()
             mock_manager.get.return_value = mock_engine
-            mock_manager.get_subscribed_symbols.return_value = set()
-            mock_manager.unregister = AsyncMock()
+            # Return None means no unsubscribe needed (other sessions still using it)
+            mock_manager.unregister_and_check_subscription = AsyncMock(return_value=None)
             mock_get_manager.return_value = mock_manager
 
             mock_stream = MagicMock()
@@ -392,7 +392,82 @@ class TestPaperTradingService:
             await service.stop(run_id)
 
             mock_engine.stop.assert_called_once()
-            mock_manager.unregister.assert_called_once()
+            mock_manager.unregister_and_check_subscription.assert_called_once_with(run_id)
+
+    @pytest.mark.asyncio
+    async def test_stop_session_with_unsubscribe(self, mock_session, mock_run, mock_engine):
+        """Test stop session triggers unsubscribe when last session (Issue 021)."""
+        run_id = uuid4()
+        mock_run.id = str(run_id)
+        mock_engine.symbol = "BTC/USDT"
+        mock_engine.timeframe = "1m"
+
+        with (
+            patch.object(StrategyRunRepository, "get", new_callable=AsyncMock) as mock_get,
+            patch.object(StrategyRunRepository, "update", new_callable=AsyncMock) as mock_update,
+            patch("squant.services.paper_trading.get_session_manager") as mock_get_manager,
+            patch("squant.services.paper_trading.get_stream_manager") as mock_get_stream,
+        ):
+            mock_get.return_value = mock_run
+            mock_update.return_value = mock_run
+
+            mock_manager = MagicMock()
+            mock_manager.get.return_value = mock_engine
+            # Return key means unsubscribe needed (last session)
+            mock_manager.unregister_and_check_subscription = AsyncMock(
+                return_value=("BTC/USDT", "1m")
+            )
+            mock_get_manager.return_value = mock_manager
+
+            mock_stream = MagicMock()
+            mock_stream.unsubscribe_candles = AsyncMock()
+            mock_get_stream.return_value = mock_stream
+
+            service = PaperTradingService(mock_session)
+            await service.stop(run_id)
+
+            # DB should be committed before unsubscribe (Issue 021 fix)
+            mock_session.commit.assert_called_once()
+            mock_stream.unsubscribe_candles.assert_called_once_with("BTC/USDT", "1m")
+
+    @pytest.mark.asyncio
+    async def test_stop_session_unsubscribe_failure_doesnt_fail(
+        self, mock_session, mock_run, mock_engine
+    ):
+        """Test stop succeeds even if unsubscribe fails (Issue 021)."""
+        run_id = uuid4()
+        mock_run.id = str(run_id)
+        mock_engine.symbol = "BTC/USDT"
+        mock_engine.timeframe = "1m"
+
+        with (
+            patch.object(StrategyRunRepository, "get", new_callable=AsyncMock) as mock_get,
+            patch.object(StrategyRunRepository, "update", new_callable=AsyncMock) as mock_update,
+            patch("squant.services.paper_trading.get_session_manager") as mock_get_manager,
+            patch("squant.services.paper_trading.get_stream_manager") as mock_get_stream,
+        ):
+            mock_get.return_value = mock_run
+            mock_update.return_value = mock_run
+
+            mock_manager = MagicMock()
+            mock_manager.get.return_value = mock_engine
+            mock_manager.unregister_and_check_subscription = AsyncMock(
+                return_value=("BTC/USDT", "1m")
+            )
+            mock_get_manager.return_value = mock_manager
+
+            mock_stream = MagicMock()
+            # Simulate unsubscribe failure
+            mock_stream.unsubscribe_candles = AsyncMock(side_effect=Exception("WS error"))
+            mock_get_stream.return_value = mock_stream
+
+            service = PaperTradingService(mock_session)
+            # Should not raise despite unsubscribe failure
+            result = await service.stop(run_id)
+
+            # DB was still committed successfully
+            mock_session.commit.assert_called_once()
+            assert result is not None
 
     @pytest.mark.asyncio
     async def test_stop_session_not_found(self, mock_session):

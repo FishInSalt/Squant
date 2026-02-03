@@ -89,6 +89,50 @@ class SessionManager:
 
             logger.info(f"Unregistered engine {run_id}, remaining sessions: {len(self._sessions)}")
 
+    async def unregister_and_check_subscription(
+        self, run_id: UUID
+    ) -> tuple[str, str] | None:
+        """Unregister an engine and atomically check if subscription can be removed.
+
+        This is an atomic operation that prevents race conditions between
+        unregistering a session and checking if other sessions need the subscription.
+
+        Args:
+            run_id: Run ID of the engine to unregister.
+
+        Returns:
+            Tuple of (symbol, timeframe) if subscription should be removed,
+            None if other sessions still need it or engine not found.
+        """
+        async with self._lock:
+            engine = self._sessions.pop(run_id, None)
+            if engine is None:
+                logger.warning(f"Engine {run_id} not found for unregistration")
+                return None
+
+            key = (engine.symbol, engine.timeframe)
+
+            # Remove from subscription tracking
+            if key in self._subscriptions:
+                self._subscriptions[key].discard(run_id)
+                if not self._subscriptions[key]:
+                    # No other sessions need this subscription
+                    del self._subscriptions[key]
+                    logger.info(
+                        f"Unregistered engine {run_id}, "
+                        f"subscription {key} can be removed"
+                    )
+                    return key
+                else:
+                    logger.info(
+                        f"Unregistered engine {run_id}, "
+                        f"subscription {key} still needed by {len(self._subscriptions[key])} sessions"
+                    )
+                    return None
+
+            logger.info(f"Unregistered engine {run_id}, remaining sessions: {len(self._sessions)}")
+            return None
+
     def get(self, run_id: UUID) -> PaperTradingEngine | None:
         """Get a paper trading engine by run ID.
 

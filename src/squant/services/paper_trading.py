@@ -243,19 +243,32 @@ class PaperTradingService:
             return run
 
         except Exception as e:
-            # Cleanup: unregister engine if it was registered
+            # Cleanup: stop engine if it was started (Issue 020 fix)
+            if engine is not None and engine.is_running:
+                try:
+                    await engine.stop(error=f"Startup failed: {e}")
+                except Exception as cleanup_error:
+                    logger.warning(f"Failed to stop engine during error handling: {cleanup_error}")
+
+            # Cleanup: unregister engine and check unsubscribe atomically (Issue 019 fix)
             if engine is not None:
                 try:
-                    await session_manager.unregister(engine.run_id)
+                    key_to_unsubscribe = await session_manager.unregister_and_check_subscription(
+                        engine.run_id
+                    )
+                    if key_to_unsubscribe and subscribed:
+                        stream_manager = get_stream_manager()
+                        await stream_manager.unsubscribe_candles(*key_to_unsubscribe)
+                        logger.info(f"Unsubscribed from candles: {key_to_unsubscribe}")
                 except Exception as cleanup_error:
                     logger.warning(
                         f"Failed to cleanup engine during error handling: {cleanup_error}"
                     )
-
-            # Cleanup: unsubscribe from WebSocket if subscribed
-            if subscribed:
+            elif subscribed:
+                # Engine was not created but we subscribed - unsubscribe directly
                 try:
-                    await self._check_unsubscribe(symbol, timeframe)
+                    stream_manager = get_stream_manager()
+                    await stream_manager.unsubscribe_candles(symbol, timeframe)
                 except Exception as cleanup_error:
                     logger.warning(
                         f"Failed to cleanup WebSocket subscription during error handling: {cleanup_error}"
@@ -344,27 +357,39 @@ class PaperTradingService:
         session_manager = get_session_manager()
         engine = session_manager.get(run_id)
 
+        key_to_unsubscribe = None
+        error_message = None
+
         if engine:
             # Persist any pending snapshots
             await self._persist_snapshots(str(run_id), engine.get_pending_snapshots())
 
             # Stop engine
             await engine.stop()
+            error_message = engine.error_message
 
-            # Unregister from session manager
-            await session_manager.unregister(run_id)
+            # Unregister and atomically check subscription (Issue 019 fix)
+            key_to_unsubscribe = await session_manager.unregister_and_check_subscription(run_id)
 
-            # Check if we should unsubscribe from candles
-            await self._check_unsubscribe(engine.symbol, engine.timeframe)
-
-        # Update run status
+        # Update run status and commit BEFORE unsubscribing (Issue 021 fix)
+        # This ensures database state is consistent even if unsubscribe fails
         run = await self.run_repo.update(
             run.id,
             status=RunStatus.STOPPED,
             stopped_at=datetime.now(UTC),
-            error_message=engine.error_message if engine else None,
+            error_message=error_message,
         )
         await self.session.commit()
+
+        # Now unsubscribe if needed (after database is consistent)
+        if key_to_unsubscribe:
+            try:
+                stream_manager = get_stream_manager()
+                await stream_manager.unsubscribe_candles(*key_to_unsubscribe)
+                logger.info(f"Unsubscribed from candles: {key_to_unsubscribe}")
+            except Exception as e:
+                # Log but don't fail - database is already updated
+                logger.warning(f"Failed to unsubscribe from candles: {e}")
 
         logger.info(f"Stopped paper trading session {run_id}")
         return run
