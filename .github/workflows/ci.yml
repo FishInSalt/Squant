@@ -131,6 +131,13 @@ jobs:
       run: |
         uv sync --all-extras
 
+    - name: Load test environment variables
+      run: |
+        # Export variables from .env.test.ci to GITHUB_ENV for subsequent steps
+        grep -v '^#' .env.test.ci | grep -v '^$' | while read line; do
+          echo "$line" >> $GITHUB_ENV
+        done
+
     - name: Run database migrations
       run: |
         uv run alembic upgrade head
@@ -172,6 +179,13 @@ jobs:
     - name: Install dependencies
       run: |
         uv sync --all-extras
+
+    - name: Load test environment variables
+      run: |
+        # Export variables from .env.test.ci to GITHUB_ENV for subsequent steps
+        grep -v '^#' .env.test.ci | grep -v '^$' | while read line; do
+          echo "$line" >> $GITHUB_ENV
+        done
 
     - name: Start E2E test environment
       run: |
