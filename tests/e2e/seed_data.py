@@ -87,12 +87,15 @@ async def generate_klines(
 async def seed_test_data(session: AsyncSession):
     """插入E2E测试数据"""
 
-    # 生成7天的BTC/USDT 1h K线数据（与测试配置一致）
-    end_date = datetime.now()
-    start_date = end_date - timedelta(days=7)
+    # 生成8天的BTC/USDT 1h K线数据（比测试请求的7天多1天作为缓冲）
+    # 添加额外的1天缓冲，避免因 seed_data.py 和 E2E 测试执行时间差异
+    # 导致 is_complete 检查失败
+    end_date = datetime.now() + timedelta(hours=1)  # 多生成1小时数据
+    start_date = end_date - timedelta(days=8)  # 从8天前开始
 
     print("生成测试K线数据: okx:BTC/USDT:1h")
     print(f"时间范围: {start_date} 到 {end_date}")
+    print("(包含1天缓冲以应对时间差异)")
 
     klines = await generate_klines(
         exchange="okx",

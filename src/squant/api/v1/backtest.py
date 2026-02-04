@@ -24,6 +24,7 @@ from squant.schemas.backtest import (
 from squant.services.backtest import (
     BacktestNotFoundError,
     BacktestService,
+    IncompleteDataError,
     InsufficientDataError,
 )
 from squant.services.data_loader import DataLoader
@@ -133,7 +134,7 @@ async def execute_backtest(
         Updated backtest run with results.
 
     Raises:
-        HTTPException: 400 if execution fails, 404 if not found.
+        HTTPException: 400 if execution fails or data incomplete, 404 if not found.
     """
     service = BacktestService(session)
 
@@ -142,7 +143,11 @@ async def execute_backtest(
         return ApiResponse(data=BacktestRunResponse.model_validate(run))
     except BacktestNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
+    except StrategyNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
     except InsufficientDataError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except IncompleteDataError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except BacktestError as e:
         raise HTTPException(status_code=400, detail=str(e))
