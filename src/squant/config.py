@@ -293,7 +293,7 @@ class Settings(BaseSettings):
     # -------------------------------------------------------------------------
     app_name: str = Field(default="Squant", description="Application name")
     app_env: str = Field(
-        default="production", description="Environment: development, staging, production"
+        default="production", description="Environment: development, test, staging, production"
     )
     debug: bool = Field(default=False, description="Enable debug mode")
     api_prefix: str = Field(default="/api/v1", description="API route prefix")
@@ -305,7 +305,7 @@ class Settings(BaseSettings):
     @field_validator("app_env")
     @classmethod
     def validate_app_env(cls, v: str) -> str:
-        valid_envs = ["development", "staging", "production"]
+        valid_envs = ["development", "test", "staging", "production"]
         if v.lower() not in valid_envs:
             raise ValueError(f"APP_ENV must be one of {valid_envs}")
         return v.lower()
