@@ -201,6 +201,13 @@ class ExchangeAccountService:
                 raise AccountNameExistsError(request.exchange, request.name) from e
             raise
 
+        # Audit log for sensitive operation
+        logger.info(
+            f"AUDIT: Exchange account created - "
+            f"id={account.id}, exchange={request.exchange}, name={request.name}, "
+            f"testnet={request.testnet}"
+        )
+
         return account
 
     async def update(
@@ -254,14 +261,16 @@ class ExchangeAccountService:
             # Decrypt existing credentials if not being updated
             try:
                 existing_creds = self.get_decrypted_credentials(account)
-            except DecryptionError as e:
+            except DecryptionError:
+                # Security: Log audit event without exposing implementation details
                 logger.error(
-                    f"Failed to decrypt existing credentials for account {account_id}: {e}"
+                    f"AUDIT: Credential decryption failed during update for account {account_id} - "
+                    f"this may indicate data corruption or key rotation"
                 )
                 raise ValueError(
                     "Cannot update account: existing credentials are corrupted. "
                     "Please delete and recreate the account."
-                ) from e
+                )
 
             api_key = (
                 request.api_key.get_secret_value() if request.api_key else existing_creds["api_key"]
@@ -317,6 +326,17 @@ class ExchangeAccountService:
 
         # Refresh to get updated data
         await self.session.refresh(account)
+
+        # Audit log for sensitive operation
+        updated_fields = list(update_data.keys())
+        # Mask credential fields in log
+        safe_fields = [f if "enc" not in f else f"{f}=***" for f in updated_fields]
+        logger.info(
+            f"AUDIT: Exchange account updated - "
+            f"id={account_id}, exchange={account.exchange}, "
+            f"updated_fields=[{', '.join(safe_fields)}]"
+        )
+
         return account
 
     async def delete(self, account_id: UUID) -> None:
@@ -329,9 +349,13 @@ class ExchangeAccountService:
             AccountNotFoundError: If account not found.
             AccountInUseError: If account has associated orders or strategy runs.
         """
-        exists = await self.repository.exists(account_id)
-        if not exists:
+        # Get account info for audit log before deletion
+        account = await self.repository.get(account_id)
+        if not account:
             raise AccountNotFoundError(account_id)
+
+        exchange = account.exchange
+        name = account.name
 
         try:
             # repository.delete() does flush(), which may raise IntegrityError
@@ -350,6 +374,12 @@ class ExchangeAccountService:
                     reason = "has associated strategy runs"
                 raise AccountInUseError(account_id, reason) from e
             raise
+
+        # Audit log for sensitive operation
+        logger.info(
+            f"AUDIT: Exchange account deleted - "
+            f"id={account_id}, exchange={exchange}, name={name}"
+        )
 
     async def get(self, account_id: UUID) -> ExchangeAccount:
         """Get an exchange account by ID.
@@ -408,7 +438,15 @@ class ExchangeAccountService:
         try:
             credentials = self.get_decrypted_credentials(account)
         except DecryptionError as e:
-            raise ConnectionTestError(f"Failed to decrypt credentials: {e}") from e
+            # Security: Use generic message, log details internally only
+            logger.error(
+                f"AUDIT: Credential decryption failed for account {account_id} - "
+                f"this may indicate data corruption or key rotation"
+            )
+            raise ConnectionTestError(
+                "Unable to access account credentials. The stored credentials may be "
+                "corrupted. Please delete and recreate the account."
+            ) from e
 
         # Create adapter and test connection
         try:
@@ -437,6 +475,12 @@ class ExchangeAccountService:
 
             async with adapter:
                 balance = await adapter.get_balance()
+                # Audit log for connection test
+                logger.info(
+                    f"AUDIT: Exchange connection test - "
+                    f"id={account_id}, exchange={account.exchange}, "
+                    f"testnet={account.testnet}, success=True"
+                )
                 return {
                     "success": True,
                     "message": None,

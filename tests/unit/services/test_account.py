@@ -184,14 +184,18 @@ class TestExchangeAccountService:
     ) -> None:
         """Test successful account deletion."""
         account_id = uuid4()
+        mock_account = MagicMock()
+        mock_account.exchange = "okx"
+        mock_account.name = "test_account"
 
-        with patch.object(service.repository, "exists", new_callable=AsyncMock) as mock_exists:
-            mock_exists.return_value = True
+        with patch.object(service.repository, "get", new_callable=AsyncMock) as mock_get:
+            mock_get.return_value = mock_account
 
             with patch.object(service.repository, "delete", new_callable=AsyncMock) as mock_delete:
                 mock_delete.return_value = True
 
                 await service.delete(account_id)
+                mock_get.assert_called_once_with(account_id)
                 mock_delete.assert_called_once_with(account_id)
                 mock_session.commit.assert_called_once()
 
@@ -200,8 +204,8 @@ class TestExchangeAccountService:
         """Test deleting an account that doesn't exist."""
         account_id = uuid4()
 
-        with patch.object(service.repository, "exists", new_callable=AsyncMock) as mock_exists:
-            mock_exists.return_value = False
+        with patch.object(service.repository, "get", new_callable=AsyncMock) as mock_get:
+            mock_get.return_value = None
 
             with pytest.raises(AccountNotFoundError):
                 await service.delete(account_id)
@@ -589,7 +593,10 @@ class TestConnectionTest:
     async def test_connection_decryption_failure(
         self, service: ExchangeAccountService, sample_okx_account
     ) -> None:
-        """Test connection test when credential decryption fails."""
+        """Test connection test when credential decryption fails.
+
+        Security: Error message should be generic to avoid leaking implementation details.
+        """
         from squant.services.account import ConnectionTestError
         from squant.utils.crypto import DecryptionError
 
@@ -602,7 +609,10 @@ class TestConnectionTest:
                 with pytest.raises(ConnectionTestError) as exc_info:
                     await service.test_connection(sample_okx_account.id)
 
-        assert "decrypt" in str(exc_info.value).lower()
+        # Error message should be generic (not expose "decryption" implementation details)
+        error_msg = str(exc_info.value).lower()
+        assert "credentials" in error_msg
+        assert "corrupted" in error_msg or "recreate" in error_msg
 
     @pytest.mark.asyncio
     async def test_connection_unexpected_error(
