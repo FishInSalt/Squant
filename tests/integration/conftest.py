@@ -82,6 +82,13 @@ def _setup_test_environment() -> None:
     """
     project_root = Path(__file__).parent.parent.parent
 
+    # Debug output for CI troubleshooting
+    print(f"[conftest] _IS_CI = {_IS_CI}")
+    print(f"[conftest] CI env = {os.environ.get('CI')}")
+    print(f"[conftest] GITHUB_ACTIONS env = {os.environ.get('GITHUB_ACTIONS')}")
+    print(f"[conftest] DATABASE_URL env (before) = {os.environ.get('DATABASE_URL')}")
+    print(f"[conftest] REDIS_URL env (before) = {os.environ.get('REDIS_URL')}")
+
     if _IS_CI:
         # CI 环境：环境变量已由 workflow job-level env 设置
         # 不加载 .env.test（它使用 Docker 服务名，CI 无法解析）
@@ -105,6 +112,10 @@ def _setup_test_environment() -> None:
     except ImportError:
         pass  # squant.config 尚未导入
 
+    # Debug output after setup
+    print(f"[conftest] DATABASE_URL env (after) = {os.environ.get('DATABASE_URL')}")
+    print(f"[conftest] REDIS_URL env (after) = {os.environ.get('REDIS_URL')}")
+
 
 # 立即设置环境变量（conftest.py 在测试模块之前被导入）
 _setup_test_environment()
@@ -121,12 +132,22 @@ from squant.models.base import Base  # noqa: E402
 def test_settings():
     """获取测试环境配置"""
     settings = get_settings()
-    # 确保使用测试数据库
+
+    # Debug output for settings values
     db_url = (
         settings.database.url.get_secret_value()
         if hasattr(settings.database.url, "get_secret_value")
         else str(settings.database.url)
     )
+    redis_url = (
+        settings.redis.url.get_secret_value()
+        if hasattr(settings.redis.url, "get_secret_value")
+        else str(settings.redis.url)
+    )
+    print(f"[test_settings] database.url = {db_url}")
+    print(f"[test_settings] redis.url = {redis_url}")
+
+    # 确保使用测试数据库
     assert "test" in db_url, "Must use test database for integration tests"
     return settings
 
