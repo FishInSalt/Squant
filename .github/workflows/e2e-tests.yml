@@ -51,7 +51,7 @@ jobs:
         # Wait for API to be ready
         max_attempts=30
         attempt=0
-        until curl -f http://localhost:8001/api/v1/health || [ $attempt -eq $max_attempts ]; do
+        until curl -f http://localhost:8000/api/v1/health || [ $attempt -eq $max_attempts ]; do
           echo "Waiting for API to be ready... (attempt $((attempt+1))/$max_attempts)"
           sleep 2
           attempt=$((attempt+1))
@@ -88,7 +88,7 @@ jobs:
       run: |
         echo "## E2E Test Results" >> $GITHUB_STEP_SUMMARY
         echo "- Full application stack tested" >> $GITHUB_STEP_SUMMARY
-        echo "- API: http://localhost:8001" >> $GITHUB_STEP_SUMMARY
+        echo "- API: http://localhost:8000" >> $GITHUB_STEP_SUMMARY
         echo "- Database: PostgreSQL + TimescaleDB (port 5433)" >> $GITHUB_STEP_SUMMARY
         echo "- Cache: Redis (port 6380)" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY

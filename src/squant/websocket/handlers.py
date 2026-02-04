@@ -420,7 +420,7 @@ async def websocket_gateway(websocket: WebSocket) -> None:
 
     Example usage:
     ```javascript
-    const ws = new WebSocket('ws://localhost:8001/api/v1/ws')
+    const ws = new WebSocket('ws://localhost:8000/api/v1/ws')
 
     ws.onopen = () => {
         // Subscribe to channels

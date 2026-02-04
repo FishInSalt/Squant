@@ -154,7 +154,7 @@ run_e2e() {
     sleep 10
 
     # 设置测试环境变量
-    export API_URL="http://localhost:8001"
+    export API_URL="http://localhost:8000"
     export DATABASE_URL="postgresql+asyncpg://squant_test:squant_test@localhost:5433/squant_test"
     export REDIS_URL="redis://localhost:6380/0"
 

@@ -196,7 +196,7 @@ jobs:
       run: |
         max_attempts=30
         attempt=0
-        until curl -f http://localhost:8001/api/v1/health || [ $attempt -eq $max_attempts ]; do
+        until curl -f http://localhost:8000/api/v1/health || [ $attempt -eq $max_attempts ]; do
           echo "Waiting for API... (attempt $((attempt+1))/$max_attempts)"
           sleep 2
           attempt=$((attempt+1))
