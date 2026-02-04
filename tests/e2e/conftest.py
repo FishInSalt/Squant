@@ -30,11 +30,9 @@ def api_base_url():
     API基础URL
 
     E2E测试通过HTTP调用API，不直接访问数据库。
-    默认连接到本地运行的API服务器（Docker模式下为localhost:8001）
+    统一使用 localhost:8000 端口（DevContainer 和 CI 环境相同）
     """
-    # Docker E2E模式: docker compose -f docker-compose.test.yml --profile e2e up -d
-    # API会在 localhost:8001 上运行
-    return "http://localhost:8001"
+    return "http://localhost:8000"
 
 
 # ============================================================================

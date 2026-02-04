@@ -215,12 +215,14 @@ class DataLoader:
         # Get total count
         count = await self.count_bars(exchange, symbol, timeframe, start, end)
 
-        # Get first and last bar times
+        # Get first and last bar times for this symbol/timeframe in database
+        # NOTE: We query the ACTUAL data range without filtering by requested range,
+        # because is_complete needs to check if data covers the requested range.
         first_bar = None
         last_bar = None
 
         if count > 0:
-            # First bar
+            # First bar in database for this symbol (not filtered by requested range)
             stmt = (
                 select(Kline.time)
                 .where(
@@ -228,8 +230,6 @@ class DataLoader:
                         Kline.exchange == exchange,
                         Kline.symbol == symbol,
                         Kline.timeframe == timeframe,
-                        Kline.time >= start,
-                        Kline.time <= end,
                     )
                 )
                 .order_by(Kline.time.asc())
@@ -238,7 +238,7 @@ class DataLoader:
             result = await self.session.execute(stmt)
             first_bar = result.scalar_one_or_none()
 
-            # Last bar
+            # Last bar in database for this symbol (not filtered by requested range)
             stmt = (
                 select(Kline.time)
                 .where(
@@ -246,8 +246,6 @@ class DataLoader:
                         Kline.exchange == exchange,
                         Kline.symbol == symbol,
                         Kline.timeframe == timeframe,
-                        Kline.time >= start,
-                        Kline.time <= end,
                     )
                 )
                 .order_by(Kline.time.desc())

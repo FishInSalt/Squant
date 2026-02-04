@@ -65,7 +65,7 @@ services:
       LOG_LEVEL: INFO
 
     ports:
-      - "8001:8000"  # 使用8001避免与开发环境冲突
+      - "8000:8000"  # E2E 测试统一使用 8000 端口
     depends_on:
       postgres-test:
         condition: service_healthy
