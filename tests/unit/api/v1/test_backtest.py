@@ -244,9 +244,7 @@ class TestExecuteBacktest:
         with patch("squant.api.v1.backtest.BacktestService") as mock_service_class:
             mock_service = MagicMock()
             mock_service.run = AsyncMock(
-                side_effect=IncompleteDataError(
-                    "Data doesn't cover the full requested range"
-                )
+                side_effect=IncompleteDataError("Data doesn't cover the full requested range")
             )
             mock_service_class.return_value = mock_service
 
