@@ -74,23 +74,25 @@ def _load_env_file(env_file: Path, override_keys: set[str] | None = None) -> Non
 def _setup_test_environment() -> None:
     """设置测试环境变量并清除配置缓存
 
-    CI 和本地环境现在使用相同的地址格式（localhost:5433/6380），
-    但 CI 优先使用 workflow 设置的环境变量。
+    两种环境使用不同的数据库/Redis 地址：
+    - DevContainer: Docker 服务名 (postgres:5432, redis:6379)
+    - CI: localhost 端口映射 (localhost:5433, localhost:6380)
+
+    CI 环境完全依赖 workflow 设置的环境变量，不加载 .env.test。
     """
     project_root = Path(__file__).parent.parent.parent
 
     if _IS_CI:
-        # CI 环境：workflow 已设置正确的环境变量
-        # .env.test 作为备用（现在地址格式一致）
-        env_test_path = project_root / ".env.test"
-        _load_env_file(env_test_path)  # 不覆盖已设置的变量
+        # CI 环境：完全依赖 workflow 设置的环境变量
+        # 不加载 .env.test，因为它使用 Docker 服务名（CI 无法解析）
+        pass
     else:
-        # 本地环境
+        # DevContainer/本地环境
         # 1. 先加载 .env（用户本地配置，包含敏感凭证如 OKX API keys）
         env_path = project_root / ".env"
         _load_env_file(env_path)
 
-        # 2. 再加载 .env.test（测试特定配置）
+        # 2. 再加载 .env.test（测试特定配置，使用 Docker 服务名）
         #    _TEST_ENV_KEYS 中的变量会强制使用 .env.test 的值
         env_test_path = project_root / ".env.test"
         _load_env_file(env_test_path, override_keys=_TEST_ENV_KEYS)
