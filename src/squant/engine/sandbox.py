@@ -31,6 +31,13 @@ DISALLOWED_MODULES = frozenset(
         "requests",
         "httpx",
         "aiohttp",
+        # Async network (STR-012)
+        "asyncio",
+        "ssl",
+        # Debugger (STR-012)
+        "pdb",
+        "bdb",
+        "cmd",
         # Serialization (can be exploited)
         "pickle",
         "marshal",

@@ -169,11 +169,21 @@ class StopLiveTradingRequest(BaseModel):
     )
 
 
+class RemainingPosition(BaseModel):
+    """Remaining position information after emergency close."""
+
+    symbol: str
+    amount: str
+    side: str  # "long" or "short"
+
+
 class EmergencyCloseResponse(BaseModel):
     """Response from emergency close operation."""
 
     run_id: UUID
-    status: str
+    status: str  # "completed", "partial", "in_progress", "not_active"
     message: str | None = None
     orders_cancelled: int | None = None
     positions_closed: int | None = None
+    remaining_positions: list[RemainingPosition] | None = None  # TRD-038#5
+    errors: list[dict[str, Any]] | None = None

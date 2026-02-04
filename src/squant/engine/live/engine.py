@@ -178,6 +178,9 @@ class LiveTradingEngine:
         # Risk trigger events for persistence (Issue 010)
         self._pending_risk_triggers: list[dict[str, Any]] = []
 
+        # Emergency close in progress flag (TRD-038#6)
+        self._emergency_close_in_progress: bool = False
+
     @property
     def run_id(self) -> UUID:
         """Get the strategy run ID."""
@@ -355,52 +358,102 @@ class LiveTradingEngine:
         """Emergency close all positions at market price.
 
         Returns:
-            Dict with close operation results.
+            Dict with close operation results including:
+            - run_id: Strategy run ID
+            - status: "completed", "partial", "in_progress", or "not_active"
+            - message: Optional message (for in_progress or errors)
+            - orders_cancelled: Number of orders cancelled
+            - positions_closed: Number of positions closed
+            - remaining_positions: List of positions that failed to close (TRD-038#5)
+            - errors: List of error details
         """
-        logger.warning(f"Emergency close triggered for run {self._run_id}")
+        # TRD-038#6: Check if already in progress
+        if self._emergency_close_in_progress:
+            return {
+                "run_id": str(self._run_id),
+                "status": "in_progress",
+                "message": "Emergency close operation already in progress",
+                "orders_cancelled": None,
+                "positions_closed": None,
+                "remaining_positions": None,
+                "errors": None,
+            }
 
-        results: dict[str, Any] = {
-            "orders_cancelled": 0,
-            "positions_closed": 0,
-            "errors": [],
-        }
+        self._emergency_close_in_progress = True
+        try:
+            logger.warning(f"Emergency close triggered for run {self._run_id}")
 
-        # Cancel all open orders first
-        cancelled = await self._cancel_all_orders()
-        results["orders_cancelled"] = len(cancelled)
+            results: dict[str, Any] = {
+                "run_id": str(self._run_id),
+                "orders_cancelled": 0,
+                "positions_closed": 0,
+                "remaining_positions": [],
+                "errors": [],
+            }
 
-        # Close all positions at market
-        for symbol, position in self._context.positions.items():
-            if position.is_open:
-                try:
-                    # Place market order to close
-                    side = OrderSide.SELL if position.amount > 0 else OrderSide.BUY
-                    order_request = OrderRequest(
-                        symbol=symbol,
-                        side=side,
-                        type="market",
-                        amount=abs(position.amount),
-                    )
+            # Cancel all open orders first
+            cancelled = await self._cancel_all_orders()
+            results["orders_cancelled"] = len(cancelled)
 
-                    await self._adapter.place_order(order_request)
-                    results["positions_closed"] += 1
-                    logger.info(
-                        f"Emergency close order placed: {symbol} {side.value} {abs(position.amount)}"
-                    )
+            # Close all positions at market
+            for symbol, position in self._context.positions.items():
+                if position.is_open:
+                    try:
+                        # Place market order to close
+                        side = OrderSide.SELL if position.amount > 0 else OrderSide.BUY
+                        order_request = OrderRequest(
+                            symbol=symbol,
+                            side=side,
+                            type="market",
+                            amount=abs(position.amount),
+                        )
 
-                except Exception as e:
-                    logger.exception(f"Error closing position for {symbol}: {e}")
-                    results["errors"].append(
-                        {
-                            "symbol": symbol,
-                            "error": str(e),
-                        }
-                    )
+                        await self._adapter.place_order(order_request)
+                        results["positions_closed"] += 1
+                        logger.info(
+                            f"Emergency close order placed: {symbol} {side.value} {abs(position.amount)}"
+                        )
 
-        # Stop the engine
-        await self.stop(error="Emergency close executed", cancel_orders=False)
+                    except Exception as e:
+                        logger.exception(f"Error closing position for {symbol}: {e}")
+                        results["errors"].append(
+                            {
+                                "symbol": symbol,
+                                "error": str(e),
+                            }
+                        )
 
-        return results
+            # TRD-038#5: Collect remaining positions after close attempts
+            for symbol, position in self._context.positions.items():
+                if position.is_open:
+                    # Check if this position had an error (meaning it wasn't closed)
+                    had_error = any(err["symbol"] == symbol for err in results["errors"])
+                    if had_error:
+                        results["remaining_positions"].append(
+                            {
+                                "symbol": symbol,
+                                "amount": str(position.amount),
+                                "side": "long" if position.amount > 0 else "short",
+                            }
+                        )
+
+            # Set status based on results
+            if results["remaining_positions"]:
+                results["status"] = "partial"
+                results["message"] = (
+                    f"Partial close: {results['positions_closed']} closed, "
+                    f"{len(results['remaining_positions'])} remaining"
+                )
+            else:
+                results["status"] = "completed"
+                results["message"] = None
+
+            # Stop the engine
+            await self.stop(error="Emergency close executed", cancel_orders=False)
+
+            return results
+        finally:
+            self._emergency_close_in_progress = False
 
     async def process_candle(self, candle: WSCandle) -> None:
         """Process a WebSocket candle update.

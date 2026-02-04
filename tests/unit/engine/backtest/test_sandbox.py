@@ -550,6 +550,123 @@ class InplaceStrategy(Strategy):
 # =============================================================================
 
 
+class TestNewlyDisallowedModules:
+    """Tests for newly added disallowed modules (STR-012).
+
+    These modules were added to DISALLOWED_MODULES to prevent:
+    - asyncio: Async network operations and execution bypass
+    - ssl: Encrypted network connections
+    - pdb/bdb/cmd: Debugger access for environment exploration
+    """
+
+    @pytest.mark.parametrize("module", ["asyncio", "ssl", "pdb", "bdb", "cmd"])
+    def test_new_critical_module_in_disallowed_list(self, module: str) -> None:
+        """Test that new critical modules are in DISALLOWED_MODULES."""
+        assert module in DISALLOWED_MODULES, f"Module '{module}' should be disallowed"
+
+    @pytest.mark.parametrize("module", ["asyncio", "ssl", "pdb", "bdb", "cmd"])
+    def test_new_critical_module_import_blocked(self, module: str) -> None:
+        """Test that importing new critical modules is blocked."""
+        code = f"""
+import {module}
+
+class TestStrategy(Strategy):
+    def on_bar(self, bar):
+        pass
+"""
+        result = validate_strategy_code(code)
+        assert result.valid is False, f"Import of '{module}' should be blocked"
+        assert any(module in err for err in result.errors), f"Error should mention '{module}'"
+
+    @pytest.mark.parametrize("module", ["asyncio", "ssl", "pdb"])
+    def test_new_critical_module_from_import_blocked(self, module: str) -> None:
+        """Test that from-import of new critical modules is blocked."""
+        code = f"""
+from {module} import *
+
+class TestStrategy(Strategy):
+    def on_bar(self, bar):
+        pass
+"""
+        result = validate_strategy_code(code)
+        assert result.valid is False, f"From-import of '{module}' should be blocked"
+
+    def test_asyncio_event_loop_blocked(self) -> None:
+        """Test asyncio event loop creation is blocked."""
+        code = """
+import asyncio
+
+class TestStrategy(Strategy):
+    def on_bar(self, bar):
+        loop = asyncio.get_event_loop()
+"""
+        result = validate_strategy_code(code)
+        assert result.valid is False
+        assert any("asyncio" in err for err in result.errors)
+
+    def test_asyncio_run_blocked(self) -> None:
+        """Test asyncio.run is blocked."""
+        code = """
+import asyncio
+
+class TestStrategy(Strategy):
+    def on_bar(self, bar):
+        asyncio.run(self.async_method())
+"""
+        result = validate_strategy_code(code)
+        assert result.valid is False
+
+    def test_ssl_context_blocked(self) -> None:
+        """Test SSL context creation is blocked."""
+        code = """
+import ssl
+
+class TestStrategy(Strategy):
+    def on_bar(self, bar):
+        ctx = ssl.create_default_context()
+"""
+        result = validate_strategy_code(code)
+        assert result.valid is False
+        assert any("ssl" in err for err in result.errors)
+
+    def test_pdb_set_trace_blocked(self) -> None:
+        """Test pdb.set_trace() is blocked."""
+        code = """
+import pdb
+
+class TestStrategy(Strategy):
+    def on_bar(self, bar):
+        pdb.set_trace()
+"""
+        result = validate_strategy_code(code)
+        assert result.valid is False
+        assert any("pdb" in err for err in result.errors)
+
+    def test_bdb_debugger_blocked(self) -> None:
+        """Test bdb debugger is blocked."""
+        code = """
+import bdb
+
+class TestStrategy(Strategy):
+    def on_bar(self, bar):
+        debugger = bdb.Bdb()
+"""
+        result = validate_strategy_code(code)
+        assert result.valid is False
+
+    def test_cmd_module_blocked(self) -> None:
+        """Test cmd module is blocked."""
+        code = """
+import cmd
+
+class TestStrategy(Strategy):
+    def on_bar(self, bar):
+        shell = cmd.Cmd()
+"""
+        result = validate_strategy_code(code)
+        assert result.valid is False
+
+
 class TestDisallowedModulesParameterized:
     """Parameterized tests for all disallowed modules.
 
@@ -569,6 +686,10 @@ class TestDisallowedModulesParameterized:
         "ctypes",
         "multiprocessing",
         "threading",
+        # STR-012: New modules
+        "asyncio",
+        "ssl",
+        "pdb",
     ]
 
     @pytest.mark.parametrize("module", CRITICAL_MODULES)
