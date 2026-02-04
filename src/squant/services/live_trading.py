@@ -25,6 +25,7 @@ from squant.engine.live.manager import get_live_session_manager
 from squant.engine.risk import RiskConfig
 from squant.engine.sandbox import compile_strategy
 from squant.infra.exchange.binance.adapter import BinanceAdapter
+from squant.infra.exchange.ccxt import CCXTRestAdapter, ExchangeCredentials
 from squant.infra.exchange.okx.adapter import OKXAdapter
 from squant.infra.repository import BaseRepository
 from squant.models.enums import RunMode, RunStatus
@@ -425,6 +426,15 @@ class LiveTradingService:
                 api_secret=credentials["api_secret"],
                 testnet=account.testnet,
             )
+        elif exchange == "bybit":
+            # Use CCXT adapter for Bybit (no native adapter available)
+            ccxt_credentials = ExchangeCredentials(
+                api_key=credentials["api_key"],
+                api_secret=credentials["api_secret"],
+                passphrase=credentials.get("passphrase"),
+                sandbox=account.testnet,
+            )
+            return CCXTRestAdapter("bybit", ccxt_credentials)
         raise ValueError(f"Unsupported exchange: {exchange}")
 
     def _instantiate_strategy(self, code: str) -> Strategy:

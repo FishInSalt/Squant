@@ -182,6 +182,11 @@ class LiveTradingEngine:
         # Emergency close in progress flag (TRD-038#6)
         self._emergency_close_in_progress: bool = False
 
+        # Order sync rate limiting - avoid excessive polling
+        # Track last poll time per order to avoid redundant API calls
+        self._order_last_poll: dict[str, datetime] = {}  # exchange_order_id -> last poll time
+        self._order_poll_min_interval = 30.0  # Minimum seconds between polls for same order
+
     @property
     def run_id(self) -> UUID:
         """Get the strategy run ID."""
@@ -647,23 +652,57 @@ class LiveTradingEngine:
             logger.warning(f"Failed to sync balance: {e}")
 
     async def _sync_pending_orders(self) -> None:
-        """Sync pending order status from exchange."""
+        """Sync pending order status from exchange with rate limiting.
+
+        Only polls orders that haven't been polled within the minimum interval
+        to avoid excessive API calls. WebSocket updates handle most state changes,
+        so polling is primarily a fallback for missed updates.
+        """
+        now = datetime.now(UTC)
         pending_internal_ids = [
             oid
             for oid, order in self._live_orders.items()
             if not order.is_complete and order.exchange_order_id
         ]
 
+        polled_count = 0
+        skipped_count = 0
+
         for internal_id in pending_internal_ids:
             live_order = self._live_orders[internal_id]
+            exchange_oid = live_order.exchange_order_id
+
+            # Check if we've polled this order recently
+            if exchange_oid in self._order_last_poll:
+                last_poll = self._order_last_poll[exchange_oid]
+                elapsed = (now - last_poll).total_seconds()
+                if elapsed < self._order_poll_min_interval:
+                    skipped_count += 1
+                    continue
+
             try:
                 response = await self._adapter.get_order(
                     live_order.symbol,
-                    live_order.exchange_order_id,  # type: ignore
+                    exchange_oid,  # type: ignore
                 )
                 self._update_order_from_response(live_order, response)
+                self._order_last_poll[exchange_oid] = now
+                polled_count += 1
+
+                # Clean up tracking for completed orders
+                if live_order.is_complete and exchange_oid in self._order_last_poll:
+                    del self._order_last_poll[exchange_oid]
+
             except Exception as e:
                 logger.warning(f"Failed to sync order {internal_id}: {e}")
+                # Still record the poll time to avoid hammering on errors
+                self._order_last_poll[exchange_oid] = now
+
+        if polled_count > 0 or skipped_count > 0:
+            logger.debug(
+                f"Order sync: polled={polled_count}, skipped={skipped_count} "
+                f"(within {self._order_poll_min_interval}s interval)"
+            )
 
     def _update_order_from_response(self, live_order: LiveOrder, response: OrderResponse) -> None:
         """Update live order from exchange response."""

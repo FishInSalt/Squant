@@ -1,5 +1,6 @@
 """Order service for order management."""
 
+import logging
 from datetime import datetime
 from decimal import Decimal
 from typing import TYPE_CHECKING
@@ -9,7 +10,14 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from squant.infra.exchange.base import ExchangeAdapter
-from squant.infra.exchange.exceptions import OrderNotFoundError as ExchangeOrderNotFound
+from squant.infra.exchange.exceptions import (
+    ExchangeAuthenticationError,
+    ExchangeConnectionError,
+    ExchangeRateLimitError,
+    OrderNotFoundError as ExchangeOrderNotFound,
+)
+
+logger = logging.getLogger(__name__)
 from squant.infra.exchange.types import (
     CancelOrderRequest,
     OrderRequest,
@@ -395,6 +403,10 @@ class OrderService:
 
         Returns:
             List of updated Order records.
+
+        Raises:
+            ExchangeAuthenticationError: If authentication fails.
+            ExchangeConnectionError: If connection fails after retries.
         """
         # Get open orders from exchange
         exchange_orders = await self.exchange.get_open_orders(symbol)
@@ -406,6 +418,7 @@ class OrderService:
         local_orders = await self.order_repo.list_open_orders(self.account.id, symbol=symbol)
 
         updated_orders = []
+        sync_failures = []
 
         for local_order in local_orders:
             if local_order.exchange_oid and local_order.exchange_oid in exchange_order_map:
@@ -417,10 +430,37 @@ class OrderService:
                 # Order not in exchange open orders - fetch full status
                 try:
                     local_order = await self.sync_order(local_order.id)
-                except Exception:
-                    # If sync fails, skip this order
-                    pass
+                except ExchangeAuthenticationError:
+                    # Authentication errors should not be silently swallowed
+                    raise
+                except (ExchangeConnectionError, ExchangeRateLimitError) as e:
+                    # Transient errors - log and continue with other orders
+                    logger.warning(
+                        f"Failed to sync order {local_order.id} (transient error): {e}. "
+                        "Will retry on next sync."
+                    )
+                    sync_failures.append((local_order.id, str(e)))
+                except ExchangeOrderNotFound:
+                    # Order was likely filled or cancelled - mark as synced
+                    logger.info(
+                        f"Order {local_order.id} not found on exchange - "
+                        "may have been filled or cancelled externally."
+                    )
+                except Exception as e:
+                    # Unexpected errors - log with full context
+                    logger.error(
+                        f"Unexpected error syncing order {local_order.id}: {e}",
+                        exc_info=True,
+                    )
+                    sync_failures.append((local_order.id, str(e)))
             updated_orders.append(local_order)
+
+        # Log summary if there were failures
+        if sync_failures:
+            logger.warning(
+                f"Order sync completed with {len(sync_failures)} failures: "
+                f"{[f'{oid}' for oid, _ in sync_failures]}"
+            )
 
         return updated_orders
 

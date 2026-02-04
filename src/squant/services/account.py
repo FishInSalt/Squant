@@ -11,6 +11,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from squant.infra.exchange import BinanceAdapter, OKXAdapter
+from squant.infra.exchange.ccxt import CCXTRestAdapter, ExchangeCredentials
 from squant.infra.exchange.exceptions import (
     ExchangeAPIError,
     ExchangeAuthenticationError,
@@ -470,6 +471,15 @@ class ExchangeAccountService:
                     api_secret=credentials["api_secret"],
                     testnet=account.testnet,
                 )
+            elif account.exchange == "bybit":
+                # Use CCXT adapter for Bybit (no native adapter available)
+                ccxt_credentials = ExchangeCredentials(
+                    api_key=credentials["api_key"],
+                    api_secret=credentials["api_secret"],
+                    passphrase=credentials.get("passphrase"),
+                    sandbox=account.testnet,
+                )
+                adapter = CCXTRestAdapter("bybit", ccxt_credentials)
             else:
                 raise ConnectionTestError(f"Unknown exchange: {account.exchange}")
 

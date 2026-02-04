@@ -17,6 +17,7 @@ from squant.infra.exchange.exceptions import (
     ExchangeConnectionError,
     ExchangeRateLimitError,
 )
+from squant.infra.exchange.retry import RetryConfig, with_retry
 
 
 class OKXClient:
@@ -39,6 +40,7 @@ class OKXClient:
         passphrase: str,
         testnet: bool = False,
         rate_limit_interval: float = DEFAULT_RATE_LIMIT_INTERVAL,
+        retry_config: RetryConfig | None = None,
     ) -> None:
         """Initialize OKX client.
 
@@ -48,12 +50,14 @@ class OKXClient:
             passphrase: OKX API passphrase.
             testnet: Whether to use testnet (simulated trading).
             rate_limit_interval: Minimum seconds between requests.
+            retry_config: Configuration for automatic retry on transient errors.
         """
         self.api_key = api_key
         self.api_secret = api_secret
         self.passphrase = passphrase
         self.testnet = testnet
         self.rate_limit_interval = rate_limit_interval
+        self.retry_config = retry_config or RetryConfig()
 
         self._client: httpx.AsyncClient | None = None
         self._last_request_time: float = 0
@@ -232,7 +236,7 @@ class OKXClient:
         body: dict[str, Any] | None = None,
         authenticated: bool = True,
     ) -> dict[str, Any]:
-        """Make an API request.
+        """Make an API request with automatic retry on transient errors.
 
         Args:
             method: HTTP method (GET, POST).
@@ -245,10 +249,41 @@ class OKXClient:
             Parsed response data.
 
         Raises:
-            ExchangeConnectionError: If connection fails.
-            ExchangeAuthenticationError: If authentication fails.
-            ExchangeRateLimitError: If rate limited.
+            ExchangeConnectionError: If connection fails after retries.
+            ExchangeAuthenticationError: If authentication fails (not retried).
+            ExchangeRateLimitError: If rate limited after retries.
             ExchangeAPIError: If API returns an error.
+        """
+        return await with_retry(
+            self._execute_request,
+            method,
+            path,
+            params,
+            body,
+            authenticated,
+            config=self.retry_config,
+            operation_name=f"OKX {method} {path}",
+        )
+
+    async def _execute_request(
+        self,
+        method: str,
+        path: str,
+        params: dict[str, Any] | None = None,
+        body: dict[str, Any] | None = None,
+        authenticated: bool = True,
+    ) -> dict[str, Any]:
+        """Execute a single API request (called by retry logic).
+
+        Args:
+            method: HTTP method (GET, POST).
+            path: API endpoint path.
+            params: Query parameters for GET requests.
+            body: JSON body for POST requests.
+            authenticated: Whether to include authentication headers.
+
+        Returns:
+            Parsed response data.
         """
         if self._client is None:
             raise ExchangeConnectionError(
