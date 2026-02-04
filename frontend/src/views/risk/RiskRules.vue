@@ -163,12 +163,18 @@ const dialogVisible = ref(false)
 const editingRule = ref<RiskRule | null>(null)
 const formRef = ref<FormInstance>()
 
+interface RuleParams {
+  max_percent?: number
+  max_amount?: number
+  max_count?: number
+}
+
 const form = reactive({
   name: '',
   type: 'max_position_size' as RiskRuleType,
   description: '',
   action: 'warn' as 'warn' | 'block' | 'halt',
-  params: {} as Record<string, unknown>,
+  params: {} as RuleParams,
 })
 
 const formRules: FormRules = {
@@ -205,7 +211,7 @@ function showCreateDialog() {
   form.type = 'max_position_size'
   form.description = ''
   form.action = 'warn'
-  form.params = { max_percent: 50 }
+  form.params = { max_percent: 50 } as RuleParams
   dialogVisible.value = true
 }
 
@@ -215,7 +221,7 @@ function showEditDialog(rule: RiskRule) {
   form.type = rule.type
   form.description = rule.description
   form.action = rule.action
-  form.params = { ...rule.params }
+  form.params = { ...rule.params } as RuleParams
   dialogVisible.value = true
 }
 
@@ -225,16 +231,16 @@ function handleTypeChange() {
     case 'max_position_size':
     case 'max_daily_loss':
     case 'max_drawdown':
-      form.params = { max_percent: 50 }
+      form.params = { max_percent: 50 } as RuleParams
       break
     case 'max_order_size':
-      form.params = { max_amount: 10000 }
+      form.params = { max_amount: 10000 } as RuleParams
       break
     case 'max_open_orders':
-      form.params = { max_count: 10 }
+      form.params = { max_count: 10 } as RuleParams
       break
     default:
-      form.params = {}
+      form.params = {} as RuleParams
   }
 }
 

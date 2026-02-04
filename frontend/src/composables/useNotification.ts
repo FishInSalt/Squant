@@ -140,12 +140,13 @@ export function useNotification() {
     defaultValue = ''
   ): Promise<string | null> {
     try {
-      const { value } = await ElMessageBox.prompt(message, title, {
+      const result = await ElMessageBox.prompt(message, title, {
         confirmButtonText: '确定',
         cancelButtonText: '取消',
         inputValue: defaultValue,
       })
-      return value
+      // ElMessageBox.prompt returns { value: string, action: string }
+      return (result as { value: string }).value
     } catch {
       return null
     }
