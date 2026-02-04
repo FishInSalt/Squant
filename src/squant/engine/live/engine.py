@@ -627,7 +627,7 @@ class LiveTradingEngine:
             update: WebSocket order update with current state.
             fill_delta: The incremental fill amount (new fills only).
         """
-        if not update.avg_price:
+        if update.avg_price is None:
             return
 
         # Create fill record with incremental amount (not total)
@@ -652,7 +652,7 @@ class LiveTradingEngine:
         response: OrderResponse,
     ) -> None:
         """Process incremental fill from polling."""
-        if not response.avg_price:
+        if response.avg_price is None:
             return
 
         fill = Fill(

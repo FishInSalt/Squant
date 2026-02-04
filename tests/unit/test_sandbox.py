@@ -195,9 +195,9 @@ class MyStrategy(Strategy):
         eval("print('dangerous')")
 """
         result = validate_strategy_code(code)
-        # eval may be rejected at RestrictedPython level
-        # The validation should fail
-        assert result.valid is False or "eval" in str(result.errors)
+        # eval should be rejected by our AST validator
+        assert result.valid is False
+        assert any("eval" in e for e in result.errors)
 
     def test_exec_rejected(self) -> None:
         """Test that exec is rejected."""
@@ -207,7 +207,9 @@ class MyStrategy(Strategy):
         exec("import os")
 """
         result = validate_strategy_code(code)
-        assert result.valid is False or "exec" in str(result.errors)
+        # exec should be rejected by our AST validator
+        assert result.valid is False
+        assert any("exec" in e for e in result.errors)
 
     def test_open_rejected(self) -> None:
         """Test that open() is rejected."""
@@ -217,7 +219,9 @@ class MyStrategy(Strategy):
         f = open("/etc/passwd", "r")
 """
         result = validate_strategy_code(code)
-        assert result.valid is False or "open" in str(result.errors)
+        # open should be rejected by our AST validator
+        assert result.valid is False
+        assert any("open" in e for e in result.errors)
 
     def test_dunder_import_rejected(self) -> None:
         """Test that __import__ is rejected."""
@@ -229,6 +233,94 @@ class MyStrategy(Strategy):
         result = validate_strategy_code(code)
         # __import__ should be rejected at RestrictedPython level
         assert result.valid is False
+
+    def test_compile_rejected(self) -> None:
+        """Test that compile() is rejected."""
+        code = """
+class MyStrategy(Strategy):
+    def on_bar(self, bar):
+        code_obj = compile("print('evil')", "<string>", "exec")
+"""
+        result = validate_strategy_code(code)
+        assert result.valid is False
+        assert any("compile" in e for e in result.errors)
+
+    def test_globals_rejected(self) -> None:
+        """Test that globals() is rejected."""
+        code = """
+class MyStrategy(Strategy):
+    def on_bar(self, bar):
+        g = globals()
+"""
+        result = validate_strategy_code(code)
+        assert result.valid is False
+        assert any("globals" in e for e in result.errors)
+
+    def test_locals_rejected(self) -> None:
+        """Test that locals() is rejected."""
+        code = """
+class MyStrategy(Strategy):
+    def on_bar(self, bar):
+        l = locals()
+"""
+        result = validate_strategy_code(code)
+        assert result.valid is False
+        assert any("locals" in e for e in result.errors)
+
+    def test_getattr_rejected(self) -> None:
+        """Test that getattr() is rejected."""
+        code = """
+class MyStrategy(Strategy):
+    def on_bar(self, bar):
+        x = getattr(self, "ctx")
+"""
+        result = validate_strategy_code(code)
+        assert result.valid is False
+        assert any("getattr" in e for e in result.errors)
+
+    def test_setattr_rejected(self) -> None:
+        """Test that setattr() is rejected."""
+        code = """
+class MyStrategy(Strategy):
+    def on_bar(self, bar):
+        setattr(self, "evil", True)
+"""
+        result = validate_strategy_code(code)
+        assert result.valid is False
+        assert any("setattr" in e for e in result.errors)
+
+    def test_type_rejected(self) -> None:
+        """Test that type() is rejected for dynamic class creation."""
+        code = """
+class MyStrategy(Strategy):
+    def on_bar(self, bar):
+        EvilClass = type("Evil", (), {"attack": lambda: None})
+"""
+        result = validate_strategy_code(code)
+        assert result.valid is False
+        assert any("type" in e for e in result.errors)
+
+    def test_input_rejected(self) -> None:
+        """Test that input() is rejected."""
+        code = """
+class MyStrategy(Strategy):
+    def on_bar(self, bar):
+        user_input = input("Enter command: ")
+"""
+        result = validate_strategy_code(code)
+        assert result.valid is False
+        assert any("input" in e for e in result.errors)
+
+    def test_breakpoint_rejected(self) -> None:
+        """Test that breakpoint() is rejected."""
+        code = """
+class MyStrategy(Strategy):
+    def on_bar(self, bar):
+        breakpoint()
+"""
+        result = validate_strategy_code(code)
+        assert result.valid is False
+        assert any("breakpoint" in e for e in result.errors)
 
 
 class TestCompileStrategy:
