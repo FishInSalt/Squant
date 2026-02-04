@@ -869,3 +869,303 @@ class TestIncompleteDataValidation:
             result = await service.run(run_id)
 
             assert result == mock_run
+
+
+class TestBacktestCancellation:
+    """Tests for backtest cancellation (TRD-008#3)."""
+
+    @pytest.mark.asyncio
+    async def test_cancel_running_backtest(self, mock_session, mock_run):
+        """Test cancelling a running backtest."""
+        from squant.engine.backtest.runner import BacktestRunner
+
+        run_id = uuid4()
+        mock_run.id = str(run_id)
+        mock_run.status = RunStatus.RUNNING
+
+        with patch.object(StrategyRunRepository, "get", new_callable=AsyncMock) as mock_get:
+            mock_get.return_value = mock_run
+
+            service = BacktestService(mock_session)
+
+            # Manually register a mock runner
+            mock_runner = MagicMock(spec=BacktestRunner)
+            BacktestService._running_backtests[str(run_id)] = mock_runner
+
+            try:
+                result = await service.cancel(run_id)
+
+                assert result == mock_run
+                mock_runner.cancel.assert_called_once()
+            finally:
+                # Clean up
+                BacktestService._running_backtests.pop(str(run_id), None)
+
+    @pytest.mark.asyncio
+    async def test_cancel_pending_backtest_fails(self, mock_session, mock_run):
+        """Test cancelling a pending backtest raises error."""
+        from squant.engine.backtest.runner import BacktestError
+
+        run_id = uuid4()
+        mock_run.id = str(run_id)
+        mock_run.status = RunStatus.PENDING
+
+        with patch.object(StrategyRunRepository, "get", new_callable=AsyncMock) as mock_get:
+            mock_get.return_value = mock_run
+
+            service = BacktestService(mock_session)
+
+            with pytest.raises(BacktestError) as exc_info:
+                await service.cancel(run_id)
+
+            assert "pending" in str(exc_info.value).lower()
+            assert "only running" in str(exc_info.value).lower()
+
+    @pytest.mark.asyncio
+    async def test_cancel_completed_backtest_fails(self, mock_session, mock_run):
+        """Test cancelling a completed backtest raises error."""
+        from squant.engine.backtest.runner import BacktestError
+
+        run_id = uuid4()
+        mock_run.id = str(run_id)
+        mock_run.status = RunStatus.COMPLETED
+
+        with patch.object(StrategyRunRepository, "get", new_callable=AsyncMock) as mock_get:
+            mock_get.return_value = mock_run
+
+            service = BacktestService(mock_session)
+
+            with pytest.raises(BacktestError) as exc_info:
+                await service.cancel(run_id)
+
+            assert "completed" in str(exc_info.value).lower()
+
+    @pytest.mark.asyncio
+    async def test_cancel_not_found(self, mock_session):
+        """Test cancelling non-existent backtest raises error."""
+        with patch.object(StrategyRunRepository, "get", new_callable=AsyncMock) as mock_get:
+            mock_get.return_value = None
+
+            service = BacktestService(mock_session)
+
+            with pytest.raises(BacktestNotFoundError):
+                await service.cancel(uuid4())
+
+    @pytest.mark.asyncio
+    async def test_cancel_no_runner_found(self, mock_session, mock_run):
+        """Test cancelling when runner already finished logs warning."""
+        run_id = uuid4()
+        mock_run.id = str(run_id)
+        mock_run.status = RunStatus.RUNNING
+
+        with (
+            patch.object(StrategyRunRepository, "get", new_callable=AsyncMock) as mock_get,
+            patch("squant.services.backtest.logger") as mock_logger,
+        ):
+            mock_get.return_value = mock_run
+
+            service = BacktestService(mock_session)
+
+            # No runner registered
+            result = await service.cancel(run_id)
+
+            assert result == mock_run
+            mock_logger.warning.assert_called_once()
+            assert "No active runner" in mock_logger.warning.call_args[0][0]
+
+    def test_is_running(self, mock_run):
+        """Test is_running class method."""
+        from squant.engine.backtest.runner import BacktestRunner
+
+        run_id = str(uuid4())
+
+        # Not running initially
+        assert BacktestService.is_running(run_id) is False
+
+        # Register a runner
+        mock_runner = MagicMock(spec=BacktestRunner)
+        BacktestService._running_backtests[run_id] = mock_runner
+
+        try:
+            assert BacktestService.is_running(run_id) is True
+        finally:
+            BacktestService._running_backtests.pop(run_id, None)
+
+        # No longer running after cleanup
+        assert BacktestService.is_running(run_id) is False
+
+
+class TestBacktestReportExport:
+    """Tests for backtest report export (TRD-009#4)."""
+
+    @pytest.fixture
+    def completed_run(self, mock_run):
+        """Create a completed run with results."""
+        mock_run.status = RunStatus.COMPLETED
+        mock_run.result = {
+            "total_return": 0.15,
+            "max_drawdown": 0.05,
+            "sharpe_ratio": 1.5,
+            "final_equity": "11500",
+            "trades": [
+                {
+                    "symbol": "BTC/USDT",
+                    "side": "buy",
+                    "entry_time": "2024-01-01T00:00:00",
+                    "entry_price": "50000",
+                    "exit_time": "2024-01-02T00:00:00",
+                    "exit_price": "51000",
+                    "amount": "0.1",
+                    "pnl": "100",
+                    "pnl_pct": "0.02",
+                    "fees": "1",
+                }
+            ],
+        }
+        return mock_run
+
+    @pytest.mark.asyncio
+    async def test_export_report_json(self, mock_session, completed_run, mock_strategy):
+        """Test exporting report as JSON."""
+        run_id = uuid4()
+        completed_run.id = str(run_id)
+
+        with (
+            patch.object(StrategyRunRepository, "get", new_callable=AsyncMock) as mock_get,
+            patch.object(
+                EquityCurveRepository, "get_by_run", new_callable=AsyncMock
+            ) as mock_get_curve,
+            patch("squant.services.strategy.StrategyRepository") as mock_strategy_repo_class,
+        ):
+            mock_get.return_value = completed_run
+            mock_get_curve.return_value = []
+
+            mock_strategy_repo = MagicMock()
+            mock_strategy_repo.get = AsyncMock(return_value=mock_strategy)
+            mock_strategy_repo_class.return_value = mock_strategy_repo
+
+            service = BacktestService(mock_session)
+            report = await service.export_report(run_id, format="json")
+
+            assert report["run_id"] == str(run_id)
+            assert report["symbol"] == "BTC/USDT"
+            assert report["export_format"] == "json"
+            assert "metrics" in report
+            assert "equity_curve" in report
+
+    @pytest.mark.asyncio
+    async def test_export_report_csv(self, mock_session, completed_run, mock_strategy):
+        """Test exporting report and generating CSV."""
+        run_id = uuid4()
+        completed_run.id = str(run_id)
+
+        with (
+            patch.object(StrategyRunRepository, "get", new_callable=AsyncMock) as mock_get,
+            patch.object(
+                EquityCurveRepository, "get_by_run", new_callable=AsyncMock
+            ) as mock_get_curve,
+            patch("squant.services.strategy.StrategyRepository") as mock_strategy_repo_class,
+        ):
+            mock_get.return_value = completed_run
+            mock_get_curve.return_value = []
+
+            mock_strategy_repo = MagicMock()
+            mock_strategy_repo.get = AsyncMock(return_value=mock_strategy)
+            mock_strategy_repo_class.return_value = mock_strategy_repo
+
+            service = BacktestService(mock_session)
+            report = await service.export_report(run_id, format="csv")
+            csv_content = service.generate_csv_report(report)
+
+            assert "# Backtest Report Summary" in csv_content
+            assert "# Performance Metrics" in csv_content
+            assert str(run_id) in csv_content
+
+    @pytest.mark.asyncio
+    async def test_export_report_not_completed(self, mock_session, mock_run):
+        """Test exporting report for non-completed run raises error."""
+        run_id = uuid4()
+        mock_run.id = str(run_id)
+        mock_run.status = RunStatus.RUNNING
+
+        with patch.object(StrategyRunRepository, "get", new_callable=AsyncMock) as mock_get:
+            mock_get.return_value = mock_run
+
+            service = BacktestService(mock_session)
+
+            with pytest.raises(ValueError) as exc_info:
+                await service.export_report(run_id)
+
+            assert "running" in str(exc_info.value).lower()
+            assert "completed" in str(exc_info.value).lower()
+
+    @pytest.mark.asyncio
+    async def test_export_report_not_found(self, mock_session):
+        """Test exporting report for non-existent run raises error."""
+        with patch.object(StrategyRunRepository, "get", new_callable=AsyncMock) as mock_get:
+            mock_get.return_value = None
+
+            service = BacktestService(mock_session)
+
+            with pytest.raises(BacktestNotFoundError):
+                await service.export_report(uuid4())
+
+    @pytest.mark.asyncio
+    async def test_export_report_invalid_format(self, mock_session, completed_run):
+        """Test exporting report with invalid format raises error."""
+        run_id = uuid4()
+        completed_run.id = str(run_id)
+
+        with patch.object(StrategyRunRepository, "get", new_callable=AsyncMock) as mock_get:
+            mock_get.return_value = completed_run
+
+            service = BacktestService(mock_session)
+
+            with pytest.raises(ValueError) as exc_info:
+                await service.export_report(run_id, format="xml")
+
+            assert "invalid" in str(exc_info.value).lower()
+            assert "xml" in str(exc_info.value).lower()
+
+    def test_generate_csv_report_with_trades(self, mock_session):
+        """Test CSV generation includes trades section."""
+        service = BacktestService(mock_session)
+
+        report = {
+            "run_id": "test-123",
+            "strategy_id": "strategy-456",
+            "strategy_name": "Test Strategy",
+            "symbol": "BTC/USDT",
+            "exchange": "okx",
+            "timeframe": "1h",
+            "start_date": "2024-01-01T00:00:00",
+            "end_date": "2024-01-31T00:00:00",
+            "initial_capital": "10000",
+            "final_equity": "11500",
+            "commission_rate": "0.001",
+            "slippage": "0",
+            "metrics": {"total_return": 0.15, "sharpe_ratio": 1.5},
+            "equity_curve": [
+                {
+                    "time": "2024-01-01T00:00:00",
+                    "equity": "10000",
+                    "cash": "10000",
+                    "position_value": "0",
+                    "unrealized_pnl": "0",
+                }
+            ],
+            "trades": [
+                {
+                    "symbol": "BTC/USDT",
+                    "side": "buy",
+                    "amount": "0.1",
+                }
+            ],
+            "exported_at": "2024-02-01T00:00:00",
+        }
+
+        csv_content = service.generate_csv_report(report)
+
+        assert "# Trades" in csv_content
+        assert "BTC/USDT" in csv_content
+        assert "# Equity Curve" in csv_content

@@ -7,13 +7,14 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from squant.api.utils import ApiResponse, PaginatedData
-from squant.engine.backtest.runner import BacktestError
+from squant.engine.backtest.runner import BacktestCancelledError, BacktestError
 from squant.infra.database import get_session
 from squant.models.enums import RunStatus
 from squant.schemas.backtest import (
     AvailableSymbolResponse,
     BacktestDetailResponse,
     BacktestListItem,
+    BacktestReportExport,
     BacktestRunResponse,
     CheckDataRequest,
     CreateBacktestRequest,
@@ -149,6 +150,40 @@ async def execute_backtest(
         raise HTTPException(status_code=400, detail=str(e))
     except IncompleteDataError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    except BacktestError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.post("/{run_id}/cancel", response_model=ApiResponse[BacktestRunResponse])
+async def cancel_backtest(
+    run_id: UUID,
+    session: AsyncSession = Depends(get_session),
+) -> ApiResponse[BacktestRunResponse]:
+    """Cancel a running backtest (TRD-008#3).
+
+    This endpoint requests cancellation of a running backtest.
+    The backtest will stop at the next bar iteration.
+
+    Args:
+        run_id: Backtest run ID.
+        session: Database session.
+
+    Returns:
+        Current backtest run state.
+
+    Raises:
+        HTTPException: 400 if not cancellable, 404 if not found.
+    """
+    service = BacktestService(session)
+
+    try:
+        run = await service.cancel(run_id)
+        return ApiResponse(
+            data=BacktestRunResponse.model_validate(run),
+            message="Backtest cancellation requested",
+        )
+    except BacktestNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
     except BacktestError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -366,3 +401,48 @@ async def list_available_symbols(
     symbols = await loader.get_available_symbols(exchange=exchange, timeframe=timeframe)
 
     return ApiResponse(data=[AvailableSymbolResponse(**s) for s in symbols])
+
+
+@router.get("/{run_id}/export", response_model=ApiResponse[dict])
+async def export_backtest_report(
+    run_id: UUID,
+    format: str = Query("json", description="Export format: json or csv"),
+    session: AsyncSession = Depends(get_session),
+) -> ApiResponse[dict]:
+    """Export backtest report (TRD-009#4).
+
+    Exports a completed backtest as JSON or CSV format.
+
+    Args:
+        run_id: Backtest run ID.
+        format: Export format ('json' or 'csv').
+        session: Database session.
+
+    Returns:
+        Report data. For CSV format, returns {content: "...", filename: "..."}
+
+    Raises:
+        HTTPException: 400 if invalid format or not completed, 404 if not found.
+    """
+    service = BacktestService(session)
+
+    try:
+        report = await service.export_report(run_id, format=format)
+
+        if format == "csv":
+            csv_content = service.generate_csv_report(report)
+            return ApiResponse(
+                data={
+                    "content": csv_content,
+                    "filename": f"backtest_{run_id}_{report['exported_at'][:10]}.csv",
+                    "content_type": "text/csv",
+                },
+                message="Report exported as CSV",
+            )
+
+        return ApiResponse(data=report, message="Report exported as JSON")
+
+    except BacktestNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))

@@ -364,3 +364,260 @@ class TestCircuitBreakerErrors:
         error = CircuitBreakerCooldownError(30.5)
         assert error.remaining_minutes == 30.5
         assert "30.5" in str(error)
+
+
+class TestCircuitBreakerBlocksNewSessions:
+    """Tests for circuit breaker blocking new trading sessions.
+
+    Verifies that when circuit breaker is active, new paper trading
+    and live trading sessions are rejected.
+    """
+
+    @pytest.fixture
+    def mock_redis_active(self) -> MagicMock:
+        """Create mock Redis with active circuit breaker state."""
+        import json
+
+        redis = MagicMock()
+        state_data = {
+            "is_active": True,
+            "triggered_at": datetime.now(UTC).isoformat(),
+            "trigger_type": "manual",
+            "trigger_reason": "Test circuit breaker active",
+            "cooldown_until": None,
+        }
+        redis.get = AsyncMock(return_value=json.dumps(state_data))
+        return redis
+
+    @pytest.fixture
+    def mock_redis_inactive(self) -> MagicMock:
+        """Create mock Redis with inactive circuit breaker state."""
+        redis = MagicMock()
+        redis.get = AsyncMock(return_value=None)
+        return redis
+
+    @pytest.fixture
+    def mock_session(self) -> MagicMock:
+        """Create mock database session."""
+        session = MagicMock()
+        session.commit = AsyncMock()
+        session.flush = AsyncMock()
+        session.refresh = AsyncMock()
+        session.add = MagicMock()
+        return session
+
+    @pytest.mark.asyncio
+    async def test_paper_trading_blocked_when_circuit_breaker_active(
+        self, mock_session: MagicMock, mock_redis_active: MagicMock
+    ) -> None:
+        """Test paper trading start is blocked when circuit breaker is active."""
+        from decimal import Decimal
+        from uuid import uuid4
+
+        from squant.services.paper_trading import (
+            CircuitBreakerActiveError,
+            PaperTradingService,
+        )
+
+        service = PaperTradingService(mock_session)
+
+        with pytest.raises(CircuitBreakerActiveError) as exc_info:
+            await service.start(
+                strategy_id=uuid4(),
+                symbol="BTC/USDT",
+                exchange="okx",
+                timeframe="1h",
+                initial_capital=Decimal("10000"),
+                redis=mock_redis_active,
+            )
+
+        assert "circuit breaker is active" in str(exc_info.value).lower()
+        assert "Test circuit breaker active" in str(exc_info.value)
+
+    @pytest.mark.asyncio
+    async def test_paper_trading_allowed_when_circuit_breaker_inactive(
+        self, mock_session: MagicMock, mock_redis_inactive: MagicMock
+    ) -> None:
+        """Test paper trading start is allowed when circuit breaker is inactive."""
+        from decimal import Decimal
+        from unittest.mock import patch
+        from uuid import uuid4
+
+        from squant.services.paper_trading import (
+            CircuitBreakerActiveError,
+            PaperTradingService,
+        )
+
+        service = PaperTradingService(mock_session)
+
+        # Mock the strategy repository to return None (strategy not found)
+        with patch("squant.services.strategy.StrategyRepository") as mock_repo_class:
+            mock_repo = MagicMock()
+            mock_repo.get = AsyncMock(return_value=None)
+            mock_repo_class.return_value = mock_repo
+
+            # Should pass circuit breaker check but fail on strategy lookup
+            from squant.services.strategy import StrategyNotFoundError
+
+            with pytest.raises(StrategyNotFoundError):
+                await service.start(
+                    strategy_id=uuid4(),
+                    symbol="BTC/USDT",
+                    exchange="okx",
+                    timeframe="1h",
+                    initial_capital=Decimal("10000"),
+                    redis=mock_redis_inactive,
+                )
+
+            # No CircuitBreakerActiveError means it passed the check
+
+    @pytest.mark.asyncio
+    async def test_live_trading_blocked_when_circuit_breaker_active(
+        self, mock_session: MagicMock, mock_redis_active: MagicMock
+    ) -> None:
+        """Test live trading start is blocked when circuit breaker is active."""
+        from decimal import Decimal
+        from uuid import uuid4
+
+        from squant.services.live_trading import (
+            CircuitBreakerActiveError,
+            LiveTradingService,
+            RiskConfig,
+        )
+
+        service = LiveTradingService(mock_session)
+
+        risk_config = RiskConfig(
+            max_position_size=Decimal("1.0"),
+            max_order_size=Decimal("0.5"),
+            daily_trade_limit=10,
+            daily_loss_limit=Decimal("100"),
+        )
+
+        with pytest.raises(CircuitBreakerActiveError) as exc_info:
+            await service.start(
+                strategy_id=uuid4(),
+                symbol="BTC/USDT",
+                exchange_account_id=uuid4(),
+                timeframe="1h",
+                risk_config=risk_config,
+                redis=mock_redis_active,
+            )
+
+        assert "circuit breaker is active" in str(exc_info.value).lower()
+
+    @pytest.mark.asyncio
+    async def test_live_trading_allowed_when_circuit_breaker_inactive(
+        self, mock_session: MagicMock, mock_redis_inactive: MagicMock
+    ) -> None:
+        """Test live trading start is allowed when circuit breaker is inactive."""
+        from decimal import Decimal
+        from unittest.mock import patch
+        from uuid import uuid4
+
+        from squant.services.live_trading import (
+            CircuitBreakerActiveError,
+            LiveTradingService,
+            RiskConfig,
+        )
+
+        service = LiveTradingService(mock_session)
+
+        risk_config = RiskConfig(
+            max_position_size=Decimal("1.0"),
+            max_order_size=Decimal("0.5"),
+            daily_trade_limit=10,
+            daily_loss_limit=Decimal("100"),
+        )
+
+        # Mock the strategy repository to return None (strategy not found)
+        with patch("squant.services.strategy.StrategyRepository") as mock_repo_class:
+            mock_repo = MagicMock()
+            mock_repo.get = AsyncMock(return_value=None)
+            mock_repo_class.return_value = mock_repo
+
+            # Should pass circuit breaker check but fail on strategy lookup
+            from squant.services.strategy import StrategyNotFoundError
+
+            with pytest.raises(StrategyNotFoundError):
+                await service.start(
+                    strategy_id=uuid4(),
+                    symbol="BTC/USDT",
+                    exchange_account_id=uuid4(),
+                    timeframe="1h",
+                    risk_config=risk_config,
+                    redis=mock_redis_inactive,
+                )
+
+            # No CircuitBreakerActiveError means it passed the check
+
+    @pytest.mark.asyncio
+    async def test_paper_trading_without_redis_skips_check(
+        self, mock_session: MagicMock
+    ) -> None:
+        """Test paper trading without redis parameter skips circuit breaker check."""
+        from decimal import Decimal
+        from unittest.mock import patch
+        from uuid import uuid4
+
+        from squant.services.paper_trading import (
+            CircuitBreakerActiveError,
+            PaperTradingService,
+        )
+
+        service = PaperTradingService(mock_session)
+
+        # Mock the strategy repository to return None (strategy not found)
+        with patch("squant.services.strategy.StrategyRepository") as mock_repo_class:
+            mock_repo = MagicMock()
+            mock_repo.get = AsyncMock(return_value=None)
+            mock_repo_class.return_value = mock_repo
+
+            from squant.services.strategy import StrategyNotFoundError
+
+            # Without redis parameter, should skip circuit breaker check
+            # and fail on strategy lookup instead
+            with pytest.raises(StrategyNotFoundError):
+                await service.start(
+                    strategy_id=uuid4(),
+                    symbol="BTC/USDT",
+                    exchange="okx",
+                    timeframe="1h",
+                    initial_capital=Decimal("10000"),
+                    # No redis parameter
+                )
+
+    @pytest.mark.asyncio
+    async def test_circuit_breaker_check_handles_invalid_json(
+        self, mock_session: MagicMock
+    ) -> None:
+        """Test circuit breaker check handles invalid JSON gracefully."""
+        from decimal import Decimal
+        from unittest.mock import patch
+        from uuid import uuid4
+
+        from squant.services.paper_trading import PaperTradingService
+
+        mock_redis = MagicMock()
+        mock_redis.get = AsyncMock(return_value="invalid json {}")
+
+        service = PaperTradingService(mock_session)
+
+        # Mock the strategy repository to return None (strategy not found)
+        with patch("squant.services.strategy.StrategyRepository") as mock_repo_class:
+            mock_repo = MagicMock()
+            mock_repo.get = AsyncMock(return_value=None)
+            mock_repo_class.return_value = mock_repo
+
+            from squant.services.strategy import StrategyNotFoundError
+
+            # Invalid JSON should be treated as inactive (allow trading)
+            with pytest.raises(StrategyNotFoundError):
+                await service.start(
+                    strategy_id=uuid4(),
+                    symbol="BTC/USDT",
+                    exchange="okx",
+                    timeframe="1h",
+                    initial_capital=Decimal("10000"),
+                    redis=mock_redis,
+                )

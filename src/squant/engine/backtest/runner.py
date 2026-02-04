@@ -31,6 +31,15 @@ class BacktestError(Exception):
     pass
 
 
+class BacktestCancelledError(BacktestError):
+    """Backtest was cancelled by user."""
+
+    def __init__(self, run_id: str | None = None):
+        self.run_id = run_id
+        message = f"Backtest cancelled: {run_id}" if run_id else "Backtest cancelled"
+        super().__init__(message)
+
+
 class StrategyInstantiationError(BacktestError):
     """Error instantiating strategy from code."""
 
@@ -86,6 +95,26 @@ class BacktestRunner:
         self._bar_count = 0
         self._start_time: datetime | None = None
         self._end_time: datetime | None = None
+        self._cancelled = False
+        self._run_id: str | None = None
+
+    def cancel(self) -> None:
+        """Cancel the running backtest.
+
+        Sets a flag that will be checked during bar processing.
+        The backtest will stop at the next bar iteration.
+        """
+        self._cancelled = True
+        logger.info(f"Backtest cancel requested: {self._run_id}")
+
+    @property
+    def is_cancelled(self) -> bool:
+        """Check if backtest has been cancelled."""
+        return self._cancelled
+
+    def set_run_id(self, run_id: str) -> None:
+        """Set the run ID for this backtest."""
+        self._run_id = run_id
 
     async def run(
         self,
@@ -116,6 +145,11 @@ class BacktestRunner:
             # Step 3: Process bars
             self._bar_count = 0
             async for bar in bars:
+                # Check for cancellation before processing each bar (TRD-008#3)
+                if self._cancelled:
+                    logger.info(f"Backtest cancelled after {self._bar_count} bars")
+                    raise BacktestCancelledError(self._run_id)
+
                 self._process_bar(bar)
                 self._bar_count += 1
 
@@ -128,6 +162,9 @@ class BacktestRunner:
             # Step 5: Build and return result
             return self._build_result()
 
+        except BacktestCancelledError:
+            # Re-raise cancellation errors without wrapping (TRD-008#3)
+            raise
         except Exception as e:
             logger.exception(f"Backtest failed: {e}")
             raise BacktestError(f"Backtest execution failed: {e}") from e

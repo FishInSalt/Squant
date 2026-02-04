@@ -87,6 +87,16 @@ class ExchangeAccountNotFoundError(LiveTradingError):
         super().__init__(f"Exchange account {account_id}: {reason}")
 
 
+class CircuitBreakerActiveError(LiveTradingError):
+    """Cannot start trading when circuit breaker is active."""
+
+    def __init__(self, reason: str | None = None):
+        message = "Cannot start live trading: circuit breaker is active"
+        if reason:
+            message += f" (reason: {reason})"
+        super().__init__(message)
+
+
 class LiveStrategyRunRepository(BaseRepository[StrategyRun]):
     """Repository for live trading StrategyRun model."""
 
@@ -193,6 +203,7 @@ class LiveTradingService:
         risk_config: RiskConfig,
         initial_equity: Decimal | None = None,
         params: dict[str, Any] | None = None,
+        redis: Any | None = None,
     ) -> StrategyRun:
         """Start a live trading session.
 
@@ -204,6 +215,7 @@ class LiveTradingService:
             risk_config: Risk management configuration.
             initial_equity: Initial equity for risk calculations (fetched from exchange if None).
             params: Strategy parameters.
+            redis: Redis client for circuit breaker check (optional).
 
         Returns:
             Created StrategyRun.
@@ -214,9 +226,14 @@ class LiveTradingService:
             StrategyInstantiationError: If strategy cannot be instantiated.
             RiskConfigurationError: If risk config is invalid.
             ExchangeConnectionError: If exchange connection fails.
+            CircuitBreakerActiveError: If circuit breaker is active.
         """
         from squant.services.account import ExchangeAccountRepository
         from squant.services.strategy import StrategyNotFoundError, StrategyRepository
+
+        # Check circuit breaker state before starting
+        if redis is not None:
+            await self._check_circuit_breaker(redis)
 
         # Validate risk configuration
         self._validate_risk_config(risk_config)
@@ -331,6 +348,26 @@ class LiveTradingService:
             )
             await self.session.commit()
             raise
+
+    async def _check_circuit_breaker(self, redis: Any) -> None:
+        """Check if circuit breaker is active and raise error if so.
+
+        Args:
+            redis: Redis client.
+
+        Raises:
+            CircuitBreakerActiveError: If circuit breaker is active.
+        """
+        import json
+
+        try:
+            state_data = await redis.get("squant:circuit_breaker:state")
+            if state_data:
+                state = json.loads(state_data)
+                if state.get("is_active", False):
+                    raise CircuitBreakerActiveError(state.get("trigger_reason"))
+        except json.JSONDecodeError:
+            pass  # Invalid state, allow trading
 
     def _validate_risk_config(self, config: RiskConfig) -> None:
         """Validate risk configuration.

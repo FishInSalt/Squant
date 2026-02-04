@@ -9,6 +9,7 @@ from decimal import Decimal
 import pytest
 
 from squant.engine.backtest.runner import (
+    BacktestCancelledError,
     BacktestError,
     BacktestRunner,
     StrategyInstantiationError,
@@ -478,3 +479,111 @@ class ErrorStrategy(Strategy):
         # (based on the runner implementation which catches strategy errors)
         result = await runner.run(async_bar_iterator(sample_bars))
         assert result is not None
+
+
+class TestBacktestCancellation:
+    """Tests for backtest cancellation (TRD-008#3)."""
+
+    def test_cancel_sets_flag(self, simple_strategy_code):
+        """Test cancel method sets cancelled flag."""
+        runner = BacktestRunner(
+            strategy_code=simple_strategy_code,
+            strategy_name="Test",
+            symbol="BTC/USDT",
+            timeframe="1h",
+            initial_capital=Decimal("10000"),
+        )
+
+        assert runner.is_cancelled is False
+        runner.cancel()
+        assert runner.is_cancelled is True
+
+    def test_set_run_id(self, simple_strategy_code):
+        """Test set_run_id method."""
+        runner = BacktestRunner(
+            strategy_code=simple_strategy_code,
+            strategy_name="Test",
+            symbol="BTC/USDT",
+            timeframe="1h",
+            initial_capital=Decimal("10000"),
+        )
+
+        assert runner._run_id is None
+        runner.set_run_id("test-run-id")
+        assert runner._run_id == "test-run-id"
+
+    @pytest.mark.asyncio
+    async def test_run_cancelled_raises_error(self, simple_strategy_code, sample_bars):
+        """Test cancelled run raises BacktestCancelledError."""
+        runner = BacktestRunner(
+            strategy_code=simple_strategy_code,
+            strategy_name="Test",
+            symbol="BTC/USDT",
+            timeframe="1h",
+            initial_capital=Decimal("10000"),
+        )
+        runner.set_run_id("test-run-123")
+
+        # Cancel immediately
+        runner.cancel()
+
+        with pytest.raises(BacktestCancelledError) as exc_info:
+            await runner.run(async_bar_iterator(sample_bars))
+
+        assert "test-run-123" in str(exc_info.value)
+
+    @pytest.mark.asyncio
+    async def test_run_cancelled_mid_execution(self, simple_strategy_code):
+        """Test cancellation during bar processing."""
+        # Create many bars to ensure we can cancel mid-execution
+        base_time = datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC)
+        many_bars = [
+            Bar(
+                time=base_time + timedelta(hours=i),
+                symbol="BTC/USDT",
+                open=Decimal("50000"),
+                high=Decimal("51000"),
+                low=Decimal("49000"),
+                close=Decimal("50500"),
+                volume=Decimal("100"),
+            )
+            for i in range(100)
+        ]
+
+        runner = BacktestRunner(
+            strategy_code=simple_strategy_code,
+            strategy_name="Test",
+            symbol="BTC/USDT",
+            timeframe="1h",
+            initial_capital=Decimal("10000"),
+        )
+        runner.set_run_id("test-run-456")
+
+        # Create iterator that cancels after 5 bars
+        async def cancelling_iterator():
+            for i, bar in enumerate(many_bars):
+                if i == 5:
+                    runner.cancel()
+                yield bar
+
+        with pytest.raises(BacktestCancelledError):
+            await runner.run(cancelling_iterator())
+
+        # Should have processed some bars before cancellation
+        # Cancellation check happens before processing, so exactly 5 bars processed
+        # But _bar_count is incremented after processing
+        # So we expect roughly 5-6 bars to be processed before exception
+        assert runner._bar_count <= 6
+
+    def test_backtest_cancelled_error(self):
+        """Test BacktestCancelledError formatting."""
+        # With run_id
+        error = BacktestCancelledError("run-123")
+        assert "run-123" in str(error)
+        assert error.run_id == "run-123"
+        assert isinstance(error, BacktestError)
+
+        # Without run_id
+        error2 = BacktestCancelledError()
+        assert "cancelled" in str(error2).lower()
+        assert error2.run_id is None

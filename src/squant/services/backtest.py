@@ -17,7 +17,11 @@ from uuid import UUID
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from squant.engine.backtest.runner import BacktestError, BacktestRunner
+from squant.engine.backtest.runner import (
+    BacktestCancelledError,
+    BacktestError,
+    BacktestRunner,
+)
 from squant.engine.backtest.types import BacktestResult
 from squant.infra.repository import BaseRepository
 from squant.models.enums import RunMode, RunStatus
@@ -197,6 +201,9 @@ class EquityCurveRepository:
 
 class BacktestService:
     """Service for backtest operations."""
+
+    # Class-level tracking of running backtests (TRD-008#3)
+    _running_backtests: dict[str, BacktestRunner] = {}
 
     def __init__(self, session: AsyncSession):
         self.session = session
@@ -432,19 +439,23 @@ class BacktestService:
         )
         await self.session.commit()
 
-        try:
-            # Create and run backtest
-            runner = BacktestRunner(
-                strategy_code=strategy.code,
-                strategy_name=strategy.name,
-                symbol=run.symbol,
-                timeframe=run.timeframe,
-                initial_capital=run.initial_capital,
-                commission_rate=run.commission_rate,
-                slippage=run.slippage or Decimal("0"),
-                params=run.params,
-            )
+        # Create runner
+        runner = BacktestRunner(
+            strategy_code=strategy.code,
+            strategy_name=strategy.name,
+            symbol=run.symbol,
+            timeframe=run.timeframe,
+            initial_capital=run.initial_capital,
+            commission_rate=run.commission_rate,
+            slippage=run.slippage or Decimal("0"),
+            params=run.params,
+        )
+        runner.set_run_id(run.id)
 
+        # Register runner for cancellation support (TRD-008#3)
+        BacktestService._running_backtests[run.id] = runner
+
+        try:
             bars = self.data_loader.load_bars(
                 exchange=run.exchange,
                 symbol=run.symbol,
@@ -469,6 +480,17 @@ class BacktestService:
 
             return run
 
+        except BacktestCancelledError:
+            # Handle cancellation (TRD-008#3)
+            run = await self.run_repo.update(
+                run.id,
+                status=RunStatus.CANCELLED,
+                error_message="Backtest cancelled by user",
+                stopped_at=datetime.now(UTC),
+            )
+            await self.session.commit()
+            raise
+
         except Exception as e:
             await self.run_repo.update(
                 run.id,
@@ -478,6 +500,10 @@ class BacktestService:
             )
             await self.session.commit()
             raise BacktestError(f"Backtest execution failed: {e}") from e
+
+        finally:
+            # Always unregister runner (TRD-008#3)
+            BacktestService._running_backtests.pop(run.id, None)
 
     async def _save_results(self, run_id: str, result: BacktestResult) -> None:
         """Save backtest results to database.
@@ -499,6 +525,55 @@ class BacktestService:
             for snapshot in result.equity_curve
         ]
         await self.equity_repo.bulk_create(equity_records)
+
+    async def cancel(self, run_id: UUID) -> StrategyRun:
+        """Cancel a running backtest (TRD-008#3).
+
+        Args:
+            run_id: Backtest run ID.
+
+        Returns:
+            Updated StrategyRun with cancelled status.
+
+        Raises:
+            BacktestNotFoundError: If run not found.
+            BacktestError: If run is not in a cancellable state.
+        """
+        # Verify run exists
+        run = await self.run_repo.get(run_id)
+        if not run:
+            raise BacktestNotFoundError(run_id)
+
+        # Check if run is in a cancellable state
+        if run.status != RunStatus.RUNNING:
+            raise BacktestError(
+                f"Cannot cancel backtest with status '{run.status.value}'. "
+                f"Only running backtests can be cancelled."
+            )
+
+        # Find and cancel the runner
+        runner = BacktestService._running_backtests.get(str(run_id))
+        if runner:
+            runner.cancel()
+            logger.info(f"Backtest {run_id} cancellation requested")
+        else:
+            # Runner not found - may have just finished
+            logger.warning(f"No active runner found for backtest {run_id}")
+
+        # Return current run state (actual cancellation happens asynchronously)
+        return run
+
+    @classmethod
+    def is_running(cls, run_id: str) -> bool:
+        """Check if a backtest is currently running.
+
+        Args:
+            run_id: Backtest run ID.
+
+        Returns:
+            True if backtest is running.
+        """
+        return run_id in cls._running_backtests
 
     async def get(self, run_id: UUID) -> StrategyRun:
         """Get a backtest run by ID.
@@ -646,3 +721,149 @@ class BacktestService:
             end=end,
         )
         return availability.to_dict()
+
+    async def export_report(
+        self,
+        run_id: UUID,
+        format: str = "json",
+    ) -> dict[str, Any]:
+        """Export backtest report (TRD-009#4).
+
+        Args:
+            run_id: Backtest run ID.
+            format: Export format ('json' or 'csv').
+
+        Returns:
+            Report data as dictionary.
+
+        Raises:
+            BacktestNotFoundError: If run not found.
+            ValueError: If run is not completed or format is invalid.
+        """
+        # Validate format
+        if format not in ("json", "csv"):
+            raise ValueError(f"Invalid export format: {format}. Supported: json, csv")
+
+        # Get run data
+        run = await self.run_repo.get(run_id)
+        if not run:
+            raise BacktestNotFoundError(run_id)
+
+        # Check run status
+        if run.status != RunStatus.COMPLETED:
+            raise ValueError(
+                f"Cannot export report for backtest with status '{run.status.value}'. "
+                f"Only completed backtests can be exported."
+            )
+
+        # Get strategy name
+        from squant.services.strategy import StrategyRepository
+
+        strategy_repo = StrategyRepository(self.session)
+        strategy = await strategy_repo.get(run.strategy_id)
+        strategy_name = strategy.name if strategy else None
+
+        # Get equity curve
+        equity_curve = await self.equity_repo.get_by_run(str(run_id))
+
+        # Build report data
+        report = {
+            "run_id": str(run.id),
+            "strategy_id": str(run.strategy_id),
+            "strategy_name": strategy_name,
+            "symbol": run.symbol,
+            "exchange": run.exchange,
+            "timeframe": run.timeframe,
+            "start_date": run.backtest_start.isoformat() if run.backtest_start else None,
+            "end_date": run.backtest_end.isoformat() if run.backtest_end else None,
+            "initial_capital": str(run.initial_capital),
+            "final_equity": str(run.result.get("final_equity", run.initial_capital))
+            if run.result
+            else str(run.initial_capital),
+            "commission_rate": str(run.commission_rate),
+            "slippage": str(run.slippage or Decimal("0")),
+            "metrics": run.result or {},
+            "equity_curve": [
+                {
+                    "time": ec.time.isoformat(),
+                    "equity": str(ec.equity),
+                    "cash": str(ec.cash),
+                    "position_value": str(ec.position_value),
+                    "unrealized_pnl": str(ec.unrealized_pnl),
+                }
+                for ec in equity_curve
+            ],
+            "trades": run.result.get("trades", []) if run.result else [],
+            "exported_at": datetime.now(UTC).isoformat(),
+            "export_format": format,
+        }
+
+        return report
+
+    def generate_csv_report(self, report: dict[str, Any]) -> str:
+        """Generate CSV format report (TRD-009#4).
+
+        Args:
+            report: Report data from export_report().
+
+        Returns:
+            CSV formatted string.
+        """
+        import csv
+        import io
+
+        output = io.StringIO()
+
+        # Section 1: Summary
+        output.write("# Backtest Report Summary\n")
+        output.write("Field,Value\n")
+        writer = csv.writer(output)
+        writer.writerow(["run_id", report["run_id"]])
+        writer.writerow(["strategy_id", report["strategy_id"]])
+        writer.writerow(["strategy_name", report["strategy_name"] or ""])
+        writer.writerow(["symbol", report["symbol"]])
+        writer.writerow(["exchange", report["exchange"]])
+        writer.writerow(["timeframe", report["timeframe"]])
+        writer.writerow(["start_date", report["start_date"] or ""])
+        writer.writerow(["end_date", report["end_date"] or ""])
+        writer.writerow(["initial_capital", report["initial_capital"]])
+        writer.writerow(["final_equity", report["final_equity"]])
+        writer.writerow(["commission_rate", report["commission_rate"]])
+        writer.writerow(["slippage", report["slippage"]])
+        writer.writerow(["exported_at", report["exported_at"]])
+
+        # Section 2: Metrics
+        output.write("\n# Performance Metrics\n")
+        output.write("Metric,Value\n")
+        for key, value in report["metrics"].items():
+            if not isinstance(value, (list, dict)):
+                writer.writerow([key, str(value)])
+
+        # Section 3: Equity Curve
+        output.write("\n# Equity Curve\n")
+        if report["equity_curve"]:
+            output.write("time,equity,cash,position_value,unrealized_pnl\n")
+            for point in report["equity_curve"]:
+                writer.writerow(
+                    [
+                        point["time"],
+                        point["equity"],
+                        point["cash"],
+                        point["position_value"],
+                        point["unrealized_pnl"],
+                    ]
+                )
+
+        # Section 4: Trades
+        output.write("\n# Trades\n")
+        if report["trades"]:
+            # Get trade fields from first trade
+            if report["trades"]:
+                first_trade = report["trades"][0]
+                if isinstance(first_trade, dict):
+                    headers = list(first_trade.keys())
+                    output.write(",".join(headers) + "\n")
+                    for trade in report["trades"]:
+                        writer.writerow([str(trade.get(h, "")) for h in headers])
+
+        return output.getvalue()

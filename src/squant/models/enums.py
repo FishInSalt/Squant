@@ -17,6 +17,7 @@ class RunStatus(str, enum.Enum):
     PENDING = "pending"
     RUNNING = "running"
     STOPPED = "stopped"
+    CANCELLED = "cancelled"  # TRD-008#3: User cancelled the run
     ERROR = "error"
     COMPLETED = "completed"
 
