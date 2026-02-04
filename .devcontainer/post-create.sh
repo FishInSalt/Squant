@@ -26,6 +26,13 @@ cd frontend
 pnpm install
 cd ..
 
+# Create .env.test.local from template if it doesn't exist
+if [ ! -f .env.test.local ]; then
+    echo "📝 Creating .env.test.local from template..."
+    cp .env.test.local.example .env.test.local
+    echo "NOTE: Edit .env.test.local to add exchange API credentials for integration tests"
+fi
+
 # Create .env file if it doesn't exist
 if [ ! -f .env ]; then
     echo "📝 Creating .env file from template..."

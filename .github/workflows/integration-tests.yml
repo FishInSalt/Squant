@@ -10,13 +10,7 @@ jobs:
   integration-tests:
     runs-on: ubuntu-latest
 
-    env:
-      # Test environment variables - available to all steps
-      DATABASE_URL: postgresql+asyncpg://squant_test:squant_test@localhost:5433/squant_test
-      REDIS_URL: redis://localhost:6380/1
-      SECRET_KEY: test-secret-key-min-32-chars-long-for-testing
-      ENCRYPTION_KEY: cTYK1ELdwLfxoLdD6z2YqraA0vasUEED
-      APP_ENV: test
+    # Environment variables are loaded from .env.test.ci by conftest.py
 
     services:
       postgres:

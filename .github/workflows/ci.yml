@@ -86,13 +86,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: lint
 
-    env:
-      # Test environment variables - available to all steps
-      DATABASE_URL: postgresql+asyncpg://squant_test:squant_test@localhost:5433/squant_test
-      REDIS_URL: redis://localhost:6380/1
-      SECRET_KEY: test-secret-key-min-32-chars-long-for-testing
-      ENCRYPTION_KEY: cTYK1ELdwLfxoLdD6z2YqraA0vasUEED
-      APP_ENV: test
+    # Environment variables are loaded from .env.test.ci by conftest.py
 
     services:
       postgres:
@@ -158,14 +152,8 @@ jobs:
     runs-on: ubuntu-latest
     needs: [unit-tests, integration-tests]
 
-    env:
-      # Test environment variables - available to all steps
-      # Note: These are for test scripts running on host, not for docker containers
-      DATABASE_URL: postgresql+asyncpg://squant_test:squant_test@localhost:5433/squant_test
-      REDIS_URL: redis://localhost:6380/1
-      SECRET_KEY: test-secret-key-for-integration-testing-min-32-chars
-      ENCRYPTION_KEY: cTYK1ELdwLfxoLdD6z2YqraA0vasUEED
-      APP_ENV: test
+    # Environment variables are loaded from .env.test.ci by conftest.py
+    # Note: These env vars are for test scripts running on host, not for docker containers
 
     steps:
     - name: Checkout code

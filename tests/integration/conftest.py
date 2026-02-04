@@ -3,17 +3,21 @@
 
 集成测试需要真实的数据库和Redis连接。
 
-运行方式（两种环境使用不同的地址配置）:
+运行方式（两种环境使用不同的配置文件）:
 
 1. 在 DevContainer 内部:
-    - 自动使用 .env.test 配置（Docker 服务名: postgres:5432, redis:6379）
+    - 自动加载 .env.test.local（Docker 服务名: postgres:5432, redis:6379）
     - 运行: uv run pytest tests/integration -v
+    - 首次运行前需创建: cp .env.test.local.example .env.test.local
 
 2. 在 CI/GitHub Actions:
-    - 环境变量由 workflow job-level env 设置（localhost:5433, localhost:6380）
-    - 不加载 .env.test 文件
+    - 自动加载 .env.test.ci（localhost:5433, localhost:6380）
+    - 无需额外配置，CI 会自动使用正确的配置
 
-注意：CI 环境变量配置在 .github/workflows/*.yml 的 job 级别 env 中定义。
+配置文件说明:
+    - .env.test.ci: CI 环境专用，使用 localhost 端口映射（已提交到仓库）
+    - .env.test.local: 本地测试专用，使用 Docker 服务名（不提交，含敏感凭证）
+    - .env.test.local.example: 本地配置模板（已提交到仓库）
 """
 
 import asyncio
@@ -33,27 +37,15 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 # 检测是否在 CI 环境中运行
 _IS_CI = os.environ.get("CI") == "true" or os.environ.get("GITHUB_ACTIONS") == "true"
 
-# 测试环境关键变量
-_TEST_ENV_KEYS = {
-    "DATABASE_URL",
-    "REDIS_URL",
-    "SECRET_KEY",
-    "ENCRYPTION_KEY",
-    "APP_ENV",
-}
 
-
-def _load_env_file(env_file: Path, override_keys: set[str] | None = None) -> None:
+def _load_env_file(env_file: Path) -> None:
     """从 .env 文件加载环境变量
 
     Args:
         env_file: .env 文件路径
-        override_keys: 需要强制覆盖的变量名集合，这些变量即使已存在也会被覆盖
     """
     if not env_file.exists():
         return
-
-    override_keys = override_keys or set()
 
     with open(env_file) as f:
         for line in f:
@@ -66,43 +58,54 @@ def _load_env_file(env_file: Path, override_keys: set[str] | None = None) -> Non
                 key, _, value = line.partition("=")
                 key = key.strip()
                 value = value.strip()
-                # 如果是覆盖键或环境变量未设置，则设置
-                if key and (key in override_keys or key not in os.environ):
+                # 设置环境变量（覆盖已存在的值，确保使用正确的测试配置）
+                if key:
                     os.environ[key] = value
 
 
 def _setup_test_environment() -> None:
-    """设置测试环境变量并清除配置缓存
+    """设置测试环境变量（严格模式）
 
-    两种环境使用不同的数据库/Redis 地址：
-    - DevContainer: Docker 服务名 (postgres:5432, redis:6379) - 从 .env.test 加载
-    - CI: localhost 端口映射 (localhost:5433, localhost:6380) - 从 workflow env 设置
+    加载策略：
+    - CI 环境: 加载 .env.test.ci (使用 localhost 端口映射)
+    - DevContainer: 加载 .env.test.local (使用 Docker 服务名)
 
-    CI 环境变量在 .github/workflows/integration-tests.yml 的 job 级别 env 中定义。
+    严格模式：缺少配置文件直接报错，避免静默使用错误配置。
     """
     project_root = Path(__file__).parent.parent.parent
 
-    # Debug output for CI troubleshooting
-    print(f"[conftest] _IS_CI = {_IS_CI}")
-    print(f"[conftest] CI env = {os.environ.get('CI')}")
-    print(f"[conftest] GITHUB_ACTIONS env = {os.environ.get('GITHUB_ACTIONS')}")
-    print(f"[conftest] DATABASE_URL env (before) = {os.environ.get('DATABASE_URL')}")
-    print(f"[conftest] REDIS_URL env (before) = {os.environ.get('REDIS_URL')}")
-
     if _IS_CI:
-        # CI 环境：环境变量已由 workflow job-level env 设置
-        # 不加载 .env.test（它使用 Docker 服务名，CI 无法解析）
-        pass
+        # CI 环境：加载 .env.test.ci
+        env_test_ci = project_root / ".env.test.ci"
+        if not env_test_ci.exists():
+            raise FileNotFoundError(
+                f".env.test.ci not found at {env_test_ci}. "
+                "This file is required for CI integration tests."
+            )
+        _load_env_file(env_test_ci)
+        print("[CI] Loaded configuration from .env.test.ci")
+        print(f"[CI] DATABASE_URL = {os.environ.get('DATABASE_URL')}")
+        print(f"[CI] REDIS_URL = {os.environ.get('REDIS_URL')}")
     else:
-        # DevContainer/本地环境
-        # 1. 先加载 .env（用户本地配置，包含敏感凭证如 OKX API keys）
-        env_path = project_root / ".env"
-        _load_env_file(env_path)
+        # DevContainer/本地环境：加载 .env.test.local（必须存在）
+        env_test_local = project_root / ".env.test.local"
 
-        # 2. 再加载 .env.test（测试特定配置，使用 Docker 服务名）
-        #    _TEST_ENV_KEYS 中的变量会强制使用 .env.test 的值
-        env_test_path = project_root / ".env.test"
-        _load_env_file(env_test_path, override_keys=_TEST_ENV_KEYS)
+        if not env_test_local.exists():
+            raise FileNotFoundError(
+                f".env.test.local not found at {env_test_local}. "
+                "Please create it from template: cp .env.test.local.example .env.test.local"
+            )
+
+        # 先加载 .env（获取敏感凭证如交易所 API keys）
+        env_path = project_root / ".env"
+        if env_path.exists():
+            _load_env_file(env_path)
+
+        # 再加载 .env.test.local（测试特定配置，会覆盖 .env 中的值）
+        _load_env_file(env_test_local)
+        print("[Local] Loaded configuration from .env.test.local")
+        print(f"[Local] DATABASE_URL = {os.environ.get('DATABASE_URL')}")
+        print(f"[Local] REDIS_URL = {os.environ.get('REDIS_URL')}")
 
     # 清除 get_settings 缓存以使用新的环境变量
     try:
@@ -111,10 +114,6 @@ def _setup_test_environment() -> None:
         get_settings.cache_clear()
     except ImportError:
         pass  # squant.config 尚未导入
-
-    # Debug output after setup
-    print(f"[conftest] DATABASE_URL env (after) = {os.environ.get('DATABASE_URL')}")
-    print(f"[conftest] REDIS_URL env (after) = {os.environ.get('REDIS_URL')}")
 
 
 # 立即设置环境变量（conftest.py 在测试模块之前被导入）
