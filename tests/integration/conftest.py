@@ -3,17 +3,17 @@
 
 集成测试需要真实的数据库和Redis连接。
 
-运行方式（两种环境现在使用相同的地址格式 localhost:5433/6380）:
+运行方式（两种环境使用不同的地址配置）:
 
-1. 在 DevContainer 外部（本地主机）:
-    docker compose -f docker-compose.test.yml up -d
-    uv run pytest tests/integration -v
-    docker compose -f docker-compose.test.yml down -v
+1. 在 DevContainer 内部:
+    - 自动使用 .env.test 配置（Docker 服务名: postgres:5432, redis:6379）
+    - 运行: uv run pytest tests/integration -v
 
 2. 在 CI/GitHub Actions:
-    workflow 自动设置 services 和环境变量
+    - 环境变量由 workflow job-level env 设置（localhost:5433, localhost:6380）
+    - 不加载 .env.test 文件
 
-注意：.env.test 现在使用 localhost 格式，兼容两种环境。
+注意：CI 环境变量配置在 .github/workflows/*.yml 的 job 级别 env 中定义。
 """
 
 import asyncio
@@ -75,16 +75,16 @@ def _setup_test_environment() -> None:
     """设置测试环境变量并清除配置缓存
 
     两种环境使用不同的数据库/Redis 地址：
-    - DevContainer: Docker 服务名 (postgres:5432, redis:6379)
-    - CI: localhost 端口映射 (localhost:5433, localhost:6380)
+    - DevContainer: Docker 服务名 (postgres:5432, redis:6379) - 从 .env.test 加载
+    - CI: localhost 端口映射 (localhost:5433, localhost:6380) - 从 workflow env 设置
 
-    CI 环境完全依赖 workflow 设置的环境变量，不加载 .env.test。
+    CI 环境变量在 .github/workflows/integration-tests.yml 的 job 级别 env 中定义。
     """
     project_root = Path(__file__).parent.parent.parent
 
     if _IS_CI:
-        # CI 环境：完全依赖 workflow 设置的环境变量
-        # 不加载 .env.test，因为它使用 Docker 服务名（CI 无法解析）
+        # CI 环境：环境变量已由 workflow job-level env 设置
+        # 不加载 .env.test（它使用 Docker 服务名，CI 无法解析）
         pass
     else:
         # DevContainer/本地环境

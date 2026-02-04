@@ -10,6 +10,14 @@ jobs:
   integration-tests:
     runs-on: ubuntu-latest
 
+    env:
+      # Test environment variables - available to all steps
+      DATABASE_URL: postgresql+asyncpg://squant_test:squant_test@localhost:5433/squant_test
+      REDIS_URL: redis://localhost:6380/1
+      SECRET_KEY: test-secret-key-min-32-chars-long-for-testing
+      ENCRYPTION_KEY: cTYK1ELdwLfxoLdD6z2YqraA0vasUEED
+      APP_ENV: test
+
     services:
       postgres:
         image: timescale/timescaledb:latest-pg16
@@ -54,17 +62,10 @@ jobs:
         uv sync --all-extras
 
     - name: Run database migrations
-      env:
-        DATABASE_URL: postgresql+asyncpg://squant_test:squant_test@localhost:5433/squant_test
       run: |
         uv run alembic upgrade head
 
     - name: Run integration tests
-      env:
-        DATABASE_URL: postgresql+asyncpg://squant_test:squant_test@localhost:5433/squant_test
-        REDIS_URL: redis://localhost:6380
-        SECRET_KEY: test-secret-key-min-32-chars-long-for-testing
-        ENCRYPTION_KEY: cTYK1ELdwLfxoLdD6z2YqraA0vasUEED
       run: |
         uv run pytest tests/integration -v --cov=src/squant --cov-report=xml --cov-report=term
 
