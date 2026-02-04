@@ -15,6 +15,7 @@ from squant.engine.backtest.context import BacktestContext
 from squant.engine.backtest.matching import MatchingEngine
 from squant.engine.backtest.strategy_base import Strategy
 from squant.engine.backtest.types import Bar, EquitySnapshot
+from squant.engine.resource_limits import ResourceLimitExceededError, resource_limiter
 from squant.infra.exchange.okx.ws_types import WSCandle
 
 logger = logging.getLogger(__name__)
@@ -269,8 +270,20 @@ class PaperTradingEngine:
             # 5. Add to history (for strategy lookback)
             self._context._add_bar_to_history(bar)
 
-            # 6. Call strategy on_bar
-            self._strategy.on_bar(bar)
+            # 6. Call strategy on_bar with resource limits (STR-013)
+            from squant.config import get_settings
+
+            settings = get_settings()
+            try:
+                with resource_limiter(
+                    cpu_seconds=settings.strategy.cpu_limit_seconds,
+                    memory_mb=settings.strategy.memory_limit_mb,
+                ):
+                    self._strategy.on_bar(bar)
+            except ResourceLimitExceededError as e:
+                logger.error(f"Strategy resource limit exceeded: {e}")
+                await self.stop(error=f"Strategy resource limit exceeded: {e}")
+                raise
 
             # 7. Record equity snapshot
             self._context._record_equity_snapshot(bar.time)

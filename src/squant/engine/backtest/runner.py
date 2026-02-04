@@ -19,6 +19,7 @@ from squant.engine.backtest.matching import MatchingEngine
 from squant.engine.backtest.metrics import calculate_metrics
 from squant.engine.backtest.strategy_base import Strategy
 from squant.engine.backtest.types import BacktestResult, Bar
+from squant.engine.resource_limits import ResourceLimitExceededError, resource_limiter
 from squant.engine.sandbox import compile_strategy
 
 logger = logging.getLogger(__name__)
@@ -210,11 +211,14 @@ class BacktestRunner:
         2. Update context with fills
         3. Set current bar in context
         4. Add bar to history
-        5. Call strategy.on_bar()
+        5. Call strategy.on_bar() (with resource limits)
         6. Record equity snapshot
 
         Args:
             bar: The bar to process.
+
+        Raises:
+            BacktestError: If strategy exceeds resource limits (STR-013).
         """
         # Track time range
         if self._start_time is None:
@@ -238,9 +242,22 @@ class BacktestRunner:
         # 5. Add to history
         self._context._add_bar_to_history(bar)
 
-        # 6. Call strategy
+        # 6. Call strategy with resource limits (STR-013)
+        # Get settings dynamically for testability
+        from squant.config import get_settings
+
+        settings = get_settings()
+
         try:
-            self._strategy.on_bar(bar)
+            with resource_limiter(
+                cpu_seconds=settings.strategy.cpu_limit_seconds,
+                memory_mb=settings.strategy.memory_limit_mb,
+            ):
+                self._strategy.on_bar(bar)
+        except ResourceLimitExceededError as e:
+            self._context.log(f"RESOURCE LIMIT EXCEEDED: {e}")
+            logger.error(f"Strategy resource limit exceeded: {e}")
+            raise BacktestError(f"Strategy resource limit exceeded: {e}") from e
         except Exception as e:
             self._context.log(f"ERROR in on_bar: {e}")
             logger.warning(f"Strategy on_bar error: {e}")

@@ -3,6 +3,7 @@
 import asyncio
 import contextlib
 import logging
+import random
 import re
 import time
 from collections.abc import Callable, Coroutine
@@ -94,6 +95,11 @@ class CCXTStreamProvider:
         self._reconnect_lock = asyncio.Lock()
         self._last_successful_message: float = 0
 
+        # Exponential backoff configuration for reconnection
+        self._reconnect_base_delay = 1.0  # Base delay in seconds
+        self._reconnect_max_delay = 60.0  # Maximum delay in seconds
+        self._reconnect_attempt: int = 0  # Current reconnect attempt counter
+
         # Batch ticker watching - more efficient than individual watch_ticker calls
         self._watched_ticker_symbols: set[str] = set()
         self._tickers_task: asyncio.Task[None] | None = None
@@ -103,6 +109,31 @@ class CCXTStreamProvider:
     def exchange_id(self) -> str:
         """Get the exchange identifier."""
         return self._exchange_id
+
+    def _get_reconnect_delay(self, attempt: int) -> float:
+        """Calculate exponential backoff delay for reconnection.
+
+        Uses the formula: min(base * 2^(attempt-1), max_delay) with ±10% jitter.
+
+        Args:
+            attempt: Current reconnection attempt number (1-based).
+
+        Returns:
+            Delay in seconds before next reconnection attempt.
+            Sequence: 1s → 2s → 4s → 8s → 16s → 32s → 60s (capped)
+        """
+        if attempt <= 0:
+            attempt = 1
+
+        # Calculate base exponential delay
+        delay = min(
+            self._reconnect_base_delay * (2 ** (attempt - 1)),
+            self._reconnect_max_delay,
+        )
+
+        # Add ±10% jitter to avoid thundering herd problem
+        jitter = delay * 0.1 * (random.random() * 2 - 1)
+        return float(delay + jitter)
 
     @property
     def is_connected(self) -> bool:
@@ -258,6 +289,7 @@ class CCXTStreamProvider:
                 self._connected = True
                 self._last_successful_message = time.time()
                 self._consecutive_errors.clear()
+                self._reconnect_attempt = 0  # Reset reconnect attempt counter on success
 
                 # Restart batch tickers loop if we had watched symbols
                 if self._watched_ticker_symbols and (
@@ -279,9 +311,10 @@ class CCXTStreamProvider:
                 return False
 
     async def _handle_loop_error(self, key: str, error: Exception) -> bool:
-        """Handle an error in a watch loop.
+        """Handle an error in a watch loop with exponential backoff.
 
-        Tracks consecutive errors and triggers reconnection if needed.
+        Tracks consecutive errors and triggers reconnection with exponential
+        backoff delays when threshold is reached.
 
         Args:
             key: Subscription key (e.g., "ticker:BTC/USDT").
@@ -298,15 +331,31 @@ class CCXTStreamProvider:
         )
 
         if error_count >= self._max_consecutive_errors:
-            logger.error(f"Too many consecutive errors for {key}, attempting reconnect...")
+            self._reconnect_attempt += 1
+            delay = self._get_reconnect_delay(self._reconnect_attempt)
+
+            logger.warning(
+                f"Too many consecutive errors for {key}, "
+                f"reconnecting in {delay:.1f}s (attempt {self._reconnect_attempt})"
+            )
+
+            # Wait with exponential backoff before reconnecting
+            await asyncio.sleep(delay)
 
             # Try to reconnect
             if await self.reconnect():
                 self._consecutive_errors[key] = 0
+                self._reconnect_attempt = 0  # Reset attempt counter on success
                 return True
             else:
-                logger.error(f"Reconnection failed, stopping {key}")
-                return False
+                # Check if we've exceeded max reconnect attempts
+                if self._reconnect_attempt >= 10:
+                    logger.error(
+                        f"Max reconnection attempts ({self._reconnect_attempt}) reached, stopping {key}"
+                    )
+                    return False
+                # Otherwise keep trying with backoff
+                return True
 
         return True
 
@@ -622,15 +671,32 @@ class CCXTStreamProvider:
                 )
 
                 if consecutive_errors >= max_errors:
-                    logger.error("Too many consecutive errors in batch tickers loop")
+                    self._reconnect_attempt += 1
+                    delay = self._get_reconnect_delay(self._reconnect_attempt)
+
+                    logger.warning(
+                        f"Too many consecutive errors in batch tickers loop, "
+                        f"reconnecting in {delay:.1f}s (attempt {self._reconnect_attempt})"
+                    )
+
+                    # Wait with exponential backoff before reconnecting
+                    await asyncio.sleep(delay)
+
                     # Try to reconnect
                     if await self.reconnect():
                         consecutive_errors = 0
+                        self._reconnect_attempt = 0  # Reset on success
                     else:
-                        logger.error("Reconnection failed, stopping batch tickers loop")
-                        break
-
-                await asyncio.sleep(1)
+                        # Check if we've exceeded max reconnect attempts
+                        if self._reconnect_attempt >= 10:
+                            logger.error(
+                                f"Max reconnection attempts ({self._reconnect_attempt}) reached, "
+                                "stopping batch tickers loop"
+                            )
+                            break
+                        # Otherwise keep trying with backoff
+                else:
+                    await asyncio.sleep(1)
 
         logger.info("Batch tickers loop stopped")
 

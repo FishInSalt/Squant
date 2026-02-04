@@ -357,3 +357,155 @@ class TestExchangeCredentials:
         assert credentials.api_secret == "secret"
         assert credentials.passphrase == "pass"
         assert credentials.sandbox is True
+
+
+class TestCCXTStreamProviderReconnectBackoff:
+    """Tests for exponential backoff reconnection logic."""
+
+    def test_backoff_delay_progression(self) -> None:
+        """Test exponential backoff delay calculation follows 2^n pattern."""
+        provider = CCXTStreamProvider("okx")
+
+        # Calculate delays for attempts 1-7
+        delays = [provider._get_reconnect_delay(i) for i in range(1, 8)]
+
+        # Verify exponential progression (allowing for ±10% jitter)
+        # Expected: 1s, 2s, 4s, 8s, 16s, 32s, 60s (capped)
+        assert 0.9 <= delays[0] <= 1.1  # ~1s
+        assert 1.8 <= delays[1] <= 2.2  # ~2s
+        assert 3.6 <= delays[2] <= 4.4  # ~4s
+        assert 7.2 <= delays[3] <= 8.8  # ~8s
+        assert 14.4 <= delays[4] <= 17.6  # ~16s
+        assert 28.8 <= delays[5] <= 35.2  # ~32s
+        assert 54.0 <= delays[6] <= 66.0  # ~60s (capped)
+
+    def test_backoff_max_delay_cap(self) -> None:
+        """Test that delay is capped at max value."""
+        provider = CCXTStreamProvider("okx")
+
+        # Very high attempt number should still be capped
+        delay = provider._get_reconnect_delay(100)
+
+        # Allow for ±10% jitter on max delay
+        assert delay <= provider._reconnect_max_delay * 1.1
+
+    def test_backoff_attempt_zero_treated_as_one(self) -> None:
+        """Test that attempt 0 is treated as attempt 1."""
+        provider = CCXTStreamProvider("okx")
+
+        delay_zero = provider._get_reconnect_delay(0)
+        delay_one = provider._get_reconnect_delay(1)
+
+        # Both should give approximately 1 second (with jitter variance)
+        assert 0.9 <= delay_zero <= 1.1
+        assert 0.9 <= delay_one <= 1.1
+
+    def test_backoff_jitter_adds_variance(self) -> None:
+        """Test that jitter adds variance to delays."""
+        provider = CCXTStreamProvider("okx")
+
+        # Generate multiple delays for the same attempt
+        delays = [provider._get_reconnect_delay(3) for _ in range(10)]
+
+        # With jitter, not all delays should be identical
+        # (There's a very small chance they could all be the same,
+        # but with 10 samples that's extremely unlikely)
+        unique_delays = set(delays)
+        assert len(unique_delays) > 1
+
+    @pytest.mark.asyncio
+    async def test_reconnect_resets_attempt_counter(self) -> None:
+        """Test that successful reconnect resets the attempt counter."""
+        provider = CCXTStreamProvider("okx")
+
+        with patch("squant.infra.exchange.ccxt.provider.ccxtpro") as mock_ccxt:
+            mock_exchange = MagicMock()
+            mock_exchange.load_markets = AsyncMock()
+            mock_exchange.close = AsyncMock()
+            mock_ccxt.okx.return_value = mock_exchange
+
+            await provider.connect()
+
+            # Simulate some reconnect attempts
+            provider._reconnect_attempt = 5
+
+            # To trigger actual reconnection, we need to make is_healthy() return False
+            # is_healthy checks: connected, exchange, and (if subscriptions) message timing
+            # Add a fake subscription task so the timing check kicks in
+            fake_task = MagicMock()
+            provider._subscription_tasks["test"] = fake_task
+            provider._last_successful_message = 1  # Very old timestamp (1970)
+
+            # Successful reconnect should reset counter
+            result = await provider.reconnect()
+
+            assert result is True
+            assert provider._reconnect_attempt == 0
+
+            await provider.close()
+
+    @pytest.mark.asyncio
+    async def test_handle_loop_error_uses_backoff(self) -> None:
+        """Test that _handle_loop_error applies exponential backoff."""
+        provider = CCXTStreamProvider("okx")
+
+        with patch("squant.infra.exchange.ccxt.provider.ccxtpro") as mock_ccxt:
+            mock_exchange = MagicMock()
+            mock_exchange.load_markets = AsyncMock()
+            mock_exchange.close = AsyncMock()
+            mock_ccxt.okx.return_value = mock_exchange
+
+            await provider.connect()
+
+            # Track sleep calls
+            sleep_calls = []
+
+            async def mock_sleep(delay: float) -> None:
+                sleep_calls.append(delay)
+
+            # Mock asyncio.sleep and reconnect
+            with (
+                patch("asyncio.sleep", mock_sleep),
+                patch.object(provider, "reconnect", AsyncMock(return_value=True)),
+            ):
+                # Simulate enough errors to trigger reconnection
+                for i in range(provider._max_consecutive_errors):
+                    await provider._handle_loop_error("test:key", Exception("Test error"))
+
+            # Verify that sleep was called with backoff delay before reconnect
+            assert len(sleep_calls) >= 1
+            # First backoff delay should be approximately 1 second
+            assert 0.9 <= sleep_calls[0] <= 1.1
+
+            await provider.close()
+
+    @pytest.mark.asyncio
+    async def test_handle_loop_error_resets_on_success(self) -> None:
+        """Test that error counter resets after successful reconnect."""
+        provider = CCXTStreamProvider("okx")
+
+        with patch("squant.infra.exchange.ccxt.provider.ccxtpro") as mock_ccxt:
+            mock_exchange = MagicMock()
+            mock_exchange.load_markets = AsyncMock()
+            mock_exchange.close = AsyncMock()
+            mock_ccxt.okx.return_value = mock_exchange
+
+            await provider.connect()
+
+            # Set up consecutive errors
+            key = "test:key"
+            provider._consecutive_errors[key] = provider._max_consecutive_errors - 1
+            provider._reconnect_attempt = 3
+
+            with (
+                patch("asyncio.sleep", AsyncMock()),
+                patch.object(provider, "reconnect", AsyncMock(return_value=True)),
+            ):
+                # This error should trigger reconnect
+                await provider._handle_loop_error(key, Exception("Test error"))
+
+            # Verify counters were reset
+            assert provider._consecutive_errors[key] == 0
+            assert provider._reconnect_attempt == 0
+
+            await provider.close()

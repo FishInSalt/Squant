@@ -14,6 +14,7 @@ from uuid import UUID
 from squant.engine.backtest.context import BacktestContext
 from squant.engine.backtest.strategy_base import Strategy
 from squant.engine.backtest.types import Bar, EquitySnapshot, Fill
+from squant.engine.resource_limits import ResourceLimitExceededError, resource_limiter
 from squant.engine.risk import RiskConfig, RiskManager
 from squant.infra.exchange.types import CancelOrderRequest, OrderRequest, OrderResponse
 from squant.models.enums import OrderSide, OrderStatus
@@ -513,8 +514,20 @@ class LiveTradingEngine:
             await self._sync_balance()
             self._risk_manager.update_equity(self._context.equity)
 
-            # Call strategy on_bar
-            self._strategy.on_bar(bar)
+            # Call strategy on_bar with resource limits (STR-013)
+            from squant.config import get_settings
+
+            settings = get_settings()
+            try:
+                with resource_limiter(
+                    cpu_seconds=settings.strategy.cpu_limit_seconds,
+                    memory_mb=settings.strategy.memory_limit_mb,
+                ):
+                    self._strategy.on_bar(bar)
+            except ResourceLimitExceededError as e:
+                logger.error(f"Strategy resource limit exceeded: {e}")
+                await self.stop(error=f"Strategy resource limit exceeded: {e}")
+                raise
 
             # Process pending order requests from strategy
             await self._process_order_requests()

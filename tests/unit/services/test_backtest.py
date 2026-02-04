@@ -11,11 +11,13 @@ import pytest
 
 from squant.models.enums import RunMode, RunStatus
 from squant.services.backtest import (
+    MIN_INITIAL_CAPITAL,
     BacktestNotFoundError,
     BacktestService,
     EquityCurveRepository,
     IncompleteDataError,
     InsufficientDataError,
+    InvalidInitialCapitalError,
     StrategyRunRepository,
 )
 
@@ -483,6 +485,190 @@ class TestBacktestService:
 
             with pytest.raises(InsufficientDataError):
                 await service.run(run_id)
+
+
+class TestInitialCapitalValidation:
+    """Tests for initial capital validation (TRD-003#4)."""
+
+    @pytest.mark.asyncio
+    async def test_tiny_capital_rejected(self, mock_session, mock_strategy):
+        """Test very small capital below minimum is rejected."""
+        strategy_id = uuid4()
+
+        with patch("squant.services.strategy.StrategyRepository") as mock_strategy_repo_class:
+            mock_strategy_repo = MagicMock()
+            mock_strategy_repo.get = AsyncMock(return_value=mock_strategy)
+            mock_strategy_repo_class.return_value = mock_strategy_repo
+
+            service = BacktestService(mock_session)
+
+            with pytest.raises(InvalidInitialCapitalError) as exc_info:
+                await service.create(
+                    strategy_id=strategy_id,
+                    symbol="BTC/USDT",
+                    exchange="okx",
+                    timeframe="1h",
+                    start_date=datetime.now(UTC) - timedelta(days=30),
+                    end_date=datetime.now(UTC),
+                    initial_capital=Decimal("0.01"),  # Tiny amount
+                )
+
+            error = exc_info.value
+            assert error.capital == Decimal("0.01")
+            assert error.min_capital == MIN_INITIAL_CAPITAL
+            assert "below minimum" in str(error).lower()
+            assert "unreliable" in str(error).lower()
+
+    @pytest.mark.asyncio
+    async def test_zero_capital_rejected(self, mock_session, mock_strategy):
+        """Test zero capital is rejected."""
+        strategy_id = uuid4()
+
+        with patch("squant.services.strategy.StrategyRepository") as mock_strategy_repo_class:
+            mock_strategy_repo = MagicMock()
+            mock_strategy_repo.get = AsyncMock(return_value=mock_strategy)
+            mock_strategy_repo_class.return_value = mock_strategy_repo
+
+            service = BacktestService(mock_session)
+
+            with pytest.raises(InvalidInitialCapitalError):
+                await service.create(
+                    strategy_id=strategy_id,
+                    symbol="BTC/USDT",
+                    exchange="okx",
+                    timeframe="1h",
+                    start_date=datetime.now(UTC) - timedelta(days=30),
+                    end_date=datetime.now(UTC),
+                    initial_capital=Decimal("0"),
+                )
+
+    @pytest.mark.asyncio
+    async def test_negative_capital_rejected(self, mock_session, mock_strategy):
+        """Test negative capital is rejected."""
+        strategy_id = uuid4()
+
+        with patch("squant.services.strategy.StrategyRepository") as mock_strategy_repo_class:
+            mock_strategy_repo = MagicMock()
+            mock_strategy_repo.get = AsyncMock(return_value=mock_strategy)
+            mock_strategy_repo_class.return_value = mock_strategy_repo
+
+            service = BacktestService(mock_session)
+
+            with pytest.raises(InvalidInitialCapitalError):
+                await service.create(
+                    strategy_id=strategy_id,
+                    symbol="BTC/USDT",
+                    exchange="okx",
+                    timeframe="1h",
+                    start_date=datetime.now(UTC) - timedelta(days=30),
+                    end_date=datetime.now(UTC),
+                    initial_capital=Decimal("-100"),
+                )
+
+    @pytest.mark.asyncio
+    async def test_minimum_capital_passes(self, mock_session, mock_strategy, mock_run):
+        """Test minimum valid capital is accepted."""
+        strategy_id = uuid4()
+
+        with (
+            patch("squant.services.strategy.StrategyRepository") as mock_strategy_repo_class,
+            patch.object(StrategyRunRepository, "create", new_callable=AsyncMock) as mock_create,
+        ):
+            mock_strategy_repo = MagicMock()
+            mock_strategy_repo.get = AsyncMock(return_value=mock_strategy)
+            mock_strategy_repo_class.return_value = mock_strategy_repo
+            mock_create.return_value = mock_run
+
+            service = BacktestService(mock_session)
+
+            # Should not raise - exactly at minimum
+            result = await service.create(
+                strategy_id=strategy_id,
+                symbol="BTC/USDT",
+                exchange="okx",
+                timeframe="1h",
+                start_date=datetime.now(UTC) - timedelta(days=30),
+                end_date=datetime.now(UTC),
+                initial_capital=MIN_INITIAL_CAPITAL,
+            )
+
+            assert result == mock_run
+
+    @pytest.mark.asyncio
+    async def test_normal_capital_passes(self, mock_session, mock_strategy, mock_run):
+        """Test normal capital is accepted without issues."""
+        strategy_id = uuid4()
+
+        with (
+            patch("squant.services.strategy.StrategyRepository") as mock_strategy_repo_class,
+            patch.object(StrategyRunRepository, "create", new_callable=AsyncMock) as mock_create,
+        ):
+            mock_strategy_repo = MagicMock()
+            mock_strategy_repo.get = AsyncMock(return_value=mock_strategy)
+            mock_strategy_repo_class.return_value = mock_strategy_repo
+            mock_create.return_value = mock_run
+
+            service = BacktestService(mock_session)
+
+            result = await service.create(
+                strategy_id=strategy_id,
+                symbol="BTC/USDT",
+                exchange="okx",
+                timeframe="1h",
+                start_date=datetime.now(UTC) - timedelta(days=30),
+                end_date=datetime.now(UTC),
+                initial_capital=Decimal("10000"),
+            )
+
+            assert result == mock_run
+
+    @pytest.mark.asyncio
+    async def test_small_capital_logs_warning(self, mock_session, mock_strategy, mock_run):
+        """Test that small capital (above minimum but below $100) logs a warning."""
+        strategy_id = uuid4()
+
+        with (
+            patch("squant.services.strategy.StrategyRepository") as mock_strategy_repo_class,
+            patch.object(StrategyRunRepository, "create", new_callable=AsyncMock) as mock_create,
+            patch("squant.services.backtest.logger") as mock_logger,
+        ):
+            mock_strategy_repo = MagicMock()
+            mock_strategy_repo.get = AsyncMock(return_value=mock_strategy)
+            mock_strategy_repo_class.return_value = mock_strategy_repo
+            mock_create.return_value = mock_run
+
+            service = BacktestService(mock_session)
+
+            # Small but valid capital
+            await service.create(
+                strategy_id=strategy_id,
+                symbol="BTC/USDT",
+                exchange="okx",
+                timeframe="1h",
+                start_date=datetime.now(UTC) - timedelta(days=30),
+                end_date=datetime.now(UTC),
+                initial_capital=Decimal("50"),  # Small but above minimum
+            )
+
+            # Should have logged a warning
+            mock_logger.warning.assert_called_once()
+            warning_msg = mock_logger.warning.call_args[0][0]
+            assert "50" in warning_msg
+            assert "unreliable" in warning_msg.lower()
+
+
+class TestInvalidInitialCapitalError:
+    """Tests for InvalidInitialCapitalError."""
+
+    def test_error_message(self):
+        """Test error message formatting."""
+        error = InvalidInitialCapitalError(Decimal("0.5"), Decimal("1.0"))
+
+        assert "0.5" in str(error)
+        assert "1.0" in str(error)
+        assert "below minimum" in str(error).lower()
+        assert error.capital == Decimal("0.5")
+        assert error.min_capital == Decimal("1.0")
 
 
 class TestBacktestNotFoundError:

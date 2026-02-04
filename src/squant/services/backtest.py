@@ -28,12 +28,30 @@ from squant.services.data_loader import DataLoader
 logger = logging.getLogger(__name__)
 
 
+# Minimum initial capital for backtest (TRD-003#4)
+# Very small amounts may produce unreliable results due to commission and rounding
+MIN_INITIAL_CAPITAL = Decimal("1.0")
+
+
 class BacktestNotFoundError(Exception):
     """Backtest run not found."""
 
     def __init__(self, run_id: str | UUID):
         self.run_id = str(run_id)
         super().__init__(f"Backtest run not found: {run_id}")
+
+
+class InvalidInitialCapitalError(Exception):
+    """Initial capital is invalid for backtest (TRD-003#4)."""
+
+    def __init__(self, capital: Decimal, min_capital: Decimal):
+        self.capital = capital
+        self.min_capital = min_capital
+        super().__init__(
+            f"Initial capital {capital} is below minimum required ({min_capital}). "
+            f"Very small amounts may produce unreliable backtest results due to "
+            f"commission and rounding effects."
+        )
 
 
 class InsufficientDataError(Exception):
@@ -290,7 +308,19 @@ class BacktestService:
 
         Raises:
             StrategyNotFoundError: If strategy not found.
+            InvalidInitialCapitalError: If initial capital is below minimum.
         """
+        # Validate initial capital (TRD-003#4)
+        if initial_capital < MIN_INITIAL_CAPITAL:
+            raise InvalidInitialCapitalError(initial_capital, MIN_INITIAL_CAPITAL)
+
+        # Log warning for very small capital (but above minimum)
+        if initial_capital < Decimal("100"):
+            logger.warning(
+                f"Very small initial capital ({initial_capital}) may produce "
+                f"unreliable backtest results due to commission and rounding effects."
+            )
+
         # Verify strategy exists
         from squant.services.strategy import StrategyNotFoundError, StrategyRepository
 
