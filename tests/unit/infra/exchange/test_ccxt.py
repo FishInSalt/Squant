@@ -292,6 +292,69 @@ class TestCCXTDataTransformer:
         assert CCXTDataTransformer._map_order_status("rejected") == "rejected"
         assert CCXTDataTransformer._map_order_status("unknown") == "unknown"
 
+    def test_ohlcv_to_ws_candle_none_volume(self):
+        """Test handling None volume value in OHLCV data."""
+        ohlcv = [1704067200000, 100.0, 105.0, 98.0, 102.0, None]
+
+        result = CCXTDataTransformer.ohlcv_to_ws_candle(ohlcv, "SOL/USDT", "1m", is_closed=False)
+
+        assert result.volume == Decimal("0")
+
+    def test_ohlcv_to_ws_candle_empty_array(self):
+        """Test that empty OHLCV array raises ValueError."""
+        with pytest.raises(ValueError, match="Invalid OHLCV array length"):
+            CCXTDataTransformer.ohlcv_to_ws_candle([], "BTC/USDT", "1h", is_closed=False)
+
+    def test_trade_to_ws_trade_sell_side(self):
+        """Test converting a sell trade with uppercase side is normalized."""
+        ccxt_trade = {
+            "id": "67890",
+            "timestamp": 1704067200000,
+            "symbol": "ETH/USDT",
+            "side": "SELL",
+            "price": 2500.0,
+            "amount": 1.0,
+        }
+
+        result = CCXTDataTransformer.trade_to_ws_trade(ccxt_trade)
+
+        assert result.side == "sell"
+
+    def test_orderbook_to_ws_orderbook_with_larger_limit(self):
+        """Test that limit parameter restricts the number of levels from a larger dataset."""
+        ccxt_orderbook = {
+            "timestamp": 1704067200000,
+            "bids": [[42000.0 - i, 1.0] for i in range(10)],
+            "asks": [[42001.0 + i, 1.0] for i in range(10)],
+        }
+
+        result = CCXTDataTransformer.orderbook_to_ws_orderbook(ccxt_orderbook, "BTC/USDT", limit=5)
+
+        assert len(result.bids) == 5
+        assert len(result.asks) == 5
+
+    def test_balance_to_ws_account_update_only_used(self):
+        """Test that currencies only in used_balances are included."""
+        ccxt_balance = {
+            "timestamp": 1704067200000,
+            "free": {"BTC": 1.0},
+            "used": {"BTC": 0.5, "ETH": 2.0},
+        }
+
+        result = CCXTDataTransformer.balance_to_ws_account_update(ccxt_balance)
+
+        assert len(result.balances) == 2
+
+        btc_balance = next((b for b in result.balances if b.currency == "BTC"), None)
+        assert btc_balance is not None
+        assert btc_balance.available == Decimal("1.0")
+        assert btc_balance.frozen == Decimal("0.5")
+
+        eth_balance = next((b for b in result.balances if b.currency == "ETH"), None)
+        assert eth_balance is not None
+        assert eth_balance.available == Decimal("0")
+        assert eth_balance.frozen == Decimal("2.0")
+
 
 class TestCCXTRestAdapterInit:
     """Tests for CCXTRestAdapter initialization."""

@@ -211,7 +211,7 @@ class TestGetTicker:
 
         response = await client.get("/api/v1/market/ticker/INVALID/SYMBOL")
 
-        assert response.status_code == 500
+        assert response.status_code == 502
 
 
 class TestGetTickers:
@@ -461,7 +461,7 @@ class TestGetCandles:
 
         response = await client.get("/api/v1/market/candles/BTC/USDT")
 
-        assert response.status_code == 500
+        assert response.status_code == 502
 
 
 class TestCandleDataIntegrity:

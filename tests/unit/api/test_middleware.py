@@ -142,12 +142,14 @@ class TestGetClientIP:
 
         assert ip == "192.168.1.100"
 
-    def test_x_forwarded_for_single_ip(self):
-        """Test extracting IP from X-Forwarded-For header."""
-        middleware = RateLimitMiddleware(MagicMock())
+    def test_x_forwarded_for_trusted_proxy(self):
+        """Test extracting IP from X-Forwarded-For when proxy is trusted."""
+        middleware = RateLimitMiddleware(MagicMock(), trusted_proxies={"127.0.0.1"})
 
         request = MagicMock(spec=Request)
         request.headers = {"X-Forwarded-For": "10.0.0.1"}
+        request.client = MagicMock()
+        request.client.host = "127.0.0.1"
 
         ip = middleware._get_client_ip(request)
 
@@ -155,10 +157,12 @@ class TestGetClientIP:
 
     def test_x_forwarded_for_multiple_ips(self):
         """Test extracting first IP from X-Forwarded-For chain."""
-        middleware = RateLimitMiddleware(MagicMock())
+        middleware = RateLimitMiddleware(MagicMock(), trusted_proxies={"172.17.0.1"})
 
         request = MagicMock(spec=Request)
         request.headers = {"X-Forwarded-For": "10.0.0.1, 172.16.0.1, 192.168.1.1"}
+        request.client = MagicMock()
+        request.client.host = "172.17.0.1"
 
         ip = middleware._get_client_ip(request)
 
@@ -166,14 +170,29 @@ class TestGetClientIP:
 
     def test_x_forwarded_for_with_spaces(self):
         """Test X-Forwarded-For header value is stripped."""
-        middleware = RateLimitMiddleware(MagicMock())
+        middleware = RateLimitMiddleware(MagicMock(), trusted_proxies={"172.17.0.1"})
 
         request = MagicMock(spec=Request)
         request.headers = {"X-Forwarded-For": "  10.0.0.1  , 172.16.0.1"}
+        request.client = MagicMock()
+        request.client.host = "172.17.0.1"
 
         ip = middleware._get_client_ip(request)
 
         assert ip == "10.0.0.1"
+
+    def test_x_forwarded_for_ignored_without_trusted_proxy(self):
+        """Test X-Forwarded-For is ignored when proxy is not trusted."""
+        middleware = RateLimitMiddleware(MagicMock())
+
+        request = MagicMock(spec=Request)
+        request.headers = {"X-Forwarded-For": "10.0.0.1"}
+        request.client = MagicMock()
+        request.client.host = "192.168.1.100"
+
+        ip = middleware._get_client_ip(request)
+
+        assert ip == "192.168.1.100"
 
     def test_no_client_info(self):
         """Test fallback to 'unknown' when no client info."""
