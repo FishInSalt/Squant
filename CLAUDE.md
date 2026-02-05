@@ -17,11 +17,15 @@ Squant is a personal quantitative trading system for cryptocurrency. It supports
 # Run database migrations
 ./scripts/dev.sh migrate          # or: uv run alembic upgrade head
 
+# Create a new Alembic migration
+uv run alembic revision --autogenerate -m "description of changes"
+
 # Start backend server with hot reload (foreground)
 ./scripts/dev.sh backend          # runs uvicorn on port 8000
 
 # Background service management
 ./scripts/backend.sh start|stop|restart|status|logs
+./scripts/frontend.sh start|stop|restart|status|logs|build
 
 # Run all tests (pytest addopts already includes --cov)
 uv run pytest -v
@@ -42,6 +46,9 @@ uv run pytest tests/integration -v
 docker compose -f docker-compose.test.yml --profile e2e up -d
 uv run pytest tests/e2e -v
 
+# Test environment management (integration/e2e)
+./scripts/test-env.sh start|stop|status|reset-db|clear-redis|psql|redis-cli
+
 # Lint (ruff check + ruff format --check + mypy)
 ./scripts/dev.sh lint
 
@@ -54,12 +61,12 @@ uv run pytest tests/e2e -v
 ```bash
 cd frontend
 pnpm install
-pnpm dev          # Development server at http://localhost:5173
+pnpm dev          # Development server at http://localhost:5175
 pnpm build        # Production build (vue-tsc + vite build)
 pnpm lint         # ESLint with --fix
 ```
 
-Frontend stack: Vue 3, Vue Router, Pinia, Element Plus, ECharts/vue-echarts, KlineCharts, Axios. Views organized by domain: `views/{market,trading,strategy,risk,account,order,system}/`.
+Frontend stack: Vue 3, Vue Router, Pinia, Element Plus, ECharts/vue-echarts, KlineCharts, Axios. Uses `unplugin-auto-import` (Vue/Router/Pinia) and `unplugin-vue-components` (Element Plus auto-resolve) so most imports are auto-generated. Views organized by domain: `views/{market,trading,strategy,risk,account,order,system}/`.
 
 ### Docker Development
 
@@ -69,6 +76,8 @@ docker compose -f docker-compose.dev.yml --profile full up -d    # full stack
 ```
 
 **Dev ports**: PostgreSQL on 5433, Redis on 6380 (non-standard to avoid conflicts).
+
+**Environment setup**: Copy `.env.example` to `.env` and fill in values. In DevContainer, `post-create.sh` generates `.env` automatically.
 
 ### VS Code Dev Container
 
@@ -117,7 +126,7 @@ src/squant/
 - **Dependency injection**: FastAPI `Depends()` with type aliases in `api/deps.py`:
   - `DbSession`, `DbSessionReadonly` — async SQLAlchemy sessions
   - `RedisClient` — Redis connection
-  - `Exchange` — CCXT adapter (cached, auto-connected with `load_markets()`)
+  - `Exchange` — CCXT adapter (cached in `_exchange_cache` with `asyncio.Lock`, auto-connected with `load_markets()`)
   - `OKXExchange` — legacy OKX-specific adapter (async generator with `yield`)
 - **Repository pattern**: `BaseRepository[ModelT: Base]` uses Python 3.12 generic syntax; provides `get`, `get_by`, `list`, `create`, `update`, `delete`, `count`
 - **Model mixins**: `UUIDMixin` (UUID string PK), `TimestampMixin` (created_at/updated_at with timezone)
@@ -141,24 +150,9 @@ src/squant/
 
 ### Configuration
 
-Settings loaded from `.env` via nested Pydantic Settings classes. Each sub-settings class has its own `env_prefix`:
+Settings loaded from `.env` via nested Pydantic Settings classes in `config.py`. Each sub-settings class has its own `env_prefix` (e.g., `DATABASE_`, `REDIS_`, `OKX_`, `STRATEGY_`, `RISK_`, `PAPER_`, `CIRCUIT_BREAKER_`). Access via `get_settings()` which is `@lru_cache`d. See `.env.example` for all available settings.
 
-| Setting group | Prefix | Access |
-|---|---|---|
-| `DatabaseSettings` | `DATABASE_` | `settings.database.url` |
-| `RedisSettings` | `REDIS_` | `settings.redis.url` |
-| `LoggingSettings` | `LOG_` | `settings.logging.level` |
-| `SecuritySettings` | *(none)* | `settings.security.secret_key` |
-| `OKXSettings` | `OKX_` | `settings.okx.api_key` |
-| `BinanceSettings` | `BINANCE_` | `settings.binance.api_key` |
-| `BybitSettings` | `BYBIT_` | `settings.bybit.api_key` |
-| `ExchangeStreamSettings` | *(none)* | `settings.exchange.default_exchange` |
-| `StrategySettings` | `STRATEGY_` | `settings.strategy.max_processes` |
-| `RiskSettings` | `RISK_` | `settings.risk.max_position_ratio` |
-| `PaperTradingSettings` | `PAPER_` | `settings.paper.max_equity_curve_size` |
-| `CircuitBreakerSettings` | `CIRCUIT_BREAKER_` | `settings.circuit_breaker.cooldown_minutes` |
-
-`get_settings()` is `@lru_cache`d. Flat aliases exist for backward compatibility (e.g., `settings.okx_api_key` → `settings.okx.api_key`). Nested settings use `@cached_property` to avoid re-reading `.env` on each access.
+Nested access: `settings.database.url`, `settings.okx.api_key`, `settings.risk.max_position_ratio`, etc. Flat aliases exist for backward compatibility (e.g., `settings.okx_api_key` → `settings.okx.api_key`). Sensitive fields (`url`, `api_key`, `secret_key`, etc.) use `SecretStr` — call `.get_secret_value()` to access the actual value.
 
 ### Database
 
@@ -182,8 +176,8 @@ Exchange-related exception handlers return a uniform shape: `{"code": <http_stat
 
 ### Test Markers
 
-- `@pytest.mark.integration`: requires Docker databases
-- `@pytest.mark.e2e`: requires full stack
+- `@pytest.mark.integration`: requires Docker databases (ports 5433/6380 or container names)
+- `@pytest.mark.e2e`: requires full stack (registered in `tests/e2e/conftest.py`)
 - `@pytest.mark.okx_private`: requires OKX API credentials
 - `asyncio_mode = "auto"`: no need for explicit `@pytest.mark.asyncio` on every test
 
@@ -210,16 +204,16 @@ Tests mirror the source layout: `tests/unit/{api/v1, services, engine/{backtest,
 
 See `dev-docs/technical/testing/TROUBLESHOOTING.md` for detailed examples and solutions.
 
+**Test Environment Configuration**:
+- `.env.test.ci` — CI environment (localhost:5433/6380)
+- `.env.test.local` — DevContainer (container service names: postgres:5432, redis:6379)
+- Root `tests/conftest.py` auto-detects integration tests and selectively overrides `DATABASE_URL`, `REDIS_URL`, `SECRET_KEY`, `ENCRYPTION_KEY`, `APP_ENV` from `.env.test`
+- Integration conftest provides two session fixtures: `db_session` (auto-rollback per test) and `clean_db_session` (real commits, clears tables after test)
+
 ### CI Pipeline
 
 CI runs on pushes to `main`, `develop`, `cc/*` and PRs to `main`/`develop`. Pipeline: lint → unit tests → integration tests → e2e tests → docker build check. Note: mypy and ruff format checks are `continue-on-error` in CI (non-blocking).
 
 ## Documentation
 
-Detailed docs in `dev-docs/`:
-- `requirements/` — PRD, user stories, acceptance criteria
-- `technical/architecture/` — system architecture, module design, data flows
-- `technical/strategy-engine/` — strategy lifecycle, sandbox, indicators
-- `technical/api/` — REST and WebSocket API specs
-- `technical/testing/` — testing guides (unit, integration, E2E, CI/CD, troubleshooting)
-- `technical/deployment/` — Docker, environment, monitoring
+Detailed docs in `dev-docs/`: requirements (PRD, user stories, acceptance criteria) and technical docs (architecture, strategy engine, API specs, testing guides, deployment). See `dev-docs/technical/testing/TROUBLESHOOTING.md` for common test failure patterns.
