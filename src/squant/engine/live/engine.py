@@ -722,7 +722,36 @@ class LiveTradingEngine:
         if response.filled > old_filled:
             fill_amount = response.filled - old_filled
             fee_delta = (response.fee or Decimal("0")) - old_fee
+
+            # Track trade count and circuit breaker state before processing
+            trades_before = len(self._context.trades)
+            circuit_breaker_before = self._risk_manager.state.circuit_breaker_triggered
+
             self._process_incremental_fill(live_order, fill_amount, response, fee_delta)
+
+            # Check if a trade was completed and record its PnL for risk management
+            trades_after = len(self._context.trades)
+            if trades_after > trades_before:
+                completed_trade = self._context.trades[-1]
+                if completed_trade.pnl is not None:
+                    self._risk_manager.record_trade_result(completed_trade.pnl)
+                    logger.info(
+                        f"[polling] Recorded trade result: PnL={completed_trade.pnl}, "
+                        f"consecutive_losses="
+                        f"{self._risk_manager.state.consecutive_losses}"
+                    )
+
+                    # Check if circuit breaker was just triggered
+                    if (
+                        not circuit_breaker_before
+                        and self._risk_manager.state.circuit_breaker_triggered
+                    ):
+                        logger.warning(
+                            f"Circuit breaker triggered for session {self._run_id} "
+                            f"after {self._risk_manager.state.consecutive_losses} "
+                            f"consecutive losses (detected via polling)"
+                        )
+                        self._circuit_breaker_triggered = True
 
     def _process_order_fill(
         self,

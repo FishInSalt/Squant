@@ -1640,6 +1640,130 @@ class TestIncrementalFillProcessing:
             # No new fills, so _process_fill should not be called
             mock_fill.assert_not_called()
 
+    @pytest.mark.asyncio
+    async def test_polling_path_records_trade_pnl(self, engine_with_buy_order, mock_adapter):
+        """Test that _update_order_from_response records trade PnL for risk management."""
+        engine = engine_with_buy_order
+        await engine.start()
+
+        live_order = engine._live_orders["order-1"]
+        response = OrderResponse(
+            order_id="exchange-1",
+            symbol="BTC/USDT",
+            side=OrderSide.BUY,
+            type=OrderType.MARKET,
+            status=OrderStatus.FILLED,
+            price=None,
+            amount=Decimal("1.0"),
+            filled=Decimal("1.0"),
+            avg_price=Decimal("45000"),
+            fee=Decimal("0.45"),
+            fee_currency="USDT",
+        )
+
+        # Mock a completed trade with a loss
+        mock_trade = MagicMock()
+        mock_trade.pnl = Decimal("-100")
+
+        engine._context._trades = []  # Before: 0 trades
+
+        def mock_process_fill(*args, **kwargs):
+            engine._context._trades = [mock_trade]
+
+        with (
+            patch.object(engine._context, "_process_fill", side_effect=mock_process_fill),
+            patch.object(engine._context, "_move_completed_orders"),
+        ):
+            engine._update_order_from_response(live_order, response)
+
+        # Check that consecutive_losses increased
+        assert engine._risk_manager.state.consecutive_losses == 1
+
+    @pytest.mark.asyncio
+    async def test_polling_path_triggers_circuit_breaker(
+        self, engine_with_buy_order, mock_adapter
+    ):
+        """Test that polling path triggers circuit breaker after consecutive losses."""
+        engine = engine_with_buy_order
+        await engine.start()
+
+        # Pre-load consecutive losses (threshold=3 by default, but engine fixture uses
+        # default config; manually set to near threshold)
+        engine._risk_manager.config.circuit_breaker_enabled = True
+        engine._risk_manager.config.circuit_breaker_loss_count = 2
+
+        # Record one prior loss so next loss triggers breaker
+        engine._risk_manager.record_trade_result(Decimal("-100"))
+        assert engine._circuit_breaker_triggered is False
+
+        live_order = engine._live_orders["order-1"]
+        response = OrderResponse(
+            order_id="exchange-1",
+            symbol="BTC/USDT",
+            side=OrderSide.BUY,
+            type=OrderType.MARKET,
+            status=OrderStatus.FILLED,
+            price=None,
+            amount=Decimal("1.0"),
+            filled=Decimal("1.0"),
+            avg_price=Decimal("45000"),
+            fee=Decimal("0.45"),
+            fee_currency="USDT",
+        )
+
+        mock_trade = MagicMock()
+        mock_trade.pnl = Decimal("-200")
+
+        engine._context._trades = []
+
+        def mock_process_fill(*args, **kwargs):
+            engine._context._trades = [mock_trade]
+
+        with (
+            patch.object(engine._context, "_process_fill", side_effect=mock_process_fill),
+            patch.object(engine._context, "_move_completed_orders"),
+        ):
+            engine._update_order_from_response(live_order, response)
+
+        # Circuit breaker should now be triggered
+        assert engine._risk_manager.state.consecutive_losses == 2
+        assert engine._risk_manager.state.circuit_breaker_triggered is True
+        assert engine._circuit_breaker_triggered is True
+
+    @pytest.mark.asyncio
+    async def test_polling_path_no_risk_update_when_no_trade_completed(
+        self, engine_with_buy_order, mock_adapter
+    ):
+        """Test that polling path does NOT update risk when fill doesn't complete a trade."""
+        engine = engine_with_buy_order
+        await engine.start()
+
+        live_order = engine._live_orders["order-1"]
+        response = OrderResponse(
+            order_id="exchange-1",
+            symbol="BTC/USDT",
+            side=OrderSide.BUY,
+            type=OrderType.MARKET,
+            status=OrderStatus.PARTIAL,
+            price=None,
+            amount=Decimal("1.0"),
+            filled=Decimal("0.5"),
+            avg_price=Decimal("45000"),
+            fee=Decimal("0.225"),
+            fee_currency="USDT",
+        )
+
+        engine._context._trades = []  # No trades before or after
+
+        with (
+            patch.object(engine._context, "_process_fill"),
+            patch.object(engine._context, "_move_completed_orders"),
+        ):
+            engine._update_order_from_response(live_order, response)
+
+        # No trade completed, risk state unchanged
+        assert engine._risk_manager.state.consecutive_losses == 0
+
 
 class TestRiskTriggerPersistence:
     """Tests for risk trigger persistence tracking (Issue 010)."""
