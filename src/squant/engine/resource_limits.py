@@ -142,9 +142,7 @@ def resource_limiter(
 
     except MemoryError as e:
         # Convert to our custom error for consistent handling
-        raise MemoryLimitError(
-            f"Strategy execution exceeded memory limit ({memory_mb}MB)"
-        ) from e
+        raise MemoryLimitError(f"Strategy execution exceeded memory limit ({memory_mb}MB)") from e
     finally:
         # Restore original limits if we set them
         if limits_set:

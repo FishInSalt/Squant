@@ -1124,19 +1124,28 @@ class StreamManager:
                         logger.error(
                             "Stream manager unhealthy for too long, attempting recovery..."
                         )
-                        await self._attempt_recovery()
-                        consecutive_unhealthy = 0
+                        recovered = await self._attempt_recovery()
+                        if recovered:
+                            consecutive_unhealthy = 0
+                        else:
+                            # Keep counting so next check triggers another attempt immediately
+                            logger.warning(
+                                "Recovery failed, will retry on next health check"
+                            )
 
             except asyncio.CancelledError:
                 break
             except Exception as e:
                 logger.exception(f"Error in health check loop: {e}")
 
-    async def _attempt_recovery(self) -> None:
+    async def _attempt_recovery(self) -> bool:
         """Attempt to recover from an unhealthy state.
 
         For CCXT provider mode, triggers a reconnection attempt.
         For native OKX mode, attempts to reconnect the clients.
+
+        Returns:
+            True if recovery was successful, False otherwise.
         """
         if self._settings.use_ccxt_provider:
             if self._ccxt_provider and hasattr(self._ccxt_provider, "reconnect"):
@@ -1144,8 +1153,11 @@ class StreamManager:
                 success = await self._ccxt_provider.reconnect()
                 if success:
                     logger.info("CCXT provider reconnection successful")
+                    return True
                 else:
                     logger.error("CCXT provider reconnection failed")
+                    return False
+            return False
         else:
             # Native OKX mode - try to reconnect clients
             logger.info("Attempting to reconnect native OKX clients...")
@@ -1155,8 +1167,10 @@ class StreamManager:
                 if self._business_client and not self._business_client.is_connected:
                     await self._business_client.connect()
                 logger.info("Native OKX clients reconnection attempted")
+                return True
             except Exception as e:
                 logger.exception(f"Failed to reconnect native OKX clients: {e}")
+                return False
 
     def _to_okx_symbol(self, symbol: str) -> str:
         """Convert standard symbol to OKX format.

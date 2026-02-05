@@ -121,6 +121,8 @@ class OrderRepository(BaseRepository[Order]):
         self,
         account_id: str | UUID,
         status: OrderStatus | list[OrderStatus] | None = None,
+        symbol: str | None = None,
+        side: OrderSide | None = None,
     ) -> int:
         """Count orders for an account."""
         from sqlalchemy import func
@@ -132,6 +134,12 @@ class OrderRepository(BaseRepository[Order]):
                 stmt = stmt.where(Order.status.in_(status))
             else:
                 stmt = stmt.where(Order.status == status)
+
+        if symbol is not None:
+            stmt = stmt.where(Order.symbol == symbol)
+
+        if side is not None:
+            stmt = stmt.where(Order.side == side)
 
         result = await self.session.execute(stmt)
         return result.scalar_one()
@@ -516,16 +524,22 @@ class OrderService:
     async def count_orders(
         self,
         status: OrderStatus | list[OrderStatus] | None = None,
+        symbol: str | None = None,
+        side: OrderSide | None = None,
     ) -> int:
-        """Count orders with optional status filter.
+        """Count orders with optional filters.
 
         Args:
             status: Filter by status.
+            symbol: Filter by trading pair.
+            side: Filter by order side.
 
         Returns:
             Order count.
         """
-        return await self.order_repo.count_by_account(self.account.id, status=status)
+        return await self.order_repo.count_by_account(
+            self.account.id, status=status, symbol=symbol, side=side
+        )
 
     async def get_order_stats(self) -> dict[str, int]:
         """Get order statistics by status in a single query.

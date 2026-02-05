@@ -7,6 +7,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from squant.api.deps import RedisClient
 from squant.api.utils import ApiResponse, PaginatedData
 from squant.infra.database import get_session
 from squant.models.enums import RunStatus
@@ -36,6 +37,7 @@ router = APIRouter()
 async def start_paper_trading(
     request: StartPaperTradingRequest,
     session: AsyncSession = Depends(get_session),
+    redis: RedisClient = None,
 ) -> ApiResponse[PaperTradingRunResponse]:
     """Start a paper trading session.
 
@@ -45,6 +47,7 @@ async def start_paper_trading(
     Args:
         request: Paper trading configuration.
         session: Database session.
+        redis: Redis client for circuit breaker check.
 
     Returns:
         Paper trading run record.
@@ -64,6 +67,7 @@ async def start_paper_trading(
             commission_rate=request.commission_rate,
             slippage=request.slippage,
             params=request.params,
+            redis=redis,
         )
         return ApiResponse(data=PaperTradingRunResponse.model_validate(run))
     except StrategyNotFoundError as e:

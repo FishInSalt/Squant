@@ -130,6 +130,18 @@ class RiskManager:
         Returns:
             RiskCheckResult with validation outcome.
         """
+        # Reject all orders if equity is zero or negative (safety check)
+        if self._current_equity <= 0:
+            logger.warning(
+                f"Order rejected: current equity is {self._current_equity} "
+                f"(zero or negative). All trading blocked."
+            )
+            return RiskCheckResult.reject(
+                rule_type=RiskRuleType.TOTAL_LOSS_LIMIT,
+                reason=f"Cannot trade with zero or negative equity: {self._current_equity}",
+                current_equity=float(self._current_equity),
+            )
+
         # Check daily reset first
         self.check_daily_reset()
 

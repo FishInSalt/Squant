@@ -75,10 +75,15 @@ async def _get_active_account(
     from sqlalchemy import select
 
     # Find first active account for this exchange
-    stmt = select(ExchangeAccount).where(
-        ExchangeAccount.exchange == exchange,
-        ExchangeAccount.is_active == True,  # noqa: E712
-    ).order_by(ExchangeAccount.created_at.asc()).limit(1)
+    stmt = (
+        select(ExchangeAccount)
+        .where(
+            ExchangeAccount.exchange == exchange,
+            ExchangeAccount.is_active == True,  # noqa: E712
+        )
+        .order_by(ExchangeAccount.created_at.asc())
+        .limit(1)
+    )
 
     result = await session.execute(stmt)
     account = result.scalar_one_or_none()
@@ -252,7 +257,7 @@ async def list_orders(
             offset=offset,
             limit=limit,
         )
-        total = await service.count_orders(status=status)
+        total = await service.count_orders(status=status, symbol=symbol, side=side)
         data = OrderListData(
             items=[_to_order_detail(o) for o in orders],
             total=total,

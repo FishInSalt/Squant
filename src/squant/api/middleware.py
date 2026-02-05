@@ -88,9 +88,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         cutoff = current_time - self.window_size
         for client_ip in list(self._request_counts.keys()):
             self._request_counts[client_ip] = [
-                (ts, count)
-                for ts, count in self._request_counts[client_ip]
-                if ts > cutoff
+                (ts, count) for ts, count in self._request_counts[client_ip] if ts > cutoff
             ]
             # Remove empty entries
             if not self._request_counts[client_ip]:
@@ -112,9 +110,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
 
         # Filter and sum requests within window
         valid_entries = [
-            (ts, count)
-            for ts, count in self._request_counts[client_ip]
-            if ts > cutoff
+            (ts, count) for ts, count in self._request_counts[client_ip] if ts > cutoff
         ]
         self._request_counts[client_ip] = valid_entries
 

@@ -378,8 +378,7 @@ class ExchangeAccountService:
 
         # Audit log for sensitive operation
         logger.info(
-            f"AUDIT: Exchange account deleted - "
-            f"id={account_id}, exchange={exchange}, name={name}"
+            f"AUDIT: Exchange account deleted - id={account_id}, exchange={exchange}, name={name}"
         )
 
     async def get(self, account_id: UUID) -> ExchangeAccount:

@@ -73,8 +73,11 @@ async def clear_exchange_cache(exchange_id: str | None = None) -> None:
                 await adapter.close()
                 logger.info(f"Cleared exchange cache for {exchange_id}")
         else:
-            for adapter in _exchange_cache.values():
-                await adapter.close()
+            for eid, adapter in list(_exchange_cache.items()):
+                try:
+                    await adapter.close()
+                except Exception as e:
+                    logger.warning(f"Error closing adapter for {eid}: {e}")
             _exchange_cache.clear()
             logger.info("Cleared all exchange cache")
 
