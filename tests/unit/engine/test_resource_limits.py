@@ -3,6 +3,7 @@
 These tests verify that CPU and memory limits are enforced for strategy execution.
 """
 
+import os
 import platform
 from unittest.mock import patch
 
@@ -51,14 +52,16 @@ class TestResourceLimiter:
             pytest.skip(f"Cannot set resource limits in this environment: {e}")
 
     @pytest.mark.skipif(
-        not _can_set_resource_limits(),
-        reason="Resource limits not available in this environment",
+        not _can_set_resource_limits() or os.environ.get("CI") == "true",
+        reason="Resource limits not available or CI environment (infinite loop can cause OOM)",
     )
     def test_cpu_timeout_raises_error(self) -> None:
         """Test that infinite loop triggers CPU timeout.
 
         Note: This test uses a very short timeout (1 second) to avoid
         long test runs. In production, the default is 30-60 seconds.
+        Skipped in CI because the infinite loop combined with coverage
+        tracking can cause the process to be OOM-killed.
         """
         try:
             with pytest.raises(CPUTimeoutError) as exc_info:

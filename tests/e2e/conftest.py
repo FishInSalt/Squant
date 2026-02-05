@@ -78,7 +78,7 @@ async def test_strategy_data():
 class SimpleStrategy(Strategy):
     \"\"\"Minimal test strategy for E2E testing\"\"\"
 
-    def on_bar(self, symbol, bar):
+    def on_bar(self, bar):
         # Simple buy and hold strategy
         # Just for testing - doesn't generate actual orders
         pass

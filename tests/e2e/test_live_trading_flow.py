@@ -623,7 +623,7 @@ class TestMultipleStrategies:
             "name": f"E2E Normal Strategy {uuid.uuid4().hex[:8]}",
             "code": """
 class NormalStrategy(Strategy):
-    def on_bar(self, symbol, bar):
+    def on_bar(self, bar):
         pass
 """,
             "description": "Normal test strategy",
@@ -638,7 +638,7 @@ class ErrorStrategy(Strategy):
         super().__init__(context)
         self.call_count = 0
 
-    def on_bar(self, symbol, bar):
+    def on_bar(self, bar):
         self.call_count += 1
         if self.call_count > 2:
             raise ValueError("Intentional error for testing")

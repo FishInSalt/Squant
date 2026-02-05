@@ -37,10 +37,10 @@ class TestCircuitBreakerBasicFlow:
         status = response_data["data"]
         assert "is_active" in status
         assert "triggered_at" in status
-        assert "reason" in status
+        assert "trigger_reason" in status
         assert "cooldown_until" in status
-        assert "live_sessions_stopped" in status
-        assert "paper_sessions_stopped" in status
+        assert "active_live_sessions" in status
+        assert "active_paper_sessions" in status
 
         print(f"✅ Circuit breaker status: active={status['is_active']}")
 
@@ -81,7 +81,7 @@ class TestCircuitBreakerBasicFlow:
         assert "data" in response_data
 
         trigger_result = response_data["data"]
-        assert trigger_result["success"] is True
+        assert trigger_result["status"] == "triggered"
         assert "triggered_at" in trigger_result
 
         # ==================== 步骤3: 验证状态变为激活 ====================
@@ -90,14 +90,14 @@ class TestCircuitBreakerBasicFlow:
 
         status = status_response.json()["data"]
         assert status["is_active"] is True
-        assert status["reason"] == "E2E test - manual trigger"
+        assert status["trigger_reason"] == "E2E test - manual trigger"
 
         # ==================== 步骤4: 重置熔断器 ====================
         reset_response = await api_client.post("/api/v1/circuit-breaker/reset?force=true")
         assert reset_response.status_code == 200
 
         reset_result = reset_response.json()["data"]
-        assert reset_result["success"] is True
+        assert reset_result["status"] == "reset"
 
         # 验证已重置
         final_status_response = await api_client.get("/api/v1/circuit-breaker/status")
@@ -339,16 +339,15 @@ class TestCloseAllPositions:
         assert "data" in response_data
 
         result = response_data["data"]
-        assert "success" in result
         assert "orders_cancelled" in result
-        assert "positions_closed" in result
-        assert "paper_sessions_stopped" in result
+        assert "live_positions_closed" in result
+        assert "paper_positions_reset" in result
         assert "errors" in result
 
         print(
             f"✅ Close all positions: cancelled={result['orders_cancelled']}, "
-            f"closed={result['positions_closed']}, "
-            f"paper_stopped={result['paper_sessions_stopped']}"
+            f"closed={result['live_positions_closed']}, "
+            f"paper_reset={result['paper_positions_reset']}"
         )
 
     @pytest.mark.asyncio
@@ -402,4 +401,4 @@ class TestCloseAllPositions:
             status = status_response.json()["data"]
             assert status["is_running"] is False
 
-        print(f"✅ Close all positions stopped {result['paper_sessions_stopped']} paper sessions")
+        print(f"✅ Close all positions reset {result['paper_positions_reset']} paper sessions")
