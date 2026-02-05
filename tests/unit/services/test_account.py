@@ -289,6 +289,168 @@ class TestExchangeAccountService:
             mock_list.assert_called_once_with(exchange="okx")
 
 
+class TestAccountCredentialUpdate:
+    """Tests for credential update flows in ExchangeAccountService.update()."""
+
+    @pytest.fixture
+    def mock_session(self) -> AsyncMock:
+        """Create a mock database session."""
+        session = AsyncMock()
+        session.commit = AsyncMock()
+        session.rollback = AsyncMock()
+        session.refresh = AsyncMock()
+        return session
+
+    @pytest.fixture
+    def service(self, mock_session: AsyncMock) -> ExchangeAccountService:
+        """Create a service with mock session."""
+        return ExchangeAccountService(mock_session)
+
+    @pytest.fixture
+    def mock_account(self) -> MagicMock:
+        """Create a mock account for update tests."""
+        account = MagicMock(spec=ExchangeAccount)
+        account.id = str(uuid4())
+        account.exchange = "okx"
+        account.name = "test-account"
+        return account
+
+    @pytest.mark.asyncio
+    async def test_update_api_key_preserves_existing_secret(
+        self, service: ExchangeAccountService, mock_session: AsyncMock, mock_account
+    ) -> None:
+        """Test updating only api_key preserves existing api_secret."""
+        from pydantic import SecretStr
+
+        request = UpdateExchangeAccountRequest(api_key=SecretStr("new-key"))
+
+        with patch.object(service.repository, "get", new_callable=AsyncMock) as mock_get:
+            mock_get.return_value = mock_account
+
+            with patch.object(service, "get_decrypted_credentials") as mock_decrypt:
+                mock_decrypt.return_value = {
+                    "api_key": "old-key",
+                    "api_secret": "existing-secret",
+                    "passphrase": "existing-pass",
+                }
+
+                with patch("squant.services.account.get_crypto_manager") as mock_crypto:
+                    crypto = MagicMock()
+                    crypto.NONCE_SIZE = 12
+                    crypto.encrypt_with_derived_nonce.return_value = b"encrypted"
+                    mock_crypto.return_value = crypto
+
+                    with patch.object(
+                        service.repository, "update", new_callable=AsyncMock
+                    ) as mock_update:
+                        mock_update.return_value = mock_account
+                        await service.update(uuid4(), request)
+
+                    # api_key (index=0), api_secret (index=1), passphrase (index=2)
+                    calls = crypto.encrypt_with_derived_nonce.call_args_list
+                    assert calls[0][0][0] == "new-key"  # new api_key
+                    assert calls[1][0][0] == "existing-secret"  # preserved api_secret
+                    assert calls[2][0][0] == "existing-pass"  # preserved passphrase
+
+    @pytest.mark.asyncio
+    async def test_update_passphrase_to_empty_removes_it(
+        self, service: ExchangeAccountService, mock_session: AsyncMock, mock_account
+    ) -> None:
+        """Test updating passphrase to empty string removes it."""
+        from pydantic import SecretStr
+
+        request = UpdateExchangeAccountRequest(
+            api_key=SecretStr("key"), passphrase=SecretStr("")
+        )
+
+        with patch.object(service.repository, "get", new_callable=AsyncMock) as mock_get:
+            mock_get.return_value = mock_account
+
+            with patch.object(service, "get_decrypted_credentials") as mock_decrypt:
+                mock_decrypt.return_value = {
+                    "api_key": "old-key",
+                    "api_secret": "old-secret",
+                    "passphrase": "old-pass",
+                }
+
+                with patch("squant.services.account.get_crypto_manager") as mock_crypto:
+                    crypto = MagicMock()
+                    crypto.NONCE_SIZE = 12
+                    crypto.encrypt_with_derived_nonce.return_value = b"encrypted"
+                    mock_crypto.return_value = crypto
+
+                    with patch.object(
+                        service.repository, "update", new_callable=AsyncMock
+                    ) as mock_update:
+                        mock_update.return_value = mock_account
+                        await service.update(uuid4(), request)
+
+                        # passphrase_enc should be set to None
+                        update_kwargs = mock_update.call_args[1]
+                        assert update_kwargs["passphrase_enc"] is None
+
+    @pytest.mark.asyncio
+    async def test_update_credentials_decryption_fails_raises_value_error(
+        self, service: ExchangeAccountService, mock_account
+    ) -> None:
+        """Test that DecryptionError during update raises ValueError."""
+        from pydantic import SecretStr
+
+        from squant.utils.crypto import DecryptionError
+
+        request = UpdateExchangeAccountRequest(api_key=SecretStr("new-key"))
+
+        with patch.object(service.repository, "get", new_callable=AsyncMock) as mock_get:
+            mock_get.return_value = mock_account
+
+            with patch("squant.services.account.get_crypto_manager") as mock_crypto:
+                crypto = MagicMock()
+                mock_crypto.return_value = crypto
+
+                with patch.object(service, "get_decrypted_credentials") as mock_decrypt:
+                    mock_decrypt.side_effect = DecryptionError("Corrupted data")
+
+                    with pytest.raises(ValueError, match="corrupted"):
+                        await service.update(uuid4(), request)
+
+    @pytest.mark.asyncio
+    async def test_update_new_passphrase_encrypts_it(
+        self, service: ExchangeAccountService, mock_session: AsyncMock, mock_account
+    ) -> None:
+        """Test updating passphrase to new value encrypts and stores it."""
+        from pydantic import SecretStr
+
+        request = UpdateExchangeAccountRequest(
+            api_key=SecretStr("key"), passphrase=SecretStr("new-pass")
+        )
+
+        with patch.object(service.repository, "get", new_callable=AsyncMock) as mock_get:
+            mock_get.return_value = mock_account
+
+            with patch.object(service, "get_decrypted_credentials") as mock_decrypt:
+                mock_decrypt.return_value = {
+                    "api_key": "old-key",
+                    "api_secret": "old-secret",
+                }
+
+                with patch("squant.services.account.get_crypto_manager") as mock_crypto:
+                    crypto = MagicMock()
+                    crypto.NONCE_SIZE = 12
+                    crypto.encrypt_with_derived_nonce.return_value = b"encrypted"
+                    mock_crypto.return_value = crypto
+
+                    with patch.object(
+                        service.repository, "update", new_callable=AsyncMock
+                    ) as mock_update:
+                        mock_update.return_value = mock_account
+                        await service.update(uuid4(), request)
+
+                    # Should encrypt: api_key(0), api_secret(1), passphrase(2)
+                    assert crypto.encrypt_with_derived_nonce.call_count == 3
+                    passphrase_call = crypto.encrypt_with_derived_nonce.call_args_list[2]
+                    assert passphrase_call[0][0] == "new-pass"
+
+
 class TestAccountErrors:
     """Tests for account error classes."""
 

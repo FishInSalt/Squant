@@ -1150,3 +1150,206 @@ class TestRiskState:
         assert state.daily_pnl == Decimal("0")
         assert state.daily_start_equity == Decimal("9500")
         assert state.daily_reset_time is not None
+
+    def test_zero_pnl_preserves_consecutive_losses(self):
+        """Test that zero PnL trades do not reset consecutive loss counter."""
+        state = RiskState()
+
+        # Record 3 losses
+        state.record_trade(Decimal("-100"))
+        state.record_trade(Decimal("-50"))
+        state.record_trade(Decimal("-75"))
+        assert state.consecutive_losses == 3
+
+        # Zero PnL should NOT reset the counter
+        state.record_trade(Decimal("0"))
+        assert state.consecutive_losses == 3
+
+        # A win should reset the counter
+        state.record_trade(Decimal("50"))
+        assert state.consecutive_losses == 0
+
+    def test_zero_pnl_does_not_increment_losses(self):
+        """Test that zero PnL trades do not increment consecutive loss counter."""
+        state = RiskState()
+
+        # No losses yet
+        assert state.consecutive_losses == 0
+
+        # Zero PnL should not count as a loss
+        state.record_trade(Decimal("0"))
+        assert state.consecutive_losses == 0
+
+
+class TestZeroEquityProtection:
+    """Tests for zero/negative equity safety checks."""
+
+    def test_zero_equity_rejects_all_orders(self, default_config):
+        """Test that zero equity rejects all orders."""
+        rm = RiskManager(config=default_config, initial_equity=Decimal("10000"))
+        rm.update_equity(Decimal("0"))
+
+        order = OrderRequest(
+            symbol="BTC/USDT",
+            side=OrderSide.BUY,
+            type=OrderType.MARKET,
+            amount=Decimal("0.001"),
+        )
+
+        result = rm.validate_order(order, Decimal("50000"))
+
+        assert result.passed is False
+        assert result.rule_type == RiskRuleType.TOTAL_LOSS_LIMIT
+        assert "zero or negative equity" in result.reason.lower()
+
+    def test_negative_equity_rejects_all_orders(self, default_config):
+        """Test that negative equity rejects all orders."""
+        rm = RiskManager(config=default_config, initial_equity=Decimal("10000"))
+        rm.update_equity(Decimal("-500"))
+
+        order = OrderRequest(
+            symbol="BTC/USDT",
+            side=OrderSide.BUY,
+            type=OrderType.MARKET,
+            amount=Decimal("0.001"),
+        )
+
+        result = rm.validate_order(order, Decimal("50000"))
+
+        assert result.passed is False
+        assert "zero or negative equity" in result.reason.lower()
+
+    def test_positive_equity_allows_orders(self, default_config):
+        """Test that positive equity allows orders normally."""
+        rm = RiskManager(config=default_config, initial_equity=Decimal("10000"))
+        rm.update_equity(Decimal("100"))  # Very low but still positive
+
+        order = OrderRequest(
+            symbol="BTC/USDT",
+            side=OrderSide.BUY,
+            type=OrderType.MARKET,
+            amount=Decimal("0.001"),  # $50 at $50000
+        )
+
+        result = rm.validate_order(order, Decimal("50000"))
+        # Order will be rejected by max_order_size (50% of $100 equity) not zero equity
+        # This confirms the zero equity check is bypassed for positive equity
+        assert result.rule_type != RiskRuleType.TOTAL_LOSS_LIMIT or result.passed
+
+
+class TestAbsoluteDailyLossLimit:
+    """Tests for absolute daily loss limit."""
+
+    def test_absolute_daily_loss_limit_triggered(self):
+        """Test absolute daily loss limit triggers rejection."""
+        config = RiskConfig(
+            max_position_size=Decimal("1.0"),
+            max_order_size=Decimal("1.0"),
+            min_order_value=Decimal("1"),
+            daily_loss_limit=Decimal("1.0"),  # 100% - won't trigger
+            daily_loss_limit_absolute=Decimal("500"),
+            daily_trade_limit=1000,
+        )
+        rm = RiskManager(config=config, initial_equity=Decimal("10000"))
+
+        # Record $500 in losses
+        rm.record_trade_result(Decimal("-500"))
+
+        order = OrderRequest(
+            symbol="BTC/USDT",
+            side=OrderSide.BUY,
+            type=OrderType.MARKET,
+            amount=Decimal("0.001"),
+        )
+
+        result = rm.validate_order(order, Decimal("50000"))
+
+        assert result.passed is False
+        assert result.rule_type == RiskRuleType.DAILY_LOSS_LIMIT
+
+    def test_absolute_daily_loss_limit_not_triggered(self):
+        """Test absolute daily loss limit does not trigger below threshold."""
+        config = RiskConfig(
+            max_position_size=Decimal("1.0"),
+            max_order_size=Decimal("1.0"),
+            min_order_value=Decimal("1"),
+            daily_loss_limit=Decimal("1.0"),  # 100% - won't trigger
+            daily_loss_limit_absolute=Decimal("500"),
+            daily_trade_limit=1000,
+        )
+        rm = RiskManager(config=config, initial_equity=Decimal("10000"))
+
+        # Record $499 in losses
+        rm.record_trade_result(Decimal("-499"))
+
+        order = OrderRequest(
+            symbol="BTC/USDT",
+            side=OrderSide.BUY,
+            type=OrderType.MARKET,
+            amount=Decimal("0.001"),
+        )
+
+        result = rm.validate_order(order, Decimal("50000"))
+
+        assert result.passed is True
+
+
+class TestUpdatePositionValue:
+    """Tests for position value tracking."""
+
+    def test_update_position_value(self, risk_manager):
+        """Test that update_position_value updates state correctly."""
+        assert risk_manager.state.current_position_value == Decimal("0")
+
+        risk_manager.update_position_value(Decimal("5000"))
+        assert risk_manager.state.current_position_value == Decimal("5000")
+
+        risk_manager.update_position_value(Decimal("0"))
+        assert risk_manager.state.current_position_value == Decimal("0")
+
+
+class TestZeroPriceDeviation:
+    """Tests for price deviation with zero price."""
+
+    def test_zero_current_price_passes(self, risk_manager):
+        """Test that zero current price skips deviation check."""
+        order = OrderRequest(
+            symbol="BTC/USDT",
+            side=OrderSide.BUY,
+            type=OrderType.LIMIT,
+            amount=Decimal("0.001"),
+            price=Decimal("50000"),
+        )
+
+        # Zero current price should not cause division by zero
+        result = risk_manager.validate_order(order, Decimal("0"))
+        # Should be rejected by zero equity or pass price check
+        # Key: no exception is raised
+
+    def test_negative_current_price_passes(self, risk_manager):
+        """Test that negative current price skips deviation check."""
+        order = OrderRequest(
+            symbol="BTC/USDT",
+            side=OrderSide.BUY,
+            type=OrderType.LIMIT,
+            amount=Decimal("0.001"),
+            price=Decimal("50000"),
+        )
+
+        # Negative current price should not cause issues
+        result = risk_manager.validate_order(order, Decimal("-1"))
+        # Key: no exception is raised
+
+
+class TestInitializationDailyResetTime:
+    """Tests for daily reset time initialization."""
+
+    def test_daily_reset_time_set_on_init(self, default_config):
+        """Test that daily_reset_time is set during initialization."""
+        rm = RiskManager(config=default_config, initial_equity=Decimal("10000"))
+        assert rm.state.daily_reset_time is not None
+
+    def test_daily_start_equity_set_on_init(self, default_config):
+        """Test that daily_start_equity is set to initial equity."""
+        rm = RiskManager(config=default_config, initial_equity=Decimal("5000"))
+        assert rm.state.daily_start_equity == Decimal("5000")

@@ -16,11 +16,15 @@ from squant.infra.exchange.ccxt.types import (
     ExchangeCredentials,
 )
 from squant.infra.exchange.exceptions import (
+    ExchangeAPIError,
     ExchangeAuthenticationError,
     ExchangeConnectionError,
+    ExchangeRateLimitError,
+    InvalidOrderError,
+    OrderNotFoundError,
 )
 from squant.infra.exchange.types import CancelOrderRequest, OrderRequest, TimeFrame
-from squant.models.enums import OrderSide, OrderType
+from squant.models.enums import OrderSide, OrderStatus, OrderType
 
 
 class TestExchangeCredentials:
@@ -632,3 +636,287 @@ class TestCCXTRestAdapterContextManager:
             adapter.connect.assert_called_once()
 
         adapter.close.assert_called_once()
+
+
+class TestCCXTRestAdapterExceptionHandling:
+    """Tests for CCXT exception mapping across all REST methods."""
+
+    @pytest.fixture
+    def authenticated_adapter(self):
+        """Create an authenticated adapter with mocked exchange."""
+        creds = ExchangeCredentials(api_key="key", api_secret="secret")
+        adapter = CCXTRestAdapter("okx", credentials=creds)
+        adapter._exchange = MagicMock()
+        adapter._connected = True
+        return adapter
+
+    # --- place_order exception tests ---
+
+    @pytest.mark.asyncio
+    async def test_place_order_insufficient_funds(self, authenticated_adapter):
+        """Test place_order maps InsufficientFunds to InvalidOrderError."""
+        import ccxt.async_support as ccxt_lib
+
+        authenticated_adapter._exchange.create_order = AsyncMock(
+            side_effect=ccxt_lib.InsufficientFunds("not enough balance")
+        )
+        request = OrderRequest(
+            symbol="BTC/USDT", side=OrderSide.BUY, type=OrderType.MARKET, amount=Decimal("1.0")
+        )
+        with pytest.raises(InvalidOrderError, match="Insufficient funds"):
+            await authenticated_adapter.place_order(request)
+
+    @pytest.mark.asyncio
+    async def test_place_order_invalid_order(self, authenticated_adapter):
+        """Test place_order maps InvalidOrder to InvalidOrderError."""
+        import ccxt.async_support as ccxt_lib
+
+        authenticated_adapter._exchange.create_order = AsyncMock(
+            side_effect=ccxt_lib.InvalidOrder("bad order")
+        )
+        request = OrderRequest(
+            symbol="BTC/USDT", side=OrderSide.BUY, type=OrderType.MARKET, amount=Decimal("1.0")
+        )
+        with pytest.raises(InvalidOrderError, match="Invalid order"):
+            await authenticated_adapter.place_order(request)
+
+    @pytest.mark.asyncio
+    async def test_place_order_rate_limit(self, authenticated_adapter):
+        """Test place_order maps RateLimitExceeded to ExchangeRateLimitError."""
+        import ccxt.async_support as ccxt_lib
+
+        authenticated_adapter._exchange.create_order = AsyncMock(
+            side_effect=ccxt_lib.RateLimitExceeded("too many requests")
+        )
+        request = OrderRequest(
+            symbol="BTC/USDT", side=OrderSide.BUY, type=OrderType.MARKET, amount=Decimal("1.0")
+        )
+        with pytest.raises(ExchangeRateLimitError, match="Rate limit exceeded"):
+            await authenticated_adapter.place_order(request)
+
+    @pytest.mark.asyncio
+    async def test_place_order_auth_error(self, authenticated_adapter):
+        """Test place_order maps AuthenticationError to ExchangeAuthenticationError."""
+        import ccxt.async_support as ccxt_lib
+
+        authenticated_adapter._exchange.create_order = AsyncMock(
+            side_effect=ccxt_lib.AuthenticationError("invalid key")
+        )
+        request = OrderRequest(
+            symbol="BTC/USDT", side=OrderSide.BUY, type=OrderType.MARKET, amount=Decimal("1.0")
+        )
+        with pytest.raises(ExchangeAuthenticationError, match="Authentication failed"):
+            await authenticated_adapter.place_order(request)
+
+    # --- cancel_order exception tests ---
+
+    @pytest.mark.asyncio
+    async def test_cancel_order_not_found(self, authenticated_adapter):
+        """Test cancel_order maps OrderNotFound to OrderNotFoundError."""
+        import ccxt.async_support as ccxt_lib
+
+        authenticated_adapter._exchange.cancel_order = AsyncMock(
+            side_effect=ccxt_lib.OrderNotFound("no such order")
+        )
+        request = CancelOrderRequest(order_id="12345", symbol="BTC/USDT")
+        with pytest.raises(OrderNotFoundError, match="Order not found"):
+            await authenticated_adapter.cancel_order(request)
+
+    @pytest.mark.asyncio
+    async def test_cancel_order_rate_limit(self, authenticated_adapter):
+        """Test cancel_order maps RateLimitExceeded to ExchangeRateLimitError."""
+        import ccxt.async_support as ccxt_lib
+
+        authenticated_adapter._exchange.cancel_order = AsyncMock(
+            side_effect=ccxt_lib.RateLimitExceeded("too many requests")
+        )
+        request = CancelOrderRequest(order_id="12345", symbol="BTC/USDT")
+        with pytest.raises(ExchangeRateLimitError, match="Rate limit exceeded"):
+            await authenticated_adapter.cancel_order(request)
+
+    # --- get_order exception tests ---
+
+    @pytest.mark.asyncio
+    async def test_get_order_not_found(self, authenticated_adapter):
+        """Test get_order maps OrderNotFound to OrderNotFoundError."""
+        import ccxt.async_support as ccxt_lib
+
+        authenticated_adapter._exchange.fetch_order = AsyncMock(
+            side_effect=ccxt_lib.OrderNotFound("no such order")
+        )
+        with pytest.raises(OrderNotFoundError, match="Order not found"):
+            await authenticated_adapter.get_order("BTC/USDT", "12345")
+
+    @pytest.mark.asyncio
+    async def test_get_order_rate_limit(self, authenticated_adapter):
+        """Test get_order maps RateLimitExceeded to ExchangeRateLimitError."""
+        import ccxt.async_support as ccxt_lib
+
+        authenticated_adapter._exchange.fetch_order = AsyncMock(
+            side_effect=ccxt_lib.RateLimitExceeded("too many requests")
+        )
+        with pytest.raises(ExchangeRateLimitError, match="Rate limit exceeded"):
+            await authenticated_adapter.get_order("BTC/USDT", "12345")
+
+    # --- get_open_orders exception tests ---
+
+    @pytest.mark.asyncio
+    async def test_get_open_orders_rate_limit(self, authenticated_adapter):
+        """Test get_open_orders maps RateLimitExceeded to ExchangeRateLimitError."""
+        import ccxt.async_support as ccxt_lib
+
+        authenticated_adapter._exchange.fetch_open_orders = AsyncMock(
+            side_effect=ccxt_lib.RateLimitExceeded("too many requests")
+        )
+        with pytest.raises(ExchangeRateLimitError, match="Rate limit exceeded"):
+            await authenticated_adapter.get_open_orders("BTC/USDT")
+
+    # --- get_balance exception tests ---
+
+    @pytest.mark.asyncio
+    async def test_get_balance_rate_limit(self, authenticated_adapter):
+        """Test get_balance maps RateLimitExceeded to ExchangeRateLimitError."""
+        import ccxt.async_support as ccxt_lib
+
+        authenticated_adapter._exchange.fetch_balance = AsyncMock(
+            side_effect=ccxt_lib.RateLimitExceeded("too many requests")
+        )
+        with pytest.raises(ExchangeRateLimitError, match="Rate limit exceeded"):
+            await authenticated_adapter.get_balance()
+
+    @pytest.mark.asyncio
+    async def test_get_balance_auth_error(self, authenticated_adapter):
+        """Test get_balance maps AuthenticationError to ExchangeAuthenticationError."""
+        import ccxt.async_support as ccxt_lib
+
+        authenticated_adapter._exchange.fetch_balance = AsyncMock(
+            side_effect=ccxt_lib.AuthenticationError("invalid key")
+        )
+        with pytest.raises(ExchangeAuthenticationError, match="Authentication failed"):
+            await authenticated_adapter.get_balance()
+
+    # --- get_ticker exception tests ---
+
+    @pytest.mark.asyncio
+    async def test_get_ticker_bad_symbol(self, authenticated_adapter):
+        """Test get_ticker maps BadSymbol to ExchangeAPIError."""
+        import ccxt.async_support as ccxt_lib
+
+        authenticated_adapter._exchange.fetch_ticker = AsyncMock(
+            side_effect=ccxt_lib.BadSymbol("invalid symbol")
+        )
+        with pytest.raises(ExchangeAPIError, match="Invalid symbol"):
+            await authenticated_adapter.get_ticker("INVALID/PAIR")
+
+    @pytest.mark.asyncio
+    async def test_get_ticker_rate_limit(self, authenticated_adapter):
+        """Test get_ticker maps RateLimitExceeded to ExchangeRateLimitError."""
+        import ccxt.async_support as ccxt_lib
+
+        authenticated_adapter._exchange.fetch_ticker = AsyncMock(
+            side_effect=ccxt_lib.RateLimitExceeded("too many requests")
+        )
+        with pytest.raises(ExchangeRateLimitError, match="Rate limit exceeded"):
+            await authenticated_adapter.get_ticker("BTC/USDT")
+
+    # --- get_tickers exception tests ---
+
+    @pytest.mark.asyncio
+    async def test_get_tickers_rate_limit(self, authenticated_adapter):
+        """Test get_tickers maps RateLimitExceeded to ExchangeRateLimitError."""
+        import ccxt.async_support as ccxt_lib
+
+        authenticated_adapter._exchange.has = {"fetchTickers": True}
+        authenticated_adapter._exchange.fetch_tickers = AsyncMock(
+            side_effect=ccxt_lib.RateLimitExceeded("too many requests")
+        )
+        with pytest.raises(ExchangeRateLimitError, match="Rate limit exceeded"):
+            await authenticated_adapter.get_tickers(["BTC/USDT"])
+
+    # --- get_candlesticks exception tests ---
+
+    @pytest.mark.asyncio
+    async def test_get_candlesticks_rate_limit(self, authenticated_adapter):
+        """Test get_candlesticks maps RateLimitExceeded to ExchangeRateLimitError."""
+        import ccxt.async_support as ccxt_lib
+
+        authenticated_adapter._exchange.fetch_ohlcv = AsyncMock(
+            side_effect=ccxt_lib.RateLimitExceeded("too many requests")
+        )
+        with pytest.raises(ExchangeRateLimitError, match="Rate limit exceeded"):
+            await authenticated_adapter.get_candlesticks("BTC/USDT", TimeFrame.H1)
+
+
+class TestCCXTRestAdapterPartialStatus:
+    """Tests for PARTIAL order status detection in _map_order_status."""
+
+    def test_open_with_partial_fill_returns_partial(self):
+        """CCXT 'open' + filled > 0 should map to PARTIAL."""
+        adapter = CCXTRestAdapter("okx")
+        result = adapter._map_order_status("open", filled=Decimal("0.5"), amount=Decimal("1.0"))
+        assert result == OrderStatus.PARTIAL
+
+    def test_open_without_fill_returns_submitted(self):
+        """CCXT 'open' + filled == 0 should map to SUBMITTED."""
+        adapter = CCXTRestAdapter("okx")
+        result = adapter._map_order_status("open", filled=Decimal("0"), amount=Decimal("1.0"))
+        assert result == OrderStatus.SUBMITTED
+
+    def test_open_fully_filled_returns_submitted(self):
+        """CCXT 'open' + filled == amount should NOT be PARTIAL (edge case)."""
+        adapter = CCXTRestAdapter("okx")
+        # filled == amount means fully filled, but CCXT reports "open" — use SUBMITTED as fallback
+        result = adapter._map_order_status("open", filled=Decimal("1.0"), amount=Decimal("1.0"))
+        assert result == OrderStatus.SUBMITTED
+
+    def test_closed_returns_filled(self):
+        """CCXT 'closed' should always map to FILLED regardless of fill."""
+        adapter = CCXTRestAdapter("okx")
+        result = adapter._map_order_status("closed", filled=Decimal("0.5"), amount=Decimal("1.0"))
+        assert result == OrderStatus.FILLED
+
+    def test_canceled_returns_cancelled(self):
+        """CCXT 'canceled' should map to CANCELLED."""
+        adapter = CCXTRestAdapter("okx")
+        result = adapter._map_order_status("canceled")
+        assert result == OrderStatus.CANCELLED
+
+    def test_expired_returns_cancelled(self):
+        """CCXT 'expired' should map to CANCELLED."""
+        adapter = CCXTRestAdapter("okx")
+        result = adapter._map_order_status("expired")
+        assert result == OrderStatus.CANCELLED
+
+    def test_rejected_returns_rejected(self):
+        """CCXT 'rejected' should map to REJECTED."""
+        adapter = CCXTRestAdapter("okx")
+        result = adapter._map_order_status("rejected")
+        assert result == OrderStatus.REJECTED
+
+    def test_unknown_status_defaults_to_submitted(self):
+        """Unknown status should default to SUBMITTED."""
+        adapter = CCXTRestAdapter("okx")
+        result = adapter._map_order_status("weird_status")
+        assert result == OrderStatus.SUBMITTED
+
+    def test_case_insensitive(self):
+        """Status mapping should be case insensitive."""
+        adapter = CCXTRestAdapter("okx")
+        result = adapter._map_order_status("Open", filled=Decimal("0.3"), amount=Decimal("1.0"))
+        assert result == OrderStatus.PARTIAL
+
+    def test_transform_order_passes_filled_to_status_mapper(self):
+        """_transform_order should pass filled/amount to _map_order_status for PARTIAL detection."""
+        adapter = CCXTRestAdapter("okx")
+        order_data = {
+            "id": "123",
+            "symbol": "BTC/USDT",
+            "side": "buy",
+            "type": "limit",
+            "amount": 1.0,
+            "filled": 0.5,
+            "status": "open",
+            "timestamp": 1704067200000,
+        }
+        result = adapter._transform_order(order_data)
+        assert result.status == OrderStatus.PARTIAL

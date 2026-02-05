@@ -261,6 +261,60 @@ class TestGetExchangeCredentials:
 
         assert credentials is None
 
+    @patch("squant.api.deps.get_settings")
+    def test_okx_partial_credentials_key_only(self, mock_get_settings):
+        """Test returns None when only API key is configured (no secret)."""
+        mock_settings = MagicMock()
+        mock_settings.okx_api_key = MagicMock()
+        mock_settings.okx_api_secret = None
+        mock_get_settings.return_value = mock_settings
+
+        credentials = _get_exchange_credentials("okx")
+
+        assert credentials is None
+
+    @patch("squant.api.deps.get_settings")
+    def test_binance_partial_credentials_secret_only(self, mock_get_settings):
+        """Test returns None when only API secret is configured (no key)."""
+        mock_settings = MagicMock()
+        mock_settings.binance_api_key = None
+        mock_settings.binance_api_secret = MagicMock()
+        mock_get_settings.return_value = mock_settings
+
+        credentials = _get_exchange_credentials("binance")
+
+        assert credentials is None
+
+
+class TestClearExchangeCacheErrorHandling:
+    """Tests for error handling in clear_exchange_cache."""
+
+    @pytest.fixture(autouse=True)
+    def clear_cache(self):
+        """Clear exchange cache before and after each test."""
+        _exchange_cache.clear()
+        yield
+        _exchange_cache.clear()
+
+    @pytest.mark.asyncio
+    async def test_close_failure_continues_cleanup(self):
+        """Test that one adapter.close() failure doesn't prevent clearing others."""
+        adapter1 = MagicMock()
+        adapter1.close = AsyncMock(side_effect=Exception("Close failed"))
+        adapter2 = MagicMock()
+        adapter2.close = AsyncMock()
+
+        _exchange_cache["okx"] = adapter1
+        _exchange_cache["binance"] = adapter2
+
+        await clear_exchange_cache()
+
+        # Both should have been attempted
+        adapter1.close.assert_called_once()
+        adapter2.close.assert_called_once()
+        # Cache should still be cleared
+        assert len(_exchange_cache) == 0
+
 
 class TestGetExchange:
     """Tests for get_exchange generator function."""

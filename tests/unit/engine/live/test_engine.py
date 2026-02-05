@@ -1337,3 +1337,451 @@ class TestCircuitBreakerIntegration:
             # Verify reason contains the run_id
             live_call_args = mock_live_manager.stop_all.call_args
             assert str(engine.run_id) in live_call_args.kwargs.get("reason", "")
+
+
+class TestOrderSyncRateLimiting:
+    """Tests for order sync rate limiting in _sync_pending_orders."""
+
+    @pytest.fixture
+    def engine_with_pending_order(self, engine, mock_adapter):
+        """Create engine with a pending order that has an exchange ID."""
+        engine._live_orders["order-1"] = LiveOrder(
+            internal_id="order-1",
+            exchange_order_id="exchange-1",
+            symbol="BTC/USDT",
+            side=OrderSide.BUY,
+            order_type="market",
+            amount=Decimal("0.1"),
+            price=None,
+            status=OrderStatus.SUBMITTED,
+        )
+        engine._exchange_order_map["exchange-1"] = "order-1"
+        return engine
+
+    @pytest.mark.asyncio
+    async def test_first_poll_always_executes(self, engine_with_pending_order, mock_adapter):
+        """Test first poll for an order always goes through (no prior poll time)."""
+        engine = engine_with_pending_order
+        await engine.start()
+
+        mock_adapter.get_order.return_value = OrderResponse(
+            order_id="exchange-1",
+            symbol="BTC/USDT",
+            side=OrderSide.BUY,
+            type=OrderType.MARKET,
+            status=OrderStatus.SUBMITTED,
+            price=None,
+            amount=Decimal("0.1"),
+            filled=Decimal("0"),
+        )
+
+        await engine._sync_pending_orders()
+
+        mock_adapter.get_order.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_skip_polling_within_interval(self, engine_with_pending_order, mock_adapter):
+        """Test that polling is skipped for orders polled within min interval."""
+        engine = engine_with_pending_order
+        await engine.start()
+
+        # Record a recent poll time
+        engine._order_last_poll["exchange-1"] = datetime.now(UTC)
+
+        await engine._sync_pending_orders()
+
+        # Should NOT call get_order because within 30s interval
+        mock_adapter.get_order.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_poll_after_interval_elapsed(self, engine_with_pending_order, mock_adapter):
+        """Test polling proceeds after min interval has elapsed."""
+        from datetime import timedelta
+
+        engine = engine_with_pending_order
+        await engine.start()
+
+        # Set poll time to 31 seconds ago (beyond 30s min interval)
+        engine._order_last_poll["exchange-1"] = datetime.now(UTC) - timedelta(seconds=31)
+
+        mock_adapter.get_order.return_value = OrderResponse(
+            order_id="exchange-1",
+            symbol="BTC/USDT",
+            side=OrderSide.BUY,
+            type=OrderType.MARKET,
+            status=OrderStatus.SUBMITTED,
+            price=None,
+            amount=Decimal("0.1"),
+            filled=Decimal("0"),
+        )
+
+        await engine._sync_pending_orders()
+
+        mock_adapter.get_order.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_cleanup_poll_tracking_for_completed_orders(
+        self, engine_with_pending_order, mock_adapter
+    ):
+        """Test that poll tracking is cleaned up when orders complete."""
+        engine = engine_with_pending_order
+        await engine.start()
+
+        # Return a filled order
+        mock_adapter.get_order.return_value = OrderResponse(
+            order_id="exchange-1",
+            symbol="BTC/USDT",
+            side=OrderSide.BUY,
+            type=OrderType.MARKET,
+            status=OrderStatus.FILLED,
+            price=None,
+            amount=Decimal("0.1"),
+            filled=Decimal("0.1"),
+            avg_price=Decimal("45000"),
+        )
+
+        await engine._sync_pending_orders()
+
+        # Poll tracking should be cleaned up for completed order
+        assert "exchange-1" not in engine._order_last_poll
+
+    @pytest.mark.asyncio
+    async def test_poll_time_recorded_on_error(self, engine_with_pending_order, mock_adapter):
+        """Test that poll time is recorded even on API errors to avoid hammering."""
+        engine = engine_with_pending_order
+        await engine.start()
+
+        mock_adapter.get_order.side_effect = Exception("API error")
+
+        await engine._sync_pending_orders()
+
+        # Even on error, poll time should be recorded
+        assert "exchange-1" in engine._order_last_poll
+
+
+class TestIncrementalFillProcessing:
+    """Tests for _process_incremental_fill from polling path."""
+
+    @pytest.fixture
+    def engine_with_buy_order(self, engine):
+        """Create engine with a buy order for fill testing."""
+        engine._live_orders["order-1"] = LiveOrder(
+            internal_id="order-1",
+            exchange_order_id="exchange-1",
+            symbol="BTC/USDT",
+            side=OrderSide.BUY,
+            order_type="market",
+            amount=Decimal("1.0"),
+            price=None,
+            status=OrderStatus.SUBMITTED,
+        )
+        engine._exchange_order_map["exchange-1"] = "order-1"
+        return engine
+
+    @pytest.mark.asyncio
+    async def test_incremental_fill_updates_context(self, engine_with_buy_order, mock_adapter):
+        """Test that incremental fill processes correctly via _process_incremental_fill."""
+        engine = engine_with_buy_order
+        await engine.start()
+
+        live_order = engine._live_orders["order-1"]
+        response = OrderResponse(
+            order_id="exchange-1",
+            symbol="BTC/USDT",
+            side=OrderSide.BUY,
+            type=OrderType.MARKET,
+            status=OrderStatus.PARTIAL,
+            price=None,
+            amount=Decimal("1.0"),
+            filled=Decimal("0.5"),
+            avg_price=Decimal("45000"),
+            fee=Decimal("0.225"),
+            fee_currency="USDT",
+        )
+
+        with (
+            patch.object(engine._context, "_process_fill") as mock_fill,
+            patch.object(engine._context, "_move_completed_orders"),
+        ):
+            engine._process_incremental_fill(live_order, Decimal("0.5"), response, Decimal("0.225"))
+
+            mock_fill.assert_called_once()
+            fill_arg = mock_fill.call_args[0][0]
+            assert fill_arg.amount == Decimal("0.5")
+            assert fill_arg.fee == Decimal("0.225")
+            assert fill_arg.price == Decimal("45000")
+
+    @pytest.mark.asyncio
+    async def test_incremental_fill_skipped_when_no_avg_price(
+        self, engine_with_buy_order, mock_adapter
+    ):
+        """Test that fill processing is skipped when avg_price is None."""
+        engine = engine_with_buy_order
+        await engine.start()
+
+        live_order = engine._live_orders["order-1"]
+        response = OrderResponse(
+            order_id="exchange-1",
+            symbol="BTC/USDT",
+            side=OrderSide.BUY,
+            type=OrderType.MARKET,
+            status=OrderStatus.PARTIAL,
+            price=None,
+            amount=Decimal("1.0"),
+            filled=Decimal("0.5"),
+            avg_price=None,  # No avg price
+        )
+
+        with patch.object(engine._context, "_process_fill") as mock_fill:
+            engine._process_incremental_fill(live_order, Decimal("0.5"), response)
+
+            mock_fill.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_incremental_fill_uses_total_fee_when_no_delta(
+        self, engine_with_buy_order, mock_adapter
+    ):
+        """Test fallback to total fee when fee_delta is None."""
+        engine = engine_with_buy_order
+        await engine.start()
+
+        live_order = engine._live_orders["order-1"]
+        response = OrderResponse(
+            order_id="exchange-1",
+            symbol="BTC/USDT",
+            side=OrderSide.BUY,
+            type=OrderType.MARKET,
+            status=OrderStatus.FILLED,
+            price=None,
+            amount=Decimal("1.0"),
+            filled=Decimal("1.0"),
+            avg_price=Decimal("45000"),
+            fee=Decimal("0.45"),
+        )
+
+        with (
+            patch.object(engine._context, "_process_fill") as mock_fill,
+            patch.object(engine._context, "_move_completed_orders"),
+        ):
+            # No fee_delta provided
+            engine._process_incremental_fill(live_order, Decimal("1.0"), response)
+
+            fill_arg = mock_fill.call_args[0][0]
+            # Should use total fee as fallback
+            assert fill_arg.fee == Decimal("0.45")
+
+    @pytest.mark.asyncio
+    async def test_update_order_from_response_detects_fill(
+        self, engine_with_buy_order, mock_adapter
+    ):
+        """Test _update_order_from_response correctly detects new fills."""
+        engine = engine_with_buy_order
+        await engine.start()
+
+        live_order = engine._live_orders["order-1"]
+        live_order.filled_amount = Decimal("0.3")  # Previously filled
+        live_order.fee = Decimal("0.135")
+
+        response = OrderResponse(
+            order_id="exchange-1",
+            symbol="BTC/USDT",
+            side=OrderSide.BUY,
+            type=OrderType.MARKET,
+            status=OrderStatus.PARTIAL,
+            price=None,
+            amount=Decimal("1.0"),
+            filled=Decimal("0.7"),  # New total = 0.7, delta = 0.4
+            avg_price=Decimal("45000"),
+            fee=Decimal("0.315"),  # New total fee
+            fee_currency="USDT",
+        )
+
+        with (
+            patch.object(engine._context, "_process_fill") as mock_fill,
+            patch.object(engine._context, "_move_completed_orders"),
+        ):
+            engine._update_order_from_response(live_order, response)
+
+            mock_fill.assert_called_once()
+            fill_arg = mock_fill.call_args[0][0]
+            # Should get incremental fill: 0.7 - 0.3 = 0.4
+            assert fill_arg.amount == Decimal("0.4")
+            # Should get incremental fee: 0.315 - 0.135 = 0.18
+            assert fill_arg.fee == Decimal("0.18")
+
+    @pytest.mark.asyncio
+    async def test_update_order_from_response_no_new_fills(
+        self, engine_with_buy_order, mock_adapter
+    ):
+        """Test _update_order_from_response does nothing when no new fills."""
+        engine = engine_with_buy_order
+        await engine.start()
+
+        live_order = engine._live_orders["order-1"]
+        live_order.filled_amount = Decimal("0.5")
+        live_order.fee = Decimal("0.225")
+
+        response = OrderResponse(
+            order_id="exchange-1",
+            symbol="BTC/USDT",
+            side=OrderSide.BUY,
+            type=OrderType.MARKET,
+            status=OrderStatus.PARTIAL,
+            price=None,
+            amount=Decimal("1.0"),
+            filled=Decimal("0.5"),  # Same as before
+            avg_price=Decimal("45000"),
+            fee=Decimal("0.225"),
+        )
+
+        with patch.object(engine._context, "_process_fill") as mock_fill:
+            engine._update_order_from_response(live_order, response)
+
+            # No new fills, so _process_fill should not be called
+            mock_fill.assert_not_called()
+
+
+class TestRiskTriggerPersistence:
+    """Tests for risk trigger persistence tracking (Issue 010)."""
+
+    @pytest.fixture
+    def engine_with_risk_rejection(self, engine, mock_adapter):
+        """Create engine and prepare for risk rejection scenario."""
+        return engine
+
+    @pytest.mark.asyncio
+    async def test_risk_trigger_recorded_on_rejection(self, engine, mock_adapter):
+        """Test that risk triggers are recorded when orders are rejected."""
+        await engine.start()
+
+        # Set a very small max order size to force rejection
+        engine._risk_manager.config.max_order_size = Decimal("0.0001")
+        engine._current_price = Decimal("45000")
+
+        # Process a candle to trigger strategy which will create an order
+        candle = WSCandle(
+            symbol="BTC/USDT",
+            timeframe="1m",
+            timestamp=datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC),
+            open=Decimal("45000"),
+            high=Decimal("46000"),
+            low=Decimal("44000"),
+            close=Decimal("45500"),
+            volume=Decimal("100"),
+            is_closed=True,
+        )
+        await engine.process_candle(candle)
+
+        # Check if there are pending risk triggers
+        if engine.has_pending_risk_triggers():
+            triggers = engine.get_pending_risk_triggers()
+            assert len(triggers) > 0
+            trigger = triggers[0]
+            assert trigger["trigger_type"] == "order_rejected"
+            assert "details" in trigger
+            assert "reason" in trigger["details"]
+
+    def test_get_pending_risk_triggers_clears_after_retrieval(self, engine):
+        """Test that get_pending_risk_triggers clears the list."""
+        engine._pending_risk_triggers = [
+            {"rule_type": "max_order_size", "trigger_type": "order_rejected", "details": {}}
+        ]
+
+        assert engine.has_pending_risk_triggers() is True
+
+        triggers = engine.get_pending_risk_triggers()
+        assert len(triggers) == 1
+
+        # Should be cleared now
+        assert engine.has_pending_risk_triggers() is False
+        assert len(engine.get_pending_risk_triggers()) == 0
+
+    def test_has_pending_risk_triggers_false_when_empty(self, engine):
+        """Test has_pending_risk_triggers returns False when no triggers."""
+        assert engine.has_pending_risk_triggers() is False
+
+
+class TestBalanceSyncFailure:
+    """Tests for balance sync error handling."""
+
+    @pytest.mark.asyncio
+    async def test_balance_sync_preserves_cash_on_failure(self, engine, mock_adapter):
+        """Test that cash remains unchanged when balance sync fails."""
+        await engine.start()
+        initial_cash = engine.context.cash
+
+        # Make get_balance fail
+        mock_adapter.get_balance.side_effect = Exception("Network error")
+
+        await engine._sync_balance()
+
+        # Cash should remain unchanged
+        assert engine.context.cash == initial_cash
+
+    @pytest.mark.asyncio
+    async def test_balance_sync_missing_quote_currency(self, engine, mock_adapter):
+        """Test balance sync when quote currency not in response."""
+        await engine.start()
+        initial_cash = engine.context.cash
+
+        # Return balance without USDT
+        mock_adapter.get_balance.return_value = AccountBalance(
+            exchange="okx",
+            balances=[
+                Balance(currency="BTC", available=Decimal("1.0"), frozen=Decimal("0")),
+            ],
+        )
+
+        await engine._sync_balance()
+
+        # Cash should remain unchanged (no USDT balance found)
+        assert engine.context.cash == initial_cash
+
+    @pytest.mark.asyncio
+    async def test_balance_sync_updates_cash_correctly(self, engine, mock_adapter):
+        """Test balance sync correctly updates cash from quote currency."""
+        await engine.start()
+
+        mock_adapter.get_balance.return_value = AccountBalance(
+            exchange="okx",
+            balances=[
+                Balance(currency="USDT", available=Decimal("9500"), frozen=Decimal("500")),
+            ],
+        )
+
+        await engine._sync_balance()
+
+        # Should update to available balance
+        assert engine.context.cash == Decimal("9500")
+
+
+class TestCircuitBreakerOrderProcessing:
+    """Tests for circuit breaker blocking order processing."""
+
+    @pytest.mark.asyncio
+    async def test_order_processing_blocked_by_circuit_breaker(self, engine, mock_adapter):
+        """Test that _process_order_requests skips when circuit breaker triggered."""
+        await engine.start()
+
+        engine._circuit_breaker_triggered = True
+
+        # Add a pending order via context
+        engine._context.buy("BTC/USDT", Decimal("0.01"))
+
+        await engine._process_order_requests()
+
+        # Should NOT call place_order
+        mock_adapter.place_order.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_order_processing_works_without_circuit_breaker(self, engine, mock_adapter):
+        """Test that orders process normally when circuit breaker is not triggered."""
+        await engine.start()
+        engine._current_price = Decimal("45000")
+
+        engine._context.buy("BTC/USDT", Decimal("0.01"))
+
+        await engine._process_order_requests()
+
+        # Should call place_order
+        mock_adapter.place_order.assert_called_once()

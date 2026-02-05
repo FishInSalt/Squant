@@ -720,3 +720,118 @@ class TestWebSocketGatewayErrorHandling:
                 "message": "Failed to subscribe to ticker:BTC/USDT",
             }
         )
+
+
+class TestChannelFormatValidation:
+    """Tests for channel format validation in _subscribe_okx."""
+
+    @pytest.mark.asyncio
+    async def test_empty_symbol_in_ticker_channel(self, mock_websocket, mock_stream_manager):
+        """Test that ticker channel with empty symbol is rejected."""
+        gateway = WebSocketGateway(mock_websocket, mock_stream_manager)
+        gateway._running = True
+
+        # "ticker:" — has parts >= 2 but symbol is empty
+        await gateway._subscribe_okx("ticker:")
+
+        mock_stream_manager.subscribe_ticker.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_empty_symbol_in_candle_channel(self, mock_websocket, mock_stream_manager):
+        """Test that candle channel with empty symbol is rejected."""
+        gateway = WebSocketGateway(mock_websocket, mock_stream_manager)
+        gateway._running = True
+
+        # "candle::1m" — symbol is empty
+        await gateway._subscribe_okx("candle::1m")
+
+        mock_stream_manager.subscribe_candles.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_empty_timeframe_in_candle_channel(self, mock_websocket, mock_stream_manager):
+        """Test that candle channel with empty timeframe is rejected."""
+        gateway = WebSocketGateway(mock_websocket, mock_stream_manager)
+        gateway._running = True
+
+        # "candle:BTC/USDT:" — timeframe is empty
+        await gateway._subscribe_okx("candle:BTC/USDT:")
+
+        mock_stream_manager.subscribe_candles.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_empty_symbol_in_trade_channel(self, mock_websocket, mock_stream_manager):
+        """Test that trade channel with empty symbol is rejected."""
+        gateway = WebSocketGateway(mock_websocket, mock_stream_manager)
+        gateway._running = True
+
+        await gateway._subscribe_okx("trade:")
+
+        mock_stream_manager.subscribe_trades.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_empty_symbol_in_orderbook_channel(self, mock_websocket, mock_stream_manager):
+        """Test that orderbook channel with empty symbol is rejected."""
+        gateway = WebSocketGateway(mock_websocket, mock_stream_manager)
+        gateway._running = True
+
+        await gateway._subscribe_okx("orderbook:")
+
+        mock_stream_manager.subscribe_orderbook.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_unknown_channel_type(self, mock_websocket, mock_stream_manager):
+        """Test that unknown channel types are handled gracefully."""
+        gateway = WebSocketGateway(mock_websocket, mock_stream_manager)
+        gateway._running = True
+
+        await gateway._subscribe_okx("invalid_type:BTC/USDT")
+
+        # Should not crash, and no subscriptions should be made
+        mock_stream_manager.subscribe_ticker.assert_not_called()
+        mock_stream_manager.subscribe_candles.assert_not_called()
+        mock_stream_manager.subscribe_trades.assert_not_called()
+        mock_stream_manager.subscribe_orderbook.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_valid_ticker_channel(self, mock_websocket, mock_stream_manager):
+        """Test that valid ticker channel subscribes correctly."""
+        gateway = WebSocketGateway(mock_websocket, mock_stream_manager)
+        gateway._running = True
+        mock_stream_manager.subscribe_ticker = AsyncMock()
+
+        await gateway._subscribe_okx("ticker:BTC/USDT")
+
+        mock_stream_manager.subscribe_ticker.assert_awaited_once_with("BTC/USDT")
+
+    @pytest.mark.asyncio
+    async def test_valid_candle_channel(self, mock_websocket, mock_stream_manager):
+        """Test that valid candle channel subscribes correctly."""
+        gateway = WebSocketGateway(mock_websocket, mock_stream_manager)
+        gateway._running = True
+        mock_stream_manager.subscribe_candles = AsyncMock()
+
+        await gateway._subscribe_okx("candle:BTC/USDT:1m")
+
+        mock_stream_manager.subscribe_candles.assert_awaited_once_with("BTC/USDT", "1m")
+
+    @pytest.mark.asyncio
+    async def test_orders_channel_no_symbol_needed(self, mock_websocket, mock_stream_manager):
+        """Test that orders channel works without symbol."""
+        gateway = WebSocketGateway(mock_websocket, mock_stream_manager)
+        gateway._running = True
+        mock_stream_manager.subscribe_orders = AsyncMock()
+
+        await gateway._subscribe_okx("orders")
+
+        mock_stream_manager.subscribe_orders.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_account_channel_no_symbol_needed(self, mock_websocket, mock_stream_manager):
+        """Test that account channel works without symbol."""
+        gateway = WebSocketGateway(mock_websocket, mock_stream_manager)
+        gateway._running = True
+        mock_stream_manager.subscribe_account = AsyncMock()
+
+        await gateway._subscribe_okx("account")
+
+        mock_stream_manager.subscribe_account.assert_awaited_once()
