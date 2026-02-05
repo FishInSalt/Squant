@@ -6,9 +6,9 @@ import base64
 import os
 from functools import lru_cache
 
+from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.kdf.hkdf import HKDFExpand
-from cryptography.hazmat.primitives import hashes
 
 from squant.config import get_settings
 

@@ -1322,7 +1322,7 @@ class TestZeroPriceDeviation:
         )
 
         # Zero current price should not cause division by zero
-        result = risk_manager.validate_order(order, Decimal("0"))
+        risk_manager.validate_order(order, Decimal("0"))
         # Should be rejected by zero equity or pass price check
         # Key: no exception is raised
 
@@ -1337,7 +1337,7 @@ class TestZeroPriceDeviation:
         )
 
         # Negative current price should not cause issues
-        result = risk_manager.validate_order(order, Decimal("-1"))
+        risk_manager.validate_order(order, Decimal("-1"))
         # Key: no exception is raised
 
 

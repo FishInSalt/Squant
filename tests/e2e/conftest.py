@@ -90,14 +90,12 @@ class SimpleStrategy(Strategy):
 @pytest_asyncio.fixture
 async def test_backtest_config():
     """测试回测配置"""
-    from datetime import datetime, timedelta
+    from datetime import UTC, datetime, timedelta
 
     # Use yesterday's end-of-day as end_date to ensure exchange data fully covers the range.
     # OKX may delay recent hours' data; using yesterday avoids flaky failures.
     # Use 3 days (72 1h bars) to stay well within exchange API limits.
-    from datetime import timezone
-
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     end_date = now.replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(hours=1)
     start_date = end_date - timedelta(days=3)
 
