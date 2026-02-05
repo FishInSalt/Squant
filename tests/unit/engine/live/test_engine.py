@@ -686,8 +686,105 @@ class TestEmergencyClose:
         assert results["positions_closed"] == 0
         assert results["orders_cancelled"] == 0
         assert results["errors"] == []
+        assert results["status"] == "completed"
         # Engine should still be stopped
         assert engine.is_running is False
+
+    @pytest.mark.asyncio
+    async def test_emergency_close_rejects_concurrent_calls(self, engine, mock_adapter):
+        """Test TRD-038#6: Reject duplicate emergency close calls.
+
+        When an emergency close is already in progress, subsequent calls should
+        return immediately with status "in_progress" instead of executing again.
+        """
+        await engine.start()
+
+        # Simulate emergency close already in progress
+        engine._emergency_close_in_progress = True
+
+        result = await engine.emergency_close()
+
+        assert result["status"] == "in_progress"
+        assert "already in progress" in result["message"]
+        assert result["orders_cancelled"] is None
+        assert result["positions_closed"] is None
+        # Should not have called any exchange operations
+        mock_adapter.cancel_order.assert_not_called()
+        mock_adapter.place_order.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_emergency_close_returns_remaining_positions(self, engine, mock_adapter):
+        """Test TRD-038#5: Return remaining positions on partial close.
+
+        When some positions fail to close, the response should include
+        detailed information about remaining positions.
+        """
+        await engine.start()
+
+        # Simulate two positions
+        engine.context._positions["BTC/USDT"] = MagicMock()
+        engine.context._positions["BTC/USDT"].is_open = True
+        engine.context._positions["BTC/USDT"].amount = Decimal("0.5")
+
+        engine.context._positions["ETH/USDT"] = MagicMock()
+        engine.context._positions["ETH/USDT"].is_open = True
+        engine.context._positions["ETH/USDT"].amount = Decimal("-2.0")  # Short position
+
+        # First call succeeds, second fails
+        mock_adapter.place_order.side_effect = [
+            MagicMock(),  # BTC/USDT succeeds
+            Exception("Network timeout"),  # ETH/USDT fails
+        ]
+
+        results = await engine.emergency_close()
+
+        # Should have partial success
+        assert results["status"] == "partial"
+        assert results["positions_closed"] == 1
+        assert len(results["errors"]) == 1
+        assert len(results["remaining_positions"]) == 1
+
+        # Check remaining position details
+        remaining = results["remaining_positions"][0]
+        assert remaining["symbol"] == "ETH/USDT"
+        assert remaining["amount"] == "-2.0"
+        assert remaining["side"] == "short"
+
+    @pytest.mark.asyncio
+    async def test_emergency_close_flag_reset_on_completion(self, engine, mock_adapter):
+        """Test that emergency close flag is reset after completion.
+
+        The flag should be reset even if the operation completes successfully,
+        allowing future emergency close calls if needed.
+        """
+        await engine.start()
+
+        assert engine._emergency_close_in_progress is False
+
+        await engine.emergency_close()
+
+        # Flag should be reset after completion
+        assert engine._emergency_close_in_progress is False
+
+    @pytest.mark.asyncio
+    async def test_emergency_close_flag_reset_on_error(self, engine, mock_adapter):
+        """Test that emergency close flag is reset even on errors.
+
+        The flag should be reset in the finally block even if errors occur.
+        """
+        await engine.start()
+
+        # Simulate a position that will fail
+        engine.context._positions["BTC/USDT"] = MagicMock()
+        engine.context._positions["BTC/USDT"].is_open = True
+        engine.context._positions["BTC/USDT"].amount = Decimal("0.5")
+
+        mock_adapter.place_order.side_effect = Exception("API error")
+
+        await engine.emergency_close()
+
+        # Flag should still be reset
+        assert engine._emergency_close_in_progress is False
 
 
 class TestOrderUpdates:

@@ -48,9 +48,7 @@ class TestReadinessProbe:
         app.dependency_overrides[get_session] = mock_get_session
 
         with patch("squant.api.v1.health.get_redis_client", return_value=mock_redis):
-            async with AsyncClient(
-                transport=ASGITransport(app=app), base_url="http://test"
-            ) as ac:
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
                 response = await ac.get("/api/v1/health/ready")
 
         app.dependency_overrides.clear()
@@ -70,9 +68,7 @@ class TestReadinessProbe:
 
         app.dependency_overrides[get_session] = mock_get_session
 
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as ac:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
             response = await ac.get("/api/v1/health/ready")
 
         app.dependency_overrides.clear()
@@ -97,9 +93,7 @@ class TestReadinessProbe:
         app.dependency_overrides[get_session] = mock_get_session
 
         with patch("squant.api.v1.health.get_redis_client", return_value=mock_redis):
-            async with AsyncClient(
-                transport=ASGITransport(app=app), base_url="http://test"
-            ) as ac:
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
                 response = await ac.get("/api/v1/health/ready")
 
         app.dependency_overrides.clear()
@@ -128,9 +122,7 @@ class TestDetailedHealthCheck:
         app.dependency_overrides[get_session] = mock_get_session
 
         with patch("squant.api.v1.health.get_redis_client", return_value=mock_redis):
-            async with AsyncClient(
-                transport=ASGITransport(app=app), base_url="http://test"
-            ) as ac:
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
                 response = await ac.get("/api/v1/health/detailed")
 
         app.dependency_overrides.clear()
@@ -160,9 +152,7 @@ class TestDetailedHealthCheck:
         app.dependency_overrides[get_session] = mock_get_session
 
         with patch("squant.api.v1.health.get_redis_client", return_value=mock_redis):
-            async with AsyncClient(
-                transport=ASGITransport(app=app), base_url="http://test"
-            ) as ac:
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
                 response = await ac.get("/api/v1/health/detailed")
 
         app.dependency_overrides.clear()
@@ -186,9 +176,7 @@ class TestDetailedHealthCheck:
         app.dependency_overrides[get_session] = mock_get_session
 
         with patch("squant.api.v1.health.get_redis_client", return_value=None):
-            async with AsyncClient(
-                transport=ASGITransport(app=app), base_url="http://test"
-            ) as ac:
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
                 response = await ac.get("/api/v1/health/detailed")
 
         app.dependency_overrides.clear()

@@ -21,10 +21,28 @@ from squant.services.order import OrderNotFoundError, OrderValidationError
 
 
 @pytest.fixture
-def mock_session():
+def mock_account():
+    """Create a mock exchange account."""
+    account = MagicMock()
+    account.id = uuid4()
+    account.exchange = "okx"
+    account.name = "test_account"
+    account.is_active = True
+    account.nonce = b"valid_nonce_12"  # 12 bytes, valid nonce
+    account.api_key_enc = b"encrypted_key"
+    account.api_secret_enc = b"encrypted_secret"
+    account.passphrase_enc = b"encrypted_pass"
+    return account
+
+
+@pytest.fixture
+def mock_session(mock_account):
     """Create a mock database session."""
     session = MagicMock()
-    session.execute = AsyncMock()
+    # Configure execute to return a result with scalar_one_or_none returning mock_account
+    mock_result = MagicMock()
+    mock_result.scalar_one_or_none.return_value = mock_account
+    session.execute = AsyncMock(return_value=mock_result)
     session.commit = AsyncMock()
     session.refresh = AsyncMock()
     session.add = MagicMock()
@@ -114,10 +132,10 @@ class TestCreateOrder:
     ) -> None:
         """Test successful order creation."""
         with (
-            patch("squant.api.v1.orders._get_or_create_default_account") as mock_account,
+            patch("squant.api.v1.orders._get_active_account") as mock_account,
             patch("squant.api.v1.orders.OrderService") as mock_service_class,
         ):
-            mock_account.return_value = MagicMock(id=uuid4())
+            mock_account.return_value = MagicMock(id=uuid4(), nonce=b"valid_nonce_12")
             mock_service = MagicMock()
             mock_service.create_order = AsyncMock(return_value=mock_order)
             mock_service_class.return_value = mock_service
@@ -178,10 +196,10 @@ class TestCreateOrder:
     ) -> None:
         """Test order creation with validation error."""
         with (
-            patch("squant.api.v1.orders._get_or_create_default_account") as mock_account,
+            patch("squant.api.v1.orders._get_active_account") as mock_account,
             patch("squant.api.v1.orders.OrderService") as mock_service_class,
         ):
-            mock_account.return_value = MagicMock(id=uuid4())
+            mock_account.return_value = MagicMock(id=uuid4(), nonce=b"valid_nonce_12")
             mock_service = MagicMock()
             mock_service.create_order = AsyncMock(
                 side_effect=OrderValidationError("Invalid order size")
@@ -196,10 +214,10 @@ class TestCreateOrder:
     async def test_create_market_order_no_price(self, client: AsyncClient, mock_order) -> None:
         """Test creating market order without price."""
         with (
-            patch("squant.api.v1.orders._get_or_create_default_account") as mock_account,
+            patch("squant.api.v1.orders._get_active_account") as mock_account,
             patch("squant.api.v1.orders.OrderService") as mock_service_class,
         ):
-            mock_account.return_value = MagicMock(id=uuid4())
+            mock_account.return_value = MagicMock(id=uuid4(), nonce=b"valid_nonce_12")
             mock_service = MagicMock()
             mock_service.create_order = AsyncMock(return_value=mock_order)
             mock_service_class.return_value = mock_service
@@ -224,10 +242,10 @@ class TestListOrders:
     async def test_list_orders_success(self, client: AsyncClient, mock_order) -> None:
         """Test listing orders."""
         with (
-            patch("squant.api.v1.orders._get_or_create_default_account") as mock_account,
+            patch("squant.api.v1.orders._get_active_account") as mock_account,
             patch("squant.api.v1.orders.OrderService") as mock_service_class,
         ):
-            mock_account.return_value = MagicMock(id=uuid4())
+            mock_account.return_value = MagicMock(id=uuid4(), nonce=b"valid_nonce_12")
             mock_service = MagicMock()
             mock_service.list_orders = AsyncMock(return_value=[mock_order])
             mock_service.count_orders = AsyncMock(return_value=1)
@@ -242,10 +260,10 @@ class TestListOrders:
     async def test_list_orders_with_pagination(self, client: AsyncClient, mock_order) -> None:
         """Test listing orders with pagination."""
         with (
-            patch("squant.api.v1.orders._get_or_create_default_account") as mock_account,
+            patch("squant.api.v1.orders._get_active_account") as mock_account,
             patch("squant.api.v1.orders.OrderService") as mock_service_class,
         ):
-            mock_account.return_value = MagicMock(id=uuid4())
+            mock_account.return_value = MagicMock(id=uuid4(), nonce=b"valid_nonce_12")
             mock_service = MagicMock()
             mock_service.list_orders = AsyncMock(return_value=[mock_order])
             mock_service.count_orders = AsyncMock(return_value=50)
@@ -265,10 +283,10 @@ class TestGetOpenOrders:
         mock_order.status = OrderStatus.SUBMITTED
 
         with (
-            patch("squant.api.v1.orders._get_or_create_default_account") as mock_account,
+            patch("squant.api.v1.orders._get_active_account") as mock_account,
             patch("squant.api.v1.orders.OrderService") as mock_service_class,
         ):
-            mock_account.return_value = MagicMock(id=uuid4())
+            mock_account.return_value = MagicMock(id=uuid4(), nonce=b"valid_nonce_12")
             mock_service = MagicMock()
             mock_service.get_open_orders = AsyncMock(return_value=[mock_order])
             mock_service_class.return_value = mock_service
@@ -283,10 +301,10 @@ class TestGetOpenOrders:
         mock_order.status = OrderStatus.SUBMITTED
 
         with (
-            patch("squant.api.v1.orders._get_or_create_default_account") as mock_account,
+            patch("squant.api.v1.orders._get_active_account") as mock_account,
             patch("squant.api.v1.orders.OrderService") as mock_service_class,
         ):
-            mock_account.return_value = MagicMock(id=uuid4())
+            mock_account.return_value = MagicMock(id=uuid4(), nonce=b"valid_nonce_12")
             mock_service = MagicMock()
             mock_service.get_open_orders = AsyncMock(return_value=[mock_order])
             mock_service_class.return_value = mock_service
@@ -313,10 +331,10 @@ class TestGetOrderStats:
         }
 
         with (
-            patch("squant.api.v1.orders._get_or_create_default_account") as mock_account,
+            patch("squant.api.v1.orders._get_active_account") as mock_account,
             patch("squant.api.v1.orders.OrderService") as mock_service_class,
         ):
-            mock_account.return_value = MagicMock(id=uuid4())
+            mock_account.return_value = MagicMock(id=uuid4(), nonce=b"valid_nonce_12")
             mock_service = MagicMock()
             mock_service.get_order_stats = AsyncMock(return_value=mock_stats)
             mock_service_class.return_value = mock_service
@@ -335,10 +353,10 @@ class TestGetOrder:
         mock_order.trades = [mock_trade]
 
         with (
-            patch("squant.api.v1.orders._get_or_create_default_account") as mock_account,
+            patch("squant.api.v1.orders._get_active_account") as mock_account,
             patch("squant.api.v1.orders.OrderService") as mock_service_class,
         ):
-            mock_account.return_value = MagicMock(id=uuid4())
+            mock_account.return_value = MagicMock(id=uuid4(), nonce=b"valid_nonce_12")
             mock_service = MagicMock()
             mock_service.get_order = AsyncMock(return_value=mock_order)
             mock_service_class.return_value = mock_service
@@ -353,10 +371,10 @@ class TestGetOrder:
         order_id = uuid4()
 
         with (
-            patch("squant.api.v1.orders._get_or_create_default_account") as mock_account,
+            patch("squant.api.v1.orders._get_active_account") as mock_account,
             patch("squant.api.v1.orders.OrderService") as mock_service_class,
         ):
-            mock_account.return_value = MagicMock(id=uuid4())
+            mock_account.return_value = MagicMock(id=uuid4(), nonce=b"valid_nonce_12")
             mock_service = MagicMock()
             mock_service.get_order = AsyncMock(side_effect=OrderNotFoundError(str(order_id)))
             mock_service_class.return_value = mock_service
@@ -375,10 +393,10 @@ class TestCancelOrder:
         mock_order.status = OrderStatus.CANCELLED
 
         with (
-            patch("squant.api.v1.orders._get_or_create_default_account") as mock_account,
+            patch("squant.api.v1.orders._get_active_account") as mock_account,
             patch("squant.api.v1.orders.OrderService") as mock_service_class,
         ):
-            mock_account.return_value = MagicMock(id=uuid4())
+            mock_account.return_value = MagicMock(id=uuid4(), nonce=b"valid_nonce_12")
             mock_service = MagicMock()
             mock_service.cancel_order = AsyncMock(return_value=mock_order)
             mock_service_class.return_value = mock_service
@@ -393,10 +411,10 @@ class TestCancelOrder:
         order_id = uuid4()
 
         with (
-            patch("squant.api.v1.orders._get_or_create_default_account") as mock_account,
+            patch("squant.api.v1.orders._get_active_account") as mock_account,
             patch("squant.api.v1.orders.OrderService") as mock_service_class,
         ):
-            mock_account.return_value = MagicMock(id=uuid4())
+            mock_account.return_value = MagicMock(id=uuid4(), nonce=b"valid_nonce_12")
             mock_service = MagicMock()
             mock_service.cancel_order = AsyncMock(side_effect=OrderNotFoundError(str(order_id)))
             mock_service_class.return_value = mock_service
@@ -409,10 +427,10 @@ class TestCancelOrder:
     async def test_cancel_order_validation_error(self, client: AsyncClient, mock_order) -> None:
         """Test cancelling order with validation error."""
         with (
-            patch("squant.api.v1.orders._get_or_create_default_account") as mock_account,
+            patch("squant.api.v1.orders._get_active_account") as mock_account,
             patch("squant.api.v1.orders.OrderService") as mock_service_class,
         ):
-            mock_account.return_value = MagicMock(id=uuid4())
+            mock_account.return_value = MagicMock(id=uuid4(), nonce=b"valid_nonce_12")
             mock_service = MagicMock()
             mock_service.cancel_order = AsyncMock(
                 side_effect=OrderValidationError("Order already filled")
@@ -431,10 +449,10 @@ class TestSyncOrder:
     async def test_sync_order_success(self, client: AsyncClient, mock_order) -> None:
         """Test syncing an order."""
         with (
-            patch("squant.api.v1.orders._get_or_create_default_account") as mock_account,
+            patch("squant.api.v1.orders._get_active_account") as mock_account,
             patch("squant.api.v1.orders.OrderService") as mock_service_class,
         ):
-            mock_account.return_value = MagicMock(id=uuid4())
+            mock_account.return_value = MagicMock(id=uuid4(), nonce=b"valid_nonce_12")
             mock_service = MagicMock()
             mock_service.sync_order = AsyncMock(return_value=mock_order)
             mock_service_class.return_value = mock_service
@@ -449,10 +467,10 @@ class TestSyncOrder:
         order_id = uuid4()
 
         with (
-            patch("squant.api.v1.orders._get_or_create_default_account") as mock_account,
+            patch("squant.api.v1.orders._get_active_account") as mock_account,
             patch("squant.api.v1.orders.OrderService") as mock_service_class,
         ):
-            mock_account.return_value = MagicMock(id=uuid4())
+            mock_account.return_value = MagicMock(id=uuid4(), nonce=b"valid_nonce_12")
             mock_service = MagicMock()
             mock_service.sync_order = AsyncMock(side_effect=OrderNotFoundError(str(order_id)))
             mock_service_class.return_value = mock_service
@@ -469,10 +487,10 @@ class TestSyncOpenOrders:
     async def test_sync_open_orders_success(self, client: AsyncClient, mock_order) -> None:
         """Test syncing all open orders."""
         with (
-            patch("squant.api.v1.orders._get_or_create_default_account") as mock_account,
+            patch("squant.api.v1.orders._get_active_account") as mock_account,
             patch("squant.api.v1.orders.OrderService") as mock_service_class,
         ):
-            mock_account.return_value = MagicMock(id=uuid4())
+            mock_account.return_value = MagicMock(id=uuid4(), nonce=b"valid_nonce_12")
             mock_service = MagicMock()
             mock_service.sync_open_orders = AsyncMock(return_value=[mock_order])
             mock_service_class.return_value = mock_service
@@ -485,10 +503,10 @@ class TestSyncOpenOrders:
     async def test_sync_open_orders_with_symbol(self, client: AsyncClient, mock_order) -> None:
         """Test syncing open orders for specific symbol."""
         with (
-            patch("squant.api.v1.orders._get_or_create_default_account") as mock_account,
+            patch("squant.api.v1.orders._get_active_account") as mock_account,
             patch("squant.api.v1.orders.OrderService") as mock_service_class,
         ):
-            mock_account.return_value = MagicMock(id=uuid4())
+            mock_account.return_value = MagicMock(id=uuid4(), nonce=b"valid_nonce_12")
             mock_service = MagicMock()
             mock_service.sync_open_orders = AsyncMock(return_value=[mock_order])
             mock_service_class.return_value = mock_service

@@ -14,6 +14,7 @@ from uuid import UUID
 from squant.engine.backtest.context import BacktestContext
 from squant.engine.backtest.strategy_base import Strategy
 from squant.engine.backtest.types import Bar, EquitySnapshot, Fill
+from squant.engine.resource_limits import ResourceLimitExceededError, resource_limiter
 from squant.engine.risk import RiskConfig, RiskManager
 from squant.infra.exchange.types import CancelOrderRequest, OrderRequest, OrderResponse
 from squant.models.enums import OrderSide, OrderStatus
@@ -177,6 +178,14 @@ class LiveTradingEngine:
 
         # Risk trigger events for persistence (Issue 010)
         self._pending_risk_triggers: list[dict[str, Any]] = []
+
+        # Emergency close in progress flag (TRD-038#6)
+        self._emergency_close_in_progress: bool = False
+
+        # Order sync rate limiting - avoid excessive polling
+        # Track last poll time per order to avoid redundant API calls
+        self._order_last_poll: dict[str, datetime] = {}  # exchange_order_id -> last poll time
+        self._order_poll_min_interval = 30.0  # Minimum seconds between polls for same order
 
     @property
     def run_id(self) -> UUID:
@@ -355,52 +364,102 @@ class LiveTradingEngine:
         """Emergency close all positions at market price.
 
         Returns:
-            Dict with close operation results.
+            Dict with close operation results including:
+            - run_id: Strategy run ID
+            - status: "completed", "partial", "in_progress", or "not_active"
+            - message: Optional message (for in_progress or errors)
+            - orders_cancelled: Number of orders cancelled
+            - positions_closed: Number of positions closed
+            - remaining_positions: List of positions that failed to close (TRD-038#5)
+            - errors: List of error details
         """
-        logger.warning(f"Emergency close triggered for run {self._run_id}")
+        # TRD-038#6: Check if already in progress
+        if self._emergency_close_in_progress:
+            return {
+                "run_id": str(self._run_id),
+                "status": "in_progress",
+                "message": "Emergency close operation already in progress",
+                "orders_cancelled": None,
+                "positions_closed": None,
+                "remaining_positions": None,
+                "errors": None,
+            }
 
-        results: dict[str, Any] = {
-            "orders_cancelled": 0,
-            "positions_closed": 0,
-            "errors": [],
-        }
+        self._emergency_close_in_progress = True
+        try:
+            logger.warning(f"Emergency close triggered for run {self._run_id}")
 
-        # Cancel all open orders first
-        cancelled = await self._cancel_all_orders()
-        results["orders_cancelled"] = len(cancelled)
+            results: dict[str, Any] = {
+                "run_id": str(self._run_id),
+                "orders_cancelled": 0,
+                "positions_closed": 0,
+                "remaining_positions": [],
+                "errors": [],
+            }
 
-        # Close all positions at market
-        for symbol, position in self._context.positions.items():
-            if position.is_open:
-                try:
-                    # Place market order to close
-                    side = OrderSide.SELL if position.amount > 0 else OrderSide.BUY
-                    order_request = OrderRequest(
-                        symbol=symbol,
-                        side=side,
-                        type="market",
-                        amount=abs(position.amount),
-                    )
+            # Cancel all open orders first
+            cancelled = await self._cancel_all_orders()
+            results["orders_cancelled"] = len(cancelled)
 
-                    await self._adapter.place_order(order_request)
-                    results["positions_closed"] += 1
-                    logger.info(
-                        f"Emergency close order placed: {symbol} {side.value} {abs(position.amount)}"
-                    )
+            # Close all positions at market
+            for symbol, position in self._context.positions.items():
+                if position.is_open:
+                    try:
+                        # Place market order to close
+                        side = OrderSide.SELL if position.amount > 0 else OrderSide.BUY
+                        order_request = OrderRequest(
+                            symbol=symbol,
+                            side=side,
+                            type="market",
+                            amount=abs(position.amount),
+                        )
 
-                except Exception as e:
-                    logger.exception(f"Error closing position for {symbol}: {e}")
-                    results["errors"].append(
-                        {
-                            "symbol": symbol,
-                            "error": str(e),
-                        }
-                    )
+                        await self._adapter.place_order(order_request)
+                        results["positions_closed"] += 1
+                        logger.info(
+                            f"Emergency close order placed: {symbol} {side.value} {abs(position.amount)}"
+                        )
 
-        # Stop the engine
-        await self.stop(error="Emergency close executed", cancel_orders=False)
+                    except Exception as e:
+                        logger.exception(f"Error closing position for {symbol}: {e}")
+                        results["errors"].append(
+                            {
+                                "symbol": symbol,
+                                "error": str(e),
+                            }
+                        )
 
-        return results
+            # TRD-038#5: Collect remaining positions after close attempts
+            for symbol, position in self._context.positions.items():
+                if position.is_open:
+                    # Check if this position had an error (meaning it wasn't closed)
+                    had_error = any(err["symbol"] == symbol for err in results["errors"])
+                    if had_error:
+                        results["remaining_positions"].append(
+                            {
+                                "symbol": symbol,
+                                "amount": str(position.amount),
+                                "side": "long" if position.amount > 0 else "short",
+                            }
+                        )
+
+            # Set status based on results
+            if results["remaining_positions"]:
+                results["status"] = "partial"
+                results["message"] = (
+                    f"Partial close: {results['positions_closed']} closed, "
+                    f"{len(results['remaining_positions'])} remaining"
+                )
+            else:
+                results["status"] = "completed"
+                results["message"] = None
+
+            # Stop the engine
+            await self.stop(error="Emergency close executed", cancel_orders=False)
+
+            return results
+        finally:
+            self._emergency_close_in_progress = False
 
     async def process_candle(self, candle: WSCandle) -> None:
         """Process a WebSocket candle update.
@@ -460,8 +519,20 @@ class LiveTradingEngine:
             await self._sync_balance()
             self._risk_manager.update_equity(self._context.equity)
 
-            # Call strategy on_bar
-            self._strategy.on_bar(bar)
+            # Call strategy on_bar with resource limits (STR-013)
+            from squant.config import get_settings
+
+            settings = get_settings()
+            try:
+                with resource_limiter(
+                    cpu_seconds=settings.strategy.cpu_limit_seconds,
+                    memory_mb=settings.strategy.memory_limit_mb,
+                ):
+                    self._strategy.on_bar(bar)
+            except ResourceLimitExceededError as e:
+                logger.error(f"Strategy resource limit exceeded: {e}")
+                await self.stop(error=f"Strategy resource limit exceeded: {e}")
+                raise
 
             # Process pending order requests from strategy
             await self._process_order_requests()
@@ -581,23 +652,57 @@ class LiveTradingEngine:
             logger.warning(f"Failed to sync balance: {e}")
 
     async def _sync_pending_orders(self) -> None:
-        """Sync pending order status from exchange."""
+        """Sync pending order status from exchange with rate limiting.
+
+        Only polls orders that haven't been polled within the minimum interval
+        to avoid excessive API calls. WebSocket updates handle most state changes,
+        so polling is primarily a fallback for missed updates.
+        """
+        now = datetime.now(UTC)
         pending_internal_ids = [
             oid
             for oid, order in self._live_orders.items()
             if not order.is_complete and order.exchange_order_id
         ]
 
+        polled_count = 0
+        skipped_count = 0
+
         for internal_id in pending_internal_ids:
             live_order = self._live_orders[internal_id]
+            exchange_oid = live_order.exchange_order_id
+
+            # Check if we've polled this order recently
+            if exchange_oid in self._order_last_poll:
+                last_poll = self._order_last_poll[exchange_oid]
+                elapsed = (now - last_poll).total_seconds()
+                if elapsed < self._order_poll_min_interval:
+                    skipped_count += 1
+                    continue
+
             try:
                 response = await self._adapter.get_order(
                     live_order.symbol,
-                    live_order.exchange_order_id,  # type: ignore
+                    exchange_oid,  # type: ignore
                 )
                 self._update_order_from_response(live_order, response)
+                self._order_last_poll[exchange_oid] = now
+                polled_count += 1
+
+                # Clean up tracking for completed orders
+                if live_order.is_complete and exchange_oid in self._order_last_poll:
+                    del self._order_last_poll[exchange_oid]
+
             except Exception as e:
                 logger.warning(f"Failed to sync order {internal_id}: {e}")
+                # Still record the poll time to avoid hammering on errors
+                self._order_last_poll[exchange_oid] = now
+
+        if polled_count > 0 or skipped_count > 0:
+            logger.debug(
+                f"Order sync: polled={polled_count}, skipped={skipped_count} "
+                f"(within {self._order_poll_min_interval}s interval)"
+            )
 
     def _update_order_from_response(self, live_order: LiveOrder, response: OrderResponse) -> None:
         """Update live order from exchange response."""

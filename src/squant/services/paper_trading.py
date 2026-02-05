@@ -59,6 +59,16 @@ class StrategyInstantiationError(PaperTradingError):
     pass
 
 
+class CircuitBreakerActiveError(PaperTradingError):
+    """Cannot start trading when circuit breaker is active."""
+
+    def __init__(self, reason: str | None = None):
+        message = "Cannot start trading: circuit breaker is active"
+        if reason:
+            message += f" (reason: {reason})"
+        super().__init__(message)
+
+
 class StrategyRunRepository(BaseRepository[StrategyRun]):
     """Repository for StrategyRun model."""
 
@@ -163,6 +173,7 @@ class PaperTradingService:
         commission_rate: Decimal = Decimal("0.001"),
         slippage: Decimal = Decimal("0"),
         params: dict[str, Any] | None = None,
+        redis: Any | None = None,
     ) -> StrategyRun:
         """Start a paper trading session.
 
@@ -175,6 +186,7 @@ class PaperTradingService:
             commission_rate: Commission rate.
             slippage: Slippage rate.
             params: Strategy parameters.
+            redis: Redis client for circuit breaker check (optional).
 
         Returns:
             Created StrategyRun.
@@ -182,8 +194,13 @@ class PaperTradingService:
         Raises:
             StrategyNotFoundError: If strategy not found.
             StrategyInstantiationError: If strategy cannot be instantiated.
+            CircuitBreakerActiveError: If circuit breaker is active.
         """
         from squant.services.strategy import StrategyNotFoundError, StrategyRepository
+
+        # Check circuit breaker state before starting
+        if redis is not None:
+            await self._check_circuit_breaker(redis)
 
         # Verify strategy exists
         strategy_repo = StrategyRepository(self.session)
@@ -335,6 +352,26 @@ class PaperTradingService:
             raise StrategyInstantiationError(f"Strategy compilation failed: {e}") from e
         except Exception as e:
             raise StrategyInstantiationError(f"Strategy instantiation failed: {e}") from e
+
+    async def _check_circuit_breaker(self, redis: Any) -> None:
+        """Check if circuit breaker is active and raise error if so.
+
+        Args:
+            redis: Redis client.
+
+        Raises:
+            CircuitBreakerActiveError: If circuit breaker is active.
+        """
+        import json
+
+        try:
+            state_data = await redis.get("squant:circuit_breaker:state")
+            if state_data:
+                state = json.loads(state_data)
+                if state.get("is_active", False):
+                    raise CircuitBreakerActiveError(state.get("trigger_reason"))
+        except json.JSONDecodeError:
+            pass  # Invalid state, allow trading
 
     async def stop(self, run_id: UUID) -> StrategyRun:
         """Stop a paper trading session.

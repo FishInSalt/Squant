@@ -5,6 +5,9 @@ This module provides REST API endpoints for managing orders:
 - Canceling orders
 - Querying order history
 - Syncing order status from exchange
+
+Security Note: Orders require a valid exchange account created through
+the /api/v1/exchange-accounts endpoint with properly encrypted credentials.
 """
 
 import logging
@@ -26,6 +29,7 @@ from squant.schemas.order import (
     SyncOrdersResponse,
     TradeDetail,
 )
+from squant.services.account import ExchangeAccountRepository
 from squant.services.order import (
     OrderNotFoundError,
     OrderService,
@@ -36,50 +40,62 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
+# Default account ID from settings (must be created via /api/v1/exchange-accounts)
+_default_account_id: UUID | None = None
 
-async def _get_or_create_default_account(
+
+class NoActiveAccountError(Exception):
+    """No active exchange account available."""
+
+    def __init__(self, exchange: str = "okx"):
+        super().__init__(
+            f"No active exchange account found for '{exchange}'. "
+            f"Please create an account via POST /api/v1/exchange-accounts first."
+        )
+
+
+async def _get_active_account(
     session: DbSession,
     exchange: str = "okx",
 ) -> ExchangeAccount:
-    """Get or create a default exchange account for order tracking.
+    """Get an active exchange account for order operations.
 
-    This is a simplified implementation that creates a placeholder account
-    for tracking orders. In a full implementation, this would use encrypted
-    credentials stored in the database.
+    Security: Only returns accounts with properly encrypted credentials
+    that were created through the official account creation flow.
 
     Args:
         session: Database session.
         exchange: Exchange name.
 
     Returns:
-        ExchangeAccount record.
+        Active ExchangeAccount with encrypted credentials.
+
+    Raises:
+        NoActiveAccountError: If no active account exists.
     """
     from sqlalchemy import select
 
-    # Check for existing default account
+    # Find first active account for this exchange
     stmt = select(ExchangeAccount).where(
         ExchangeAccount.exchange == exchange,
-        ExchangeAccount.name == "default",
-    )
+        ExchangeAccount.is_active == True,  # noqa: E712
+    ).order_by(ExchangeAccount.created_at.asc()).limit(1)
+
     result = await session.execute(stmt)
     account = result.scalar_one_or_none()
 
     if account is None:
-        # Create placeholder account
-        # Note: In production, credentials would be properly encrypted
-        account = ExchangeAccount(
-            exchange=exchange,
-            name="default",
-            api_key_enc=b"placeholder",  # Not used - credentials from settings
-            api_secret_enc=b"placeholder",
-            passphrase_enc=b"placeholder",
-            nonce=b"placeholder",
-            testnet=True,  # Default to testnet for safety
-            is_active=True,
+        logger.warning(f"No active exchange account found for {exchange}")
+        raise NoActiveAccountError(exchange)
+
+    # Security check: Ensure account has proper encrypted credentials
+    # Placeholder credentials are exactly 11 bytes ("placeholder")
+    if account.nonce == b"placeholder" or len(account.nonce) < 12:
+        logger.error(
+            f"Account {account.id} has invalid credentials - may be a legacy placeholder. "
+            "Please recreate the account with proper API credentials."
         )
-        session.add(account)
-        await session.flush()
-        await session.refresh(account)
+        raise NoActiveAccountError(exchange)
 
     return account
 
@@ -93,7 +109,7 @@ async def get_order_service(
     This dependency provides an OrderService configured with:
     - Database session for persistence
     - Exchange adapter for trading operations
-    - Default account for order tracking
+    - Active account with encrypted credentials
 
     Args:
         session: Database session.
@@ -101,9 +117,18 @@ async def get_order_service(
 
     Returns:
         Configured OrderService.
+
+    Raises:
+        HTTPException: If no active exchange account is available.
     """
-    account = await _get_or_create_default_account(session)
-    return OrderService(session, exchange, account)
+    try:
+        account = await _get_active_account(session)
+        return OrderService(session, exchange, account)
+    except NoActiveAccountError as e:
+        raise HTTPException(
+            status_code=400,
+            detail=str(e),
+        ) from e
 
 
 OrderServiceDep = Annotated[OrderService, Depends(get_order_service)]

@@ -568,6 +568,129 @@ class TestTotalLossLimitValidation:
         assert risk_manager.state.total_pnl == Decimal("-1000")
 
 
+class TestNegativePositionRejection:
+    """Tests for negative position rejection (spot trading - no short selling).
+
+    Note: Orders must pass the order size check (5% of equity) before reaching
+    the position size check. With $10000 equity at $10000/BTC, max order is 0.05 BTC.
+    """
+
+    def test_sell_more_than_position_rejected(self, risk_manager):
+        """Test selling more than current position is rejected.
+
+        Use price of $10000 so order value = 0.04 * 10000 = $400 (4% of equity, passes)
+        Current position: 0.02 BTC, trying to sell 0.04 BTC -> would result in -0.02
+        """
+        order = OrderRequest(
+            symbol="BTC/USDT",
+            side=OrderSide.SELL,
+            type=OrderType.MARKET,
+            amount=Decimal("0.04"),  # Trying to sell 0.04 BTC
+        )
+        current_price = Decimal("10000")  # $10000/BTC so order = $400 (4% of $10000)
+
+        result = risk_manager.validate_order(
+            order,
+            current_price,
+            current_position_amount=Decimal("0.02"),  # Only have 0.02
+        )
+
+        assert result.passed is False
+        assert result.rule_type == RiskRuleType.MAX_POSITION_SIZE
+        assert "negative position" in result.reason.lower()
+        assert result.metadata["new_position_amount"] == pytest.approx(-0.02)
+
+    def test_sell_with_no_position_rejected(self, risk_manager):
+        """Test selling when position is 0 is rejected.
+
+        Use small order value to pass order size check.
+        """
+        order = OrderRequest(
+            symbol="BTC/USDT",
+            side=OrderSide.SELL,
+            type=OrderType.MARKET,
+            amount=Decimal("0.01"),  # 0.01 * $10000 = $100 = 1% of equity
+        )
+        current_price = Decimal("10000")
+
+        result = risk_manager.validate_order(
+            order, current_price, current_position_amount=Decimal("0")
+        )
+
+        assert result.passed is False
+        assert "negative position" in result.reason.lower()
+
+    def test_sell_exact_position_passes(self, risk_manager):
+        """Test selling exact position amount is allowed."""
+        order = OrderRequest(
+            symbol="BTC/USDT",
+            side=OrderSide.SELL,
+            type=OrderType.MARKET,
+            amount=Decimal("0.02"),  # Selling exactly what we have
+        )
+        current_price = Decimal("10000")  # Order value = $200 = 2% of equity
+
+        result = risk_manager.validate_order(
+            order, current_price, current_position_amount=Decimal("0.02")
+        )
+
+        # Resulting position = 0, which is valid
+        assert result.passed is True
+
+    def test_sell_less_than_position_passes(self, risk_manager):
+        """Test selling less than current position is allowed."""
+        order = OrderRequest(
+            symbol="BTC/USDT",
+            side=OrderSide.SELL,
+            type=OrderType.MARKET,
+            amount=Decimal("0.01"),  # Selling less than we have
+        )
+        current_price = Decimal("10000")  # Order value = $100 = 1% of equity
+
+        result = risk_manager.validate_order(
+            order, current_price, current_position_amount=Decimal("0.02")
+        )
+
+        # Resulting position = 0.01, which is valid
+        assert result.passed is True
+
+    def test_error_message_contains_amounts(self, risk_manager):
+        """Test rejection message includes specific amounts for debugging."""
+        order = OrderRequest(
+            symbol="BTC/USDT",
+            side=OrderSide.SELL,
+            type=OrderType.MARKET,
+            amount=Decimal("0.04"),  # Order value = $400 = 4% of equity
+        )
+        current_price = Decimal("10000")
+
+        result = risk_manager.validate_order(
+            order, current_price, current_position_amount=Decimal("0.02")
+        )
+
+        assert result.passed is False
+        # Check that the reason contains useful information about positions
+        assert "0.02" in result.reason or "current" in result.reason.lower()
+        assert "0.04" in result.reason or "selling" in result.reason.lower()
+
+    def test_buy_order_not_affected(self, risk_manager):
+        """Test that buy orders are not affected by negative position check."""
+        order = OrderRequest(
+            symbol="BTC/USDT",
+            side=OrderSide.BUY,
+            type=OrderType.MARKET,
+            amount=Decimal("0.01"),
+        )
+        current_price = Decimal("50000")
+
+        result = risk_manager.validate_order(
+            order, current_price, current_position_amount=Decimal("0")
+        )
+
+        # Buy order should pass (no negative position issue)
+        assert result.passed is True
+
+
 class TestPriceDeviationValidation:
     """Tests for price deviation validation (RSK-005)."""
 
@@ -751,6 +874,119 @@ class TestDailyReset:
         assert risk_manager.state.daily_trade_count == 0
         assert risk_manager.state.daily_pnl == Decimal("0")
         assert risk_manager.state.daily_start_equity == Decimal("9800")
+
+
+class TestCheckDailyResetBoundary:
+    """Tests for check_daily_reset() automatic reset logic."""
+
+    def test_same_day_no_reset(self, risk_manager):
+        """Test no reset occurs within the same day."""
+        # Set reset time to today
+        now = datetime.now(UTC)
+        risk_manager.state.daily_reset_time = now
+
+        # Simulate some daily stats
+        risk_manager.state.daily_trade_count = 5
+        risk_manager.state.daily_pnl = Decimal("-100")
+        original_start_equity = risk_manager.state.daily_start_equity
+
+        # Check reset - should NOT reset (same day)
+        risk_manager.check_daily_reset()
+
+        assert risk_manager.state.daily_trade_count == 5
+        assert risk_manager.state.daily_pnl == Decimal("-100")
+        assert risk_manager.state.daily_start_equity == original_start_equity
+
+    def test_day_boundary_triggers_reset(self, risk_manager):
+        """Test reset triggers when crossing day boundary."""
+        # Set reset time to yesterday
+        yesterday = datetime.now(UTC) - timedelta(days=1)
+        risk_manager.state.daily_reset_time = yesterday
+
+        # Simulate some daily stats
+        risk_manager.state.daily_trade_count = 50
+        risk_manager.state.daily_pnl = Decimal("-300")
+
+        # Update equity to simulate current state
+        risk_manager.update_equity(Decimal("9700"))
+
+        # Check reset - should trigger reset (new day)
+        risk_manager.check_daily_reset()
+
+        assert risk_manager.state.daily_trade_count == 0
+        assert risk_manager.state.daily_pnl == Decimal("0")
+        assert risk_manager.state.daily_start_equity == Decimal("9700")
+        # Reset time should be updated to today
+        assert risk_manager.state.daily_reset_time.date() == datetime.now(UTC).date()
+
+    def test_multiple_day_jump_still_resets(self, risk_manager):
+        """Test reset works even after multiple days have passed."""
+        # Set reset time to 6 days ago
+        six_days_ago = datetime.now(UTC) - timedelta(days=6)
+        risk_manager.state.daily_reset_time = six_days_ago
+
+        # Simulate some daily stats
+        risk_manager.state.daily_trade_count = 100
+        risk_manager.state.daily_pnl = Decimal("-500")
+
+        # Check reset - should trigger reset
+        risk_manager.check_daily_reset()
+
+        assert risk_manager.state.daily_trade_count == 0
+        assert risk_manager.state.daily_pnl == Decimal("0")
+
+    def test_total_pnl_preserved_after_reset(self, risk_manager):
+        """Test total PnL is preserved while daily stats reset."""
+        # Set up total PnL
+        risk_manager.state.total_pnl = Decimal("-1500")
+        risk_manager.state.daily_pnl = Decimal("-200")
+        risk_manager.state.daily_trade_count = 10
+
+        # Set reset time to yesterday
+        yesterday = datetime.now(UTC) - timedelta(days=1)
+        risk_manager.state.daily_reset_time = yesterday
+
+        # Check reset
+        risk_manager.check_daily_reset()
+
+        # Daily stats should reset
+        assert risk_manager.state.daily_trade_count == 0
+        assert risk_manager.state.daily_pnl == Decimal("0")
+        # Total PnL should be preserved
+        assert risk_manager.state.total_pnl == Decimal("-1500")
+
+    def test_none_reset_time_initializes(self, risk_manager):
+        """Test that None reset_time triggers initialization."""
+        # Clear the reset time
+        risk_manager.state.daily_reset_time = None
+
+        # Check reset - should initialize
+        risk_manager.check_daily_reset()
+
+        # Should have set a reset time
+        assert risk_manager.state.daily_reset_time is not None
+        assert risk_manager.state.daily_trade_count == 0
+        assert risk_manager.state.daily_pnl == Decimal("0")
+
+    def test_consecutive_losses_preserved_after_daily_reset(self, risk_manager):
+        """Test that consecutive losses count is preserved after daily reset."""
+        # Record some consecutive losses
+        risk_manager.record_trade_result(Decimal("-100"))
+        risk_manager.record_trade_result(Decimal("-100"))
+        assert risk_manager.state.consecutive_losses == 2
+
+        # Set reset time to yesterday
+        yesterday = datetime.now(UTC) - timedelta(days=1)
+        risk_manager.state.daily_reset_time = yesterday
+
+        # Trigger daily reset
+        risk_manager.check_daily_reset()
+
+        # Consecutive losses should NOT reset with daily stats
+        # (This tests whether consecutive losses persists across days)
+        # Note: The actual behavior depends on implementation
+        # If this fails, update the test based on actual desired behavior
+        assert risk_manager.state.consecutive_losses == 2
 
 
 class TestEquityUpdate:

@@ -105,8 +105,9 @@ class CryptoManager:
         try:
             plaintext = self._aesgcm.decrypt(nonce, ciphertext, associated_data=None)
             return plaintext.decode("utf-8")
-        except Exception as e:
-            raise DecryptionError(f"Decryption failed: {e}") from e
+        except Exception:
+            # Security: Use generic message to avoid leaking implementation details
+            raise DecryptionError("Decryption failed: data may be corrupted or key mismatch")
 
     def derive_nonce(self, base_nonce: bytes, index: int) -> bytes:
         """Derive a unique nonce from base nonce and index.

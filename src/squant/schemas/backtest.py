@@ -186,3 +186,41 @@ class AvailableSymbolResponse(BaseModel):
     bar_count: int
     first_bar: datetime | None
     last_bar: datetime | None
+
+
+class ExportFormat(str):
+    """Export format enum (TRD-009#4)."""
+
+    JSON = "json"
+    CSV = "csv"
+
+
+class BacktestReportExport(BaseModel):
+    """Backtest report export data (TRD-009#4)."""
+
+    # Run metadata
+    run_id: str
+    strategy_id: str
+    strategy_name: str | None
+    symbol: str
+    exchange: str
+    timeframe: str
+    start_date: datetime
+    end_date: datetime
+    initial_capital: Decimal
+    final_equity: Decimal
+    commission_rate: Decimal
+    slippage: Decimal
+
+    # Performance metrics
+    metrics: dict[str, Any]
+
+    # Equity curve
+    equity_curve: list[EquityCurvePoint]
+
+    # Trades
+    trades: list[TradeRecordResponse]
+
+    # Export metadata
+    exported_at: datetime
+    export_format: str

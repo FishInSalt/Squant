@@ -184,14 +184,18 @@ class TestExchangeAccountService:
     ) -> None:
         """Test successful account deletion."""
         account_id = uuid4()
+        mock_account = MagicMock()
+        mock_account.exchange = "okx"
+        mock_account.name = "test_account"
 
-        with patch.object(service.repository, "exists", new_callable=AsyncMock) as mock_exists:
-            mock_exists.return_value = True
+        with patch.object(service.repository, "get", new_callable=AsyncMock) as mock_get:
+            mock_get.return_value = mock_account
 
             with patch.object(service.repository, "delete", new_callable=AsyncMock) as mock_delete:
                 mock_delete.return_value = True
 
                 await service.delete(account_id)
+                mock_get.assert_called_once_with(account_id)
                 mock_delete.assert_called_once_with(account_id)
                 mock_session.commit.assert_called_once()
 
@@ -200,8 +204,8 @@ class TestExchangeAccountService:
         """Test deleting an account that doesn't exist."""
         account_id = uuid4()
 
-        with patch.object(service.repository, "exists", new_callable=AsyncMock) as mock_exists:
-            mock_exists.return_value = False
+        with patch.object(service.repository, "get", new_callable=AsyncMock) as mock_get:
+            mock_get.return_value = None
 
             with pytest.raises(AccountNotFoundError):
                 await service.delete(account_id)
@@ -317,3 +321,412 @@ class TestAccountErrors:
         assert "test-id" in str(error)
         assert "in use" in str(error)
         assert error.reason == ""
+
+
+class TestConnectionTest:
+    """Unit tests for ExchangeAccountService.test_connection (ACC-005).
+
+    These tests verify the connection testing functionality which allows users
+    to test their exchange credentials before using them for trading.
+    """
+
+    @pytest.fixture
+    def mock_session(self) -> AsyncMock:
+        """Create a mock database session."""
+        session = AsyncMock()
+        session.execute = AsyncMock()
+        session.flush = AsyncMock()
+        session.refresh = AsyncMock()
+        session.commit = AsyncMock()
+        return session
+
+    @pytest.fixture
+    def service(self, mock_session: AsyncMock) -> ExchangeAccountService:
+        """Create a service with mock session."""
+        return ExchangeAccountService(mock_session)
+
+    @pytest.fixture
+    def sample_okx_account(self):
+        """Create a sample OKX account with encrypted credentials."""
+        account = MagicMock(spec=ExchangeAccount)
+        account.id = uuid4()
+        account.exchange = "okx"
+        account.name = "test-account"
+        account.testnet = True
+        account.api_key_enc = b"encrypted_key"
+        account.api_secret_enc = b"encrypted_secret"
+        account.passphrase_enc = b"encrypted_pass"
+        account.nonce = b"test_nonce_12"  # 12 bytes
+        return account
+
+    @pytest.fixture
+    def sample_binance_account(self):
+        """Create a sample Binance account (no passphrase)."""
+        account = MagicMock(spec=ExchangeAccount)
+        account.id = uuid4()
+        account.exchange = "binance"
+        account.name = "test-binance"
+        account.testnet = False
+        account.api_key_enc = b"encrypted_key"
+        account.api_secret_enc = b"encrypted_secret"
+        account.passphrase_enc = None
+        account.nonce = b"test_nonce_12"
+        return account
+
+    @pytest.mark.asyncio
+    async def test_connection_success_okx(
+        self, service: ExchangeAccountService, sample_okx_account
+    ) -> None:
+        """Test successful OKX connection returns balance count."""
+        with patch.object(service.repository, "get", new_callable=AsyncMock) as mock_get:
+            mock_get.return_value = sample_okx_account
+
+            with patch.object(service, "get_decrypted_credentials") as mock_decrypt:
+                mock_decrypt.return_value = {
+                    "api_key": "test_key",
+                    "api_secret": "test_secret",
+                    "passphrase": "test_pass",
+                }
+
+                with patch("squant.services.account.OKXAdapter") as MockAdapter:
+                    mock_balance = MagicMock()
+                    mock_balance.balances = [MagicMock(), MagicMock(), MagicMock()]
+
+                    # Create proper async context manager mock
+                    mock_adapter_instance = MagicMock()
+                    mock_adapter_instance.get_balance = AsyncMock(return_value=mock_balance)
+                    mock_adapter_instance.__aenter__ = AsyncMock(return_value=mock_adapter_instance)
+                    mock_adapter_instance.__aexit__ = AsyncMock(return_value=None)
+                    MockAdapter.return_value = mock_adapter_instance
+
+                    result = await service.test_connection(sample_okx_account.id)
+
+        assert result["success"] is True
+        assert result["balance_count"] == 3
+        assert result["message"] is None
+
+    @pytest.mark.asyncio
+    async def test_connection_success_binance(
+        self, service: ExchangeAccountService, sample_binance_account
+    ) -> None:
+        """Test successful Binance connection."""
+        with patch.object(service.repository, "get", new_callable=AsyncMock) as mock_get:
+            mock_get.return_value = sample_binance_account
+
+            with patch.object(service, "get_decrypted_credentials") as mock_decrypt:
+                mock_decrypt.return_value = {
+                    "api_key": "test_key",
+                    "api_secret": "test_secret",
+                }
+
+                with patch("squant.services.account.BinanceAdapter") as MockAdapter:
+                    mock_balance = MagicMock()
+                    mock_balance.balances = [MagicMock()]
+
+                    mock_adapter_instance = MagicMock()
+                    mock_adapter_instance.get_balance = AsyncMock(return_value=mock_balance)
+                    mock_adapter_instance.__aenter__ = AsyncMock(return_value=mock_adapter_instance)
+                    mock_adapter_instance.__aexit__ = AsyncMock(return_value=None)
+                    MockAdapter.return_value = mock_adapter_instance
+
+                    result = await service.test_connection(sample_binance_account.id)
+
+        assert result["success"] is True
+        assert result["balance_count"] == 1
+
+    @pytest.mark.asyncio
+    async def test_connection_okx_missing_passphrase(
+        self, service: ExchangeAccountService, sample_okx_account
+    ) -> None:
+        """Test OKX connection fails when passphrase is missing."""
+        with patch.object(service.repository, "get", new_callable=AsyncMock) as mock_get:
+            mock_get.return_value = sample_okx_account
+
+            with patch.object(service, "get_decrypted_credentials") as mock_decrypt:
+                # Return credentials without passphrase
+                mock_decrypt.return_value = {
+                    "api_key": "test_key",
+                    "api_secret": "test_secret",
+                }
+
+                result = await service.test_connection(sample_okx_account.id)
+
+        assert result["success"] is False
+        assert "passphrase" in result["message"].lower()
+        assert result["balance_count"] is None
+
+    @pytest.mark.asyncio
+    async def test_connection_auth_failure(
+        self, service: ExchangeAccountService, sample_okx_account
+    ) -> None:
+        """Test authentication failure returns proper error."""
+        from squant.infra.exchange.exceptions import ExchangeAuthenticationError
+
+        with patch.object(service.repository, "get", new_callable=AsyncMock) as mock_get:
+            mock_get.return_value = sample_okx_account
+
+            with patch.object(service, "get_decrypted_credentials") as mock_decrypt:
+                mock_decrypt.return_value = {
+                    "api_key": "invalid_key",
+                    "api_secret": "invalid_secret",
+                    "passphrase": "invalid_pass",
+                }
+
+                with patch("squant.services.account.OKXAdapter") as MockAdapter:
+                    mock_adapter_instance = MagicMock()
+                    mock_adapter_instance.get_balance = AsyncMock(
+                        side_effect=ExchangeAuthenticationError("Invalid API key")
+                    )
+                    mock_adapter_instance.__aenter__ = AsyncMock(return_value=mock_adapter_instance)
+                    mock_adapter_instance.__aexit__ = AsyncMock(return_value=None)
+                    MockAdapter.return_value = mock_adapter_instance
+
+                    result = await service.test_connection(sample_okx_account.id)
+
+        assert result["success"] is False
+        assert "Authentication failed" in result["message"]
+        assert result["balance_count"] is None
+
+    @pytest.mark.asyncio
+    async def test_connection_network_timeout(
+        self, service: ExchangeAccountService, sample_okx_account
+    ) -> None:
+        """Test network timeout returns proper error."""
+        from squant.infra.exchange.exceptions import ExchangeConnectionError
+
+        with patch.object(service.repository, "get", new_callable=AsyncMock) as mock_get:
+            mock_get.return_value = sample_okx_account
+
+            with patch.object(service, "get_decrypted_credentials") as mock_decrypt:
+                mock_decrypt.return_value = {
+                    "api_key": "key",
+                    "api_secret": "secret",
+                    "passphrase": "pass",
+                }
+
+                with patch("squant.services.account.OKXAdapter") as MockAdapter:
+                    mock_adapter_instance = MagicMock()
+                    mock_adapter_instance.get_balance = AsyncMock(
+                        side_effect=ExchangeConnectionError("Connection timed out")
+                    )
+                    mock_adapter_instance.__aenter__ = AsyncMock(return_value=mock_adapter_instance)
+                    mock_adapter_instance.__aexit__ = AsyncMock(return_value=None)
+                    MockAdapter.return_value = mock_adapter_instance
+
+                    result = await service.test_connection(sample_okx_account.id)
+
+        assert result["success"] is False
+        assert "Connection failed" in result["message"]
+        assert result["balance_count"] is None
+
+    @pytest.mark.asyncio
+    async def test_connection_api_error(
+        self, service: ExchangeAccountService, sample_okx_account
+    ) -> None:
+        """Test API error returns proper error."""
+        from squant.infra.exchange.exceptions import ExchangeAPIError
+
+        with patch.object(service.repository, "get", new_callable=AsyncMock) as mock_get:
+            mock_get.return_value = sample_okx_account
+
+            with patch.object(service, "get_decrypted_credentials") as mock_decrypt:
+                mock_decrypt.return_value = {
+                    "api_key": "key",
+                    "api_secret": "secret",
+                    "passphrase": "pass",
+                }
+
+                with patch("squant.services.account.OKXAdapter") as MockAdapter:
+                    mock_adapter_instance = MagicMock()
+                    mock_adapter_instance.get_balance = AsyncMock(
+                        side_effect=ExchangeAPIError("Rate limit exceeded")
+                    )
+                    mock_adapter_instance.__aenter__ = AsyncMock(return_value=mock_adapter_instance)
+                    mock_adapter_instance.__aexit__ = AsyncMock(return_value=None)
+                    MockAdapter.return_value = mock_adapter_instance
+
+                    result = await service.test_connection(sample_okx_account.id)
+
+        assert result["success"] is False
+        assert "API error" in result["message"]
+
+    @pytest.mark.asyncio
+    async def test_connection_unknown_exchange(self, service: ExchangeAccountService) -> None:
+        """Test unknown exchange returns proper error.
+
+        Note: ConnectionTestError is caught by the generic Exception handler
+        in test_connection, so it returns an error result rather than raising.
+        """
+        unknown_account = MagicMock(spec=ExchangeAccount)
+        unknown_account.id = uuid4()
+        unknown_account.exchange = "unknown_exchange"
+        unknown_account.api_key_enc = b"key"
+        unknown_account.api_secret_enc = b"secret"
+        unknown_account.passphrase_enc = None
+        unknown_account.nonce = b"test_nonce_12"
+
+        with patch.object(service.repository, "get", new_callable=AsyncMock) as mock_get:
+            mock_get.return_value = unknown_account
+
+            with patch.object(service, "get_decrypted_credentials") as mock_decrypt:
+                mock_decrypt.return_value = {
+                    "api_key": "key",
+                    "api_secret": "secret",
+                }
+
+                result = await service.test_connection(unknown_account.id)
+
+        # The ConnectionTestError is caught by generic Exception handler
+        assert result["success"] is False
+        assert "unknown_exchange" in result["message"].lower()
+
+    @pytest.mark.asyncio
+    async def test_connection_account_not_found(self, service: ExchangeAccountService) -> None:
+        """Test connection test with non-existent account."""
+        with patch.object(service.repository, "get", new_callable=AsyncMock) as mock_get:
+            mock_get.return_value = None
+
+            with pytest.raises(AccountNotFoundError):
+                await service.test_connection(uuid4())
+
+    @pytest.mark.asyncio
+    async def test_connection_decryption_failure(
+        self, service: ExchangeAccountService, sample_okx_account
+    ) -> None:
+        """Test connection test when credential decryption fails.
+
+        Security: Error message should be generic to avoid leaking implementation details.
+        """
+        from squant.services.account import ConnectionTestError
+        from squant.utils.crypto import DecryptionError
+
+        with patch.object(service.repository, "get", new_callable=AsyncMock) as mock_get:
+            mock_get.return_value = sample_okx_account
+
+            with patch.object(service, "get_decrypted_credentials") as mock_decrypt:
+                mock_decrypt.side_effect = DecryptionError("Invalid key")
+
+                with pytest.raises(ConnectionTestError) as exc_info:
+                    await service.test_connection(sample_okx_account.id)
+
+        # Error message should be generic (not expose "decryption" implementation details)
+        error_msg = str(exc_info.value).lower()
+        assert "credentials" in error_msg
+        assert "corrupted" in error_msg or "recreate" in error_msg
+
+    @pytest.mark.asyncio
+    async def test_connection_unexpected_error(
+        self, service: ExchangeAccountService, sample_okx_account
+    ) -> None:
+        """Test connection test handles unexpected errors gracefully."""
+        with patch.object(service.repository, "get", new_callable=AsyncMock) as mock_get:
+            mock_get.return_value = sample_okx_account
+
+            with patch.object(service, "get_decrypted_credentials") as mock_decrypt:
+                mock_decrypt.return_value = {
+                    "api_key": "key",
+                    "api_secret": "secret",
+                    "passphrase": "pass",
+                }
+
+                with patch("squant.services.account.OKXAdapter") as MockAdapter:
+                    mock_adapter_instance = MagicMock()
+                    mock_adapter_instance.get_balance = AsyncMock(
+                        side_effect=RuntimeError("Unexpected internal error")
+                    )
+                    mock_adapter_instance.__aenter__ = AsyncMock(return_value=mock_adapter_instance)
+                    mock_adapter_instance.__aexit__ = AsyncMock(return_value=None)
+                    MockAdapter.return_value = mock_adapter_instance
+
+                    result = await service.test_connection(sample_okx_account.id)
+
+        assert result["success"] is False
+        assert "Unexpected error" in result["message"]
+
+
+class TestGetDecryptedCredentials:
+    """Unit tests for get_decrypted_credentials method."""
+
+    @pytest.fixture
+    def mock_session(self) -> AsyncMock:
+        """Create a mock database session."""
+        return AsyncMock()
+
+    @pytest.fixture
+    def service(self, mock_session: AsyncMock) -> ExchangeAccountService:
+        """Create a service with mock session."""
+        return ExchangeAccountService(mock_session)
+
+    def test_decrypt_all_credentials(self, service: ExchangeAccountService) -> None:
+        """Test all credentials are decrypted correctly."""
+        account = MagicMock(spec=ExchangeAccount)
+        account.api_key_enc = b"encrypted_key"
+        account.api_secret_enc = b"encrypted_secret"
+        account.passphrase_enc = b"encrypted_pass"
+        account.nonce = b"test_nonce_12"
+
+        with patch("squant.services.account.get_crypto_manager") as mock_crypto:
+            mock_manager = MagicMock()
+            mock_manager.decrypt_with_derived_nonce.side_effect = [
+                "decrypted_key",
+                "decrypted_secret",
+                "decrypted_pass",
+            ]
+            mock_crypto.return_value = mock_manager
+
+            result = service.get_decrypted_credentials(account)
+
+        assert result["api_key"] == "decrypted_key"
+        assert result["api_secret"] == "decrypted_secret"
+        assert result["passphrase"] == "decrypted_pass"
+
+        # Verify correct nonce indices were used
+        calls = mock_manager.decrypt_with_derived_nonce.call_args_list
+        assert calls[0][1]["index"] == 0  # api_key
+        assert calls[1][1]["index"] == 1  # api_secret
+        assert calls[2][1]["index"] == 2  # passphrase
+
+    def test_decrypt_without_passphrase(self, service: ExchangeAccountService) -> None:
+        """Test decryption works when passphrase is not set."""
+        account = MagicMock(spec=ExchangeAccount)
+        account.api_key_enc = b"encrypted_key"
+        account.api_secret_enc = b"encrypted_secret"
+        account.passphrase_enc = None  # No passphrase
+        account.nonce = b"test_nonce_12"
+
+        with patch("squant.services.account.get_crypto_manager") as mock_crypto:
+            mock_manager = MagicMock()
+            mock_manager.decrypt_with_derived_nonce.side_effect = [
+                "decrypted_key",
+                "decrypted_secret",
+            ]
+            mock_crypto.return_value = mock_manager
+
+            result = service.get_decrypted_credentials(account)
+
+        assert result["api_key"] == "decrypted_key"
+        assert result["api_secret"] == "decrypted_secret"
+        assert "passphrase" not in result
+
+        # Only two decryption calls should be made
+        assert mock_manager.decrypt_with_derived_nonce.call_count == 2
+
+    def test_decrypt_raises_on_failure(self, service: ExchangeAccountService) -> None:
+        """Test that decryption error is propagated."""
+        from squant.utils.crypto import DecryptionError
+
+        account = MagicMock(spec=ExchangeAccount)
+        account.api_key_enc = b"corrupted_data"
+        account.api_secret_enc = b"encrypted_secret"
+        account.passphrase_enc = None
+        account.nonce = b"test_nonce_12"
+
+        with patch("squant.services.account.get_crypto_manager") as mock_crypto:
+            mock_manager = MagicMock()
+            mock_manager.decrypt_with_derived_nonce.side_effect = DecryptionError(
+                "Decryption failed"
+            )
+            mock_crypto.return_value = mock_manager
+
+            with pytest.raises(DecryptionError):
+                service.get_decrypted_credentials(account)

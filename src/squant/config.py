@@ -107,6 +107,16 @@ class SecuritySettings(BaseSettings):
     jwt_access_token_expire_minutes: int = Field(
         default=30, ge=1, description="JWT token expiry in minutes"
     )
+    # Rate limiting configuration (applied at API layer)
+    rate_limit_enabled: bool = Field(
+        default=False, description="Enable API rate limiting"
+    )
+    rate_limit_per_minute: int = Field(
+        default=60, ge=1, description="Max requests per minute per client"
+    )
+    rate_limit_burst: int = Field(
+        default=10, ge=1, description="Max burst requests allowed"
+    )
 
     @field_validator("secret_key")
     @classmethod

@@ -19,6 +19,7 @@ from squant.engine.backtest.matching import MatchingEngine
 from squant.engine.backtest.metrics import calculate_metrics
 from squant.engine.backtest.strategy_base import Strategy
 from squant.engine.backtest.types import BacktestResult, Bar
+from squant.engine.resource_limits import ResourceLimitExceededError, resource_limiter
 from squant.engine.sandbox import compile_strategy
 
 logger = logging.getLogger(__name__)
@@ -28,6 +29,15 @@ class BacktestError(Exception):
     """Error during backtest execution."""
 
     pass
+
+
+class BacktestCancelledError(BacktestError):
+    """Backtest was cancelled by user."""
+
+    def __init__(self, run_id: str | None = None):
+        self.run_id = run_id
+        message = f"Backtest cancelled: {run_id}" if run_id else "Backtest cancelled"
+        super().__init__(message)
 
 
 class StrategyInstantiationError(BacktestError):
@@ -85,6 +95,26 @@ class BacktestRunner:
         self._bar_count = 0
         self._start_time: datetime | None = None
         self._end_time: datetime | None = None
+        self._cancelled = False
+        self._run_id: str | None = None
+
+    def cancel(self) -> None:
+        """Cancel the running backtest.
+
+        Sets a flag that will be checked during bar processing.
+        The backtest will stop at the next bar iteration.
+        """
+        self._cancelled = True
+        logger.info(f"Backtest cancel requested: {self._run_id}")
+
+    @property
+    def is_cancelled(self) -> bool:
+        """Check if backtest has been cancelled."""
+        return self._cancelled
+
+    def set_run_id(self, run_id: str) -> None:
+        """Set the run ID for this backtest."""
+        self._run_id = run_id
 
     async def run(
         self,
@@ -115,6 +145,11 @@ class BacktestRunner:
             # Step 3: Process bars
             self._bar_count = 0
             async for bar in bars:
+                # Check for cancellation before processing each bar (TRD-008#3)
+                if self._cancelled:
+                    logger.info(f"Backtest cancelled after {self._bar_count} bars")
+                    raise BacktestCancelledError(self._run_id)
+
                 self._process_bar(bar)
                 self._bar_count += 1
 
@@ -127,6 +162,9 @@ class BacktestRunner:
             # Step 5: Build and return result
             return self._build_result()
 
+        except BacktestCancelledError:
+            # Re-raise cancellation errors without wrapping (TRD-008#3)
+            raise
         except Exception as e:
             logger.exception(f"Backtest failed: {e}")
             raise BacktestError(f"Backtest execution failed: {e}") from e
@@ -210,11 +248,14 @@ class BacktestRunner:
         2. Update context with fills
         3. Set current bar in context
         4. Add bar to history
-        5. Call strategy.on_bar()
+        5. Call strategy.on_bar() (with resource limits)
         6. Record equity snapshot
 
         Args:
             bar: The bar to process.
+
+        Raises:
+            BacktestError: If strategy exceeds resource limits (STR-013).
         """
         # Track time range
         if self._start_time is None:
@@ -238,9 +279,22 @@ class BacktestRunner:
         # 5. Add to history
         self._context._add_bar_to_history(bar)
 
-        # 6. Call strategy
+        # 6. Call strategy with resource limits (STR-013)
+        # Get settings dynamically for testability
+        from squant.config import get_settings
+
+        settings = get_settings()
+
         try:
-            self._strategy.on_bar(bar)
+            with resource_limiter(
+                cpu_seconds=settings.strategy.cpu_limit_seconds,
+                memory_mb=settings.strategy.memory_limit_mb,
+            ):
+                self._strategy.on_bar(bar)
+        except ResourceLimitExceededError as e:
+            self._context.log(f"RESOURCE LIMIT EXCEEDED: {e}")
+            logger.error(f"Strategy resource limit exceeded: {e}")
+            raise BacktestError(f"Strategy resource limit exceeded: {e}") from e
         except Exception as e:
             self._context.log(f"ERROR in on_bar: {e}")
             logger.warning(f"Strategy on_bar error: {e}")
