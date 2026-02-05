@@ -554,8 +554,9 @@ class BacktestService:
 
         # Check if run is in a cancellable state
         if run.status != RunStatus.RUNNING:
+            status_val = run.status.value if hasattr(run.status, "value") else run.status
             raise BacktestError(
-                f"Cannot cancel backtest with status '{run.status.value}'. "
+                f"Cannot cancel backtest with status '{status_val}'. "
                 f"Only running backtests can be cancelled."
             )
 
