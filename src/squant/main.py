@@ -149,17 +149,17 @@ def create_app() -> FastAPI:
 
     # Rate limiting middleware (simple in-memory implementation)
     # For production, consider using slowapi with Redis backend or Nginx-level limiting
-    if settings.security.rate_limit_enabled:
+    if settings.rate_limit_enabled:
         from squant.api.middleware import RateLimitMiddleware
 
         app.add_middleware(
             RateLimitMiddleware,
-            requests_per_minute=settings.security.rate_limit_per_minute,
-            burst_limit=settings.security.rate_limit_burst,
+            requests_per_minute=settings.rate_limit_per_minute,
+            burst_limit=settings.rate_limit_burst,
         )
         logger.info(
-            f"Rate limiting enabled: {settings.security.rate_limit_per_minute}/min, "
-            f"burst={settings.security.rate_limit_burst}"
+            f"Rate limiting enabled: {settings.rate_limit_per_minute}/min, "
+            f"burst={settings.rate_limit_burst}"
         )
 
     # Include API router

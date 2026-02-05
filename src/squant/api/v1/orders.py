@@ -29,7 +29,6 @@ from squant.schemas.order import (
     SyncOrdersResponse,
     TradeDetail,
 )
-from squant.services.account import ExchangeAccountRepository
 from squant.services.order import (
     OrderNotFoundError,
     OrderService,

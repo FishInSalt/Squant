@@ -136,7 +136,7 @@ class TestCCXTProviderPublicChannels:
             await provider.watch_order_book("BTC/USDT", limit=5)
 
             # Wait for some data (with timeout)
-            for _ in range(50):  # 5 seconds max
+            for _ in range(100):  # 10 seconds max
                 await asyncio.sleep(0.1)
                 if received_data:
                     break

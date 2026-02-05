@@ -7,14 +7,13 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from squant.api.utils import ApiResponse, PaginatedData
-from squant.engine.backtest.runner import BacktestCancelledError, BacktestError
+from squant.engine.backtest.runner import BacktestError
 from squant.infra.database import get_session
 from squant.models.enums import RunStatus
 from squant.schemas.backtest import (
     AvailableSymbolResponse,
     BacktestDetailResponse,
     BacktestListItem,
-    BacktestReportExport,
     BacktestRunResponse,
     CheckDataRequest,
     CreateBacktestRequest,

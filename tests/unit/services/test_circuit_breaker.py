@@ -444,7 +444,6 @@ class TestCircuitBreakerBlocksNewSessions:
         from uuid import uuid4
 
         from squant.services.paper_trading import (
-            CircuitBreakerActiveError,
             PaperTradingService,
         )
 
@@ -516,7 +515,6 @@ class TestCircuitBreakerBlocksNewSessions:
         from uuid import uuid4
 
         from squant.services.live_trading import (
-            CircuitBreakerActiveError,
             LiveTradingService,
             RiskConfig,
         )
@@ -561,7 +559,6 @@ class TestCircuitBreakerBlocksNewSessions:
         from uuid import uuid4
 
         from squant.services.paper_trading import (
-            CircuitBreakerActiveError,
             PaperTradingService,
         )
 

@@ -14,10 +14,10 @@ from squant.infra.exchange.exceptions import (
     ExchangeAuthenticationError,
     ExchangeConnectionError,
     ExchangeRateLimitError,
+)
+from squant.infra.exchange.exceptions import (
     OrderNotFoundError as ExchangeOrderNotFound,
 )
-
-logger = logging.getLogger(__name__)
 from squant.infra.exchange.types import (
     CancelOrderRequest,
     OrderRequest,
@@ -31,6 +31,8 @@ from squant.models.order import Order, Trade
 
 if TYPE_CHECKING:
     from squant.models.exchange import ExchangeAccount
+
+logger = logging.getLogger(__name__)
 
 
 class OrderNotFoundError(Exception):
