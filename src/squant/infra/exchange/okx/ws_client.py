@@ -551,8 +551,24 @@ class OKXWebSocketClient:
                 logger.warning(f"Reconnection failed: {e}")
 
         if self._reconnect_count >= self.RECONNECT_MAX_ATTEMPTS:
-            logger.error("Max reconnection attempts reached")
+            logger.error("Max reconnection attempts reached, cleaning up")
             self._running = False
+
+            # Cancel heartbeat task (safe: we're in _receive_loop, not heartbeat)
+            if self._heartbeat_task and not self._heartbeat_task.done():
+                self._heartbeat_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await self._heartbeat_task
+                self._heartbeat_task = None
+
+            # Close WebSocket connection
+            if self._ws:
+                with contextlib.suppress(Exception):
+                    await self._ws.close()
+                self._ws = None
+
+            self._connected = False
+            self._authenticated = False
 
     async def __aenter__(self) -> "OKXWebSocketClient":
         """Async context manager entry."""

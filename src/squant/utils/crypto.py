@@ -7,6 +7,8 @@ import os
 from functools import lru_cache
 
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+from cryptography.hazmat.primitives.kdf.hkdf import HKDFExpand
+from cryptography.hazmat.primitives import hashes
 
 from squant.config import get_settings
 
@@ -112,15 +114,15 @@ class CryptoManager:
     def derive_nonce(self, base_nonce: bytes, index: int) -> bytes:
         """Derive a unique nonce from base nonce and index.
 
-        Uses XOR on the last bytes to create unique nonces for multi-field
-        encryption while sharing a single stored nonce.
+        Uses HKDF-Expand (HMAC-based) to cryptographically derive unique nonces
+        for multi-field encryption while sharing a single stored nonce.
 
         Args:
             base_nonce: The base nonce (12 bytes).
-            index: Derivation index (0-255 for single byte, supports larger).
+            index: Derivation index (use different index for each field).
 
         Returns:
-            Derived nonce of same size.
+            Derived nonce of same size (12 bytes).
 
         Raises:
             ValueError: If base_nonce is wrong size or index is negative.
@@ -130,13 +132,12 @@ class CryptoManager:
         if index < 0:
             raise ValueError("Index must be non-negative")
 
-        # XOR index into the last bytes of the nonce
-        nonce = bytearray(base_nonce)
-        # Use up to 4 bytes for index to support larger values
-        for i in range(min(4, self.NONCE_SIZE)):
-            nonce[-(i + 1)] ^= (index >> (8 * i)) & 0xFF
-
-        return bytes(nonce)
+        hkdf = HKDFExpand(
+            algorithm=hashes.SHA256(),
+            length=self.NONCE_SIZE,
+            info=f"field_{index}".encode(),
+        )
+        return hkdf.derive(base_nonce)
 
     def encrypt_with_derived_nonce(self, plaintext: str, base_nonce: bytes, index: int) -> bytes:
         """Encrypt using a derived nonce.

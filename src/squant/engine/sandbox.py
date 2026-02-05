@@ -268,6 +268,45 @@ class DangerousBuiltinsValidator(ast.NodeVisitor):
         self.generic_visit(node)
 
 
+# Dunder attributes that should never be accessed in strategy code
+_DANGEROUS_DUNDER_ATTRS = frozenset(
+    {
+        "__builtins__",
+        "__globals__",
+        "__locals__",
+        "__import__",
+        "__subclasses__",
+        "__bases__",
+        "__mro__",
+        "__code__",
+        "__func__",
+    }
+)
+
+
+class DangerousAttributeValidator(ast.NodeVisitor):
+    """AST visitor to check for dangerous dunder attribute access."""
+
+    def __init__(self, result: ValidationResult) -> None:
+        self.result = result
+
+    def visit_Attribute(self, node: ast.Attribute) -> None:
+        """Check attribute access for dangerous dunder attributes."""
+        if node.attr in _DANGEROUS_DUNDER_ATTRS:
+            self.result.add_error(
+                f"Line {node.lineno}: Access to '{node.attr}' is not allowed"
+            )
+        self.generic_visit(node)
+
+    def visit_Subscript(self, node: ast.Subscript) -> None:
+        """Check subscript access like __builtins__['eval']."""
+        if isinstance(node.value, ast.Name) and node.value.id in _DANGEROUS_DUNDER_ATTRS:
+            self.result.add_error(
+                f"Line {node.lineno}: Access to '{node.value.id}' is not allowed"
+            )
+        self.generic_visit(node)
+
+
 def _inplacevar_(op: str, x: Any, y: Any) -> Any:
     """Handle in-place variable operations for RestrictedPython."""
     ops = {
@@ -363,6 +402,10 @@ def validate_strategy_code(code: str) -> ValidationResult:
     # Step 3: Validate for dangerous builtins
     builtins_validator = DangerousBuiltinsValidator(result)
     builtins_validator.visit(tree)
+
+    # Step 3b: Validate for dangerous dunder attribute access
+    attr_validator = DangerousAttributeValidator(result)
+    attr_validator.visit(tree)
 
     # Step 4: Validate strategy structure
     structure_validator = StrategyStructureValidator(result)

@@ -336,6 +336,14 @@ class BacktestService:
         if not strategy:
             raise StrategyNotFoundError(strategy_id)
 
+        # Validate strategy code before creating DB record to avoid orphan PENDING records
+        from squant.engine.sandbox import validate_strategy_code
+
+        validation = validate_strategy_code(strategy.code)
+        if not validation.valid:
+            errors = "; ".join(validation.errors)
+            raise ValueError(f"Invalid strategy code: {errors}")
+
         # Create run record
         run = await self.run_repo.create(
             strategy_id=str(strategy_id),

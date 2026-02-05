@@ -295,31 +295,42 @@ class StreamManager:
         )
 
         # Resubscribe to all previous channels on new exchange
+        failed_subs: list[str] = []
+
         for symbol in ticker_subs:
             try:
                 await self.subscribe_ticker(symbol)
             except Exception as e:
-                logger.warning(f"Failed to resubscribe ticker {symbol}: {e}")
+                logger.error(f"Failed to resubscribe ticker {symbol}: {e}")
+                failed_subs.append(f"ticker:{symbol}")
 
         for symbol, timeframe in candle_subs:
             try:
                 await self.subscribe_candles(symbol, timeframe)
             except Exception as e:
-                logger.warning(f"Failed to resubscribe candle {symbol} {timeframe}: {e}")
+                logger.error(f"Failed to resubscribe candle {symbol} {timeframe}: {e}")
+                failed_subs.append(f"candle:{symbol}:{timeframe}")
 
         for symbol in trade_subs:
             try:
                 await self.subscribe_trades(symbol)
             except Exception as e:
-                logger.warning(f"Failed to resubscribe trades {symbol}: {e}")
+                logger.error(f"Failed to resubscribe trades {symbol}: {e}")
+                failed_subs.append(f"trade:{symbol}")
 
         for symbol in orderbook_subs:
             try:
                 await self.subscribe_orderbook(symbol)
             except Exception as e:
-                logger.warning(f"Failed to resubscribe orderbook {symbol}: {e}")
+                logger.error(f"Failed to resubscribe orderbook {symbol}: {e}")
+                failed_subs.append(f"orderbook:{symbol}")
 
-        logger.info(f"Successfully switched to {exchange_id}")
+        if failed_subs:
+            logger.error(
+                f"Exchange switch to {exchange_id}: {len(failed_subs)} subscriptions failed: "
+                f"{', '.join(failed_subs)}"
+            )
+        logger.info(f"Switched to {exchange_id} ({len(failed_subs)} failures)")
 
         # Notify clients that exchange switch is complete
         await self._publish_exchange_switching(current_exchange, exchange_id, "completed")
