@@ -638,7 +638,7 @@ class ErrorStrategy(Strategy):
         self.call_count = 0
 
     def on_bar(self, bar):
-        self.call_count += 1
+        self.call_count = self.call_count + 1
         if self.call_count > 2:
             raise ValueError("Intentional error for testing")
 """,

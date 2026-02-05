@@ -52,7 +52,7 @@ services:
 
       # 安全配置
       SECRET_KEY: test-secret-key-for-integration-testing-min-32-chars
-      ENCRYPTION_KEY: test-encryption-key-32-chars!!
+      ENCRYPTION_KEY: test-encryption-key-32-character
 
       # 交易所配置（测试网）
       DEFAULT_EXCHANGE: okx
