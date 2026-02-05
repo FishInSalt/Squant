@@ -15,31 +15,34 @@ Squant is a personal quantitative trading system for cryptocurrency. It supports
 ./scripts/dev.sh start
 
 # Run database migrations
-./scripts/dev.sh migrate
+./scripts/dev.sh migrate          # or: uv run alembic upgrade head
 
 # Start backend server with hot reload (foreground)
-./scripts/dev.sh backend
+./scripts/dev.sh backend          # runs uvicorn on port 8000
 
-# Or run as background service with management commands
-./scripts/backend.sh start     # Start in background
-./scripts/backend.sh stop      # Stop server
-./scripts/backend.sh restart   # Restart server
-./scripts/backend.sh status    # Check if running
-./scripts/backend.sh logs      # Tail log file
+# Background service management
+./scripts/backend.sh start|stop|restart|status|logs
 
-# Run tests
+# Run all tests (pytest addopts already includes --cov)
 uv run pytest -v
 
-# Run a single test file
+# Run specific tests
+uv run pytest tests/unit -v
 uv run pytest tests/unit/test_example.py -v
-
-# Run tests matching a pattern
 uv run pytest -k "test_name_pattern" -v
 
-# Lint and type check
+# Integration tests (requires Docker services on ports 5433/6380)
+docker compose -f docker-compose.dev.yml up -d postgres redis
+uv run pytest tests/integration -v
+
+# E2E tests (full stack)
+docker compose -f docker-compose.test.yml --profile e2e up -d
+uv run pytest tests/e2e -v
+
+# Lint (ruff check + ruff format --check + mypy)
 ./scripts/dev.sh lint
 
-# Format code
+# Format (ruff format + ruff check --fix)
 ./scripts/dev.sh format
 ```
 
@@ -49,21 +52,31 @@ uv run pytest -k "test_name_pattern" -v
 cd frontend
 pnpm install
 pnpm dev          # Development server at http://localhost:5173
-pnpm build        # Production build
-pnpm lint         # ESLint
+pnpm build        # Production build (vue-tsc + vite build)
+pnpm lint         # ESLint with --fix
 ```
+
+Frontend stack: Vue 3, Vue Router, Pinia, Element Plus, ECharts/vue-echarts, KlineCharts, Axios.
 
 ### Docker Development
 
 ```bash
-# Start only databases
-docker compose -f docker-compose.dev.yml up -d postgres redis
-
-# Full stack (includes backend and frontend)
-docker compose -f docker-compose.dev.yml --profile full up -d
+docker compose -f docker-compose.dev.yml up -d postgres redis   # databases only
+docker compose -f docker-compose.dev.yml --profile full up -d    # full stack
 ```
 
-**Port mapping in dev**: PostgreSQL on 5433, Redis on 6380 (non-standard to avoid conflicts).
+**Dev ports**: PostgreSQL on 5433, Redis on 6380 (non-standard to avoid conflicts).
+
+### VS Code Dev Container
+
+项目支持通过 VS Code Dev Container 进行开发（配置在 `.devcontainer/`）。容器启动后 `post-create.sh` 自动完成 `uv sync`、`pnpm install`、DB 迁移和 `.env` 生成，环境开箱即用。
+
+与本地开发的关键差异：
+
+- **数据库/Redis 已自动启动** — postgres 和 redis 作为 sibling 容器运行并有 health check，无需手动 `./scripts/dev.sh start`
+- **连接地址使用容器服务名** — `postgres:5432` / `redis:6379`，而非宿主机的 `localhost:5433` / `localhost:6380`
+- **`.venv` 和 `frontend/node_modules` 在 named volume 上** — 不在宿主机文件系统中，容器重建后 volume 会保留
+- **Python 解释器路径** — `/workspaces/Squant/.venv/bin/python`
 
 ## Architecture
 
@@ -71,74 +84,33 @@ docker compose -f docker-compose.dev.yml --profile full up -d
 
 ```
 src/squant/
-├── main.py              # FastAPI entry point with lifespan management
+├── main.py              # FastAPI entry point with lifespan (init DB, Redis, WebSocket manager)
 ├── config.py            # Nested Pydantic Settings (loaded from .env)
 ├── api/                 # REST API routes (presentation layer)
-│   ├── deps.py          # Dependency injection (sessions, exchange clients)
+│   ├── deps.py          # DI: DbSession, DbSessionReadonly, RedisClient, exchange adapters
 │   └── v1/              # Versioned endpoints
-│       ├── market.py, strategies.py, backtest.py
-│       ├── paper_trading.py, live_trading.py
-│       ├── orders.py, account.py, risk.py
-│       └── circuit_breaker.py, exchange_accounts.py
-├── websocket/           # WebSocket handlers for real-time data
-│   ├── manager.py       # Stream manager with auto-reconnect
-│   └── handlers.py      # Message routing
+├── websocket/           # WebSocket handlers for real-time market data
 ├── services/            # Business logic layer
-│   ├── backtest.py, paper_trading.py, live_trading.py
-│   ├── order.py, account.py, risk.py
-│   ├── circuit_breaker.py  # Trading halt on risk events
-│   ├── background.py    # Background task manager
-│   └── data_loader.py   # Historical data loading
-├── engine/              # Trading engines
-│   ├── backtest/        # Backtesting with order matching simulation
-│   ├── paper/           # Real-time paper trading (in-memory)
-│   ├── live/            # Live trading with real orders
-│   ├── risk/            # Risk management engine
+├── engine/              # Trading engines (backtest, paper, live, risk)
 │   └── sandbox.py       # RestrictedPython strategy sandbox
 ├── models/              # SQLAlchemy ORM models
 ├── schemas/             # Pydantic request/response schemas
 └── infra/               # Infrastructure layer
     ├── database.py      # AsyncPG + SQLAlchemy async session
     ├── redis.py         # Redis client with pub/sub
-    ├── repository.py    # Generic repository pattern
-    └── exchange/        # Exchange adapters
-        ├── base.py      # Abstract adapter interface
-        ├── types.py     # Shared types (Ticker, Order, etc.)
-        ├── ccxt/        # CCXT multi-exchange (REST + WebSocket)
-        ├── okx/         # Native OKX implementation
-        └── binance/     # Native Binance implementation
+    ├── repository.py    # Generic CRUD repository pattern
+    └── exchange/        # Exchange adapters (CCXT unified + native OKX/Binance)
 ```
 
 ### Key Patterns
 
-- **Async-first**: All I/O operations use `async`/`await` with asyncpg and aioredis
-- **Dependency injection**: FastAPI `Depends()` for database sessions and exchange clients
-- **Repository pattern**: Generic CRUD operations in `infra/repository.py`
-- **Process isolation**: Strategy execution runs in separate processes via `multiprocessing`
-- **Strategy sandbox**: RestrictedPython for safe user strategy execution
+- **Async-first**: All I/O uses `async`/`await` with asyncpg and aioredis
+- **Dependency injection**: FastAPI `Depends()` with type aliases (`DbSession`, `RedisClient`) in `api/deps.py`
+- **Repository pattern**: Generic CRUD in `infra/repository.py`, all repos inherit `BaseRepository`
+- **Process isolation**: Strategy execution in separate processes via `multiprocessing`
+- **Strategy sandbox**: RestrictedPython blocks os/sys/subprocess/network/pickle/threading modules
 - **Circuit breaker**: Automatic trading halt on risk events (max loss, position limits)
-- **Background tasks**: Periodic persistence, health checks, session cleanup
-
-### Trading Engines
-
-1. **Backtest Engine** (`engine/backtest/`): Simulates historical trading with realistic order matching
-2. **Paper Trading Engine** (`engine/paper/`): Real-time simulation with in-memory order book
-3. **Live Trading Engine** (`engine/live/`): Executes real orders through exchange APIs
-
-### Exchange Abstraction
-
-Two adapter implementations available:
-
-1. **CCXT Provider** (`infra/exchange/ccxt/`): Multi-exchange support via CCXT library
-   - REST adapter for trading operations
-   - WebSocket streaming for real-time data (tickers, orderbook, trades)
-   - Supports OKX, Binance, Bybit with unified interface
-
-2. **Native Adapters** (`infra/exchange/okx/`, `binance/`): Direct API implementations
-   - Lower latency, exchange-specific optimizations
-   - Full WebSocket support with auto-reconnect
-
-Configurable via `DEFAULT_EXCHANGE` (okx/binance/bybit) and `USE_CCXT_PROVIDER` (true/false) settings.
+- **Exchange abstraction**: CCXT unified adapter (default) or native adapters; configured via `DEFAULT_EXCHANGE` + `USE_CCXT_PROVIDER`
 
 ### Data Flow
 
@@ -146,90 +118,41 @@ Configurable via `DEFAULT_EXCHANGE` (okx/binance/bybit) and `USE_CCXT_PROVIDER` 
 - Order execution: Frontend → REST API → Service → Exchange Adapter → Exchange
 - Strategy signals: Strategy Process → Redis → Order Service
 
-## Configuration
+### Configuration
 
-Environment variables are loaded from `.env` via Pydantic Settings with nested configuration classes:
+Settings loaded from `.env` via nested Pydantic Settings classes with env prefixes (`DATABASE_`, `REDIS_`, `LOG_`, etc.):
 
 ```python
-settings = get_settings()
+settings = get_settings()  # lru_cached
 settings.database.url      # DatabaseSettings
 settings.redis.url         # RedisSettings
 settings.security.secret_key  # SecuritySettings
 settings.exchange.default_exchange  # ExchangeSettings
-# ... plus LoggingSettings, StrategySettings, RiskSettings, etc.
 ```
 
-Key environment variables:
+### Database
 
-- `DATABASE_URL`: PostgreSQL connection string (must include `+asyncpg`)
-- `REDIS_URL`: Redis connection string
-- `SECRET_KEY`: Application secret (min 32 chars)
-- `ENCRYPTION_KEY`: For encrypting stored API keys
-- `DEFAULT_EXCHANGE`: okx, binance, or bybit
-- `USE_CCXT_PROVIDER`: true (CCXT) or false (native adapter)
-- `*_API_KEY`, `*_API_SECRET`, `*_PASSPHRASE`: Exchange credentials
+- PostgreSQL 16 + TimescaleDB for time-series data (candles, equity curves)
+- Alembic migrations in `alembic/` — run `uv run alembic upgrade head`
+- SQLAlchemy 2.0 async patterns; connection string must include `+asyncpg`
+
+## Code Style
+
+- **Ruff**: line-length 100, target Python 3.12. Rules: E, W, F, I, B, C4, UP, SIM
+- **Ruff ignored**: E501, B008 (FastAPI default args), B904, SIM117, SIM102, SIM105, B027, B007, B017
+- **mypy**: strict mode with pydantic plugin
+- **isort**: first-party = `squant`
 
 ## Testing
 
-Squant has comprehensive test coverage across unit, integration, and E2E layers.
-
-**Test Statistics** (as of 2026-01-31):
-- **Total tests**: 1,537
-- **Overall coverage**: 77%
-- **All tests passing**: ✅
-
-### Test Structure
-
-```
-tests/
-├── unit/              # Fast, isolated tests with mocks
-│   ├── api/           # API endpoint tests
-│   ├── engine/        # Trading engine tests
-│   ├── infra/         # Infrastructure tests
-│   ├── models/        # Model tests
-│   ├── schemas/       # Schema validation tests
-│   └── services/      # Business logic tests
-├── integration/       # Tests with real DB/Redis
-│   ├── api/           # API integration tests
-│   ├── conftest.py    # Shared fixtures
-│   └── services/      # Service integration tests
-├── e2e/               # End-to-end workflow tests
-│   ├── conftest.py    # E2E fixtures
-│   └── seed_data.py   # Test data seeding
-└── templates/         # Test templates for new tests
-
-```
-
-### Running Tests
-
-```bash
-# Unit tests (fast, no external dependencies)
-uv run pytest tests/unit -v
-
-# Integration tests (requires Docker)
-docker compose -f docker-compose.test.yml up -d postgres redis
-uv run pytest tests/integration -v
-
-# E2E tests (full stack)
-docker compose -f docker-compose.test.yml --profile e2e up -d
-uv run pytest tests/e2e -v
-
-# All tests
-uv run pytest -v
-
-# With coverage
-uv run pytest --cov=src/squant --cov-report=html
-```
-
 ### Test Markers
 
-- `@pytest.mark.unit`: Unit tests (default)
-- `@pytest.mark.integration`: Integration tests requiring databases
-- `@pytest.mark.e2e`: End-to-end tests requiring full stack
-- `@pytest.mark.okx_private`: Tests requiring OKX credentials
-- `@pytest.mark.asyncio`: Async tests (pytest-asyncio mode = "auto")
+- `@pytest.mark.integration`: requires Docker databases
+- `@pytest.mark.e2e`: requires full stack
+- `@pytest.mark.okx_private`: requires OKX API credentials
+- `asyncio_mode = "auto"`: no need for explicit `@pytest.mark.asyncio` on every test
 
-### Important Testing Notes
+### Important Testing Rules
 
 **Async Testing with FastAPI**:
 - Use `httpx.AsyncClient` (not `TestClient`) for async endpoint tests
@@ -239,38 +162,25 @@ uv run pytest --cov=src/squant --cov-report=html
       yield mock_object
   app.dependency_overrides[get_dep] = override_dep
   ```
-- All test methods must be `async def` with `@pytest.mark.asyncio`
 
-**Dangerous Operations to Avoid**:
-1. ❌ Never mock `asyncio.sleep()` in code with `while` loops
-2. ❌ Don't test methods with infinite `while running` loops
-3. ❌ Don't call WebSocket `run()` methods in unit tests
-4. ❌ Don't start background async tasks in unit tests
+**Dangerous Operations — Will Crash Tests**:
+1. Never mock `asyncio.sleep()` in code with `while` loops
+2. Don't test methods with infinite `while running` loops
+3. Don't call WebSocket `run()` methods in unit tests
+4. Don't start background async tasks in unit tests
 
-See `dev-docs/technical/testing/TROUBLESHOOTING.md` for details on system crashes caused by these operations.
+See `dev-docs/technical/testing/TROUBLESHOOTING.md` for details.
 
-### Test Documentation
+### CI Pipeline
 
-Comprehensive testing guides available in `dev-docs/technical/testing/`:
-- **TESTING_GUIDE.md** - General testing guide and best practices
-- **INTEGRATION_TESTING.md** - Integration testing with Docker
-- **E2E_TESTING.md** - End-to-end testing guide
-- **TROUBLESHOOTING.md** - Common issues and solutions
-- **CI_SETUP.md** - CI/CD workflow configuration
-
-## Database
-
-- PostgreSQL 16 with TimescaleDB extension for time-series data (candles, equity curves)
-- Alembic for migrations in `alembic/` directory
-- Models use SQLAlchemy 2.0 async patterns
+CI runs on pushes to `main`, `develop`, `cc/*` and PRs to `main`/`develop`. Pipeline: lint → unit tests → integration tests → e2e tests → docker build check.
 
 ## Documentation
 
-Detailed technical documentation is available in `dev-docs/`:
-
-- `dev-docs/requirements/` - PRD, user stories, acceptance criteria
-- `dev-docs/technical/architecture/` - System architecture, module design, data flows
-- `dev-docs/technical/strategy-engine/` - Strategy lifecycle, sandbox, indicators
-- `dev-docs/technical/api/` - REST and WebSocket API specifications
-- `dev-docs/technical/testing/` - Comprehensive testing guides (unit, integration, E2E, CI/CD)
-- `dev-docs/technical/deployment/` - Docker, environment, monitoring
+Detailed docs in `dev-docs/`:
+- `requirements/` — PRD, user stories, acceptance criteria
+- `technical/architecture/` — system architecture, module design, data flows
+- `technical/strategy-engine/` — strategy lifecycle, sandbox, indicators
+- `technical/api/` — REST and WebSocket API specs
+- `technical/testing/` — testing guides (unit, integration, E2E, CI/CD, troubleshooting)
+- `technical/deployment/` — Docker, environment, monitoring
