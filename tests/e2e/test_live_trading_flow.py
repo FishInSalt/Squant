@@ -104,10 +104,10 @@ class TestLiveTradingAPIEndpoints:
             "exchange_account_id": "00000000-0000-0000-0000-000000000000",
             "timeframe": "1m",
             "risk_config": {
-                "max_position_size": 1000.0,
-                "max_order_size": 100.0,
+                "max_position_size": 0.5,
+                "max_order_size": 0.1,
                 "daily_trade_limit": 10,
-                "daily_loss_limit": 100.0,
+                "daily_loss_limit": 0.05,
                 "price_deviation_limit": 0.01,
                 "circuit_breaker_threshold": 3,
             },
@@ -134,10 +134,10 @@ class TestLiveTradingAPIEndpoints:
             "exchange_account_id": "00000000-0000-0000-0000-000000000001",
             "timeframe": "1m",
             "risk_config": {
-                "max_position_size": 1000.0,
-                "max_order_size": 100.0,
+                "max_position_size": 0.5,
+                "max_order_size": 0.1,
                 "daily_trade_limit": 10,
-                "daily_loss_limit": 100.0,
+                "daily_loss_limit": 0.05,
                 "price_deviation_limit": 0.01,
                 "circuit_breaker_threshold": 3,
             },
@@ -270,7 +270,7 @@ class TestExchangeAccountManagement:
             "api_key": "test_api_key_" + uuid.uuid4().hex[:8],
             "api_secret": "test_api_secret_" + uuid.uuid4().hex[:8],
             "passphrase": "test_passphrase",
-            "is_testnet": True,  # 使用测试网
+            "testnet": True,  # 使用测试网
         }
 
         response = await api_client.post("/api/v1/exchange-accounts", json=account_request)
@@ -281,7 +281,7 @@ class TestExchangeAccountManagement:
 
         assert account["name"] == unique_name
         assert account["exchange"] == "okx"
-        assert account["is_testnet"] is True
+        assert account["testnet"] is True
         # API 密钥不应该返回
         assert "api_key" not in account or account.get("api_key") is None
         assert "api_secret" not in account or account.get("api_secret") is None
@@ -345,7 +345,7 @@ class TestLiveTradingWithCredentials:
             "exchange": exchange,
             "api_key": os.environ.get(f"{exchange.upper()}_API_KEY"),
             "api_secret": os.environ.get(f"{exchange.upper()}_API_SECRET"),
-            "is_testnet": True,  # 使用测试网
+            "testnet": True,  # 使用测试网
         }
 
         if exchange == "okx":
@@ -634,8 +634,7 @@ class NormalStrategy(Strategy):
             "name": f"E2E Error Strategy {uuid.uuid4().hex[:8]}",
             "code": """
 class ErrorStrategy(Strategy):
-    def __init__(self, context):
-        super().__init__(context)
+    def on_init(self):
         self.call_count = 0
 
     def on_bar(self, bar):
