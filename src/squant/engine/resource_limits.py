@@ -7,7 +7,7 @@ Usage:
     from squant.engine.resource_limits import resource_limiter, ResourceLimitExceededError
 
     try:
-        with resource_limiter(cpu_seconds=30, memory_mb=512):
+        with resource_limiter(cpu_seconds=30, memory_mb=2048):
             strategy.on_bar(bar)
     except ResourceLimitExceededError as e:
         handle_error(e)
@@ -58,17 +58,22 @@ def _timeout_handler(signum: int, frame: object) -> None:
 @contextmanager
 def resource_limiter(
     cpu_seconds: int = 30,
-    memory_mb: int = 512,
+    memory_mb: int = 2048,
 ) -> Generator[None, None, None]:
     """Context manager that limits CPU time and memory usage.
 
     This enforces resource limits on the code block to prevent:
     - Infinite loops (CPU time limit)
-    - Memory exhaustion attacks (memory limit)
+    - Memory exhaustion attacks (memory limit via RLIMIT_AS)
+
+    Note: RLIMIT_AS limits the entire process's virtual address space.
+    The default of 2048MB provides enough headroom for the Python runtime
+    and libraries while still preventing runaway memory allocation by
+    strategy code.
 
     Args:
         cpu_seconds: Maximum CPU time in seconds. Default 30s.
-        memory_mb: Maximum memory in megabytes. Default 512MB.
+        memory_mb: Maximum memory in megabytes. Default 2048MB.
 
     Yields:
         None
@@ -83,7 +88,7 @@ def resource_limiter(
         operates as a no-op with a warning logged.
 
     Example:
-        >>> with resource_limiter(cpu_seconds=5, memory_mb=100):
+        >>> with resource_limiter(cpu_seconds=5, memory_mb=2048):
         ...     # Strategy code runs here with limits enforced
         ...     strategy.on_bar(bar)
     """
@@ -137,7 +142,9 @@ def resource_limiter(
 
     except MemoryError as e:
         # Convert to our custom error for consistent handling
-        raise MemoryLimitError(f"Strategy execution exceeded memory limit ({memory_mb}MB)") from e
+        raise MemoryLimitError(
+            f"Strategy execution exceeded memory limit ({memory_mb}MB)"
+        ) from e
     finally:
         # Restore original limits if we set them
         if limits_set:

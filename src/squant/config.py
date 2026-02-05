@@ -195,7 +195,7 @@ class StrategySettings(BaseSettings):
     max_processes: int = Field(
         default=5, ge=1, le=20, description="Max concurrent strategy processes"
     )
-    memory_limit_mb: int = Field(default=512, ge=64, description="Memory limit per strategy (MB)")
+    memory_limit_mb: int = Field(default=2048, ge=64, description="Memory limit per strategy (MB)")
     cpu_limit_seconds: int = Field(
         default=60, ge=1, description="CPU time limit per execution (seconds)"
     )

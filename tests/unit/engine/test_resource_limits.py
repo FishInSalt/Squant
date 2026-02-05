@@ -3,7 +3,6 @@
 These tests verify that CPU and memory limits are enforced for strategy execution.
 """
 
-import os
 import platform
 from unittest.mock import patch
 
@@ -45,34 +44,60 @@ class TestResourceLimiter:
         # Use generous limits that work in most environments
         try:
             result = 0
-            with resource_limiter(cpu_seconds=60, memory_mb=1024):
+            with resource_limiter(cpu_seconds=60, memory_mb=8192):
                 result = sum(range(1000))
             assert result == 499500
         except OSError as e:
             pytest.skip(f"Cannot set resource limits in this environment: {e}")
 
     @pytest.mark.skipif(
-        not _can_set_resource_limits() or os.environ.get("CI") == "true",
-        reason="Resource limits not available or CI environment (infinite loop can cause OOM)",
+        not _can_set_resource_limits(),
+        reason="Resource limits not available in this environment",
     )
     def test_cpu_timeout_raises_error(self) -> None:
-        """Test that infinite loop triggers CPU timeout.
+        """Test that CPU-intensive code triggers CPU timeout.
 
-        Note: This test uses a very short timeout (1 second) to avoid
-        long test runs. In production, the default is 30-60 seconds.
-        Skipped in CI because the infinite loop combined with coverage
-        tracking can cause the process to be OOM-killed.
+        Runs in a subprocess to avoid OOM in the main test process,
+        which accumulates significant memory from coverage tracking
+        across thousands of tests.
         """
-        try:
-            with pytest.raises(CPUTimeoutError) as exc_info:
-                with resource_limiter(cpu_seconds=1, memory_mb=1024):
-                    # Infinite loop to trigger CPU timeout
-                    while True:
-                        pass
+        import multiprocessing
 
-            assert "CPU time limit" in str(exc_info.value)
-        except OSError as e:
-            pytest.skip(f"Cannot set resource limits in this environment: {e}")
+        def worker(conn):
+            """Child process: set CPU limit, burn CPU, expect CPUTimeoutError."""
+            try:
+                with resource_limiter(cpu_seconds=1, memory_mb=2048):
+                    while True:
+                        sum(range(10**6))
+                conn.send(("fail", "CPUTimeoutError not raised"))
+            except CPUTimeoutError as e:
+                conn.send(("ok", str(e)))
+            except OSError as e:
+                conn.send(("skip", str(e)))
+            except Exception as e:
+                conn.send(("fail", f"Unexpected: {type(e).__name__}: {e}"))
+            finally:
+                conn.close()
+
+        parent_conn, child_conn = multiprocessing.Pipe()
+        p = multiprocessing.Process(target=worker, args=(child_conn,))
+        p.start()
+        p.join(timeout=10)
+
+        if p.exitcode is None:
+            p.kill()
+            pytest.fail("Worker process timed out")
+
+        if not parent_conn.poll():
+            pytest.fail(f"Worker exited with code {p.exitcode} without sending result")
+
+        status, message = parent_conn.recv()
+        if status == "skip":
+            pytest.skip(f"Cannot set resource limits: {message}")
+        elif status == "fail":
+            pytest.fail(message)
+
+        assert "CPU time limit" in message
 
     @pytest.mark.skipif(
         not _can_set_resource_limits(),
@@ -104,7 +129,7 @@ class TestResourceLimiter:
             orig_cpu = resource.getrlimit(resource.RLIMIT_CPU)
             orig_as = resource.getrlimit(resource.RLIMIT_AS)
 
-            with resource_limiter(cpu_seconds=60, memory_mb=1024):
+            with resource_limiter(cpu_seconds=60, memory_mb=2048):
                 # Do something simple
                 _ = 1 + 1
 
@@ -131,7 +156,7 @@ class TestResourceLimiter:
             orig_as = resource.getrlimit(resource.RLIMIT_AS)
 
             with pytest.raises(ValueError):
-                with resource_limiter(cpu_seconds=60, memory_mb=1024):
+                with resource_limiter(cpu_seconds=60, memory_mb=2048):
                     raise ValueError("Test exception")
 
             # Check limits are restored
