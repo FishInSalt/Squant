@@ -31,6 +31,9 @@ uv run pytest tests/unit -v
 uv run pytest tests/unit/test_example.py -v
 uv run pytest -k "test_name_pattern" -v
 
+# Run tests without coverage (faster for iterating)
+uv run pytest tests/unit -v --no-cov
+
 # Integration tests (requires Docker services on ports 5433/6380)
 docker compose -f docker-compose.dev.yml up -d postgres redis
 uv run pytest tests/integration -v
@@ -56,7 +59,7 @@ pnpm build        # Production build (vue-tsc + vite build)
 pnpm lint         # ESLint with --fix
 ```
 
-Frontend stack: Vue 3, Vue Router, Pinia, Element Plus, ECharts/vue-echarts, KlineCharts, Axios.
+Frontend stack: Vue 3, Vue Router, Pinia, Element Plus, ECharts/vue-echarts, KlineCharts, Axios. Views organized by domain: `views/{market,trading,strategy,risk,account,order,system}/`.
 
 ### Docker Development
 
@@ -84,33 +87,45 @@ docker compose -f docker-compose.dev.yml --profile full up -d    # full stack
 
 ```
 src/squant/
-├── main.py              # FastAPI entry point with lifespan (init DB, Redis, WebSocket manager)
+├── main.py              # FastAPI entry point with lifespan (init DB, Redis, WebSocket, background tasks)
 ├── config.py            # Nested Pydantic Settings (loaded from .env)
 ├── api/                 # REST API routes (presentation layer)
-│   ├── deps.py          # DI: DbSession, DbSessionReadonly, RedisClient, exchange adapters
+│   ├── deps.py          # DI: DbSession, DbSessionReadonly, RedisClient, Exchange
+│   ├── middleware.py     # Rate limiting middleware
 │   └── v1/              # Versioned endpoints
-├── websocket/           # WebSocket handlers for real-time market data
-├── services/            # Business logic layer
-├── engine/              # Trading engines (backtest, paper, live, risk)
-│   └── sandbox.py       # RestrictedPython strategy sandbox
-├── models/              # SQLAlchemy ORM models
+├── websocket/           # WebSocket handlers + stream manager for real-time market data
+├── services/            # Business logic layer (one service per domain)
+├── engine/              # Trading engines
+│   ├── sandbox.py       # RestrictedPython strategy sandbox
+│   ├── resource_limits.py
+│   ├── paper/           # Paper trading: manager.py (session lifecycle) + engine.py (execution)
+│   └── live/            # Live trading: manager.py + engine.py + order_sync.py
+├── models/              # SQLAlchemy ORM models (inherit Base, UUIDMixin, TimestampMixin)
 ├── schemas/             # Pydantic request/response schemas
 └── infra/               # Infrastructure layer
     ├── database.py      # AsyncPG + SQLAlchemy async session
     ├── redis.py         # Redis client with pub/sub
-    ├── repository.py    # Generic CRUD repository pattern
-    └── exchange/        # Exchange adapters (CCXT unified + native OKX/Binance)
+    ├── repository.py    # Generic CRUD: BaseRepository[ModelT: Base] (Python 3.12 generics)
+    └── exchange/        # Exchange adapters
+        ├── base.py      # Abstract base + types + exceptions + retry
+        └── ccxt/        # CCXT unified adapter: rest_adapter.py, provider.py, transformer.py
 ```
 
 ### Key Patterns
 
 - **Async-first**: All I/O uses `async`/`await` with asyncpg and aioredis
-- **Dependency injection**: FastAPI `Depends()` with type aliases (`DbSession`, `RedisClient`) in `api/deps.py`
-- **Repository pattern**: Generic CRUD in `infra/repository.py`, all repos inherit `BaseRepository`
+- **Dependency injection**: FastAPI `Depends()` with type aliases in `api/deps.py`:
+  - `DbSession`, `DbSessionReadonly` — async SQLAlchemy sessions
+  - `RedisClient` — Redis connection
+  - `Exchange` — CCXT adapter (cached, auto-connected with `load_markets()`)
+  - `OKXExchange` — legacy OKX-specific adapter (async generator with `yield`)
+- **Repository pattern**: `BaseRepository[ModelT: Base]` uses Python 3.12 generic syntax; provides `get`, `get_by`, `list`, `create`, `update`, `delete`, `count`
+- **Model mixins**: `UUIDMixin` (UUID string PK), `TimestampMixin` (created_at/updated_at with timezone)
+- **Manager + Engine pattern**: Both paper and live trading use a `manager.py` (session lifecycle, singleton via `get_*_session_manager()`) and `engine.py` (execution logic)
 - **Process isolation**: Strategy execution in separate processes via `multiprocessing`
 - **Strategy sandbox**: RestrictedPython blocks os/sys/subprocess/network/pickle/threading modules
 - **Circuit breaker**: Automatic trading halt on risk events (max loss, position limits)
-- **Exchange abstraction**: CCXT unified adapter (default) or native adapters; configured via `DEFAULT_EXCHANGE` + `USE_CCXT_PROVIDER`
+- **Exchange abstraction**: CCXT unified adapter (default) or native OKX adapter; configured via `DEFAULT_EXCHANGE` + `USE_CCXT_PROVIDER`
 
 ### Data Flow
 
@@ -118,17 +133,32 @@ src/squant/
 - Order execution: Frontend → REST API → Service → Exchange Adapter → Exchange
 - Strategy signals: Strategy Process → Redis → Order Service
 
+### Application Lifespan
+
+`main.py` lifespan manages startup/shutdown order:
+1. **Startup**: init DB → init Redis → init stream manager (with retry fallback) → recover orphaned trading sessions → start background tasks (persist + health check)
+2. **Shutdown**: stop background tasks → stop paper sessions → stop live sessions → close stream manager → clear exchange cache → close Redis → close DB
+
 ### Configuration
 
-Settings loaded from `.env` via nested Pydantic Settings classes with env prefixes (`DATABASE_`, `REDIS_`, `LOG_`, etc.):
+Settings loaded from `.env` via nested Pydantic Settings classes. Each sub-settings class has its own `env_prefix`:
 
-```python
-settings = get_settings()  # lru_cached
-settings.database.url      # DatabaseSettings
-settings.redis.url         # RedisSettings
-settings.security.secret_key  # SecuritySettings
-settings.exchange.default_exchange  # ExchangeSettings
-```
+| Setting group | Prefix | Access |
+|---|---|---|
+| `DatabaseSettings` | `DATABASE_` | `settings.database.url` |
+| `RedisSettings` | `REDIS_` | `settings.redis.url` |
+| `LoggingSettings` | `LOG_` | `settings.logging.level` |
+| `SecuritySettings` | *(none)* | `settings.security.secret_key` |
+| `OKXSettings` | `OKX_` | `settings.okx.api_key` |
+| `BinanceSettings` | `BINANCE_` | `settings.binance.api_key` |
+| `BybitSettings` | `BYBIT_` | `settings.bybit.api_key` |
+| `ExchangeStreamSettings` | *(none)* | `settings.exchange.default_exchange` |
+| `StrategySettings` | `STRATEGY_` | `settings.strategy.max_processes` |
+| `RiskSettings` | `RISK_` | `settings.risk.max_position_ratio` |
+| `PaperTradingSettings` | `PAPER_` | `settings.paper.max_equity_curve_size` |
+| `CircuitBreakerSettings` | `CIRCUIT_BREAKER_` | `settings.circuit_breaker.cooldown_minutes` |
+
+`get_settings()` is `@lru_cache`d. Flat aliases exist for backward compatibility (e.g., `settings.okx_api_key` → `settings.okx.api_key`). Nested settings use `@cached_property` to avoid re-reading `.env` on each access.
 
 ### Database
 
@@ -136,11 +166,16 @@ settings.exchange.default_exchange  # ExchangeSettings
 - Alembic migrations in `alembic/` — run `uv run alembic upgrade head`
 - SQLAlchemy 2.0 async patterns; connection string must include `+asyncpg`
 
+### API Response Convention
+
+Exchange-related exception handlers return a uniform shape: `{"code": <http_status>, "message": <str>, "data": null}`. Exchange errors map to: connection → 503, auth → 401, rate limit → 429 (with `Retry-After` header), other API errors → 502.
+
 ## Code Style
 
 - **Ruff**: line-length 100, target Python 3.12. Rules: E, W, F, I, B, C4, UP, SIM
 - **Ruff ignored**: E501, B008 (FastAPI default args), B904, SIM117, SIM102, SIM105, B027, B007, B017
-- **mypy**: strict mode with pydantic plugin
+- **Ruff exclude**: `tests/templates/` is excluded from linting
+- **mypy**: strict mode with pydantic plugin; `RestrictedPython` and `ccxt` have `ignore_missing_imports`
 - **isort**: first-party = `squant`
 
 ## Testing
@@ -151,6 +186,10 @@ settings.exchange.default_exchange  # ExchangeSettings
 - `@pytest.mark.e2e`: requires full stack
 - `@pytest.mark.okx_private`: requires OKX API credentials
 - `asyncio_mode = "auto"`: no need for explicit `@pytest.mark.asyncio` on every test
+
+### Test Structure
+
+Tests mirror the source layout: `tests/unit/{api/v1, services, engine/{backtest,paper,live,risk}, infra/exchange, models, schemas, websocket, utils}`, `tests/integration/{api, database, services, websocket}`, `tests/e2e/`. Each subdirectory can have its own `conftest.py` for scoped fixtures.
 
 ### Important Testing Rules
 
@@ -164,16 +203,16 @@ settings.exchange.default_exchange  # ExchangeSettings
   ```
 
 **Dangerous Operations — Will Crash Tests**:
-1. Never mock `asyncio.sleep()` in code with `while` loops
-2. Don't test methods with infinite `while running` loops
+1. Never mock `asyncio.sleep()` in code with `while` loops — causes infinite CPU loops and OOM
+2. Don't test methods with infinite `while running` loops directly
 3. Don't call WebSocket `run()` methods in unit tests
 4. Don't start background async tasks in unit tests
 
-See `dev-docs/technical/testing/TROUBLESHOOTING.md` for details.
+See `dev-docs/technical/testing/TROUBLESHOOTING.md` for detailed examples and solutions.
 
 ### CI Pipeline
 
-CI runs on pushes to `main`, `develop`, `cc/*` and PRs to `main`/`develop`. Pipeline: lint → unit tests → integration tests → e2e tests → docker build check.
+CI runs on pushes to `main`, `develop`, `cc/*` and PRs to `main`/`develop`. Pipeline: lint → unit tests → integration tests → e2e tests → docker build check. Note: mypy and ruff format checks are `continue-on-error` in CI (non-blocking).
 
 ## Documentation
 
