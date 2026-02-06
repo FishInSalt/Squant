@@ -619,3 +619,109 @@ class TestLimitOrderBoundaries:
         assert len(fills) == 1
         # min(42000, 42000) = 42000
         assert fills[0].price == Decimal("42000")
+
+
+class TestMultiBarLimitOrder:
+    """Tests for limit orders that wait multiple bars before filling (BT-5)."""
+
+    def test_buy_limit_fills_after_multiple_bars(self, engine: MatchingEngine) -> None:
+        """Test buy limit order that waits 2 bars then fills on 3rd bar."""
+        order = SimulatedOrder.create(
+            symbol="BTC/USDT",
+            side=OrderSide.BUY,
+            order_type=OrderType.LIMIT,
+            amount=Decimal("1"),
+            price=Decimal("40000"),  # Below all bars initially
+        )
+
+        # Bar 1: price range 42000-43000, limit at 40000 not triggered
+        bar1 = Bar(
+            time=datetime(2024, 1, 1, 0, 0, tzinfo=UTC),
+            symbol="BTC/USDT",
+            open=Decimal("42500"),
+            high=Decimal("43000"),
+            low=Decimal("42000"),
+            close=Decimal("42800"),
+            volume=Decimal("1000"),
+        )
+        fills1 = engine.process_bar(bar1, [order])
+        assert len(fills1) == 0
+
+        # Bar 2: price range 41500-42500, still above 40000
+        bar2 = Bar(
+            time=datetime(2024, 1, 1, 0, 1, tzinfo=UTC),
+            symbol="BTC/USDT",
+            open=Decimal("42000"),
+            high=Decimal("42500"),
+            low=Decimal("41500"),
+            close=Decimal("41800"),
+            volume=Decimal("1000"),
+        )
+        fills2 = engine.process_bar(bar2, [order])
+        assert len(fills2) == 0
+
+        # Bar 3: price drops to 39500, limit at 40000 is triggered
+        bar3 = Bar(
+            time=datetime(2024, 1, 1, 0, 2, tzinfo=UTC),
+            symbol="BTC/USDT",
+            open=Decimal("41000"),
+            high=Decimal("41500"),
+            low=Decimal("39500"),
+            close=Decimal("40200"),
+            volume=Decimal("1000"),
+        )
+        fills3 = engine.process_bar(bar3, [order])
+        assert len(fills3) == 1
+        assert fills3[0].price == Decimal("40000")
+        assert fills3[0].side == OrderSide.BUY
+
+    def test_sell_limit_fills_after_multiple_bars(self, engine: MatchingEngine) -> None:
+        """Test sell limit order that waits 2 bars then fills on 3rd bar."""
+        order = SimulatedOrder.create(
+            symbol="BTC/USDT",
+            side=OrderSide.SELL,
+            order_type=OrderType.LIMIT,
+            amount=Decimal("1"),
+            price=Decimal("46000"),  # Above all bars initially
+        )
+
+        # Bar 1: price range 42000-43000, limit at 46000 not triggered
+        bar1 = Bar(
+            time=datetime(2024, 1, 1, 0, 0, tzinfo=UTC),
+            symbol="BTC/USDT",
+            open=Decimal("42500"),
+            high=Decimal("43000"),
+            low=Decimal("42000"),
+            close=Decimal("42800"),
+            volume=Decimal("1000"),
+        )
+        fills1 = engine.process_bar(bar1, [order])
+        assert len(fills1) == 0
+
+        # Bar 2: price range 43000-44500, still below 46000
+        bar2 = Bar(
+            time=datetime(2024, 1, 1, 0, 1, tzinfo=UTC),
+            symbol="BTC/USDT",
+            open=Decimal("43000"),
+            high=Decimal("44500"),
+            low=Decimal("42800"),
+            close=Decimal("44000"),
+            volume=Decimal("1000"),
+        )
+        fills2 = engine.process_bar(bar2, [order])
+        assert len(fills2) == 0
+
+        # Bar 3: price rises to 46500, limit at 46000 is triggered
+        bar3 = Bar(
+            time=datetime(2024, 1, 1, 0, 2, tzinfo=UTC),
+            symbol="BTC/USDT",
+            open=Decimal("44500"),
+            high=Decimal("46500"),
+            low=Decimal("44000"),
+            close=Decimal("46000"),
+            volume=Decimal("1000"),
+        )
+        fills3 = engine.process_bar(bar3, [order])
+        assert len(fills3) == 1
+        assert fills3[0].price == Decimal("46000")
+        assert fills3[0].side == OrderSide.SELL

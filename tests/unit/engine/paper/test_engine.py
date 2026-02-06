@@ -410,6 +410,32 @@ class TestHealthCheck:
         # Engine not started
         assert engine.is_healthy(timeout_seconds=300) is False
 
+
+class TestProcessingLock:
+    """Tests for processing lock (PP-C05)."""
+
+    @pytest.mark.asyncio
+    async def test_stop_waits_for_processing_candle(self, engine, strategy):
+        """Test that stop() waits for in-progress candle processing to complete."""
+        import asyncio
+
+        await engine.start()
+
+        # Acquire the processing lock to simulate in-progress candle
+        async with engine._processing_lock:
+            # Start stop() in background — it should block on the lock
+            stop_task = asyncio.create_task(engine.stop())
+
+            # Give the event loop a chance to process
+            await asyncio.sleep(0.05)
+
+            # Engine should still be running because stop is waiting for lock
+            assert engine.is_running is True
+
+        # Now the lock is released, stop should complete
+        await stop_task
+        assert engine.is_running is False
+
     @pytest.mark.asyncio
     async def test_is_healthy_returns_false_when_stopped(self, engine):
         """Test is_healthy returns False after stop."""

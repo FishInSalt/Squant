@@ -269,6 +269,14 @@ class RiskManager:
                     limit_pct=float(self.config.daily_loss_limit),
                     daily_pnl=float(self.state.daily_pnl),
                 )
+        elif self.state.daily_pnl < 0:
+            # daily_start_equity is 0 but we have losses — block trading (RSK-1)
+            return RiskCheckResult.reject(
+                rule_type=RiskRuleType.DAILY_LOSS_LIMIT,
+                reason="Daily loss detected but daily_start_equity is 0 "
+                "(cannot calculate loss percentage)",
+                daily_pnl=float(self.state.daily_pnl),
+            )
 
         # Check absolute limit if configured
         if self.config.daily_loss_limit_absolute is not None:

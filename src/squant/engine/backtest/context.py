@@ -571,7 +571,11 @@ class BacktestContext:
             prev_amount < 0 and new_amount < prev_amount
         ):
             if self._open_trade:
-                # Average into existing trade
+                # Calculate weighted average entry price
+                added_amount = abs(new_amount) - abs(prev_amount)
+                prev_value = self._open_trade.entry_price * abs(prev_amount)
+                new_value = fill.price * added_amount
+                self._open_trade.entry_price = (prev_value + new_value) / abs(new_amount)
                 self._open_trade.fees += fill.fee
                 self._open_trade.amount = abs(new_amount)
 
@@ -599,36 +603,8 @@ class BacktestContext:
                 self._trades.append(self._open_trade)
                 self._open_trade = None
 
-            # Position reversed
-            elif (prev_amount > 0 and new_amount < 0) or (prev_amount < 0 and new_amount > 0):
-                # Close existing trade
-                self._open_trade.exit_time = fill.timestamp
-                self._open_trade.exit_price = fill.price
-                self._open_trade.amount = abs(prev_amount)
-
-                # Calculate PnL for closed portion
-                if self._open_trade.side == OrderSide.BUY:
-                    pnl = (fill.price - self._open_trade.entry_price) * abs(prev_amount)
-                else:
-                    pnl = (self._open_trade.entry_price - fill.price) * abs(prev_amount)
-                pnl -= self._open_trade.fees
-                self._open_trade.pnl = pnl
-
-                cost_basis = self._open_trade.entry_price * abs(prev_amount)
-                if cost_basis != Decimal("0"):
-                    self._open_trade.pnl_pct = pnl / cost_basis * 100
-
-                self._trades.append(self._open_trade)
-
-                # Open new trade in the direction of the fill that opened it
-                self._open_trade = TradeRecord(
-                    symbol=fill.symbol,
-                    side=fill.side,
-                    entry_time=fill.timestamp,
-                    entry_price=fill.price,
-                    amount=abs(new_amount),
-                    fees=Decimal("0"),
-                )
+            # Note: Position reversal (long→short or short→long) is not supported
+            # in spot trading. sell() validation prevents negative positions.
 
     def _record_equity_snapshot(self, time: datetime) -> None:
         """Record an equity snapshot.

@@ -466,6 +466,77 @@ class TestUnregisterAndCheckSubscription:
         assert ("ETH/USDT", "1m") in session_manager.get_subscribed_symbols()
 
 
+class TestDispatchConsecutiveErrors:
+    """Tests for dispatch consecutive error tracking and auto-stop (PP-H02)."""
+
+    @pytest.fixture
+    def sample_candle(self):
+        """Create a sample candle."""
+        return WSCandle(
+            symbol="BTC/USDT",
+            timeframe="1m",
+            timestamp=datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC),
+            open=Decimal("45000"),
+            high=Decimal("46000"),
+            low=Decimal("44000"),
+            close=Decimal("45500"),
+            volume=Decimal("100"),
+            is_closed=True,
+        )
+
+    @pytest.mark.asyncio
+    async def test_consecutive_errors_auto_stop(self, session_manager, sample_candle):
+        """Test engine auto-stops after reaching consecutive dispatch error threshold."""
+        engine = MagicMock()
+        engine.run_id = uuid4()
+        engine.symbol = "BTC/USDT"
+        engine.timeframe = "1m"
+        engine.is_running = True
+        engine.process_candle = AsyncMock(side_effect=RuntimeError("processing error"))
+        engine.stop = AsyncMock()
+
+        await session_manager.register(engine)
+
+        # Dispatch 5 candles (threshold), each failing
+        for _ in range(5):
+            await session_manager.dispatch_candle(sample_candle)
+
+        # Engine should be auto-stopped after reaching threshold
+        engine.stop.assert_called_once()
+        call_kwargs = engine.stop.call_args.kwargs
+        assert "consecutive dispatch errors" in call_kwargs.get("error", "")
+
+    @pytest.mark.asyncio
+    async def test_success_resets_error_counter(self, session_manager, sample_candle):
+        """Test successful dispatch resets the consecutive error counter."""
+        engine = MagicMock()
+        engine.run_id = uuid4()
+        engine.symbol = "BTC/USDT"
+        engine.timeframe = "1m"
+        engine.is_running = True
+        engine.process_candle = AsyncMock()
+        engine.stop = AsyncMock()
+
+        await session_manager.register(engine)
+
+        # Fail 4 times (just below threshold)
+        engine.process_candle.side_effect = RuntimeError("error")
+        for _ in range(4):
+            await session_manager.dispatch_candle(sample_candle)
+
+        # Now succeed once (should reset counter)
+        engine.process_candle.side_effect = None
+        await session_manager.dispatch_candle(sample_candle)
+
+        # Fail 4 more times — should NOT trigger auto-stop because counter was reset
+        engine.process_candle.side_effect = RuntimeError("error")
+        for _ in range(4):
+            await session_manager.dispatch_candle(sample_candle)
+
+        # Engine should NOT have been auto-stopped
+        engine.stop.assert_not_called()
+
+
 class TestSingleton:
     """Tests for singleton behavior."""
 

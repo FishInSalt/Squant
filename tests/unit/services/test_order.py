@@ -401,6 +401,36 @@ class TestOrderService:
         assert call_kwargs["status"] == OrderStatus.REJECTED
 
     @pytest.mark.asyncio
+    async def test_create_order_db_update_failure_cancels_exchange_order(
+        self, service, sample_order, exchange_response
+    ):
+        """Test ORD-1: when DB update fails after exchange succeeds, cancel the exchange order."""
+        service.order_repo.create = AsyncMock(return_value=sample_order)
+        service.exchange.place_order.return_value = exchange_response
+
+        # First update call is from _update_order_from_response (fails)
+        # Second update call is from the outer except (marks rejected)
+        service.order_repo.update = AsyncMock(
+            side_effect=[Exception("DB connection lost"), sample_order]
+        )
+
+        with pytest.raises(Exception, match="DB connection lost"):
+            await service.create_order(
+                symbol="BTC/USDT",
+                side=OrderSide.BUY,
+                order_type=OrderType.LIMIT,
+                amount=Decimal("0.1"),
+                price=Decimal("50000"),
+            )
+
+        # Exchange order should have been placed
+        service.exchange.place_order.assert_called_once()
+        # Compensating cancel should have been sent
+        service.exchange.cancel_order.assert_called_once()
+        cancel_args = service.exchange.cancel_order.call_args[0][0]
+        assert cancel_args.order_id == "exc-123"
+
+    @pytest.mark.asyncio
     async def test_cancel_order_success(self, service, sample_order, exchange_response):
         """Test successful order cancellation."""
         exchange_response.status = OrderStatus.CANCELLED

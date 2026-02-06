@@ -48,9 +48,21 @@ class SessionNotFoundError(PaperTradingError):
 class SessionAlreadyRunningError(PaperTradingError):
     """Paper trading session already running."""
 
-    def __init__(self, run_id: str | UUID):
-        self.run_id = str(run_id)
-        super().__init__(f"Paper trading session already running: {run_id}")
+    def __init__(self, run_id: str | UUID | None = None, *, message: str | None = None):
+        self.run_id = str(run_id) if run_id else None
+        if message:
+            super().__init__(message)
+        else:
+            super().__init__(f"Paper trading session already running: {run_id}")
+
+
+class MaxSessionsReachedError(PaperTradingError):
+    """Maximum number of concurrent paper trading sessions reached."""
+
+    def __init__(self, max_sessions: int):
+        super().__init__(
+            f"Maximum concurrent paper trading sessions reached: {max_sessions}"
+        )
 
 
 class StrategyInstantiationError(PaperTradingError):
@@ -103,6 +115,35 @@ class StrategyRunRepository(BaseRepository[StrategyRun]):
         if status:
             filters["status"] = status
         return await self.count(**filters)
+
+    async def has_running_session(
+        self,
+        strategy_id: str,
+        symbol: str,
+        mode: RunMode,
+    ) -> bool:
+        """Check if a running session exists for the given strategy/symbol/mode.
+
+        Args:
+            strategy_id: Strategy ID.
+            symbol: Trading symbol.
+            mode: Run mode (PAPER, LIVE).
+
+        Returns:
+            True if a running session exists.
+        """
+        stmt = (
+            select(StrategyRun)
+            .where(
+                StrategyRun.strategy_id == strategy_id,
+                StrategyRun.symbol == symbol,
+                StrategyRun.mode == mode,
+                StrategyRun.status == RunStatus.RUNNING,
+            )
+            .limit(1)
+        )
+        result = await self.session.execute(stmt)
+        return result.scalar_one_or_none() is not None
 
     async def mark_orphaned_sessions(self) -> int:
         """Mark all RUNNING paper trading sessions as ERROR.
@@ -196,11 +237,30 @@ class PaperTradingService:
             StrategyInstantiationError: If strategy cannot be instantiated.
             CircuitBreakerActiveError: If circuit breaker is active.
         """
+        from squant.config import get_settings
         from squant.services.strategy import StrategyNotFoundError, StrategyRepository
 
         # Check circuit breaker state before starting
         if redis is not None:
             await self._check_circuit_breaker(redis)
+
+        # Check for duplicate running session (PP-C03)
+        has_running = await self.run_repo.has_running_session(
+            strategy_id=str(strategy_id),
+            symbol=symbol,
+            mode=RunMode.PAPER,
+        )
+        if has_running:
+            raise SessionAlreadyRunningError(
+                message=f"A paper trading session for strategy {strategy_id} "
+                f"on {symbol} is already running"
+            )
+
+        # Check max concurrent sessions limit (PP-H01)
+        settings = get_settings()
+        session_manager = get_session_manager()
+        if session_manager.session_count >= settings.paper.max_sessions:
+            raise MaxSessionsReachedError(settings.paper.max_sessions)
 
         # Verify strategy exists
         strategy_repo = StrategyRepository(self.session)

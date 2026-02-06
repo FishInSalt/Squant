@@ -404,6 +404,10 @@ class TestCircuitBreakerBlocksNewSessions:
         session.flush = AsyncMock()
         session.refresh = AsyncMock()
         session.add = MagicMock()
+        # Support has_running_session() query (PP-C03)
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = None
+        session.execute = AsyncMock(return_value=mock_result)
         return session
 
     @pytest.mark.asyncio

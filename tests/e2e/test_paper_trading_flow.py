@@ -230,14 +230,15 @@ class TestPaperTradingBasicFlow:
         strategy_id = response.json()["data"]["id"]
         cleanup_strategies(strategy_id)
 
-        # 创建2个Paper Trading会话
+        # 创建2个Paper Trading会话（使用不同symbol避免PP-C03重复会话防护）
+        symbols = ["BTC/USDT", "ETH/USDT"]
         run_ids = []
-        for _i in range(2):
+        for symbol in symbols:
             response = await api_client.post(
                 "/api/v1/paper",
                 json={
                     "strategy_id": strategy_id,
-                    "symbol": "BTC/USDT",
+                    "symbol": symbol,
                     "exchange": "okx",
                     "timeframe": "1m",
                     "initial_capital": 10000.0,
@@ -291,14 +292,15 @@ class TestPaperTradingBasicFlow:
         strategy_id = response.json()["data"]["id"]
         cleanup_strategies(strategy_id)
 
-        # 创建3个Paper Trading会话
+        # 创建3个Paper Trading会话（使用不同symbol避免PP-C03重复会话防护）
+        symbols = ["BTC/USDT", "ETH/USDT", "SOL/USDT"]
         run_ids = []
-        for _i in range(3):
+        for symbol in symbols:
             response = await api_client.post(
                 "/api/v1/paper",
                 json={
                     "strategy_id": strategy_id,
-                    "symbol": "BTC/USDT",
+                    "symbol": symbol,
                     "exchange": "okx",
                     "timeframe": "1m",
                     "initial_capital": 10000.0,
@@ -536,14 +538,15 @@ class TestPaperTradingRunManagement:
         strategy_id = response.json()["data"]["id"]
         cleanup_strategies(strategy_id)
 
-        # 创建2个运行
+        # 创建2个运行（使用不同symbol避免PP-C03重复会话防护）
+        symbols = ["BTC/USDT", "ETH/USDT"]
         run_ids = []
-        for _i in range(2):
+        for symbol in symbols:
             response = await api_client.post(
                 "/api/v1/paper",
                 json={
                     "strategy_id": strategy_id,
-                    "symbol": "BTC/USDT",
+                    "symbol": symbol,
                     "exchange": "okx",
                     "timeframe": "1m",
                     "initial_capital": 10000.0,

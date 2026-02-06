@@ -37,6 +37,10 @@ class SessionManager:
         # Lock for thread-safe operations
         self._lock = asyncio.Lock()
 
+        # Consecutive dispatch error tracking per session (PP-H02)
+        self._consecutive_errors: dict[UUID, int] = {}
+        self._dispatch_error_threshold: int = 5
+
     @property
     def session_count(self) -> int:
         """Get number of active sessions."""
@@ -87,6 +91,9 @@ class SessionManager:
                 if not self._subscriptions[key]:
                     del self._subscriptions[key]
 
+            # Clean up error tracking (PP-H02)
+            self._consecutive_errors.pop(run_id, None)
+
             logger.info(f"Unregistered engine {run_id}, remaining sessions: {len(self._sessions)}")
 
     async def unregister_and_check_subscription(self, run_id: UUID) -> tuple[str, str] | None:
@@ -116,6 +123,8 @@ class SessionManager:
                 if not self._subscriptions[key]:
                     # No other sessions need this subscription
                     del self._subscriptions[key]
+                    # Clean up error tracking (PP-H02)
+                    self._consecutive_errors.pop(run_id, None)
                     logger.info(f"Unregistered engine {run_id}, subscription {key} can be removed")
                     return key
                 else:
@@ -123,8 +132,12 @@ class SessionManager:
                         f"Unregistered engine {run_id}, "
                         f"subscription {key} still needed by {len(self._subscriptions[key])} sessions"
                     )
+                    # Clean up error tracking (PP-H02)
+                    self._consecutive_errors.pop(run_id, None)
                     return None
 
+            # Clean up error tracking (PP-H02)
+            self._consecutive_errors.pop(run_id, None)
             logger.info(f"Unregistered engine {run_id}, remaining sessions: {len(self._sessions)}")
             return None
 
@@ -168,8 +181,27 @@ class SessionManager:
             if engine and engine.is_running:
                 try:
                     await engine.process_candle(candle)
+                    # Reset error counter on success (PP-H02)
+                    self._consecutive_errors.pop(run_id, None)
                 except Exception as e:
                     logger.exception(f"Error dispatching candle to engine {run_id}: {e}")
+                    # Track consecutive errors and auto-stop if threshold reached (PP-H02)
+                    error_count = self._consecutive_errors.get(run_id, 0) + 1
+                    self._consecutive_errors[run_id] = error_count
+                    if error_count >= self._dispatch_error_threshold:
+                        logger.error(
+                            f"Engine {run_id} reached {error_count} consecutive dispatch errors, "
+                            f"stopping automatically"
+                        )
+                        try:
+                            await engine.stop(
+                                error=f"Auto-stopped: {error_count} consecutive dispatch errors"
+                            )
+                        except Exception as stop_error:
+                            logger.exception(
+                                f"Error auto-stopping engine {run_id}: {stop_error}"
+                            )
+                        self._consecutive_errors.pop(run_id, None)
 
     async def stop_all(self, reason: str = "shutdown") -> None:
         """Stop all active sessions.

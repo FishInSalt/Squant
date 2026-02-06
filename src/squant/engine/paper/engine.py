@@ -5,6 +5,7 @@ Uses WebSocket market data to drive strategy execution with local order matching
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -101,6 +102,9 @@ class PaperTradingEngine:
         self._pending_snapshots: list[EquitySnapshot] = []
         self._snapshot_batch_size = 10  # Persist every N bars
 
+        # Lock to ensure stop() waits for in-progress candle processing (PP-C05)
+        self._processing_lock = asyncio.Lock()
+
     @property
     def run_id(self) -> UUID:
         """Get the strategy run ID."""
@@ -194,7 +198,8 @@ class PaperTradingEngine:
     async def stop(self, error: str | None = None) -> None:
         """Stop the paper trading engine.
 
-        Calls strategy.on_stop() and marks the engine as stopped.
+        Waits for any in-progress candle processing to complete,
+        then calls strategy.on_stop() and marks the engine as stopped.
 
         Args:
             error: Optional error message if stopping due to error.
@@ -208,6 +213,12 @@ class PaperTradingEngine:
         if error:
             self._error_message = error
 
+        # Wait for any in-progress candle processing to finish (PP-C05)
+        async with self._processing_lock:
+            self._stop_impl()
+
+    def _stop_impl(self) -> None:
+        """Internal stop logic (must be called with _processing_lock held or from within it)."""
         try:
             # Call strategy cleanup
             self._strategy.on_stop()
@@ -246,71 +257,75 @@ class PaperTradingEngine:
             logger.warning(f"Symbol mismatch: expected {self._symbol}, got {candle.symbol}")
             return
 
-        try:
-            # Update last activity timestamp
-            self._last_active_at = datetime.now(UTC)
-
-            # Convert WSCandle to Bar
-            bar = self._candle_to_bar(candle)
-
-            # 1. Match pending orders
-            pending = self._context._get_pending_orders()
-            fills = self._matching_engine.process_bar(bar, pending)
-
-            # 2. Process fills (TRD-025#3: insufficient cash → log, don't crash)
-            for fill in fills:
-                try:
-                    self._context._process_fill(fill)
-                except ValueError as e:
-                    logger.warning(f"Fill rejected in engine {self._run_id}: {e}")
-                    self._context.log(f"Order fill rejected: {e}")
-
-            # 3. Move completed orders
-            self._context._move_completed_orders()
-
-            # 4. Update current bar
-            self._context._set_current_bar(bar)
-
-            # 5. Add to history (for strategy lookback)
-            self._context._add_bar_to_history(bar)
-
-            # 6. Record equity snapshot (before strategy, consistent with live engine P0-1)
-            self._context._record_equity_snapshot(bar.time)
-
-            # Track pending snapshot for persistence
-            if self._context.equity_curve:
-                self._pending_snapshots.append(self._context.equity_curve[-1])
-
-            # 7. Call strategy on_bar with resource limits (STR-013)
-            from squant.config import get_settings
-
-            settings = get_settings()
+        # Acquire processing lock so stop() waits for completion (PP-C05)
+        async with self._processing_lock:
             try:
-                with resource_limiter(
-                    cpu_seconds=settings.strategy.cpu_limit_seconds,
-                    memory_mb=settings.strategy.memory_limit_mb,
-                ):
-                    self._strategy.on_bar(bar)
-            except ResourceLimitExceededError as e:
-                logger.error(f"Strategy resource limit exceeded: {e}")
-                await self.stop(error=f"Strategy resource limit exceeded: {e}")
-                raise
+                # Update last activity timestamp
+                self._last_active_at = datetime.now(UTC)
+
+                # Convert WSCandle to Bar
+                bar = self._candle_to_bar(candle)
+
+                # 1. Match pending orders
+                pending = self._context._get_pending_orders()
+                fills = self._matching_engine.process_bar(bar, pending)
+
+                # 2. Process fills (TRD-025#3: insufficient cash → log, don't crash)
+                for fill in fills:
+                    try:
+                        self._context._process_fill(fill)
+                    except ValueError as e:
+                        logger.warning(f"Fill rejected in engine {self._run_id}: {e}")
+                        self._context.log(f"Order fill rejected: {e}")
+
+                # 3. Move completed orders
+                self._context._move_completed_orders()
+
+                # 4. Update current bar
+                self._context._set_current_bar(bar)
+
+                # 5. Add to history (for strategy lookback)
+                self._context._add_bar_to_history(bar)
+
+                # 6. Record equity snapshot (before strategy, consistent with live engine P0-1)
+                self._context._record_equity_snapshot(bar.time)
+
+                # Track pending snapshot for persistence
+                if self._context.equity_curve:
+                    self._pending_snapshots.append(self._context.equity_curve[-1])
+
+                # 7. Call strategy on_bar with resource limits (STR-013)
+                from squant.config import get_settings
+
+                settings = get_settings()
+                try:
+                    with resource_limiter(
+                        cpu_seconds=settings.strategy.cpu_limit_seconds,
+                        memory_mb=settings.strategy.memory_limit_mb,
+                    ):
+                        self._strategy.on_bar(bar)
+                except ResourceLimitExceededError as e:
+                    logger.error(f"Strategy resource limit exceeded: {e}")
+                    self._error_message = f"Strategy resource limit exceeded: {e}"
+                    self._stop_impl()
+                    raise
+                except Exception as e:
+                    # TRD-025#3: strategy errors (e.g., insufficient cash) should
+                    # be logged but not crash the engine — consistent with backtest runner
+                    logger.warning(f"Strategy on_bar error in engine {self._run_id}: {e}")
+                    self._context.log(f"ERROR in on_bar: {e}")
+
+                self._bar_count += 1
+
+                logger.debug(
+                    f"Processed bar {self._bar_count} at {bar.time}, "
+                    f"equity={self._context.equity}"
+                )
+
             except Exception as e:
-                # TRD-025#3: strategy errors (e.g., insufficient cash) should
-                # be logged but not crash the engine — consistent with backtest runner
-                logger.warning(f"Strategy on_bar error in engine {self._run_id}: {e}")
-                self._context.log(f"ERROR in on_bar: {e}")
-
-            self._bar_count += 1
-
-            logger.debug(
-                f"Processed bar {self._bar_count} at {bar.time}, equity={self._context.equity}"
-            )
-
-        except Exception as e:
-            logger.exception(f"Error processing candle in engine {self._run_id}: {e}")
-            await self.stop(error=f"Error processing candle: {e}")
-            raise
+                logger.exception(f"Error processing candle in engine {self._run_id}: {e}")
+                await self.stop(error=f"Error processing candle: {e}")
+                raise
 
     def _candle_to_bar(self, candle: WSCandle) -> Bar:
         """Convert WSCandle to Bar.

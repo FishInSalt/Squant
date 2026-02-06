@@ -274,15 +274,43 @@ class OrderService:
             response = await self.exchange.place_order(request)
 
             # Update order with exchange response
-            order = await self._update_order_from_response(order, response)
+            try:
+                order = await self._update_order_from_response(order, response)
+            except Exception as db_err:
+                # DB update failed but exchange order exists — attempt to cancel
+                # to prevent zombie orders (ORD-1)
+                logger.error(
+                    f"Failed to update order {order.id} after exchange submission "
+                    f"(exchange_oid={response.order_id}): {db_err}"
+                )
+                try:
+                    await self.exchange.cancel_order(
+                        CancelOrderRequest(
+                            symbol=symbol,
+                            order_id=response.order_id,
+                        )
+                    )
+                    logger.info(
+                        f"Compensating cancel sent for zombie order {response.order_id}"
+                    )
+                except Exception as cancel_err:
+                    logger.critical(
+                        f"ZOMBIE ORDER: exchange_oid={response.order_id}, "
+                        f"symbol={symbol}, side={side.value}, amount={amount}. "
+                        f"DB update failed: {db_err}. Cancel also failed: {cancel_err}"
+                    )
+                raise db_err
 
         except Exception as e:
-            # Mark order as rejected on exchange error
-            order = await self.order_repo.update(
-                order.id,
-                status=OrderStatus.REJECTED,
-                reject_reason=str(e),
-            )
+            # Mark order as rejected on exchange/DB error
+            try:
+                order = await self.order_repo.update(
+                    order.id,
+                    status=OrderStatus.REJECTED,
+                    reject_reason=str(e),
+                )
+            except Exception:
+                logger.error(f"Failed to mark order {order.id} as rejected: {e}")
             raise
 
         return order

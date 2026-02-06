@@ -115,12 +115,41 @@ class BackgroundTaskManager:
                     logger.error(f"Failed to persist snapshots for run {run_id}: {e}")
 
     async def _health_check(self) -> None:
-        """Check and cleanup stale sessions."""
+        """Check and cleanup stale sessions.
+
+        Before cleaning up, persist any pending snapshots for unhealthy sessions
+        to avoid data loss (PP-C07).
+        """
         from squant.config import get_settings
         from squant.engine.paper.manager import get_session_manager
+        from squant.infra.database import get_session_context
+        from squant.services.paper_trading import PaperTradingService
 
         settings = get_settings()
         session_manager = get_session_manager()
+
+        # Get unhealthy sessions first
+        unhealthy_ids = await session_manager.check_health(settings.paper_session_timeout_seconds)
+
+        # Persist snapshots for unhealthy sessions before cleanup (PP-C07)
+        if unhealthy_ids:
+            try:
+                async with get_session_context() as db_session:
+                    service = PaperTradingService(db_session)
+                    for run_id in unhealthy_ids:
+                        try:
+                            count = await service.persist_snapshots(run_id)
+                            if count > 0:
+                                logger.info(
+                                    f"Persisted {count} snapshots for stale session {run_id} "
+                                    f"before cleanup"
+                                )
+                        except Exception as e:
+                            logger.error(
+                                f"Failed to persist snapshots for stale session {run_id}: {e}"
+                            )
+            except Exception as e:
+                logger.error(f"Failed to open DB session for pre-cleanup persistence: {e}")
 
         count = await session_manager.cleanup_stale_sessions(settings.paper_session_timeout_seconds)
         if count > 0:
