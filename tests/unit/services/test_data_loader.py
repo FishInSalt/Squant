@@ -119,6 +119,64 @@ class TestDataAvailability:
 
         assert availability.is_complete is False
 
+    def test_is_complete_last_bar_one_period_before_end(self):
+        """Test is_complete when last_bar is exactly one timeframe before requested_end.
+
+        Bar timestamps are the START of the period, so a 1h bar at 23:00
+        covers [23:00, 00:00). If requested_end is 00:00, data IS complete.
+        """
+        requested_start = datetime(2024, 1, 1, 0, 0, tzinfo=UTC)
+        requested_end = datetime(2024, 1, 2, 0, 0, tzinfo=UTC)  # midnight
+
+        availability = DataAvailability(
+            exchange="okx",
+            symbol="BTC/USDT",
+            timeframe="1h",
+            first_bar=requested_start,
+            last_bar=datetime(2024, 1, 1, 23, 0, tzinfo=UTC),  # 23:00 (covers until 00:00)
+            total_bars=24,
+            requested_start=requested_start,
+            requested_end=requested_end,
+        )
+
+        assert availability.is_complete is True
+
+    def test_is_complete_false_last_bar_too_early(self):
+        """Test is_complete False when last_bar + duration < requested_end."""
+        requested_start = datetime(2024, 1, 1, 0, 0, tzinfo=UTC)
+        requested_end = datetime(2024, 1, 2, 0, 0, tzinfo=UTC)
+
+        availability = DataAvailability(
+            exchange="okx",
+            symbol="BTC/USDT",
+            timeframe="1h",
+            first_bar=requested_start,
+            last_bar=datetime(2024, 1, 1, 22, 0, tzinfo=UTC),  # 22:00 → covers until 23:00
+            total_bars=23,
+            requested_start=requested_start,
+            requested_end=requested_end,
+        )
+
+        assert availability.is_complete is False
+
+    def test_is_complete_daily_timeframe(self):
+        """Test is_complete with daily timeframe."""
+        requested_start = datetime(2024, 1, 1, 0, 0, tzinfo=UTC)
+        requested_end = datetime(2024, 1, 8, 0, 0, tzinfo=UTC)  # 7 days later
+
+        availability = DataAvailability(
+            exchange="okx",
+            symbol="BTC/USDT",
+            timeframe="1d",
+            first_bar=requested_start,
+            last_bar=datetime(2024, 1, 7, 0, 0, tzinfo=UTC),  # Jan 7 covers until Jan 8
+            total_bars=7,
+            requested_start=requested_start,
+            requested_end=requested_end,
+        )
+
+        assert availability.is_complete is True
+
     def test_to_dict(self):
         """Test to_dict method."""
         first_bar = datetime.now(UTC) - timedelta(days=30)
