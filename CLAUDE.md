@@ -38,6 +38,9 @@ uv run pytest -k "test_name_pattern" -v
 # Run tests without coverage (faster for iterating)
 uv run pytest tests/unit -v --no-cov
 
+# Run tests in parallel (pytest-xdist)
+uv run pytest tests/unit -v --no-cov -n auto
+
 # Integration tests (requires Docker services on ports 5433/6380)
 docker compose -f docker-compose.dev.yml up -d postgres redis
 uv run pytest tests/integration -v
@@ -81,14 +84,14 @@ docker compose -f docker-compose.dev.yml --profile full up -d    # full stack
 
 ### VS Code Dev Container
 
-项目支持通过 VS Code Dev Container 进行开发（配置在 `.devcontainer/`）。容器启动后 `post-create.sh` 自动完成 `uv sync`、`pnpm install`、DB 迁移和 `.env` 生成，环境开箱即用。
+The project supports development via VS Code Dev Container (config in `.devcontainer/`). On container start, `post-create.sh` auto-runs `uv sync`, `pnpm install`, DB migrations, and `.env` generation — ready to use out of the box.
 
-与本地开发的关键差异：
+Key differences from local development:
 
-- **数据库/Redis 已自动启动** — postgres 和 redis 作为 sibling 容器运行并有 health check，无需手动 `./scripts/dev.sh start`
-- **连接地址使用容器服务名** — `postgres:5432` / `redis:6379`，而非宿主机的 `localhost:5433` / `localhost:6380`
-- **`.venv` 和 `frontend/node_modules` 在 named volume 上** — 不在宿主机文件系统中，容器重建后 volume 会保留
-- **Python 解释器路径** — `/workspaces/Squant/.venv/bin/python`
+- **DB/Redis already running** — postgres and redis run as sibling containers with health checks, no need for `./scripts/dev.sh start`
+- **Connection addresses use container service names** — `postgres:5432` / `redis:6379`, not `localhost:5433` / `localhost:6380`
+- **`.venv` and `frontend/node_modules` on named volumes** — not on host filesystem, volumes persist across container rebuilds
+- **Python interpreter path** — `/workspaces/Squant/.venv/bin/python`
 
 ## Architecture
 
