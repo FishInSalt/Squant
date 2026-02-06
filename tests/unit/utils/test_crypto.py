@@ -10,6 +10,8 @@ from squant.utils.crypto import (
     CryptoManager,
     DecryptionError,
     EncryptionError,
+    decrypt_string,
+    encrypt_string,
     get_crypto_manager,
 )
 
@@ -427,3 +429,75 @@ class TestGetCryptoManager:
 
             # Should return the same instance due to caching
             assert manager1 is manager2
+
+
+class TestEncryptDecryptString:
+    """Tests for encrypt_string and decrypt_string utility functions."""
+
+    @pytest.fixture(autouse=True)
+    def _setup_crypto_manager(self):
+        """Set up crypto manager with a valid key for each test."""
+        mock_settings = type("Settings", (), {})()
+        mock_key = type("SecretStr", (), {"get_secret_value": lambda self: "a" * 32})()
+        mock_settings.encryption_key = mock_key
+
+        with patch("squant.utils.crypto.get_settings", return_value=mock_settings):
+            get_crypto_manager.cache_clear()
+            yield
+            get_crypto_manager.cache_clear()
+
+    def test_roundtrip(self) -> None:
+        """Test encrypt then decrypt recovers plaintext."""
+        plaintext = "my_secret_api_key_12345"
+        encrypted = encrypt_string(plaintext)
+        decrypted = decrypt_string(encrypted)
+        assert decrypted == plaintext
+
+    def test_roundtrip_unicode(self) -> None:
+        """Test roundtrip with unicode content."""
+        plaintext = "密码测试 🔑 пароль"
+        encrypted = encrypt_string(plaintext)
+        decrypted = decrypt_string(encrypted)
+        assert decrypted == plaintext
+
+    def test_empty_string_raises_encryption_error(self) -> None:
+        """Test encrypting empty string raises EncryptionError."""
+        with pytest.raises(EncryptionError, match="empty"):
+            encrypt_string("")
+
+    def test_output_is_base64(self) -> None:
+        """Test encrypted output is valid base64."""
+        encrypted = encrypt_string("test")
+        # Should be valid base64 - decoding should not raise
+        decoded = base64.b64decode(encrypted)
+        # Decoded should contain nonce (12 bytes) + ciphertext
+        assert len(decoded) > CryptoManager.NONCE_SIZE
+
+    def test_different_encryptions_produce_different_output(self) -> None:
+        """Test same plaintext encrypted twice produces different ciphertext."""
+        plaintext = "same_secret"
+        enc1 = encrypt_string(plaintext)
+        enc2 = encrypt_string(plaintext)
+        assert enc1 != enc2  # Different random nonces
+
+    def test_decrypt_invalid_base64(self) -> None:
+        """Test decrypt with invalid base64 raises error."""
+        with pytest.raises(Exception):  # binascii.Error or DecryptionError
+            decrypt_string("not-valid-base64!!!")
+
+    def test_decrypt_truncated_data(self) -> None:
+        """Test decrypt with truncated data raises error."""
+        # Only nonce, no ciphertext — too short
+        short_data = base64.b64encode(os.urandom(8)).decode("ascii")
+        with pytest.raises(Exception):
+            decrypt_string(short_data)
+
+    def test_decrypt_tampered_ciphertext(self) -> None:
+        """Test decrypt with tampered data raises DecryptionError."""
+        encrypted = encrypt_string("secret")
+        decoded = bytearray(base64.b64decode(encrypted))
+        # Flip a bit in the ciphertext portion
+        decoded[-1] ^= 0xFF
+        tampered = base64.b64encode(bytes(decoded)).decode("ascii")
+        with pytest.raises(DecryptionError):
+            decrypt_string(tampered)

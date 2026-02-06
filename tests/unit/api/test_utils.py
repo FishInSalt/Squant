@@ -73,88 +73,79 @@ class TestPaginatedData:
 
 
 class TestHandleExchangeError:
-    """Tests for handle_exchange_error function."""
+    """Tests for handle_exchange_error function.
+
+    Known exchange exceptions are re-raised directly for main.py exception handlers.
+    Only OrderNotFound, InvalidOrder, and unknown errors use HTTPException.
+    """
 
     def test_authentication_error(self) -> None:
-        """Test handling of ExchangeAuthenticationError."""
+        """Test ExchangeAuthenticationError is re-raised directly."""
         error = ExchangeAuthenticationError("Invalid API key")
 
-        with pytest.raises(HTTPException) as exc_info:
+        with pytest.raises(ExchangeAuthenticationError):
             handle_exchange_error(error)
-
-        assert exc_info.value.status_code == 401
-        assert exc_info.value.detail == "Invalid API key"
 
     def test_rate_limit_error(self) -> None:
-        """Test handling of ExchangeRateLimitError."""
+        """Test ExchangeRateLimitError is re-raised directly."""
         error = ExchangeRateLimitError("Rate limit exceeded", retry_after=60)
 
-        with pytest.raises(HTTPException) as exc_info:
+        with pytest.raises(ExchangeRateLimitError):
             handle_exchange_error(error)
-
-        assert exc_info.value.status_code == 429
-        assert exc_info.value.detail == "Rate limit exceeded"
-        assert exc_info.value.headers == {"Retry-After": "60"}
 
     def test_rate_limit_error_no_retry_after(self) -> None:
-        """Test handling of ExchangeRateLimitError without retry_after."""
+        """Test ExchangeRateLimitError without retry_after is re-raised."""
         error = ExchangeRateLimitError("Rate limit exceeded")
 
-        with pytest.raises(HTTPException) as exc_info:
+        with pytest.raises(ExchangeRateLimitError):
             handle_exchange_error(error)
 
-        assert exc_info.value.status_code == 429
-        assert exc_info.value.headers == {"Retry-After": "1"}
-
     def test_order_not_found_error(self) -> None:
-        """Test handling of OrderNotFoundError."""
+        """Test OrderNotFoundError raises HTTPException with uniform format."""
         error = OrderNotFoundError("Order not found: 12345")
 
         with pytest.raises(HTTPException) as exc_info:
             handle_exchange_error(error)
 
         assert exc_info.value.status_code == 404
-        assert exc_info.value.detail == "Order not found: 12345"
+        assert exc_info.value.detail["code"] == 404
+        assert exc_info.value.detail["message"] == "Order not found: 12345"
 
     def test_invalid_order_error(self) -> None:
-        """Test handling of InvalidOrderError."""
+        """Test InvalidOrderError raises HTTPException with uniform format."""
         error = InvalidOrderError("Invalid order amount")
 
         with pytest.raises(HTTPException) as exc_info:
             handle_exchange_error(error)
 
         assert exc_info.value.status_code == 400
-        assert exc_info.value.detail == "Invalid order amount"
+        assert exc_info.value.detail["code"] == 400
+        assert exc_info.value.detail["message"] == "Invalid order amount"
 
     def test_connection_error(self) -> None:
-        """Test handling of ExchangeConnectionError."""
+        """Test ExchangeConnectionError is re-raised directly."""
         error = ExchangeConnectionError("Connection timeout")
 
-        with pytest.raises(HTTPException) as exc_info:
+        with pytest.raises(ExchangeConnectionError):
             handle_exchange_error(error)
-
-        assert exc_info.value.status_code == 503
-        assert exc_info.value.detail == "Connection timeout"
 
     def test_api_error(self) -> None:
-        """Test handling of ExchangeAPIError."""
+        """Test ExchangeAPIError is re-raised directly."""
         error = ExchangeAPIError("API error occurred")
 
-        with pytest.raises(HTTPException) as exc_info:
+        with pytest.raises(ExchangeAPIError):
             handle_exchange_error(error)
 
-        assert exc_info.value.status_code == 502
-        assert exc_info.value.detail == "API error occurred"
-
     def test_unknown_error(self) -> None:
-        """Test handling of unknown exception."""
+        """Test unknown exception raises HTTPException with uniform format."""
         error = ValueError("Unknown error")
 
         with pytest.raises(HTTPException) as exc_info:
             handle_exchange_error(error)
 
         assert exc_info.value.status_code == 500
-        assert exc_info.value.detail == "Internal server error"
+        assert exc_info.value.detail["code"] == 500
+        assert exc_info.value.detail["message"] == "Internal server error"
 
 
 class TestPaginateParams:

@@ -18,6 +18,7 @@ from squant.infra.exchange.exceptions import (
     ExchangeAPIError,
     ExchangeAuthenticationError,
     ExchangeConnectionError,
+    ExchangeRateLimitError,
     InvalidOrderError,
     OrderNotFoundError,
 )
@@ -177,6 +178,11 @@ class CCXTRestAdapter(ExchangeAdapter):
                 message=f"Invalid symbol: {symbol}",
                 exchange=self._exchange_id,
             ) from e
+        except ccxt.RateLimitExceeded as e:
+            raise ExchangeRateLimitError(
+                message=f"Rate limit exceeded: {e}",
+                exchange=self._exchange_id,
+            ) from e
         except Exception as e:
             raise ExchangeAPIError(
                 message=f"Failed to fetch ticker for {symbol}: {e}",
@@ -209,6 +215,11 @@ class CCXTRestAdapter(ExchangeAdapter):
                             logger.warning(f"Failed to fetch ticker for {symbol}: {e}")
 
             return [self._transform_ticker(t) for t in tickers.values()]
+        except ccxt.RateLimitExceeded as e:
+            raise ExchangeRateLimitError(
+                message=f"Rate limit exceeded: {e}",
+                exchange=self._exchange_id,
+            ) from e
         except Exception as e:
             raise ExchangeAPIError(
                 message=f"Failed to fetch tickers: {e}",
@@ -261,6 +272,11 @@ class CCXTRestAdapter(ExchangeAdapter):
         except ccxt.BadSymbol as e:
             raise ExchangeAPIError(
                 message=f"Invalid symbol: {symbol}",
+                exchange=self._exchange_id,
+            ) from e
+        except ccxt.RateLimitExceeded as e:
+            raise ExchangeRateLimitError(
+                message=f"Rate limit exceeded: {e}",
                 exchange=self._exchange_id,
             ) from e
         except Exception as e:
@@ -319,6 +335,11 @@ class CCXTRestAdapter(ExchangeAdapter):
                 message=f"Authentication failed: {e}",
                 exchange=self._exchange_id,
             ) from e
+        except ccxt.RateLimitExceeded as e:
+            raise ExchangeRateLimitError(
+                message=f"Rate limit exceeded: {e}",
+                exchange=self._exchange_id,
+            ) from e
         except Exception as e:
             raise ExchangeAPIError(
                 message=f"Failed to fetch balance: {e}",
@@ -354,9 +375,20 @@ class CCXTRestAdapter(ExchangeAdapter):
             )
 
             return self._transform_order(order)
+        except ccxt.InsufficientFunds as e:
+            raise InvalidOrderError(
+                message=f"Insufficient funds: {e}",
+                exchange=self._exchange_id,
+                field="amount",
+            ) from e
         except ccxt.InvalidOrder as e:
             raise InvalidOrderError(
                 message=f"Invalid order: {e}",
+                exchange=self._exchange_id,
+            ) from e
+        except ccxt.RateLimitExceeded as e:
+            raise ExchangeRateLimitError(
+                message=f"Rate limit exceeded: {e}",
                 exchange=self._exchange_id,
             ) from e
         except ccxt.AuthenticationError as e:
@@ -397,6 +429,11 @@ class CCXTRestAdapter(ExchangeAdapter):
                 message=f"Order not found: {order_id}",
                 exchange=self._exchange_id,
             ) from e
+        except ccxt.RateLimitExceeded as e:
+            raise ExchangeRateLimitError(
+                message=f"Rate limit exceeded: {e}",
+                exchange=self._exchange_id,
+            ) from e
         except ccxt.AuthenticationError as e:
             raise ExchangeAuthenticationError(
                 message=f"Authentication failed: {e}",
@@ -430,6 +467,11 @@ class CCXTRestAdapter(ExchangeAdapter):
                 message=f"Order not found: {order_id}",
                 exchange=self._exchange_id,
             ) from e
+        except ccxt.RateLimitExceeded as e:
+            raise ExchangeRateLimitError(
+                message=f"Rate limit exceeded: {e}",
+                exchange=self._exchange_id,
+            ) from e
         except ccxt.AuthenticationError as e:
             raise ExchangeAuthenticationError(
                 message=f"Authentication failed: {e}",
@@ -458,6 +500,11 @@ class CCXTRestAdapter(ExchangeAdapter):
         try:
             orders = await self._exchange.fetch_open_orders(symbol)
             return [self._transform_order(order) for order in orders]
+        except ccxt.RateLimitExceeded as e:
+            raise ExchangeRateLimitError(
+                message=f"Rate limit exceeded: {e}",
+                exchange=self._exchange_id,
+            ) from e
         except ccxt.AuthenticationError as e:
             raise ExchangeAuthenticationError(
                 message=f"Authentication failed: {e}",
@@ -504,6 +551,8 @@ class CCXTRestAdapter(ExchangeAdapter):
     def _transform_order(self, order: dict[str, Any]) -> OrderResponse:
         """Transform CCXT order to internal OrderResponse type."""
         fee_info = order.get("fee") or {}
+        amount = Decimal(str(order.get("amount", 0)))
+        filled = Decimal(str(order.get("filled", 0)))
 
         return OrderResponse(
             order_id=str(order.get("id", "")),
@@ -511,10 +560,10 @@ class CCXTRestAdapter(ExchangeAdapter):
             symbol=order.get("symbol", ""),
             side=OrderSide(order.get("side", "buy")),
             type=OrderType(order.get("type", "market")),
-            status=self._map_order_status(order.get("status", "")),
+            status=self._map_order_status(order.get("status", ""), filled, amount),
             price=Decimal(str(order["price"])) if order.get("price") is not None else None,
-            amount=Decimal(str(order.get("amount", 0))),
-            filled=Decimal(str(order.get("filled", 0))),
+            amount=amount,
+            filled=filled,
             avg_price=Decimal(str(order["average"])) if order.get("average") is not None else None,
             fee=Decimal(str(fee_info["cost"])) if fee_info.get("cost") is not None else None,
             fee_currency=fee_info.get("currency"),
@@ -522,8 +571,18 @@ class CCXTRestAdapter(ExchangeAdapter):
             updated_at=self._parse_timestamp(order.get("lastTradeTimestamp")),
         )
 
-    def _map_order_status(self, status: str) -> OrderStatus:
-        """Map CCXT order status to internal OrderStatus enum."""
+    def _map_order_status(
+        self, status: str, filled: Decimal = Decimal("0"), amount: Decimal = Decimal("0")
+    ) -> OrderStatus:
+        """Map CCXT order status to internal OrderStatus enum.
+
+        CCXT uses "open" for both new and partially filled orders.
+        We distinguish them by checking if filled > 0.
+        """
+        lower_status = status.lower()
+        # Detect partially filled orders: CCXT reports "open" with filled > 0
+        if lower_status == "open" and filled > 0 and amount > 0 and filled < amount:
+            return OrderStatus.PARTIAL
         status_map = {
             "open": OrderStatus.SUBMITTED,
             "closed": OrderStatus.FILLED,
@@ -531,7 +590,7 @@ class CCXTRestAdapter(ExchangeAdapter):
             "expired": OrderStatus.CANCELLED,
             "rejected": OrderStatus.REJECTED,
         }
-        return status_map.get(status.lower(), OrderStatus.SUBMITTED)
+        return status_map.get(lower_status, OrderStatus.SUBMITTED)
 
     def _parse_timestamp(self, ts: int | None) -> datetime:
         """Parse CCXT timestamp (milliseconds) to datetime."""

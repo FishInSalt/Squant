@@ -254,9 +254,10 @@ class RiskState(BaseModel):
         self.total_pnl += pnl  # Track cumulative PnL (RSK-004)
 
         # Track consecutive losses
+        # Zero PnL (break-even) should not affect the counter
         if pnl < 0:
             self.consecutive_losses += 1
-        else:
+        elif pnl > 0:
             self.consecutive_losses = 0
 
     def trigger_circuit_breaker(self, cooldown_minutes: int) -> None:

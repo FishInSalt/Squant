@@ -301,19 +301,17 @@ async def okx_exchange(skip_if_no_exchange_credentials):
         - OKX_API_SECRET
         - OKX_PASSPHRASE
     """
-    from squant.infra.exchange.ccxt.rest_adapter import CCXTRestAdapter
+    from squant.infra.exchange.ccxt import CCXTRestAdapter, ExchangeCredentials
 
-    adapter = CCXTRestAdapter(
-        exchange_id="okx",
-        config={
-            "apiKey": os.getenv("OKX_API_KEY"),
-            "secret": os.getenv("OKX_API_SECRET"),
-            "password": os.getenv("OKX_PASSPHRASE"),
-            "options": {
-                "defaultType": "spot",
-            },
-        },
+    credentials = ExchangeCredentials(
+        api_key=os.getenv("OKX_API_KEY", ""),
+        api_secret=os.getenv("OKX_API_SECRET", ""),
+        passphrase=os.getenv("OKX_PASSPHRASE"),
+        sandbox=True,
     )
+
+    adapter = CCXTRestAdapter(exchange_id="okx", credentials=credentials)
+    await adapter.connect()
 
     yield adapter
 
@@ -455,7 +453,7 @@ async def websocket_manager(redis):
     """创建WebSocket管理器实例"""
     from squant.websocket.manager import StreamManager
 
-    manager = StreamManager(redis_client=redis)
+    manager = StreamManager()
 
     yield manager
 

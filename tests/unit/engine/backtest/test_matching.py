@@ -446,3 +446,176 @@ class TestOrderValidation:
         is_valid, error = engine.validate_order(order, Decimal("0"))  # No cash
         assert is_valid is True
         assert error == ""
+
+
+class TestLookAheadBiasPrevention:
+    """Tests explicitly verifying no look-ahead bias in order execution."""
+
+    def test_market_order_fills_at_open_not_close(self, engine: MatchingEngine) -> None:
+        """Market orders must fill at open price, never at close (prevents look-ahead bias)."""
+        bar = Bar(
+            time=datetime(2024, 1, 1, tzinfo=UTC),
+            symbol="BTC/USDT",
+            open=Decimal("42000"),
+            high=Decimal("48000"),
+            low=Decimal("41000"),
+            close=Decimal("47000"),  # Significantly different from open
+            volume=Decimal("1000"),
+        )
+        order = SimulatedOrder.create(
+            symbol="BTC/USDT",
+            side=OrderSide.BUY,
+            order_type=OrderType.MARKET,
+            amount=Decimal("1"),
+        )
+
+        fills = engine.process_bar(bar, [order])
+
+        assert len(fills) == 1
+        assert fills[0].price == Decimal("42000")  # Must be open
+        assert fills[0].price != Decimal("47000")  # Must NOT be close
+
+    def test_market_sell_fills_at_open_not_close(self, engine: MatchingEngine) -> None:
+        """Market sell orders must also fill at open, not close."""
+        bar = Bar(
+            time=datetime(2024, 1, 1, tzinfo=UTC),
+            symbol="BTC/USDT",
+            open=Decimal("42000"),
+            high=Decimal("48000"),
+            low=Decimal("41000"),
+            close=Decimal("41500"),  # Large drop from open, within valid range
+            volume=Decimal("1000"),
+        )
+        order = SimulatedOrder.create(
+            symbol="BTC/USDT",
+            side=OrderSide.SELL,
+            order_type=OrderType.MARKET,
+            amount=Decimal("1"),
+        )
+
+        fills = engine.process_bar(bar, [order])
+
+        assert fills[0].price == Decimal("42000")  # Must be open, not close
+
+
+class TestLimitOrderBoundaries:
+    """Tests for exact boundary conditions in limit order matching."""
+
+    def test_buy_limit_exact_low_match(self, engine: MatchingEngine) -> None:
+        """Buy limit fills when bar.low exactly equals limit price."""
+        bar = Bar(
+            time=datetime(2024, 1, 1, tzinfo=UTC),
+            symbol="BTC/USDT",
+            open=Decimal("42000"),
+            high=Decimal("43000"),
+            low=Decimal("41000"),
+            close=Decimal("42500"),
+            volume=Decimal("1000"),
+        )
+        order = SimulatedOrder.create(
+            symbol="BTC/USDT",
+            side=OrderSide.BUY,
+            order_type=OrderType.LIMIT,
+            amount=Decimal("1"),
+            price=Decimal("41000"),  # Exactly bar.low
+        )
+
+        fills = engine.process_bar(bar, [order])
+
+        assert len(fills) == 1
+        assert fills[0].price == Decimal("41000")
+
+    def test_sell_limit_exact_high_match(self, engine: MatchingEngine) -> None:
+        """Sell limit fills when bar.high exactly equals limit price."""
+        bar = Bar(
+            time=datetime(2024, 1, 1, tzinfo=UTC),
+            symbol="BTC/USDT",
+            open=Decimal("42000"),
+            high=Decimal("43000"),
+            low=Decimal("41000"),
+            close=Decimal("42500"),
+            volume=Decimal("1000"),
+        )
+        order = SimulatedOrder.create(
+            symbol="BTC/USDT",
+            side=OrderSide.SELL,
+            order_type=OrderType.LIMIT,
+            amount=Decimal("1"),
+            price=Decimal("43000"),  # Exactly bar.high
+        )
+
+        fills = engine.process_bar(bar, [order])
+
+        assert len(fills) == 1
+        assert fills[0].price == Decimal("43000")
+
+    def test_buy_limit_one_tick_below_low_no_fill(self, engine: MatchingEngine) -> None:
+        """Buy limit does NOT fill when price is just below bar.low."""
+        bar = Bar(
+            time=datetime(2024, 1, 1, tzinfo=UTC),
+            symbol="BTC/USDT",
+            open=Decimal("42000"),
+            high=Decimal("43000"),
+            low=Decimal("41000"),
+            close=Decimal("42500"),
+            volume=Decimal("1000"),
+        )
+        order = SimulatedOrder.create(
+            symbol="BTC/USDT",
+            side=OrderSide.BUY,
+            order_type=OrderType.LIMIT,
+            amount=Decimal("1"),
+            price=Decimal("40999.99"),  # Just below bar.low
+        )
+
+        fills = engine.process_bar(bar, [order])
+
+        assert len(fills) == 0
+
+    def test_sell_limit_one_tick_above_high_no_fill(self, engine: MatchingEngine) -> None:
+        """Sell limit does NOT fill when price is just above bar.high."""
+        bar = Bar(
+            time=datetime(2024, 1, 1, tzinfo=UTC),
+            symbol="BTC/USDT",
+            open=Decimal("42000"),
+            high=Decimal("43000"),
+            low=Decimal("41000"),
+            close=Decimal("42500"),
+            volume=Decimal("1000"),
+        )
+        order = SimulatedOrder.create(
+            symbol="BTC/USDT",
+            side=OrderSide.SELL,
+            order_type=OrderType.LIMIT,
+            amount=Decimal("1"),
+            price=Decimal("43000.01"),  # Just above bar.high
+        )
+
+        fills = engine.process_bar(bar, [order])
+
+        assert len(fills) == 0
+
+    def test_buy_limit_at_open_price(self, engine: MatchingEngine) -> None:
+        """Buy limit at open price gets filled at open."""
+        bar = Bar(
+            time=datetime(2024, 1, 1, tzinfo=UTC),
+            symbol="BTC/USDT",
+            open=Decimal("42000"),
+            high=Decimal("43000"),
+            low=Decimal("41000"),
+            close=Decimal("42500"),
+            volume=Decimal("1000"),
+        )
+        order = SimulatedOrder.create(
+            symbol="BTC/USDT",
+            side=OrderSide.BUY,
+            order_type=OrderType.LIMIT,
+            amount=Decimal("1"),
+            price=Decimal("42000"),  # Exactly open
+        )
+
+        fills = engine.process_bar(bar, [order])
+
+        assert len(fills) == 1
+        # min(42000, 42000) = 42000
+        assert fills[0].price == Decimal("42000")

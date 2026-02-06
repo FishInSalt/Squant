@@ -550,9 +550,7 @@ class TestCircuitBreakerBlocksNewSessions:
             # No CircuitBreakerActiveError means it passed the check
 
     @pytest.mark.asyncio
-    async def test_paper_trading_without_redis_skips_check(
-        self, mock_session: MagicMock
-    ) -> None:
+    async def test_paper_trading_without_redis_skips_check(self, mock_session: MagicMock) -> None:
         """Test paper trading without redis parameter skips circuit breaker check."""
         from decimal import Decimal
         from unittest.mock import patch

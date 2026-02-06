@@ -304,20 +304,32 @@ class WebSocketGateway:
         try:
             if channel_type == "ticker" and len(parts) >= 2:
                 symbol = parts[1]
+                if not symbol:
+                    logger.warning(f"Empty symbol in channel: {channel}")
+                    return
                 await self.stream_manager.subscribe_ticker(symbol)
 
             elif channel_type == "candle" and len(parts) >= 3:
                 symbol = parts[1]
                 timeframe = parts[2]
+                if not symbol or not timeframe:
+                    logger.warning(f"Empty symbol or timeframe in channel: {channel}")
+                    return
                 logger.info(f"Subscribing to candle: symbol={symbol}, timeframe={timeframe}")
                 await self.stream_manager.subscribe_candles(symbol, timeframe)
 
             elif channel_type == "trade" and len(parts) >= 2:
                 symbol = parts[1]
+                if not symbol:
+                    logger.warning(f"Empty symbol in channel: {channel}")
+                    return
                 await self.stream_manager.subscribe_trades(symbol)
 
             elif channel_type == "orderbook" and len(parts) >= 2:
                 symbol = parts[1]
+                if not symbol:
+                    logger.warning(f"Empty symbol in channel: {channel}")
+                    return
                 await self.stream_manager.subscribe_orderbook(symbol)
 
             elif channel_type == "orders":
@@ -325,6 +337,9 @@ class WebSocketGateway:
 
             elif channel_type == "account":
                 await self.stream_manager.subscribe_account()
+
+            else:
+                logger.warning(f"Unknown or malformed channel: {channel}")
 
         except Exception as e:
             logger.warning(f"Failed to subscribe OKX stream for {channel}: {e}")

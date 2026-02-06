@@ -319,6 +319,10 @@ class TestErrorHandling:
 
         assert response.status_code == 500
         # Should not expose internal error details
-        assert response.json()["detail"] == "Internal server error"
+        detail = response.json()["detail"]
+        if isinstance(detail, dict):
+            assert detail["message"] == "Internal server error"
+        else:
+            assert detail == "Internal server error"
         assert "secret123" not in response.text
         assert "Database" not in response.text

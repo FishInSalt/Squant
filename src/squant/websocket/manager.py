@@ -295,31 +295,42 @@ class StreamManager:
         )
 
         # Resubscribe to all previous channels on new exchange
+        failed_subs: list[str] = []
+
         for symbol in ticker_subs:
             try:
                 await self.subscribe_ticker(symbol)
             except Exception as e:
-                logger.warning(f"Failed to resubscribe ticker {symbol}: {e}")
+                logger.error(f"Failed to resubscribe ticker {symbol}: {e}")
+                failed_subs.append(f"ticker:{symbol}")
 
         for symbol, timeframe in candle_subs:
             try:
                 await self.subscribe_candles(symbol, timeframe)
             except Exception as e:
-                logger.warning(f"Failed to resubscribe candle {symbol} {timeframe}: {e}")
+                logger.error(f"Failed to resubscribe candle {symbol} {timeframe}: {e}")
+                failed_subs.append(f"candle:{symbol}:{timeframe}")
 
         for symbol in trade_subs:
             try:
                 await self.subscribe_trades(symbol)
             except Exception as e:
-                logger.warning(f"Failed to resubscribe trades {symbol}: {e}")
+                logger.error(f"Failed to resubscribe trades {symbol}: {e}")
+                failed_subs.append(f"trade:{symbol}")
 
         for symbol in orderbook_subs:
             try:
                 await self.subscribe_orderbook(symbol)
             except Exception as e:
-                logger.warning(f"Failed to resubscribe orderbook {symbol}: {e}")
+                logger.error(f"Failed to resubscribe orderbook {symbol}: {e}")
+                failed_subs.append(f"orderbook:{symbol}")
 
-        logger.info(f"Successfully switched to {exchange_id}")
+        if failed_subs:
+            logger.error(
+                f"Exchange switch to {exchange_id}: {len(failed_subs)} subscriptions failed: "
+                f"{', '.join(failed_subs)}"
+            )
+        logger.info(f"Switched to {exchange_id} ({len(failed_subs)} failures)")
 
         # Notify clients that exchange switch is complete
         await self._publish_exchange_switching(current_exchange, exchange_id, "completed")
@@ -1124,19 +1135,28 @@ class StreamManager:
                         logger.error(
                             "Stream manager unhealthy for too long, attempting recovery..."
                         )
-                        await self._attempt_recovery()
-                        consecutive_unhealthy = 0
+                        recovered = await self._attempt_recovery()
+                        if recovered:
+                            consecutive_unhealthy = 0
+                        else:
+                            # Keep counting so next check triggers another attempt immediately
+                            logger.warning(
+                                "Recovery failed, will retry on next health check"
+                            )
 
             except asyncio.CancelledError:
                 break
             except Exception as e:
                 logger.exception(f"Error in health check loop: {e}")
 
-    async def _attempt_recovery(self) -> None:
+    async def _attempt_recovery(self) -> bool:
         """Attempt to recover from an unhealthy state.
 
         For CCXT provider mode, triggers a reconnection attempt.
         For native OKX mode, attempts to reconnect the clients.
+
+        Returns:
+            True if recovery was successful, False otherwise.
         """
         if self._settings.use_ccxt_provider:
             if self._ccxt_provider and hasattr(self._ccxt_provider, "reconnect"):
@@ -1144,8 +1164,11 @@ class StreamManager:
                 success = await self._ccxt_provider.reconnect()
                 if success:
                     logger.info("CCXT provider reconnection successful")
+                    return True
                 else:
                     logger.error("CCXT provider reconnection failed")
+                    return False
+            return False
         else:
             # Native OKX mode - try to reconnect clients
             logger.info("Attempting to reconnect native OKX clients...")
@@ -1155,8 +1178,10 @@ class StreamManager:
                 if self._business_client and not self._business_client.is_connected:
                     await self._business_client.connect()
                 logger.info("Native OKX clients reconnection attempted")
+                return True
             except Exception as e:
                 logger.exception(f"Failed to reconnect native OKX clients: {e}")
+                return False
 
     def _to_okx_symbol(self, symbol: str) -> str:
         """Convert standard symbol to OKX format.

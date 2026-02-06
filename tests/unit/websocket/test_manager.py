@@ -670,3 +670,129 @@ class TestStreamManagerRetryLoop:
             manager._retry_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await manager._retry_task
+
+
+class TestHealthCheckRecovery:
+    """Tests for health check recovery logic."""
+
+    @pytest.mark.asyncio
+    async def test_attempt_recovery_ccxt_success(self, mock_settings):
+        """Test successful CCXT provider recovery returns True."""
+        with patch("squant.websocket.manager.get_settings", return_value=mock_settings):
+            manager = StreamManager()
+            manager._ccxt_provider = MagicMock()
+            manager._ccxt_provider.reconnect = AsyncMock(return_value=True)
+
+            result = await manager._attempt_recovery()
+
+            assert result is True
+            manager._ccxt_provider.reconnect.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_attempt_recovery_ccxt_failure(self, mock_settings):
+        """Test failed CCXT provider recovery returns False."""
+        with patch("squant.websocket.manager.get_settings", return_value=mock_settings):
+            manager = StreamManager()
+            manager._ccxt_provider = MagicMock()
+            manager._ccxt_provider.reconnect = AsyncMock(return_value=False)
+
+            result = await manager._attempt_recovery()
+
+            assert result is False
+
+    @pytest.mark.asyncio
+    async def test_attempt_recovery_no_provider(self, mock_settings):
+        """Test recovery with no CCXT provider returns False."""
+        with patch("squant.websocket.manager.get_settings", return_value=mock_settings):
+            manager = StreamManager()
+            manager._ccxt_provider = None
+
+            result = await manager._attempt_recovery()
+
+            assert result is False
+
+    @pytest.mark.asyncio
+    async def test_attempt_recovery_native_okx_success(self, mock_settings):
+        """Test successful native OKX recovery returns True."""
+        mock_settings.use_ccxt_provider = False
+        with patch("squant.websocket.manager.get_settings", return_value=mock_settings):
+            manager = StreamManager()
+            manager._public_client = MagicMock()
+            manager._public_client.is_connected = False
+            manager._public_client.connect = AsyncMock()
+            manager._business_client = None
+
+            result = await manager._attempt_recovery()
+
+            assert result is True
+            manager._public_client.connect.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_attempt_recovery_native_okx_failure(self, mock_settings):
+        """Test failed native OKX recovery returns False."""
+        mock_settings.use_ccxt_provider = False
+        with patch("squant.websocket.manager.get_settings", return_value=mock_settings):
+            manager = StreamManager()
+            manager._public_client = MagicMock()
+            manager._public_client.is_connected = False
+            manager._public_client.connect = AsyncMock(
+                side_effect=Exception("Connection refused")
+            )
+            manager._business_client = None
+
+            result = await manager._attempt_recovery()
+
+            assert result is False
+
+
+class TestExchangeSwitchSubscriptionRecovery:
+    """Tests for exchange switch subscription state handling."""
+
+    @pytest.mark.asyncio
+    async def test_switch_exchange_resubscription_failure_logged(self, mock_settings):
+        """Test that failed resubscriptions during switch are logged, not lost silently."""
+        with patch("squant.websocket.manager.get_settings", return_value=mock_settings):
+            manager = StreamManager()
+            manager._running = True
+
+            # Set up initial provider
+            old_provider = MagicMock()
+            old_provider.exchange_id = "okx"
+            old_provider.close = AsyncMock()
+            manager._ccxt_provider = old_provider
+
+            # Pre-populate subscriptions
+            manager._ticker_subscriptions.add("BTC/USDT")
+            manager._ticker_subscriptions.add("ETH/USDT")
+
+            # Mock new provider creation
+            new_provider = MagicMock()
+            new_provider.add_handler = MagicMock()
+            new_provider.connect = AsyncMock()
+
+            with (
+                patch(
+                    "squant.websocket.manager.CCXTStreamProvider",
+                    return_value=new_provider,
+                ),
+                patch.object(manager, "_publish_exchange_switching", new_callable=AsyncMock),
+                patch.object(manager, "_get_exchange_credentials", return_value=None),
+            ):
+                # Make subscribe_ticker fail for one symbol
+                call_count = 0
+
+                async def failing_subscribe(symbol):
+                    nonlocal call_count
+                    call_count += 1
+                    if symbol == "ETH/USDT":
+                        raise Exception("Symbol not found on new exchange")
+                    manager._ticker_subscriptions.add(symbol)
+
+                manager.subscribe_ticker = failing_subscribe
+
+                await manager.switch_exchange("binance")
+
+                # BTC/USDT should be resubscribed, ETH/USDT should have failed
+                assert "BTC/USDT" in manager._ticker_subscriptions
+                # ETH/USDT was NOT added back (subscription lost)
+                assert "ETH/USDT" not in manager._ticker_subscriptions

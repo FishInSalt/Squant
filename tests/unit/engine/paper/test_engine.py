@@ -429,3 +429,224 @@ class TestHealthCheck:
 
         await asyncio.sleep(0.01)
         assert engine.is_healthy(timeout_seconds=0) is False
+
+
+class FailingOnInitStrategy(Strategy):
+    """Strategy that raises in on_init."""
+
+    def on_init(self) -> None:
+        raise ValueError("Strategy init failed")
+
+    def on_bar(self, bar: Bar) -> None:
+        pass
+
+    def on_stop(self) -> None:
+        pass
+
+
+class FailingOnBarStrategy(Strategy):
+    """Strategy that raises in on_bar."""
+
+    def on_init(self) -> None:
+        pass
+
+    def on_bar(self, bar: Bar) -> None:
+        raise RuntimeError("Strategy on_bar crashed")
+
+    def on_stop(self) -> None:
+        pass
+
+
+class FailingOnStopStrategy(Strategy):
+    """Strategy that raises in on_stop."""
+
+    def on_init(self) -> None:
+        pass
+
+    def on_bar(self, bar: Bar) -> None:
+        pass
+
+    def on_stop(self) -> None:
+        raise RuntimeError("Strategy on_stop crashed")
+
+
+class TestStrategyExceptionHandling:
+    """Tests for strategy exception handling during lifecycle."""
+
+    @pytest.fixture
+    def closed_candle(self):
+        return WSCandle(
+            symbol="BTC/USDT",
+            timeframe="1m",
+            timestamp=datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC),
+            open=Decimal("45000"),
+            high=Decimal("46000"),
+            low=Decimal("44000"),
+            close=Decimal("45500"),
+            volume=Decimal("100"),
+            is_closed=True,
+        )
+
+    @pytest.mark.asyncio
+    async def test_start_strategy_on_init_throws(self, run_id):
+        """Strategy on_init() raising should stop engine and propagate."""
+        engine = PaperTradingEngine(
+            run_id=run_id,
+            strategy=FailingOnInitStrategy(),
+            symbol="BTC/USDT",
+            timeframe="1m",
+            initial_capital=Decimal("10000"),
+        )
+        with pytest.raises(ValueError, match="Strategy init failed"):
+            await engine.start()
+
+        assert engine.is_running is False
+        assert "Strategy initialization failed" in engine.error_message
+
+    @pytest.mark.asyncio
+    async def test_process_candle_strategy_on_bar_throws(self, run_id, closed_candle):
+        """Strategy on_bar() raising should stop engine and propagate."""
+        engine = PaperTradingEngine(
+            run_id=run_id,
+            strategy=FailingOnBarStrategy(),
+            symbol="BTC/USDT",
+            timeframe="1m",
+            initial_capital=Decimal("10000"),
+        )
+        await engine.start()
+        assert engine.is_running is True
+
+        with pytest.raises(RuntimeError, match="Strategy on_bar crashed"):
+            await engine.process_candle(closed_candle)
+
+        assert engine.is_running is False
+        assert "Error processing candle" in engine.error_message
+
+    @pytest.mark.asyncio
+    async def test_stop_strategy_on_stop_throws(self, run_id):
+        """Strategy on_stop() raising should still mark engine as stopped."""
+        engine = PaperTradingEngine(
+            run_id=run_id,
+            strategy=FailingOnStopStrategy(),
+            symbol="BTC/USDT",
+            timeframe="1m",
+            initial_capital=Decimal("10000"),
+        )
+        await engine.start()
+        await engine.stop()
+
+        assert engine.is_running is False
+        assert engine.stopped_at is not None
+        assert "Strategy stop failed" in engine.error_message
+
+    @pytest.mark.asyncio
+    async def test_stop_with_prior_error_preserves_original_error(self, run_id):
+        """Stopping with error and failing on_stop preserves original error."""
+        engine = PaperTradingEngine(
+            run_id=run_id,
+            strategy=FailingOnStopStrategy(),
+            symbol="BTC/USDT",
+            timeframe="1m",
+            initial_capital=Decimal("10000"),
+        )
+        await engine.start()
+        await engine.stop(error="Original error")
+
+        # The original error should be preserved, not overwritten by on_stop failure
+        assert engine.error_message == "Original error"
+
+
+class TestResourceLimitExceeded:
+    """Tests for resource limit enforcement during strategy execution."""
+
+    @pytest.fixture
+    def closed_candle(self):
+        return WSCandle(
+            symbol="BTC/USDT",
+            timeframe="1m",
+            timestamp=datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC),
+            open=Decimal("45000"),
+            high=Decimal("46000"),
+            low=Decimal("44000"),
+            close=Decimal("45500"),
+            volume=Decimal("100"),
+            is_closed=True,
+        )
+
+    @pytest.mark.asyncio
+    async def test_resource_limit_exceeded_stops_engine(self, run_id, strategy, closed_candle):
+        """ResourceLimitExceededError during on_bar should stop engine."""
+        from unittest.mock import patch
+
+        from squant.engine.resource_limits import ResourceLimitExceededError
+
+        engine = PaperTradingEngine(
+            run_id=run_id,
+            strategy=strategy,
+            symbol="BTC/USDT",
+            timeframe="1m",
+            initial_capital=Decimal("10000"),
+            params={"threshold": Decimal("50000")},
+        )
+        await engine.start()
+
+        # Mock the resource_limiter to raise ResourceLimitExceededError
+        with patch(
+            "squant.engine.paper.engine.resource_limiter"
+        ) as mock_limiter:
+            mock_ctx = mock_limiter.return_value.__enter__
+            mock_ctx.side_effect = ResourceLimitExceededError("CPU time exceeded")
+
+            with pytest.raises(ResourceLimitExceededError):
+                await engine.process_candle(closed_candle)
+
+        assert engine.is_running is False
+        assert "resource limit exceeded" in engine.error_message.lower()
+
+
+class TestEdgeCaseCandles:
+    """Tests for edge case candle data."""
+
+    @pytest.mark.asyncio
+    async def test_process_candle_with_zero_volume(self, engine):
+        """Engine should handle zero volume candles."""
+        await engine.start()
+
+        candle = WSCandle(
+            symbol="BTC/USDT",
+            timeframe="1m",
+            timestamp=datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC),
+            open=Decimal("45000"),
+            high=Decimal("46000"),
+            low=Decimal("44000"),
+            close=Decimal("45500"),
+            volume=Decimal("0"),
+            is_closed=True,
+        )
+        await engine.process_candle(candle)
+
+        assert engine.bar_count == 1
+
+    @pytest.mark.asyncio
+    async def test_candle_to_bar_conversion(self, engine):
+        """Verify WSCandle to Bar field mapping."""
+        candle = WSCandle(
+            symbol="BTC/USDT",
+            timeframe="1m",
+            timestamp=datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC),
+            open=Decimal("45000.12"),
+            high=Decimal("46000.34"),
+            low=Decimal("44000.56"),
+            close=Decimal("45500.78"),
+            volume=Decimal("100.99"),
+            is_closed=True,
+        )
+        bar = engine._candle_to_bar(candle)
+
+        assert bar.time == candle.timestamp
+        assert bar.symbol == candle.symbol
+        assert bar.open == Decimal("45000.12")
+        assert bar.high == Decimal("46000.34")
+        assert bar.low == Decimal("44000.56")
+        assert bar.close == Decimal("45500.78")
+        assert bar.volume == Decimal("100.99")

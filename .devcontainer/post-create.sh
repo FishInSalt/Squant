@@ -48,7 +48,7 @@ REDIS_URL=redis://redis:6379/0
 
 # Security (development only - change in production!)
 SECRET_KEY=dev-secret-key-minimum-32-characters-long
-ENCRYPTION_KEY=dev-encryption-key-32-chars-long!!
+ENCRYPTION_KEY=dev-encrypt-key-32chars-ok123456
 
 # Development settings
 DEBUG=true

@@ -280,6 +280,127 @@ class TestTradeStatistics:
         assert metrics.avg_trade_return == Decimal("250")
 
 
+class TestMetricsEdgeCases:
+    """Tests for edge cases in metrics calculation."""
+
+    def test_equity_curve_with_no_trades(self) -> None:
+        """Test metrics with equity curve but zero trades (no division by zero)."""
+        equities = [Decimal("10000"), Decimal("11000"), Decimal("12000")]
+        curve = create_equity_curve(equities)
+
+        metrics = calculate_metrics(curve, [], Decimal("10000"))
+
+        assert metrics.total_trades == 0
+        assert metrics.avg_trade_return == Decimal("0")
+        assert metrics.win_rate == Decimal("0")
+        assert metrics.profit_factor == Decimal("0")
+
+    def test_zero_initial_capital(self) -> None:
+        """Test metrics with zero initial capital doesn't crash."""
+        equities = [Decimal("0"), Decimal("100")]
+        curve = create_equity_curve(equities)
+
+        metrics = calculate_metrics(curve, [], Decimal("0"))
+
+        assert metrics.total_return == Decimal("100")
+        assert metrics.total_return_pct == Decimal("0")  # Skips division by zero
+
+    def test_single_equity_snapshot(self) -> None:
+        """Test metrics with only one equity snapshot."""
+        equities = [Decimal("10000")]
+        curve = create_equity_curve(equities)
+
+        metrics = calculate_metrics(curve, [], Decimal("10000"))
+
+        assert metrics.total_return == Decimal("0")
+        assert metrics.sharpe_ratio == Decimal("0")
+        assert metrics.sortino_ratio == Decimal("0")
+
+    def test_max_drawdown_single_snapshot(self) -> None:
+        """Test max drawdown with only one equity snapshot returns zero."""
+        equities = [Decimal("10000")]
+        curve = create_equity_curve(equities)
+
+        max_dd, max_dd_pct = _calculate_max_drawdown(curve)
+
+        assert max_dd == Decimal("0")
+        assert max_dd_pct == Decimal("0")
+
+    def test_sharpe_ratio_zero_volatility(self) -> None:
+        """Test Sharpe ratio with constant equity (zero std dev) returns zero."""
+        equities = [Decimal("10000")] * 10
+        curve = create_equity_curve(equities, interval_hours=24)
+
+        metrics = calculate_metrics(curve, [], Decimal("10000"))
+
+        assert metrics.sharpe_ratio == Decimal("0")
+
+    def test_sortino_ratio_no_negative_returns(self) -> None:
+        """Test Sortino ratio with only positive returns caps at 99.99."""
+        equities = [Decimal("10000") + Decimal(str(i * 100)) for i in range(10)]
+        curve = create_equity_curve(equities, interval_hours=24)
+
+        metrics = calculate_metrics(curve, [], Decimal("10000"))
+
+        assert metrics.sortino_ratio == Decimal("99.99")
+
+    def test_all_losing_trades(self) -> None:
+        """Test metrics with only losing trades."""
+        trades = [
+            TradeRecord(
+                symbol="BTC/USDT",
+                side=OrderSide.BUY,
+                entry_time=datetime(2024, 1, 1, tzinfo=UTC),
+                entry_price=Decimal("42000"),
+                exit_time=datetime(2024, 1, 2, tzinfo=UTC),
+                exit_price=Decimal("41000"),
+                amount=Decimal("1"),
+                pnl=Decimal("-1000"),
+            ),
+            TradeRecord(
+                symbol="BTC/USDT",
+                side=OrderSide.BUY,
+                entry_time=datetime(2024, 1, 3, tzinfo=UTC),
+                entry_price=Decimal("41000"),
+                exit_time=datetime(2024, 1, 4, tzinfo=UTC),
+                exit_price=Decimal("40000"),
+                amount=Decimal("1"),
+                pnl=Decimal("-1000"),
+            ),
+        ]
+        equities = [Decimal("10000"), Decimal("9000"), Decimal("8000")]
+        curve = create_equity_curve(equities)
+
+        metrics = calculate_metrics(curve, trades, Decimal("10000"))
+
+        assert metrics.win_rate == Decimal("0")
+        assert metrics.winning_trades == 0
+        assert metrics.losing_trades == 2
+        assert metrics.profit_factor == Decimal("0")  # No gross profit
+
+    def test_all_winning_trades_profit_factor_capped(self) -> None:
+        """Test profit factor caps at 99.99 when there are no losses."""
+        trades = [
+            TradeRecord(
+                symbol="BTC/USDT",
+                side=OrderSide.BUY,
+                entry_time=datetime(2024, 1, 1, tzinfo=UTC),
+                entry_price=Decimal("42000"),
+                exit_time=datetime(2024, 1, 2, tzinfo=UTC),
+                exit_price=Decimal("43000"),
+                amount=Decimal("1"),
+                pnl=Decimal("1000"),
+            ),
+        ]
+        equities = [Decimal("10000"), Decimal("11000")]
+        curve = create_equity_curve(equities)
+
+        metrics = calculate_metrics(curve, trades, Decimal("10000"))
+
+        assert metrics.win_rate == Decimal("100")
+        assert metrics.profit_factor == Decimal("99.99")
+
+
 class TestPerformanceMetricsToDict:
     """Tests for PerformanceMetrics.to_dict()."""
 

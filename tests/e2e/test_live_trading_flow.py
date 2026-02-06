@@ -19,6 +19,10 @@ import asyncio
 import os
 
 import pytest
+from dotenv import load_dotenv
+
+# Load .env file so credentials are available via os.environ
+load_dotenv()
 
 pytestmark = pytest.mark.e2e
 
@@ -416,10 +420,10 @@ class TestLiveTradingWithCredentials:
             "exchange_account_id": test_exchange_account["id"],
             "timeframe": "1m",
             "risk_config": {
-                "max_position_size": 100.0,  # 小额度用于测试
-                "max_order_size": 10.0,
+                "max_position_size": 0.5,
+                "max_order_size": 0.1,
                 "daily_trade_limit": 5,
-                "daily_loss_limit": 50.0,
+                "daily_loss_limit": 0.05,
                 "price_deviation_limit": 0.01,
                 "circuit_breaker_threshold": 3,
             },
@@ -500,10 +504,10 @@ class TestLiveTradingWithCredentials:
             "exchange_account_id": test_exchange_account["id"],
             "timeframe": "1m",
             "risk_config": {
-                "max_position_size": 100.0,
-                "max_order_size": 10.0,
+                "max_position_size": 0.5,
+                "max_order_size": 0.1,
                 "daily_trade_limit": 5,
-                "daily_loss_limit": 50.0,
+                "daily_loss_limit": 0.05,
                 "price_deviation_limit": 0.01,
                 "circuit_breaker_threshold": 3,
             },
