@@ -361,6 +361,15 @@ class TestBuildRestrictedGlobals:
         assert "OrderSide" in globals_dict
         assert "OrderType" in globals_dict
 
+    def test_contains_math(self):
+        """Test restricted globals includes math module."""
+        globals_dict = _build_restricted_globals()
+        builtins = globals_dict["__builtins__"]
+        assert "math" in builtins
+        import math
+
+        assert builtins["math"] is math
+
     def test_contains_guards(self):
         """Test restricted globals includes security guards."""
         globals_dict = _build_restricted_globals()
@@ -527,6 +536,22 @@ class DecimalStrategy(Strategy):
         exec(compiled.code_object, compiled.restricted_globals, local_namespace)
 
         assert "DecimalStrategy" in local_namespace
+
+    def test_strategy_can_use_math_module(self):
+        """Test strategy can use math functions (sqrt, log, exp)."""
+        code = """
+class MathStrategy(Strategy):
+    def on_bar(self, bar):
+        volatility = math.sqrt(0.04)
+        log_return = math.log(bar.close / bar.open)
+        weight = math.exp(-0.5)
+"""
+        compiled = compile_strategy(code)
+
+        local_namespace: dict = {}
+        exec(compiled.code_object, compiled.restricted_globals, local_namespace)
+
+        assert "MathStrategy" in local_namespace
 
     def test_strategy_can_use_inplace_operators(self):
         """Test strategy can use += and other inplace operators on local variables."""

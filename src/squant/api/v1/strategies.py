@@ -88,7 +88,14 @@ async def create_strategy(
     except StrategyNameExistsError as e:
         raise HTTPException(status_code=409, detail=str(e))
     except StrategyValidationError as e:
-        raise HTTPException(status_code=400, detail={"errors": e.errors})
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "code": 400,
+                "message": f"Strategy validation failed: {'; '.join(e.errors)}",
+                "data": None,
+            },
+        )
 
 
 @router.get("", response_model=ApiResponse[PaginatedData[StrategyListItem]])
@@ -184,7 +191,14 @@ async def update_strategy(
     except StrategyNameExistsError as e:
         raise HTTPException(status_code=409, detail=str(e))
     except StrategyValidationError as e:
-        raise HTTPException(status_code=400, detail={"errors": e.errors})
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "code": 400,
+                "message": f"Strategy validation failed: {'; '.join(e.errors)}",
+                "data": None,
+            },
+        )
 
 
 @router.delete("/{strategy_id}", response_model=ApiResponse[None])

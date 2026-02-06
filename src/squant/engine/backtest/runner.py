@@ -279,7 +279,10 @@ class BacktestRunner:
         # 5. Add to history
         self._context._add_bar_to_history(bar)
 
-        # 6. Call strategy with resource limits (STR-013)
+        # 6. Record equity snapshot (before strategy, consistent with live engine P0-1)
+        self._context._record_equity_snapshot(bar.time)
+
+        # 7. Call strategy with resource limits (STR-013)
         # Get settings dynamically for testability
         from squant.config import get_settings
 
@@ -299,9 +302,6 @@ class BacktestRunner:
             self._context.log(f"ERROR in on_bar: {e}")
             logger.warning(f"Strategy on_bar error: {e}")
 
-        # 7. Record equity
-        self._context._record_equity_snapshot(bar.time)
-
     def _build_result(self) -> BacktestResult:
         """Build the final backtest result.
 
@@ -314,6 +314,7 @@ class BacktestRunner:
             trades=self._context.trades,
             initial_capital=self.initial_capital,
             total_fees=self._context.total_fees,
+            timeframe=self.timeframe,
         )
 
         return BacktestResult(

@@ -442,8 +442,9 @@ class ErrorStrategy(Strategy):
             is_closed=True,
         )
 
-        with pytest.raises(ValueError):
-            await engine.process_candle(candle)
+        # Strategy errors are caught and logged, engine continues running
+        # (matches backtest runner behavior per TRD-025#3)
+        await engine.process_candle(candle)
 
-        assert not engine.is_running
-        assert "Test error in on_bar" in engine.error_message
+        assert engine.is_running
+        assert any("Test error in on_bar" in log for log in engine.context.logs)

@@ -5,7 +5,7 @@ to Bar objects for the backtest engine.
 """
 
 from collections.abc import AsyncIterator
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 
 from sqlalchemy import and_, func, select
@@ -13,6 +13,20 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from squant.engine.backtest.types import Bar
 from squant.models.market import Kline
+
+# Mapping from timeframe string to its duration.
+# Bar timestamps represent the START of the period, so the bar at time T
+# covers the interval [T, T + duration).
+_TIMEFRAME_DURATIONS: dict[str, timedelta] = {
+    "1m": timedelta(minutes=1),
+    "5m": timedelta(minutes=5),
+    "15m": timedelta(minutes=15),
+    "30m": timedelta(minutes=30),
+    "1h": timedelta(hours=1),
+    "4h": timedelta(hours=4),
+    "1d": timedelta(days=1),
+    "1w": timedelta(weeks=1),
+}
 
 
 class DataAvailability:
@@ -45,14 +59,21 @@ class DataAvailability:
 
     @property
     def is_complete(self) -> bool:
-        """Check if data covers the full requested range."""
+        """Check if data covers the full requested range.
+
+        Bar timestamps represent the START of the period.  A bar at time T
+        with timeframe duration D covers the interval [T, T+D).  Therefore,
+        data is complete when ``last_bar + duration >= requested_end``, not
+        simply ``last_bar >= requested_end``.
+        """
         if not self.has_data:
             return False
+        if self.first_bar is None or self.last_bar is None:
+            return False
+        duration = _TIMEFRAME_DURATIONS.get(self.timeframe, timedelta(0))
         return (
-            self.first_bar is not None
-            and self.last_bar is not None
-            and self.first_bar <= self.requested_start
-            and self.last_bar >= self.requested_end
+            self.first_bar <= self.requested_start
+            and self.last_bar + duration >= self.requested_end
         )
 
     def to_dict(self) -> dict[str, Any]:

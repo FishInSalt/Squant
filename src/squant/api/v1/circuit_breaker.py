@@ -151,7 +151,8 @@ async def reset_circuit_breaker(
         raise HTTPException(
             status_code=409,
             detail={
+                "code": 409,
                 "message": str(e),
-                "cooldown_remaining_minutes": e.remaining_minutes,
+                "data": {"cooldown_remaining_minutes": e.remaining_minutes},
             },
         ) from None

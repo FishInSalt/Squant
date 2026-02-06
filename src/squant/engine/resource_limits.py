@@ -115,10 +115,12 @@ def resource_limiter(
 
         # Try to set CPU time limit
         # In some environments (containers), we may not be able to change limits
+        # NOTE: Only modify the soft limit. Non-root processes cannot raise hard
+        # limits once lowered, so changing the hard limit would make restoration
+        # impossible. The soft limit is what triggers SIGXCPU.
         try:
-            # Only set if we're lowering the limit or if there's no limit
             if old_cpu_hard == resource.RLIM_INFINITY or cpu_seconds <= old_cpu_hard:
-                resource.setrlimit(resource.RLIMIT_CPU, (cpu_seconds, cpu_seconds + 1))
+                resource.setrlimit(resource.RLIMIT_CPU, (cpu_seconds, old_cpu_hard))
             else:
                 logger.warning(
                     f"Cannot set CPU limit to {cpu_seconds}s (hard limit is {old_cpu_hard}s)"
@@ -127,9 +129,10 @@ def resource_limiter(
             logger.warning(f"Cannot set CPU time limit: {e}")
 
         # Try to set address space (virtual memory) limit
+        # Same principle: only modify soft limit to allow restoration.
         try:
             if old_as_hard == resource.RLIM_INFINITY or memory_bytes <= old_as_hard:
-                resource.setrlimit(resource.RLIMIT_AS, (memory_bytes, memory_bytes))
+                resource.setrlimit(resource.RLIMIT_AS, (memory_bytes, old_as_hard))
             else:
                 logger.warning(f"Cannot set memory limit to {memory_mb}MB (hard limit applies)")
         except (ValueError, OSError) as e:

@@ -531,12 +531,11 @@ class TestInsufficientBalance:
         assert len(context.pending_orders) == 1
         assert context.pending_orders[0].price == Decimal("40000")
 
-    def test_multiple_orders_accumulate_check(self) -> None:
-        """Test that multiple pending orders don't double-spend cash.
+    def test_multiple_orders_reserve_cash(self) -> None:
+        """Test that pending buy orders reserve cash, preventing over-allocation.
 
-        Note: Current implementation validates each order independently
-        at placement time against available cash. This test documents
-        that behavior - orders are validated individually.
+        With $600 capital, a $500.50 buy (5 units @ 100 + 0.1% fee) leaves only
+        ~$99.50 available. A second buy of $200.20 should be rejected.
         """
         context = BacktestContext(
             initial_capital=Decimal("600"),
@@ -554,13 +553,45 @@ class TestInsufficientBalance:
         )
         context._set_current_bar(bar)
 
-        # First order: $500 + fee = ~$500.50
+        # First order: 5 * 100 * 1.001 = $500.50 → accepted
         order1 = context.buy("TEST/USDT", Decimal("5"), price=Decimal("100"))
         assert order1 is not None
+        assert len(context.pending_orders) == 1
 
-        # Second order: would be another $200 + fee = ~$200.20
-        # Total would exceed $600, but each order is validated independently
-        # This test documents current behavior
-        order2 = context.buy("TEST/USDT", Decimal("2"), price=Decimal("100"))
-        assert order2 is not None
-        assert len(context.pending_orders) == 2
+        # Second order: 2 * 100 * 1.001 = $200.20 → rejected (only ~$99.50 available)
+        with pytest.raises(ValueError, match="Insufficient cash"):
+            context.buy("TEST/USDT", Decimal("2"), price=Decimal("100"))
+
+        # Only one order should exist
+        assert len(context.pending_orders) == 1
+
+    def test_multiple_small_orders_within_budget(self) -> None:
+        """Test that multiple buy orders within total budget are all accepted."""
+        context = BacktestContext(
+            initial_capital=Decimal("1000"),
+            commission_rate=Decimal("0.001"),
+        )
+
+        bar = Bar(
+            time=datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC),
+            symbol="TEST/USDT",
+            open=Decimal("100"),
+            high=Decimal("100"),
+            low=Decimal("100"),
+            close=Decimal("100"),
+            volume=Decimal("10"),
+        )
+        context._set_current_bar(bar)
+
+        # Order 1: 3 * 100 * 1.001 = $300.30
+        context.buy("TEST/USDT", Decimal("3"), price=Decimal("100"))
+        # Order 2: 3 * 100 * 1.001 = $300.30 (total $600.60, still within $1000)
+        context.buy("TEST/USDT", Decimal("3"), price=Decimal("100"))
+        # Order 3: 3 * 100 * 1.001 = $300.30 (total $900.90, still within $1000)
+        context.buy("TEST/USDT", Decimal("3"), price=Decimal("100"))
+
+        assert len(context.pending_orders) == 3
+
+        # Order 4: would bring total to $1201.20 → rejected
+        with pytest.raises(ValueError, match="Insufficient cash"):
+            context.buy("TEST/USDT", Decimal("3"), price=Decimal("100"))

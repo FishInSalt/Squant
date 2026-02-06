@@ -88,21 +88,64 @@ class SimpleStrategy(Strategy):
 
 
 @pytest_asyncio.fixture
-async def test_backtest_config():
-    """测试回测配置"""
+async def test_backtest_config(api_client):
+    """测试回测配置 — 基于实际可用数据动态构建。
+
+    通过 /api/v1/backtest/data/check 查询 DB 中实际已有的 K 线数据范围，
+    然后从 last_bar 向前取 3 天作为测试窗口。这样无论交易所数据延迟多久，
+    只要 DB 中有数据，测试就能稳定通过。
+    """
     from datetime import UTC, datetime, timedelta
 
-    # Use yesterday's end-of-day as end_date to ensure exchange data fully covers the range.
-    # OKX may delay recent hours' data; using yesterday avoids flaky failures.
-    # Use 3 days (72 1h bars) to stay well within exchange API limits.
+    exchange = "okx"
+    symbol = "BTC/USDT"
+    timeframe = "1h"
+
+    # 用一个足够大的窗口查询 DB 中实际可用数据
     now = datetime.now(UTC)
-    end_date = now.replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(hours=1)
+    probe_start = (now - timedelta(days=90)).isoformat()
+    probe_end = now.isoformat()
+
+    response = await api_client.post(
+        "/api/v1/backtest/data/check",
+        json={
+            "exchange": exchange,
+            "symbol": symbol,
+            "timeframe": timeframe,
+            "start_date": probe_start,
+            "end_date": probe_end,
+        },
+    )
+
+    if response.status_code != 200:
+        pytest.skip(f"Data check API failed: {response.status_code} {response.text}")
+
+    data = response.json().get("data", {})
+    if not data.get("has_data") or not data.get("last_bar"):
+        pytest.skip("No historical data available in DB for BTC/USDT 1h")
+
+    # 从实际最后一根 K 线向前取 3 天窗口
+    last_bar = datetime.fromisoformat(data["last_bar"])
+    first_bar = datetime.fromisoformat(data["first_bar"])
+    end_date = last_bar
     start_date = end_date - timedelta(days=3)
 
+    # 确保 start_date 不早于实际数据起点
+    if start_date < first_bar:
+        start_date = first_bar
+
+    # 至少需要 24 根 1h K 线（1 天）才有意义
+    hours_available = (end_date - start_date).total_seconds() / 3600
+    if hours_available < 24:
+        pytest.skip(
+            f"Insufficient data: only {hours_available:.0f}h available "
+            f"(need >=24h). first_bar={first_bar}, last_bar={last_bar}"
+        )
+
     return {
-        "exchange": "okx",
-        "symbol": "BTC/USDT",
-        "timeframe": "1h",  # Required by API
+        "exchange": exchange,
+        "symbol": symbol,
+        "timeframe": timeframe,
         "start_date": start_date.isoformat(),
         "end_date": end_date.isoformat(),
         "initial_capital": 10000.0,

@@ -125,8 +125,19 @@ def mock_adapter():
         )
     )
 
-    # Mock cancel_order
-    adapter.cancel_order = AsyncMock()
+    # Mock cancel_order — returns CANCELLED status by default
+    adapter.cancel_order = AsyncMock(
+        return_value=OrderResponse(
+            order_id="exchange-123",
+            symbol="BTC/USDT",
+            side=OrderSide.BUY,
+            type=OrderType.LIMIT,
+            status=OrderStatus.CANCELLED,
+            price=Decimal("40000"),
+            amount=Decimal("0.1"),
+            filled=Decimal("0"),
+        )
+    )
 
     return adapter
 
@@ -458,6 +469,32 @@ class TestOrderSubmission:
         rejected = engine.context.completed_orders[0]
         assert rejected.status == OrderStatus.REJECTED
 
+    @pytest.mark.asyncio
+    async def test_empty_order_id_rejected(self, engine, mock_adapter, closed_candle):
+        """Test C-DEFER-4: order with empty exchange_order_id is rejected.
+
+        If the exchange returns a successful response but with no order_id,
+        the order should be treated as a failure to prevent zombie orders.
+        """
+        mock_adapter.place_order.return_value = OrderResponse(
+            order_id="",
+            symbol="BTC/USDT",
+            side=OrderSide.BUY,
+            type=OrderType.MARKET,
+            status=OrderStatus.SUBMITTED,
+            price=None,
+            amount=Decimal("0.01"),
+            filled=Decimal("0"),
+        )
+
+        await engine.start()
+        await engine.process_candle(closed_candle)
+
+        # Should be rejected, not tracked as live order
+        assert len(engine._live_orders) == 0
+        assert len(engine.context.completed_orders) == 1
+        assert engine.context.completed_orders[0].status == OrderStatus.REJECTED
+
 
 class TestRiskValidation:
     """Tests for risk validation integration."""
@@ -786,6 +823,36 @@ class TestEmergencyClose:
         # Flag should still be reset
         assert engine._emergency_close_in_progress is False
 
+    @pytest.mark.asyncio
+    async def test_process_candle_blocked_during_emergency_close(self, engine, mock_adapter):
+        """Test C-DEFER-3: process_candle returns early during emergency close.
+
+        When an emergency close is in progress, new candle processing should be
+        blocked to prevent the strategy from placing new orders that would
+        interfere with the emergency close operation.
+        """
+        await engine.start()
+
+        candle = WSCandle(
+            symbol="BTC/USDT",
+            timeframe="1m",
+            timestamp=datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC),
+            open=Decimal("45000"),
+            high=Decimal("46000"),
+            low=Decimal("44000"),
+            close=Decimal("45500"),
+            volume=Decimal("100"),
+            is_closed=True,
+        )
+
+        # Simulate emergency close in progress
+        engine._emergency_close_in_progress = True
+
+        await engine.process_candle(candle)
+
+        # Strategy should NOT have been called (no order placed)
+        mock_adapter.place_order.assert_not_called()
+
 
 class TestOrderUpdates:
     """Tests for WebSocket order updates."""
@@ -844,6 +911,31 @@ class TestOrderUpdates:
 
         # Should not raise
         engine_with_order.on_order_update(update)
+
+    def test_order_update_ignored_during_emergency_close(self, engine_with_order):
+        """Test that order updates are blocked during emergency close (P0-2)."""
+        engine_with_order._emergency_close_in_progress = True
+
+        update = WSOrderUpdate(
+            order_id="exchange-1",
+            client_order_id="internal-1",
+            symbol="BTC/USDT",
+            side="buy",
+            order_type="market",
+            status="filled",
+            size=Decimal("0.1"),
+            filled_size=Decimal("0.1"),
+            avg_price=Decimal("45000"),
+            fee=Decimal("0.45"),
+            fee_currency="USDT",
+        )
+
+        engine_with_order.on_order_update(update)
+
+        # Order status should remain SUBMITTED — fill was ignored
+        live_order = engine_with_order._live_orders["internal-1"]
+        assert live_order.status == OrderStatus.SUBMITTED
+        assert live_order.filled_amount == Decimal("0")
 
 
 class TestStateSnapshot:
@@ -1068,6 +1160,90 @@ class TestCancelAllOrders:
 
         # Order should not be cancelled
         mock_adapter.cancel_order.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_cancel_uses_exchange_response(self, engine, mock_adapter):
+        """Test C-DEFER-7: cancel uses exchange response as source of truth.
+
+        If the order was filled before the cancel took effect, the local state
+        should reflect FILLED (not CANCELLED) with actual fill data.
+        """
+        await engine.start()
+
+        engine._live_orders["order-1"] = LiveOrder(
+            internal_id="order-1",
+            exchange_order_id="exchange-1",
+            symbol="BTC/USDT",
+            side=OrderSide.BUY,
+            order_type="limit",
+            amount=Decimal("0.1"),
+            price=Decimal("40000"),
+            status=OrderStatus.SUBMITTED,
+        )
+
+        # Exchange returns FILLED (order was filled before cancel arrived)
+        mock_adapter.cancel_order.return_value = OrderResponse(
+            order_id="exchange-1",
+            symbol="BTC/USDT",
+            side=OrderSide.BUY,
+            type=OrderType.LIMIT,
+            status=OrderStatus.FILLED,
+            price=Decimal("40000"),
+            amount=Decimal("0.1"),
+            filled=Decimal("0.1"),
+            avg_price=Decimal("40000"),
+            fee=Decimal("0.04"),
+        )
+
+        await engine.stop(cancel_orders=True)
+
+        # Order should be FILLED, not CANCELLED
+        order = engine._live_orders["order-1"]
+        assert order.status == OrderStatus.FILLED
+        assert order.filled_amount == Decimal("0.1")
+        assert order.avg_fill_price == Decimal("40000")
+
+    @pytest.mark.asyncio
+    async def test_cancel_partial_fill_before_cancel(self, engine, mock_adapter):
+        """Test C-DEFER-7: partially filled order returns accurate state.
+
+        If the order was partially filled before cancel, the response captures
+        the fill data rather than silently marking as cancelled.
+        """
+        await engine.start()
+
+        engine._live_orders["order-1"] = LiveOrder(
+            internal_id="order-1",
+            exchange_order_id="exchange-1",
+            symbol="BTC/USDT",
+            side=OrderSide.BUY,
+            order_type="limit",
+            amount=Decimal("0.1"),
+            price=Decimal("40000"),
+            status=OrderStatus.SUBMITTED,
+        )
+
+        # Exchange returns CANCELLED with partial fill
+        mock_adapter.cancel_order.return_value = OrderResponse(
+            order_id="exchange-1",
+            symbol="BTC/USDT",
+            side=OrderSide.BUY,
+            type=OrderType.LIMIT,
+            status=OrderStatus.CANCELLED,
+            price=Decimal("40000"),
+            amount=Decimal("0.1"),
+            filled=Decimal("0.03"),
+            avg_price=Decimal("40000"),
+            fee=Decimal("0.012"),
+        )
+
+        await engine.stop(cancel_orders=True)
+
+        # Order should be CANCELLED but with partial fill data preserved
+        order = engine._live_orders["order-1"]
+        assert order.status == OrderStatus.CANCELLED
+        assert order.filled_amount == Decimal("0.03")
+        assert order.fee == Decimal("0.012")
 
 
 class TestCircuitBreakerIntegration:
@@ -1337,6 +1513,173 @@ class TestCircuitBreakerIntegration:
             # Verify reason contains the run_id
             live_call_args = mock_live_manager.stop_all.call_args
             assert str(engine.run_id) in live_call_args.kwargs.get("reason", "")
+
+
+class TestStaleOrderCleanup:
+    """Tests for C-DEFER-4: stale and zombie order cleanup."""
+
+    @pytest.mark.asyncio
+    async def test_completed_orders_cleaned_from_live_orders(self, engine, mock_adapter):
+        """Completed orders should be removed from _live_orders during sync."""
+        await engine.start()
+
+        # Add a FILLED order (completed)
+        engine._live_orders["order-1"] = LiveOrder(
+            internal_id="order-1",
+            exchange_order_id="exchange-1",
+            symbol="BTC/USDT",
+            side=OrderSide.BUY,
+            order_type="limit",
+            amount=Decimal("0.1"),
+            price=Decimal("40000"),
+            status=OrderStatus.FILLED,
+        )
+        engine._exchange_order_map["exchange-1"] = "order-1"
+
+        # Add a still-active order
+        engine._live_orders["order-2"] = LiveOrder(
+            internal_id="order-2",
+            exchange_order_id="exchange-2",
+            symbol="BTC/USDT",
+            side=OrderSide.SELL,
+            order_type="limit",
+            amount=Decimal("0.1"),
+            price=Decimal("50000"),
+            status=OrderStatus.SUBMITTED,
+        )
+
+        await engine._sync_pending_orders()
+
+        # Completed order should be cleaned up
+        assert "order-1" not in engine._live_orders
+        assert "exchange-1" not in engine._exchange_order_map
+        # Active order should remain
+        assert "order-2" in engine._live_orders
+
+    @pytest.mark.asyncio
+    async def test_zombie_order_marked_rejected(self, engine, mock_adapter):
+        """Orders without exchange_order_id older than threshold should be rejected."""
+        await engine.start()
+
+        # Create a zombie order (no exchange_order_id, old timestamp)
+        zombie = LiveOrder(
+            internal_id="zombie-1",
+            exchange_order_id=None,
+            symbol="BTC/USDT",
+            side=OrderSide.BUY,
+            order_type="limit",
+            amount=Decimal("0.1"),
+            price=Decimal("40000"),
+            status=OrderStatus.PENDING,
+        )
+        zombie.created_at = datetime(2020, 1, 1, tzinfo=UTC)  # Very old
+        engine._live_orders["zombie-1"] = zombie
+
+        await engine._sync_pending_orders()
+
+        # Zombie should be cleaned up
+        assert "zombie-1" not in engine._live_orders
+
+    @pytest.mark.asyncio
+    async def test_recent_order_without_exchange_id_not_cleaned(self, engine, mock_adapter):
+        """Recently created orders without exchange_id should NOT be cleaned yet."""
+        await engine.start()
+
+        recent = LiveOrder(
+            internal_id="recent-1",
+            exchange_order_id=None,
+            symbol="BTC/USDT",
+            side=OrderSide.BUY,
+            order_type="limit",
+            amount=Decimal("0.1"),
+            price=Decimal("40000"),
+            status=OrderStatus.PENDING,
+        )
+        recent.created_at = datetime.now(UTC)  # Just created
+        engine._live_orders["recent-1"] = recent
+
+        await engine._sync_pending_orders()
+
+        # Should still be there (not old enough)
+        assert "recent-1" in engine._live_orders
+
+
+class TestEquitySnapshotTiming:
+    """Tests for C-DEFER-8: equity snapshot timing consistency."""
+
+    @pytest.fixture
+    def closed_candle(self):
+        """Create a closed candle."""
+        return WSCandle(
+            symbol="BTC/USDT",
+            timeframe="1m",
+            timestamp=datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC),
+            open=Decimal("45000"),
+            high=Decimal("46000"),
+            low=Decimal("44000"),
+            close=Decimal("45500"),
+            volume=Decimal("100"),
+            is_closed=True,
+        )
+
+    @pytest.mark.asyncio
+    async def test_snapshot_recorded_before_strategy(self, engine, mock_adapter, closed_candle):
+        """Equity snapshot should be recorded before strategy.on_bar() runs.
+
+        This ensures the snapshot captures the portfolio state at bar close,
+        not a state affected by new orders from the strategy.
+        """
+        await engine.start()
+
+        call_order = []
+
+        # Track when snapshot is recorded vs when strategy runs
+        original_record = engine._context._record_equity_snapshot
+
+        def track_record(time):
+            call_order.append("snapshot")
+            original_record(time)
+
+        engine._context._record_equity_snapshot = track_record
+
+        original_on_bar = engine._strategy.on_bar
+
+        def track_on_bar(bar):
+            call_order.append("strategy")
+            original_on_bar(bar)
+
+        engine._strategy.on_bar = track_on_bar
+
+        await engine.process_candle(closed_candle)
+
+        assert call_order.index("snapshot") < call_order.index("strategy")
+
+    @pytest.mark.asyncio
+    async def test_balance_synced_before_order_sync(self, engine, mock_adapter, closed_candle):
+        """Balance should be synced before order sync so fills adjust on top of exchange cash."""
+        await engine.start()
+
+        call_order = []
+
+        original_sync_balance = engine._sync_balance
+
+        async def track_balance():
+            call_order.append("balance")
+            await original_sync_balance()
+
+        engine._sync_balance = track_balance
+
+        original_sync_orders = engine._sync_pending_orders
+
+        async def track_orders():
+            call_order.append("orders")
+            await original_sync_orders()
+
+        engine._sync_pending_orders = track_orders
+
+        await engine.process_candle(closed_candle)
+
+        assert call_order.index("balance") < call_order.index("orders")
 
 
 class TestOrderSyncRateLimiting:

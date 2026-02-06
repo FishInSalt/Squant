@@ -6,6 +6,7 @@ Validates orders against configured risk rules before execution.
 from __future__ import annotations
 
 import logging
+import threading
 from datetime import UTC, datetime
 from decimal import Decimal
 from typing import TYPE_CHECKING
@@ -46,10 +47,17 @@ class RiskManager:
             config: Risk configuration.
             initial_equity: Initial account equity for relative calculations.
         """
+        if initial_equity <= 0:
+            raise ValueError(
+                f"initial_equity must be positive, got {initial_equity}. "
+                f"Risk percentage calculations require positive equity."
+            )
+
         self.config = config
         self.state = RiskState()
         self._initial_equity = initial_equity
         self._current_equity = initial_equity
+        self._lock = threading.RLock()
 
         # Initialize daily stats
         self.state.reset_daily_stats(initial_equity)
@@ -68,7 +76,8 @@ class RiskManager:
         Args:
             equity: Current account equity.
         """
-        self._current_equity = equity
+        with self._lock:
+            self._current_equity = equity
 
     def update_position_value(self, position_value: Decimal) -> None:
         """Update current position value.
@@ -76,7 +85,8 @@ class RiskManager:
         Args:
             position_value: Total value of current positions.
         """
-        self.state.current_position_value = position_value
+        with self._lock:
+            self.state.current_position_value = position_value
 
     def record_trade_result(self, pnl: Decimal) -> None:
         """Record the result of a completed trade.
@@ -84,35 +94,37 @@ class RiskManager:
         Args:
             pnl: Profit/loss from the trade.
         """
-        self.state.record_trade(pnl)
+        with self._lock:
+            self.state.record_trade(pnl)
 
-        # Check if circuit breaker should trigger
-        if (
-            self.config.circuit_breaker_enabled
-            and self.state.consecutive_losses >= self.config.circuit_breaker_loss_count
-            and not self.state.circuit_breaker_triggered
-        ):
-            logger.warning(
-                f"Circuit breaker triggered after {self.state.consecutive_losses} "
-                f"consecutive losses. Cooldown: {self.config.circuit_breaker_cooldown_minutes} minutes."
-            )
-            self.state.trigger_circuit_breaker(self.config.circuit_breaker_cooldown_minutes)
+            # Check if circuit breaker should trigger
+            if (
+                self.config.circuit_breaker_enabled
+                and self.state.consecutive_losses >= self.config.circuit_breaker_loss_count
+                and not self.state.circuit_breaker_triggered
+            ):
+                logger.warning(
+                    f"Circuit breaker triggered after {self.state.consecutive_losses} "
+                    f"consecutive losses. Cooldown: {self.config.circuit_breaker_cooldown_minutes} minutes."
+                )
+                self.state.trigger_circuit_breaker(self.config.circuit_breaker_cooldown_minutes)
 
     def check_daily_reset(self) -> None:
         """Check if daily stats should be reset (new trading day).
 
         Resets daily counters if we've moved to a new UTC day.
         """
-        now = datetime.now(UTC)
-        if self.state.daily_reset_time is None:
-            self.state.reset_daily_stats(self._current_equity)
-            return
+        with self._lock:
+            now = datetime.now(UTC)
+            if self.state.daily_reset_time is None:
+                self.state.reset_daily_stats(self._current_equity)
+                return
 
-        # Reset if new day
-        reset_date = self.state.daily_reset_time.date()
-        if now.date() > reset_date:
-            logger.info("New trading day detected, resetting daily risk stats")
-            self.state.reset_daily_stats(self._current_equity)
+            # Reset if new day
+            reset_date = self.state.daily_reset_time.date()
+            if now.date() > reset_date:
+                logger.info("New trading day detected, resetting daily risk stats")
+                self.state.reset_daily_stats(self._current_equity)
 
     def validate_order(
         self,
@@ -130,6 +142,16 @@ class RiskManager:
         Returns:
             RiskCheckResult with validation outcome.
         """
+        with self._lock:
+            return self._validate_order_unlocked(order, current_price, current_position_amount)
+
+    def _validate_order_unlocked(
+        self,
+        order: OrderRequest,
+        current_price: Decimal,
+        current_position_amount: Decimal = Decimal("0"),
+    ) -> RiskCheckResult:
+        """Internal order validation (caller must hold self._lock)."""
         # Reject all orders if equity is zero or negative (safety check)
         if self._current_equity <= 0:
             logger.warning(
@@ -348,7 +370,7 @@ class RiskManager:
 
         # Check absolute order value limit
         if self.config.max_order_value is not None:
-            if order_value > self.config.max_order_value:
+            if order_value >= self.config.max_order_value:
                 return RiskCheckResult.reject(
                     rule_type=RiskRuleType.MAX_ORDER_SIZE,
                     reason=f"Order value exceeds limit: {order_value} "
@@ -360,7 +382,7 @@ class RiskManager:
         # Check relative order size (fraction of equity)
         if self._current_equity > 0:
             order_size_pct = order_value / self._current_equity
-            if order_size_pct > self.config.max_order_size:
+            if order_size_pct >= self.config.max_order_size:
                 return RiskCheckResult.reject(
                     rule_type=RiskRuleType.MAX_ORDER_SIZE,
                     reason=f"Order size exceeds limit: {order_size_pct:.2%} of equity "
@@ -410,7 +432,7 @@ class RiskManager:
 
         # Check absolute position value limit
         if self.config.max_position_value is not None:
-            if new_position_value > self.config.max_position_value:
+            if new_position_value >= self.config.max_position_value:
                 return RiskCheckResult.reject(
                     rule_type=RiskRuleType.MAX_POSITION_SIZE,
                     reason=f"Position value would exceed limit: {new_position_value} "
@@ -422,7 +444,7 @@ class RiskManager:
         # Check relative position size (fraction of equity)
         if self._current_equity > 0:
             position_size_pct = new_position_value / self._current_equity
-            if position_size_pct > self.config.max_position_size:
+            if position_size_pct >= self.config.max_position_size:
                 return RiskCheckResult.reject(
                     rule_type=RiskRuleType.MAX_POSITION_SIZE,
                     reason=f"Position size would exceed limit: {position_size_pct:.2%} of equity "
@@ -482,6 +504,11 @@ class RiskManager:
         Returns:
             Dictionary with risk state information.
         """
+        with self._lock:
+            return self._get_state_summary_unlocked()
+
+    def _get_state_summary_unlocked(self) -> dict:
+        """Internal state summary (caller must hold self._lock)."""
         return {
             "daily_trade_count": self.state.daily_trade_count,
             "daily_trade_limit": self.config.daily_trade_limit,
