@@ -370,6 +370,52 @@ class TestProcessBar:
         closes = runner._context.get_closes(2)
         assert len(closes) == 2
 
+    def test_equity_snapshot_recorded_before_strategy(self, sample_bars):
+        """Test equity snapshot is taken before strategy on_bar (P0-1).
+
+        This ensures consistent timing with live and paper engines.
+        The snapshot should reflect pre-strategy portfolio state.
+        """
+        call_order = []
+
+        # Strategy that records call order and modifies cash via buy
+        strategy_code = '''
+class MyStrategy(Strategy):
+    def on_init(self):
+        pass
+    def on_bar(self, bar):
+        pass
+    def on_stop(self):
+        pass
+'''
+        runner = BacktestRunner(
+            strategy_code=strategy_code,
+            strategy_name="Test",
+            symbol="BTC/USDT",
+            timeframe="1h",
+            initial_capital=Decimal("10000"),
+        )
+        runner._setup()
+
+        # Monkey-patch to track call order
+        original_snapshot = runner._context._record_equity_snapshot
+        original_on_bar = runner._strategy.on_bar
+
+        def tracked_snapshot(time):
+            call_order.append("snapshot")
+            return original_snapshot(time)
+
+        def tracked_on_bar(bar):
+            call_order.append("on_bar")
+            return original_on_bar(bar)
+
+        runner._context._record_equity_snapshot = tracked_snapshot
+        runner._strategy.on_bar = tracked_on_bar
+
+        runner._process_bar(sample_bars[0])
+
+        assert call_order == ["snapshot", "on_bar"]
+
 
 class TestBuildResult:
     """Tests for result building."""

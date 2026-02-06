@@ -569,6 +569,12 @@ class LiveTradingEngine:
         Args:
             update: Order update from WebSocket.
         """
+        # Block order updates during emergency close to prevent
+        # fill processing from modifying positions/cash mid-close (P0-2)
+        if self._emergency_close_in_progress:
+            logger.debug(f"Ignoring order update during emergency close: {update.order_id}")
+            return
+
         exchange_id = update.order_id
         internal_id = self._exchange_order_map.get(exchange_id)
 

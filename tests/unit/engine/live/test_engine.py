@@ -912,6 +912,31 @@ class TestOrderUpdates:
         # Should not raise
         engine_with_order.on_order_update(update)
 
+    def test_order_update_ignored_during_emergency_close(self, engine_with_order):
+        """Test that order updates are blocked during emergency close (P0-2)."""
+        engine_with_order._emergency_close_in_progress = True
+
+        update = WSOrderUpdate(
+            order_id="exchange-1",
+            client_order_id="internal-1",
+            symbol="BTC/USDT",
+            side="buy",
+            order_type="market",
+            status="filled",
+            size=Decimal("0.1"),
+            filled_size=Decimal("0.1"),
+            avg_price=Decimal("45000"),
+            fee=Decimal("0.45"),
+            fee_currency="USDT",
+        )
+
+        engine_with_order.on_order_update(update)
+
+        # Order status should remain SUBMITTED — fill was ignored
+        live_order = engine_with_order._live_orders["internal-1"]
+        assert live_order.status == OrderStatus.SUBMITTED
+        assert live_order.filled_amount == Decimal("0")
+
 
 class TestStateSnapshot:
     """Tests for state snapshot functionality."""

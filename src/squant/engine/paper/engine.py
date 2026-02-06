@@ -274,7 +274,14 @@ class PaperTradingEngine:
             # 5. Add to history (for strategy lookback)
             self._context._add_bar_to_history(bar)
 
-            # 6. Call strategy on_bar with resource limits (STR-013)
+            # 6. Record equity snapshot (before strategy, consistent with live engine P0-1)
+            self._context._record_equity_snapshot(bar.time)
+
+            # Track pending snapshot for persistence
+            if self._context.equity_curve:
+                self._pending_snapshots.append(self._context.equity_curve[-1])
+
+            # 7. Call strategy on_bar with resource limits (STR-013)
             from squant.config import get_settings
 
             settings = get_settings()
@@ -286,8 +293,6 @@ class PaperTradingEngine:
                     self._strategy.on_bar(bar)
             except ResourceLimitExceededError as e:
                 logger.error(f"Strategy resource limit exceeded: {e}")
-                # Record equity snapshot before stopping (C2 fix)
-                self._context._record_equity_snapshot(bar.time)
                 await self.stop(error=f"Strategy resource limit exceeded: {e}")
                 raise
             except Exception as e:
@@ -295,13 +300,6 @@ class PaperTradingEngine:
                 # be logged but not crash the engine — consistent with backtest runner
                 logger.warning(f"Strategy on_bar error in engine {self._run_id}: {e}")
                 self._context.log(f"ERROR in on_bar: {e}")
-
-            # 7. Record equity snapshot
-            self._context._record_equity_snapshot(bar.time)
-
-            # Track pending snapshot for persistence
-            if self._context.equity_curve:
-                self._pending_snapshots.append(self._context.equity_curve[-1])
 
             self._bar_count += 1
 
