@@ -459,9 +459,13 @@ class TestBacktestErrors:
         assert "Strategy failed" in str(error)
 
     @pytest.mark.asyncio
-    async def test_run_error_wrapped_in_backtest_error(self, sample_bars):
-        """Test runtime errors are wrapped in BacktestError."""
-        # Code that will error in on_bar
+    async def test_strategy_on_bar_error_caught_and_continues(self, sample_bars):
+        """Test that strategy on_bar errors are caught and backtest continues.
+
+        The runner catches exceptions from on_bar(), logs them, and
+        continues processing remaining bars — it does NOT wrap them
+        in BacktestError or propagate them.
+        """
         error_code = """
 class ErrorStrategy(Strategy):
     def on_bar(self, bar):
@@ -475,10 +479,12 @@ class ErrorStrategy(Strategy):
             initial_capital=Decimal("10000"),
         )
 
-        # The error is caught and logged, backtest continues
-        # (based on the runner implementation which catches strategy errors)
         result = await runner.run(async_bar_iterator(sample_bars))
         assert result is not None
+        # All bars processed despite errors
+        assert result.bar_count == len(sample_bars)
+        # Errors logged in context
+        assert any("ERROR" in log for log in result.logs)
 
 
 class TestBacktestCancellation:
@@ -569,11 +575,10 @@ class TestBacktestCancellation:
         with pytest.raises(BacktestCancelledError):
             await runner.run(cancelling_iterator())
 
-        # Should have processed some bars before cancellation
-        # Cancellation check happens before processing, so exactly 5 bars processed
-        # But _bar_count is incremented after processing
-        # So we expect roughly 5-6 bars to be processed before exception
-        assert runner._bar_count <= 6
+        # Cancel is set when iterator yields bar at index 5.
+        # The cancel check happens before processing each bar.
+        # So bars 0-4 are processed (5 bars), and bar 5 triggers the cancel check.
+        assert runner._bar_count == 5
 
     def test_backtest_cancelled_error(self):
         """Test BacktestCancelledError formatting."""

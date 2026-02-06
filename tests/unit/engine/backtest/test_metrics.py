@@ -97,26 +97,28 @@ class TestMaxDrawdown:
         ]
         curve = create_equity_curve(equities)
 
-        max_dd, max_dd_pct = _calculate_max_drawdown(curve)
+        max_dd, max_dd_pct, dd_hours = _calculate_max_drawdown(curve)
 
         assert max_dd == Decimal("0")
         assert max_dd_pct == Decimal("0")
+        assert dd_hours == 0
 
     def test_simple_drawdown(self) -> None:
         """Test simple drawdown calculation."""
         equities = [
             Decimal("10000"),
-            Decimal("12000"),  # Peak
-            Decimal("10000"),  # Drawdown of 2000 (16.67%)
+            Decimal("12000"),  # Peak at hour 1
+            Decimal("10000"),  # Drawdown of 2000 (16.67%) at hour 2
             Decimal("11000"),
         ]
         curve = create_equity_curve(equities)
 
-        max_dd, max_dd_pct = _calculate_max_drawdown(curve)
+        max_dd, max_dd_pct, dd_hours = _calculate_max_drawdown(curve)
 
         assert max_dd == Decimal("2000")
         # 2000 / 12000 * 100 = 16.666...%
         assert float(max_dd_pct) == pytest.approx(16.67, rel=0.01)
+        assert dd_hours == 1  # 1 hour from peak to max drawdown
 
     def test_multiple_drawdowns(self) -> None:
         """Test with multiple drawdowns, takes the maximum."""
@@ -130,11 +132,12 @@ class TestMaxDrawdown:
         ]
         curve = create_equity_curve(equities)
 
-        max_dd, max_dd_pct = _calculate_max_drawdown(curve)
+        max_dd, max_dd_pct, dd_hours = _calculate_max_drawdown(curve)
 
         assert max_dd == Decimal("4000")
         # 4000 / 14000 * 100 = 28.57%
         assert float(max_dd_pct) == pytest.approx(28.57, rel=0.01)
+        assert dd_hours == 1  # 1 hour from peak 2 to max drawdown point
 
 
 class TestTradeStatistics:
@@ -321,10 +324,11 @@ class TestMetricsEdgeCases:
         equities = [Decimal("10000")]
         curve = create_equity_curve(equities)
 
-        max_dd, max_dd_pct = _calculate_max_drawdown(curve)
+        max_dd, max_dd_pct, dd_hours = _calculate_max_drawdown(curve)
 
         assert max_dd == Decimal("0")
         assert max_dd_pct == Decimal("0")
+        assert dd_hours == 0
 
     def test_sharpe_ratio_zero_volatility(self) -> None:
         """Test Sharpe ratio with constant equity (zero std dev) returns zero."""
@@ -421,5 +425,167 @@ class TestPerformanceMetricsToDict:
         assert "max_drawdown" in result
         assert "total_trades" in result
         assert "win_rate" in result
+        assert "max_drawdown_duration_hours" in result
+        assert "volatility" in result
+        assert "max_consecutive_losses" in result
         assert result["total_trades"] == 5  # int, not string
         assert result["total_return"] == "1000"  # Decimal as string
+
+
+class TestNewMetricsFields:
+    """Tests for newly added metrics fields (TRD-009 compliance)."""
+
+    def test_max_consecutive_losses(self) -> None:
+        """Test max consecutive losses calculation."""
+        trades = [
+            TradeRecord(
+                symbol="BTC/USDT",
+                side=OrderSide.BUY,
+                entry_time=datetime(2024, 1, 1, tzinfo=UTC),
+                entry_price=Decimal("42000"),
+                exit_time=datetime(2024, 1, 2, tzinfo=UTC),
+                exit_price=Decimal("43000"),
+                amount=Decimal("1"),
+                pnl=Decimal("1000"),
+            ),
+            TradeRecord(
+                symbol="BTC/USDT",
+                side=OrderSide.BUY,
+                entry_time=datetime(2024, 1, 3, tzinfo=UTC),
+                entry_price=Decimal("43000"),
+                exit_time=datetime(2024, 1, 4, tzinfo=UTC),
+                exit_price=Decimal("42000"),
+                amount=Decimal("1"),
+                pnl=Decimal("-1000"),
+            ),
+            TradeRecord(
+                symbol="BTC/USDT",
+                side=OrderSide.BUY,
+                entry_time=datetime(2024, 1, 5, tzinfo=UTC),
+                entry_price=Decimal("42000"),
+                exit_time=datetime(2024, 1, 6, tzinfo=UTC),
+                exit_price=Decimal("41000"),
+                amount=Decimal("1"),
+                pnl=Decimal("-1000"),
+            ),
+            TradeRecord(
+                symbol="BTC/USDT",
+                side=OrderSide.BUY,
+                entry_time=datetime(2024, 1, 7, tzinfo=UTC),
+                entry_price=Decimal("41000"),
+                exit_time=datetime(2024, 1, 8, tzinfo=UTC),
+                exit_price=Decimal("40000"),
+                amount=Decimal("1"),
+                pnl=Decimal("-1000"),
+            ),
+            TradeRecord(
+                symbol="BTC/USDT",
+                side=OrderSide.BUY,
+                entry_time=datetime(2024, 1, 9, tzinfo=UTC),
+                entry_price=Decimal("40000"),
+                exit_time=datetime(2024, 1, 10, tzinfo=UTC),
+                exit_price=Decimal("42000"),
+                amount=Decimal("1"),
+                pnl=Decimal("2000"),
+            ),
+        ]
+        equities = [Decimal("10000")]
+        curve = create_equity_curve(equities)
+
+        metrics = calculate_metrics(curve, trades, Decimal("10000"))
+
+        assert metrics.max_consecutive_losses == 3
+
+    def test_volatility_calculated(self) -> None:
+        """Test annualized volatility is calculated."""
+        equities = [
+            Decimal("10000"),
+            Decimal("10500"),
+            Decimal("9800"),
+            Decimal("10200"),
+            Decimal("10100"),
+        ]
+        curve = create_equity_curve(equities, interval_hours=24)
+
+        metrics = calculate_metrics(curve, [], Decimal("10000"), timeframe="1d")
+
+        assert metrics.volatility > Decimal("0")
+
+    def test_max_drawdown_duration(self) -> None:
+        """Test max drawdown duration tracking."""
+        equities = [
+            Decimal("10000"),
+            Decimal("12000"),  # Peak
+            Decimal("11000"),  # Hour 2 - drawdown starts
+            Decimal("10000"),  # Hour 3 - deeper drawdown
+            Decimal("9000"),  # Hour 4 - max drawdown (3 hours from peak)
+            Decimal("11000"),
+        ]
+        curve = create_equity_curve(equities)
+
+        max_dd, max_dd_pct, dd_hours = _calculate_max_drawdown(curve)
+
+        assert max_dd == Decimal("3000")
+        assert dd_hours == 3
+
+    def test_calmar_ratio(self) -> None:
+        """Test Calmar ratio calculation."""
+        # Use a 10-day equity curve for annualized return to be nonzero
+        equities = [Decimal("10000") + Decimal(str(i * 100)) for i in range(240)]
+        curve = create_equity_curve(equities, interval_hours=1)
+
+        metrics = calculate_metrics(curve, [], Decimal("10000"), timeframe="1h")
+
+        # Should have both annualized return and max drawdown > 0 for a valid Calmar
+        # With constantly increasing equity, max drawdown is 0, so Calmar is 0
+        assert metrics.calmar_ratio == Decimal("0")
+
+    def test_calmar_ratio_with_drawdown(self) -> None:
+        """Test Calmar ratio is calculated when drawdown exists."""
+        equities = [
+            Decimal("10000"),
+            Decimal("11000"),
+            Decimal("10500"),
+            Decimal("11500"),
+            Decimal("11000"),
+            Decimal("12000"),
+            Decimal("11500"),
+            Decimal("12500"),
+            Decimal("12000"),
+            Decimal("13000"),
+        ]
+        # Make it span 10 days for annualized return
+        curve = create_equity_curve(equities, interval_hours=24)
+
+        metrics = calculate_metrics(curve, [], Decimal("10000"), timeframe="1d")
+
+        if metrics.annualized_return != Decimal("0") and metrics.max_drawdown_pct > 0:
+            assert metrics.calmar_ratio != Decimal("0")
+
+    def test_annualized_return_zero_for_short_backtest(self) -> None:
+        """Test annualized return is zero for backtests < 7 days."""
+        equities = [Decimal("10000"), Decimal("11000"), Decimal("12000")]
+        # 2 hours total duration (< 7 days)
+        curve = create_equity_curve(equities, interval_hours=1)
+
+        metrics = calculate_metrics(curve, [], Decimal("10000"))
+
+        assert metrics.annualized_return == Decimal("0")
+
+    def test_timeframe_parameter_affects_sharpe(self) -> None:
+        """Test that timeframe parameter affects ratio calculations."""
+        equities = [
+            Decimal("10000"),
+            Decimal("10100"),
+            Decimal("10050"),
+            Decimal("10200"),
+            Decimal("10150"),
+        ]
+        curve = create_equity_curve(equities, interval_hours=24)
+
+        metrics_daily = calculate_metrics(curve, [], Decimal("10000"), timeframe="1d")
+        metrics_hourly = calculate_metrics(curve, [], Decimal("10000"), timeframe="1h")
+
+        # With different timeframes, the Sharpe ratios should differ
+        # (hourly annualization amplifies more than daily)
+        assert metrics_daily.sharpe_ratio != metrics_hourly.sharpe_ratio

@@ -432,9 +432,11 @@ class TestResetCircuitBreaker:
 
         assert response.status_code == 409
         detail = response.json()["detail"]
+        assert "code" in detail
+        assert detail["code"] == 409
         assert "message" in detail
         assert "cooldown" in detail["message"].lower()
-        assert detail["cooldown_remaining_minutes"] == 15.5
+        assert detail["data"]["cooldown_remaining_minutes"] == 15.5
 
     async def test_reset_not_active(self, client):
         """Test reset when circuit breaker is not active."""

@@ -257,9 +257,13 @@ class PaperTradingEngine:
             pending = self._context._get_pending_orders()
             fills = self._matching_engine.process_bar(bar, pending)
 
-            # 2. Process fills
+            # 2. Process fills (TRD-025#3: insufficient cash → log, don't crash)
             for fill in fills:
-                self._context._process_fill(fill)
+                try:
+                    self._context._process_fill(fill)
+                except ValueError as e:
+                    logger.warning(f"Fill rejected in engine {self._run_id}: {e}")
+                    self._context.log(f"Order fill rejected: {e}")
 
             # 3. Move completed orders
             self._context._move_completed_orders()
@@ -282,8 +286,15 @@ class PaperTradingEngine:
                     self._strategy.on_bar(bar)
             except ResourceLimitExceededError as e:
                 logger.error(f"Strategy resource limit exceeded: {e}")
+                # Record equity snapshot before stopping (C2 fix)
+                self._context._record_equity_snapshot(bar.time)
                 await self.stop(error=f"Strategy resource limit exceeded: {e}")
                 raise
+            except Exception as e:
+                # TRD-025#3: strategy errors (e.g., insufficient cash) should
+                # be logged but not crash the engine — consistent with backtest runner
+                logger.warning(f"Strategy on_bar error in engine {self._run_id}: {e}")
+                self._context.log(f"ERROR in on_bar: {e}")
 
             # 7. Record equity snapshot
             self._context._record_equity_snapshot(bar.time)

@@ -579,10 +579,9 @@ class BacktestContext:
                 pnl -= self._open_trade.fees
                 self._open_trade.pnl = pnl
 
-                if self._open_trade.entry_price != Decimal("0"):
-                    self._open_trade.pnl_pct = (
-                        pnl / (self._open_trade.entry_price * self._open_trade.amount) * 100
-                    )
+                cost_basis = self._open_trade.entry_price * self._open_trade.amount
+                if cost_basis != Decimal("0"):
+                    self._open_trade.pnl_pct = pnl / cost_basis * 100
 
                 self._trades.append(self._open_trade)
                 self._open_trade = None
@@ -602,10 +601,9 @@ class BacktestContext:
                 pnl -= self._open_trade.fees
                 self._open_trade.pnl = pnl
 
-                if self._open_trade.entry_price != Decimal("0"):
-                    self._open_trade.pnl_pct = (
-                        pnl / (self._open_trade.entry_price * abs(prev_amount)) * 100
-                    )
+                cost_basis = self._open_trade.entry_price * abs(prev_amount)
+                if cost_basis != Decimal("0"):
+                    self._open_trade.pnl_pct = pnl / cost_basis * 100
 
                 self._trades.append(self._open_trade)
 

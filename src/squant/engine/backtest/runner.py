@@ -314,6 +314,7 @@ class BacktestRunner:
             trades=self._context.trades,
             initial_capital=self.initial_capital,
             total_fees=self._context.total_fees,
+            timeframe=self.timeframe,
         )
 
         return BacktestResult(

@@ -60,6 +60,16 @@ class TestRiskManagerInit:
         assert risk_manager.state.daily_start_equity == Decimal("10000")
         assert risk_manager.state.daily_reset_time is not None
 
+    def test_zero_initial_equity_raises(self, default_config):
+        """Test that zero initial equity raises ValueError."""
+        with pytest.raises(ValueError, match="initial_equity must be positive"):
+            RiskManager(config=default_config, initial_equity=Decimal("0"))
+
+    def test_negative_initial_equity_raises(self, default_config):
+        """Test that negative initial equity raises ValueError."""
+        with pytest.raises(ValueError, match="initial_equity must be positive"):
+            RiskManager(config=default_config, initial_equity=Decimal("-1000"))
+
 
 class TestOrderSizeValidation:
     """Tests for order size validation (RSK-002)."""
@@ -70,7 +80,7 @@ class TestOrderSizeValidation:
             symbol="BTC/USDT",
             side=OrderSide.BUY,
             type=OrderType.MARKET,
-            amount=Decimal("0.01"),  # ~$500 at $50000
+            amount=Decimal("0.009"),  # $450 at $50000 = 4.5% (below 5% limit)
         )
         current_price = Decimal("50000")
 
@@ -113,8 +123,12 @@ class TestOrderSizeValidation:
         assert result.rule_type == RiskRuleType.MAX_ORDER_SIZE
         assert "exceeds limit" in result.reason.lower()
 
-    def test_order_at_max_size_passes(self, risk_manager):
-        """Test that orders at exactly max size pass."""
+    def test_order_at_max_size_rejected(self, risk_manager):
+        """Test that orders at exactly max size are rejected (boundary).
+
+        At-limit orders are rejected for safety — consistent with loss limit
+        behavior which also uses >= for boundary checks.
+        """
         # Max order size = 5% of $10000 = $500
         # At $50000/BTC, that's 0.01 BTC
         order = OrderRequest(
@@ -122,6 +136,23 @@ class TestOrderSizeValidation:
             side=OrderSide.BUY,
             type=OrderType.MARKET,
             amount=Decimal("0.01"),
+        )
+        current_price = Decimal("50000")
+
+        result = risk_manager.validate_order(order, current_price)
+
+        assert result.passed is False
+        assert result.rule_type == RiskRuleType.MAX_ORDER_SIZE
+
+    def test_order_just_below_max_size_passes(self, risk_manager):
+        """Test that orders just below max size pass."""
+        # Max order size = 5% of $10000 = $500
+        # Order value = 0.0099 * 50000 = $495 = 4.95% < 5%
+        order = OrderRequest(
+            symbol="BTC/USDT",
+            side=OrderSide.BUY,
+            type=OrderType.MARKET,
+            amount=Decimal("0.0099"),
         )
         current_price = Decimal("50000")
 
@@ -160,12 +191,52 @@ class TestPositionSizeValidation:
             symbol="BTC/USDT",
             side=OrderSide.BUY,
             type=OrderType.MARKET,
-            amount=Decimal("0.01"),
+            amount=Decimal("0.009"),  # $450 = 4.5% (below 5% order limit)
         )
         current_price = Decimal("50000")
 
         result = risk_manager.validate_order(
             order, current_price, current_position_amount=Decimal("0")
+        )
+
+        assert result.passed is True
+
+    def test_position_at_exact_limit_rejected(self, risk_manager):
+        """Test that position at exactly max size is rejected (boundary).
+
+        max_position_size = 10% of $10000 = $1000.
+        At $10000/BTC, 0.1 BTC = $1000 = exactly 10%.
+        Should be rejected with >= check.
+        """
+        order = OrderRequest(
+            symbol="BTC/USDT",
+            side=OrderSide.BUY,
+            type=OrderType.MARKET,
+            amount=Decimal("0.01"),  # $100 at $10000 (1% of equity, passes order check)
+        )
+        current_price = Decimal("10000")
+
+        # Current position 0.09 BTC ($900), buying 0.01 -> total 0.1 BTC ($1000 = 10%)
+        result = risk_manager.validate_order(
+            order, current_price, current_position_amount=Decimal("0.09")
+        )
+
+        assert result.passed is False
+        assert result.rule_type == RiskRuleType.MAX_POSITION_SIZE
+
+    def test_position_just_below_limit_passes(self, risk_manager):
+        """Test that position just below limit passes."""
+        order = OrderRequest(
+            symbol="BTC/USDT",
+            side=OrderSide.BUY,
+            type=OrderType.MARKET,
+            amount=Decimal("0.01"),  # $100 at $10000 (1%)
+        )
+        current_price = Decimal("10000")
+
+        # Current position 0.08 BTC ($800), buying 0.01 -> total 0.09 BTC ($900 = 9%)
+        result = risk_manager.validate_order(
+            order, current_price, current_position_amount=Decimal("0.08")
         )
 
         assert result.passed is True
@@ -236,16 +307,57 @@ class TestPositionSizeValidation:
             symbol="BTC/USDT",
             side=OrderSide.SELL,
             type=OrderType.MARKET,
-            amount=Decimal("0.01"),
+            amount=Decimal("0.009"),  # $450 = 4.5% (below 5% order limit)
         )
         current_price = Decimal("50000")
 
         result = risk_manager.validate_order(
-            order, current_price, current_position_amount=Decimal("0.01")
+            order, current_price, current_position_amount=Decimal("0.009")
         )
 
         # Resulting position = 0, passes
         assert result.passed is True
+
+    def test_absolute_position_value_at_limit_rejected(self):
+        """Test that position value at exactly the absolute limit is rejected."""
+        config = RiskConfig(
+            max_position_value=Decimal("5000"),
+            max_position_size=Decimal("1.0"),  # Disable relative limit
+            max_order_size=Decimal("1.0"),  # Disable relative order limit
+        )
+        rm = RiskManager(config=config, initial_equity=Decimal("100000"))
+
+        order = OrderRequest(
+            symbol="BTC/USDT",
+            side=OrderSide.BUY,
+            type=OrderType.MARKET,
+            amount=Decimal("0.1"),  # $5000 at $50000 = exactly at limit
+        )
+
+        result = rm.validate_order(order, Decimal("50000"))
+
+        assert result.passed is False
+        assert result.rule_type == RiskRuleType.MAX_POSITION_SIZE
+
+    def test_absolute_order_value_at_limit_rejected(self):
+        """Test that order value at exactly the absolute limit is rejected."""
+        config = RiskConfig(
+            max_order_value=Decimal("1000"),
+            max_order_size=Decimal("1.0"),  # Disable relative limit
+        )
+        rm = RiskManager(config=config, initial_equity=Decimal("100000"))
+
+        order = OrderRequest(
+            symbol="BTC/USDT",
+            side=OrderSide.BUY,
+            type=OrderType.MARKET,
+            amount=Decimal("0.02"),  # $1000 at $50000 = exactly at limit
+        )
+
+        result = rm.validate_order(order, Decimal("50000"))
+
+        assert result.passed is False
+        assert result.rule_type == RiskRuleType.MAX_ORDER_SIZE
 
     def test_sell_reduces_position_within_limit_passes(self, risk_manager):
         """Test that selling to reduce position within limit passes.
@@ -255,14 +367,14 @@ class TestPositionSizeValidation:
         """
         # Config: max_position_size = 10% of $10,000 equity = $1,000
         # Current position: 0.015 BTC at $50,000 = $750 = 7.5% of equity
-        # Sell order: 0.01 BTC
-        # Resulting position: 0.005 BTC at $50,000 = $250 = 2.5% of equity
-        # Since 2.5% < 10% limit, order should pass
+        # Sell order: 0.009 BTC ($450 = 4.5%, below 5% order limit)
+        # Resulting position: 0.006 BTC at $50,000 = $300 = 3% of equity
+        # Since 3% < 10% limit, order should pass
         order = OrderRequest(
             symbol="BTC/USDT",
             side=OrderSide.SELL,
             type=OrderType.MARKET,
-            amount=Decimal("0.01"),
+            amount=Decimal("0.009"),
         )
         current_price = Decimal("50000")
 
@@ -283,7 +395,7 @@ class TestDailyTradeLimitValidation:
             symbol="BTC/USDT",
             side=OrderSide.BUY,
             type=OrderType.MARKET,
-            amount=Decimal("0.01"),
+            amount=Decimal("0.001"),  # $50 = 0.5% (well below 5% order limit)
         )
         current_price = Decimal("50000")
 
@@ -301,7 +413,7 @@ class TestDailyTradeLimitValidation:
             symbol="BTC/USDT",
             side=OrderSide.BUY,
             type=OrderType.MARKET,
-            amount=Decimal("0.01"),
+            amount=Decimal("0.001"),
         )
         current_price = Decimal("50000")
 
@@ -323,7 +435,7 @@ class TestDailyLossLimitValidation:
             symbol="BTC/USDT",
             side=OrderSide.BUY,
             type=OrderType.MARKET,
-            amount=Decimal("0.01"),
+            amount=Decimal("0.001"),  # $50 = 0.5% (well below order limit)
         )
         current_price = Decimal("50000")
 
@@ -340,7 +452,7 @@ class TestDailyLossLimitValidation:
             symbol="BTC/USDT",
             side=OrderSide.BUY,
             type=OrderType.MARKET,
-            amount=Decimal("0.01"),
+            amount=Decimal("0.001"),  # $50 = 0.5% (well below order limit)
         )
         current_price = Decimal("50000")
 
@@ -362,7 +474,7 @@ class TestDailyLossLimitValidation:
             symbol="BTC/USDT",
             side=OrderSide.BUY,
             type=OrderType.MARKET,
-            amount=Decimal("0.01"),
+            amount=Decimal("0.001"),  # $50 = 0.5% (well below order limit)
         )
         current_price = Decimal("50000")
 
@@ -384,7 +496,7 @@ class TestDailyLossLimitValidation:
             symbol="BTC/USDT",
             side=OrderSide.BUY,
             type=OrderType.MARKET,
-            amount=Decimal("0.01"),
+            amount=Decimal("0.001"),  # $50 = 0.5% (well below order limit)
         )
         current_price = Decimal("50000")
 
@@ -405,7 +517,7 @@ class TestTotalLossLimitValidation:
             symbol="BTC/USDT",
             side=OrderSide.BUY,
             type=OrderType.MARKET,
-            amount=Decimal("0.01"),
+            amount=Decimal("0.001"),  # $50 = 0.5% (well below order limit)
         )
         current_price = Decimal("50000")
 
@@ -422,7 +534,7 @@ class TestTotalLossLimitValidation:
             symbol="BTC/USDT",
             side=OrderSide.BUY,
             type=OrderType.MARKET,
-            amount=Decimal("0.01"),
+            amount=Decimal("0.001"),  # $50 = 0.5% (well below order limit)
         )
         current_price = Decimal("50000")
 
@@ -441,7 +553,7 @@ class TestTotalLossLimitValidation:
             symbol="BTC/USDT",
             side=OrderSide.BUY,
             type=OrderType.MARKET,
-            amount=Decimal("0.01"),
+            amount=Decimal("0.001"),
         )
         current_price = Decimal("50000")
 
@@ -459,7 +571,7 @@ class TestTotalLossLimitValidation:
             symbol="BTC/USDT",
             side=OrderSide.BUY,
             type=OrderType.MARKET,
-            amount=Decimal("0.01"),
+            amount=Decimal("0.001"),
         )
         current_price = Decimal("50000")
 
@@ -476,7 +588,7 @@ class TestTotalLossLimitValidation:
             symbol="BTC/USDT",
             side=OrderSide.BUY,
             type=OrderType.MARKET,
-            amount=Decimal("0.01"),
+            amount=Decimal("0.001"),
         )
         current_price = Decimal("50000")
 
@@ -511,7 +623,7 @@ class TestTotalLossLimitValidation:
             symbol="BTC/USDT",
             side=OrderSide.BUY,
             type=OrderType.MARKET,
-            amount=Decimal("0.01"),
+            amount=Decimal("0.001"),  # Small order to pass size check
         )
         current_price = Decimal("50000")
 
@@ -539,7 +651,7 @@ class TestTotalLossLimitValidation:
             symbol="BTC/USDT",
             side=OrderSide.BUY,
             type=OrderType.MARKET,
-            amount=Decimal("0.01"),
+            amount=Decimal("0.001"),  # Small order to pass size check
         )
         current_price = Decimal("50000")
 
@@ -679,7 +791,7 @@ class TestNegativePositionRejection:
             symbol="BTC/USDT",
             side=OrderSide.BUY,
             type=OrderType.MARKET,
-            amount=Decimal("0.01"),
+            amount=Decimal("0.001"),  # $50 = 0.5% (well below order limit)
         )
         current_price = Decimal("50000")
 
@@ -752,7 +864,7 @@ class TestPriceDeviationValidation:
             symbol="BTC/USDT",
             side=OrderSide.BUY,
             type=OrderType.MARKET,
-            amount=Decimal("0.01"),
+            amount=Decimal("0.001"),  # $50 = 0.5% (well below order limit)
         )
         current_price = Decimal("50000")
 
@@ -786,7 +898,7 @@ class TestCircuitBreaker:
             symbol="BTC/USDT",
             side=OrderSide.BUY,
             type=OrderType.MARKET,
-            amount=Decimal("0.01"),
+            amount=Decimal("0.001"),
         )
         current_price = Decimal("50000")
 
@@ -805,7 +917,7 @@ class TestCircuitBreaker:
             symbol="BTC/USDT",
             side=OrderSide.BUY,
             type=OrderType.MARKET,
-            amount=Decimal("0.01"),
+            amount=Decimal("0.001"),  # Small order to pass size check
         )
         current_price = Decimal("50000")
 

@@ -3,12 +3,15 @@
 Defines risk rules, configurations, and check results for live trading.
 """
 
+import logging
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from enum import Enum
 from typing import Any
 
 from pydantic import BaseModel, Field
+
+logger = logging.getLogger(__name__)
 
 
 class RiskRuleType(str, Enum):
@@ -238,6 +241,11 @@ class RiskState(BaseModel):
         Args:
             equity: Current equity to set as daily start.
         """
+        if equity <= 0:
+            logger.warning(
+                f"reset_daily_stats called with non-positive equity={equity}. "
+                f"Daily loss percentage checks will be disabled."
+            )
         self.daily_trade_count = 0
         self.daily_pnl = Decimal("0")
         self.daily_start_equity = equity

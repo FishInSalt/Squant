@@ -505,7 +505,11 @@ class TestStrategyExceptionHandling:
 
     @pytest.mark.asyncio
     async def test_process_candle_strategy_on_bar_throws(self, run_id, closed_candle):
-        """Strategy on_bar() raising should stop engine and propagate."""
+        """Strategy on_bar() raising should log error but engine continues.
+
+        Consistent with backtest runner behavior — strategy exceptions
+        are logged and the engine keeps processing bars (TRD-025#3).
+        """
         engine = PaperTradingEngine(
             run_id=run_id,
             strategy=FailingOnBarStrategy(),
@@ -516,11 +520,13 @@ class TestStrategyExceptionHandling:
         await engine.start()
         assert engine.is_running is True
 
-        with pytest.raises(RuntimeError, match="Strategy on_bar crashed"):
-            await engine.process_candle(closed_candle)
+        # Strategy on_bar exception should be caught and logged, not crash
+        await engine.process_candle(closed_candle)
 
-        assert engine.is_running is False
-        assert "Error processing candle" in engine.error_message
+        assert engine.is_running is True
+        assert engine.bar_count == 1
+        # Error logged in context
+        assert any("error" in log.lower() for log in engine.context.logs)
 
     @pytest.mark.asyncio
     async def test_stop_strategy_on_stop_throws(self, run_id):
@@ -591,9 +597,7 @@ class TestResourceLimitExceeded:
         await engine.start()
 
         # Mock the resource_limiter to raise ResourceLimitExceededError
-        with patch(
-            "squant.engine.paper.engine.resource_limiter"
-        ) as mock_limiter:
+        with patch("squant.engine.paper.engine.resource_limiter") as mock_limiter:
             mock_ctx = mock_limiter.return_value.__enter__
             mock_ctx.side_effect = ResourceLimitExceededError("CPU time exceeded")
 
@@ -650,3 +654,117 @@ class TestEdgeCaseCandles:
         assert bar.low == Decimal("44000.56")
         assert bar.close == Decimal("45500.78")
         assert bar.volume == Decimal("100.99")
+
+
+class TestInsufficientCashHandling:
+    """Tests for TRD-025#3: insufficient cash should log, not crash engine."""
+
+    @pytest.mark.asyncio
+    async def test_insufficient_cash_does_not_stop_engine(self):
+        """Engine should continue running when a fill is rejected due to insufficient cash."""
+
+        class AggressiveBuyStrategy(Strategy):
+            """Strategy that tries to buy more than available cash."""
+
+            def on_init(self) -> None:
+                self.bar_count = 0
+
+            def on_bar(self, bar: Bar) -> None:
+                self.bar_count += 1
+                # Always try to buy a huge amount on every bar
+                if self.bar_count == 1:
+                    self.ctx.buy(bar.symbol, Decimal("1000"))  # Way more than cash allows
+
+            def on_stop(self) -> None:
+                pass
+
+        run_id = uuid4()
+        strategy = AggressiveBuyStrategy()
+        engine = PaperTradingEngine(
+            run_id=run_id,
+            strategy=strategy,
+            symbol="BTC/USDT",
+            timeframe="1m",
+            initial_capital=Decimal("100"),  # Very small capital
+        )
+        await engine.start()
+
+        # Bar 1: strategy places huge buy order
+        candle1 = WSCandle(
+            symbol="BTC/USDT",
+            timeframe="1m",
+            timestamp=datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC),
+            open=Decimal("50000"),
+            high=Decimal("51000"),
+            low=Decimal("49000"),
+            close=Decimal("50500"),
+            volume=Decimal("100"),
+            is_closed=True,
+        )
+        await engine.process_candle(candle1)
+        assert engine.is_running is True
+        assert engine.bar_count == 1
+
+        # Bar 2: order would be matched but fill should be rejected (insufficient cash)
+        candle2 = WSCandle(
+            symbol="BTC/USDT",
+            timeframe="1m",
+            timestamp=datetime(2024, 1, 1, 12, 1, 0, tzinfo=UTC),
+            open=Decimal("50200"),
+            high=Decimal("51200"),
+            low=Decimal("49200"),
+            close=Decimal("50700"),
+            volume=Decimal("100"),
+            is_closed=True,
+        )
+        await engine.process_candle(candle2)
+
+        # Engine should still be running (not crashed)
+        assert engine.is_running is True
+        assert engine.bar_count == 2
+        assert engine.error_message is None
+
+        # Logs should contain the error from insufficient cash
+        logs = engine.context.logs
+        assert any("insufficient cash" in log.lower() for log in logs)
+
+    @pytest.mark.asyncio
+    async def test_resource_limit_records_equity_snapshot(self):
+        """ResourceLimitExceededError should record equity snapshot before stopping."""
+        from unittest.mock import patch
+
+        from squant.engine.resource_limits import ResourceLimitExceededError
+
+        strategy = SimpleStrategy()
+        run_id = uuid4()
+        engine = PaperTradingEngine(
+            run_id=run_id,
+            strategy=strategy,
+            symbol="BTC/USDT",
+            timeframe="1m",
+            initial_capital=Decimal("10000"),
+            params={"threshold": Decimal("50000")},
+        )
+        await engine.start()
+
+        candle = WSCandle(
+            symbol="BTC/USDT",
+            timeframe="1m",
+            timestamp=datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC),
+            open=Decimal("45000"),
+            high=Decimal("46000"),
+            low=Decimal("44000"),
+            close=Decimal("45500"),
+            volume=Decimal("100"),
+            is_closed=True,
+        )
+
+        with patch("squant.engine.paper.engine.resource_limiter") as mock_limiter:
+            mock_ctx = mock_limiter.return_value.__enter__
+            mock_ctx.side_effect = ResourceLimitExceededError("CPU time exceeded")
+
+            with pytest.raises(ResourceLimitExceededError):
+                await engine.process_candle(candle)
+
+        # Engine should have recorded equity snapshot before stopping
+        assert len(engine.context.equity_curve) >= 1

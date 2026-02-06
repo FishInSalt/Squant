@@ -46,6 +46,12 @@ class RiskManager:
             config: Risk configuration.
             initial_equity: Initial account equity for relative calculations.
         """
+        if initial_equity <= 0:
+            raise ValueError(
+                f"initial_equity must be positive, got {initial_equity}. "
+                f"Risk percentage calculations require positive equity."
+            )
+
         self.config = config
         self.state = RiskState()
         self._initial_equity = initial_equity
@@ -348,7 +354,7 @@ class RiskManager:
 
         # Check absolute order value limit
         if self.config.max_order_value is not None:
-            if order_value > self.config.max_order_value:
+            if order_value >= self.config.max_order_value:
                 return RiskCheckResult.reject(
                     rule_type=RiskRuleType.MAX_ORDER_SIZE,
                     reason=f"Order value exceeds limit: {order_value} "
@@ -360,7 +366,7 @@ class RiskManager:
         # Check relative order size (fraction of equity)
         if self._current_equity > 0:
             order_size_pct = order_value / self._current_equity
-            if order_size_pct > self.config.max_order_size:
+            if order_size_pct >= self.config.max_order_size:
                 return RiskCheckResult.reject(
                     rule_type=RiskRuleType.MAX_ORDER_SIZE,
                     reason=f"Order size exceeds limit: {order_size_pct:.2%} of equity "
@@ -410,7 +416,7 @@ class RiskManager:
 
         # Check absolute position value limit
         if self.config.max_position_value is not None:
-            if new_position_value > self.config.max_position_value:
+            if new_position_value >= self.config.max_position_value:
                 return RiskCheckResult.reject(
                     rule_type=RiskRuleType.MAX_POSITION_SIZE,
                     reason=f"Position value would exceed limit: {new_position_value} "
@@ -422,7 +428,7 @@ class RiskManager:
         # Check relative position size (fraction of equity)
         if self._current_equity > 0:
             position_size_pct = new_position_value / self._current_equity
-            if position_size_pct > self.config.max_position_size:
+            if position_size_pct >= self.config.max_position_size:
                 return RiskCheckResult.reject(
                     rule_type=RiskRuleType.MAX_POSITION_SIZE,
                     reason=f"Position size would exceed limit: {position_size_pct:.2%} of equity "
