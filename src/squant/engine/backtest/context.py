@@ -211,7 +211,7 @@ class BacktestContext:
 
         amount = Decimal(str(amount))
 
-        # Validate sufficient cash for buy orders
+        # Validate sufficient cash for buy orders, accounting for pending buys
         if price is not None:
             # Limit order: use limit price
             estimated_cost = Decimal(str(price)) * amount * (1 + self._commission_rate)
@@ -222,10 +222,23 @@ class BacktestContext:
             # No bar yet, skip validation (will be caught at fill time)
             estimated_cost = Decimal("0")
 
-        if estimated_cost > 0 and self._cash < estimated_cost:
+        # Reserve cash for existing pending buy orders (mirrors sell's pending_sell_amount)
+        pending_buy_cost = Decimal("0")
+        for order in self._pending_orders:
+            if order.side == OrderSide.BUY:
+                if order.price is not None:
+                    pending_buy_cost += order.price * order.remaining * (1 + self._commission_rate)
+                elif self._current_bar:
+                    pending_buy_cost += (
+                        self._current_bar.close * order.remaining * (1 + self._commission_rate)
+                    )
+
+        available_cash = self._cash - pending_buy_cost
+        if estimated_cost > 0 and available_cash < estimated_cost:
             raise ValueError(
-                f"Insufficient cash for buy order: available={self._cash}, "
-                f"estimated_cost={estimated_cost}"
+                f"Insufficient cash for buy order: available={available_cash}, "
+                f"estimated_cost={estimated_cost} "
+                f"(cash={self._cash}, reserved_for_pending={pending_buy_cost})"
             )
 
         order_type = OrderType.LIMIT if price is not None else OrderType.MARKET

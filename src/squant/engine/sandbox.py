@@ -343,6 +343,12 @@ def _build_restricted_globals() -> dict[str, Any]:
 
     restricted_builtins["Decimal"] = Decimal
 
+    # Add math module for technical analysis (sqrt, log, exp, etc.)
+    # math is a pure computation module with no IO, network, or filesystem access.
+    import math
+
+    restricted_builtins["math"] = math
+
     # Build globals with guards
     restricted_globals = {
         "__builtins__": restricted_builtins,
