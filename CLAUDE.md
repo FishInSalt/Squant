@@ -139,6 +139,29 @@ src/squant/
 - **Circuit breaker**: Automatic trading halt on risk events (max loss, position limits)
 - **Exchange abstraction**: CCXT unified adapter (default) or native OKX adapter; configured via `DEFAULT_EXCHANGE` + `USE_CCXT_PROVIDER`
 
+### Exchange Exception Hierarchy
+
+All exchange errors inherit from `ExchangeError` in `infra/exchange/exceptions.py`. Exception handlers in `main.py` map them to HTTP responses with `{"code", "message", "data"}` shape:
+
+- `ExchangeConnectionError` → 503
+- `ExchangeAuthenticationError` → 401
+- `ExchangeRateLimitError` → 429 (with `Retry-After` header)
+- `ExchangeAPIError` → 502
+- `OrderNotFoundError`, `InvalidOrderError` → specific error codes
+
+The `handle_exchange_error()` helper in `infra/exchange/base.py` translates CCXT exceptions to these types and re-raises — it does NOT format HTTP responses.
+
+### Trading Engine Execution Flow
+
+All three engines (backtest, paper, live) process bars in the same order:
+1. Match/sync pending orders against current bar
+2. Process fills (update positions, cash)
+3. Move completed orders
+4. Update current bar and history
+5. **Record equity snapshot** (before strategy, captures pre-decision state)
+6. Call `strategy.on_bar(bar)` with resource limits
+7. Collect new order requests from strategy
+
 ### Data Flow
 
 - Real-time market data: WebSocket → Redis pub/sub → Frontend WebSocket
@@ -165,7 +188,20 @@ Nested access: `settings.database.url`, `settings.okx.api_key`, `settings.risk.m
 
 ### API Response Convention
 
-Exchange-related exception handlers return a uniform shape: `{"code": <http_status>, "message": <str>, "data": null}`. Exchange errors map to: connection → 503, auth → 401, rate limit → 429 (with `Retry-After` header), other API errors → 502.
+All API error responses use the uniform shape `{"code": <http_status>, "message": <str>, "data": null}`. This applies to exchange errors, validation errors, and circuit breaker responses.
+
+### Common Constructor Signatures
+
+These constructors have been frequent sources of errors in tests and fixtures:
+
+- `CCXTRestAdapter(exchange_id: str, credentials: ExchangeCredentials | None)` — not a dict
+- `StreamManager()` — takes NO arguments; redis is set internally via `get_settings()`
+- `LiveTradingEngine(run_id, symbol, strategy, adapter, risk_config, ...)` — `adapter` is an `ExchangeAdapter`
+- `RiskManager(config: RiskConfig)` — uses `threading.RLock()` internally for thread safety
+
+### API Routes
+
+All REST endpoints are under `/api/v1/` prefix. Health endpoints are at `/api/v1/health/*`, not `/health/*`. Always use the full path in tests.
 
 ## Code Style
 
@@ -204,6 +240,7 @@ Tests mirror the source layout: `tests/unit/{api/v1, services, engine/{backtest,
 2. Don't test methods with infinite `while running` loops directly
 3. Don't call WebSocket `run()` methods in unit tests
 4. Don't start background async tasks in unit tests
+5. Don't call `self.close()` from within `_receive_loop()` in WebSocket clients (cancels own task)
 
 See `dev-docs/technical/testing/TROUBLESHOOTING.md` for detailed examples and solutions.
 
