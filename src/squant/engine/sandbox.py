@@ -299,7 +299,20 @@ class DangerousAttributeValidator(ast.NodeVisitor):
         self.generic_visit(node)
 
     def visit_Subscript(self, node: ast.Subscript) -> None:
-        """Check subscript access like __builtins__['eval']."""
+        """Check subscript access for dangerous dunder attributes.
+
+        Catches patterns like:
+        - obj["__builtins__"] — string literal in slice
+        - __builtins__["eval"] — dangerous name as the subscript target
+        """
+        # Check string literal in slice: obj["__builtins__"]
+        if isinstance(node.slice, ast.Constant) and isinstance(node.slice.value, str):
+            if node.slice.value in _DANGEROUS_DUNDER_ATTRS:
+                self.result.add_error(
+                    f"Line {node.lineno}: Access to '{node.slice.value}' "
+                    f"via subscript is not allowed"
+                )
+        # Check dangerous name as subscript target: __builtins__["eval"]
         if isinstance(node.value, ast.Name) and node.value.id in _DANGEROUS_DUNDER_ATTRS:
             self.result.add_error(
                 f"Line {node.lineno}: Access to '{node.value.id}' is not allowed"

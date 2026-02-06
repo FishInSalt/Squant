@@ -5,6 +5,7 @@ from __future__ import annotations
 from uuid import UUID
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from squant.engine.sandbox import ValidationResult, validate_strategy_code
@@ -126,16 +127,20 @@ class StrategyService:
         if not validation.valid:
             raise StrategyValidationError(validation.errors)
 
-        # Create strategy
-        strategy = await self.repository.create(
-            name=request.name,
-            code=request.code,
-            description=request.description,
-            params_schema=request.params_schema or {},
-            default_params=request.default_params or {},
-        )
+        # Create strategy (handle TOCTOU race on name uniqueness)
+        try:
+            strategy = await self.repository.create(
+                name=request.name,
+                code=request.code,
+                description=request.description,
+                params_schema=request.params_schema or {},
+                default_params=request.default_params or {},
+            )
 
-        await self.session.commit()
+            await self.session.commit()
+        except IntegrityError:
+            await self.session.rollback()
+            raise StrategyNameExistsError(request.name)
         return strategy
 
     async def update(self, strategy_id: UUID, request: UpdateStrategyRequest) -> Strategy:

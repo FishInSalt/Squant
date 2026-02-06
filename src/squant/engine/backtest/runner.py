@@ -266,9 +266,19 @@ class BacktestRunner:
         pending_orders = self._context._get_pending_orders()
         fills = self._matching_engine.process_bar(bar, pending_orders)
 
-        # 2. Process fills
+        # 2. Process fills (catch ValueError for gap scenarios where cost exceeds cash)
         for fill in fills:
-            self._context._process_fill(fill)
+            try:
+                self._context._process_fill(fill)
+            except ValueError as e:
+                # Order can't be filled (e.g., gap-up made market buy too expensive)
+                # Cancel the order instead of crashing the backtest
+                self._context.log(f"Order {fill.order_id} rejected at fill: {e}")
+                logger.warning(f"Fill rejected for order {fill.order_id}: {e}")
+                for order in self._context._get_pending_orders():
+                    if order.id == fill.order_id:
+                        self._context.cancel_order(order.id)
+                        break
 
         # 3. Move completed orders
         self._context._move_completed_orders()
