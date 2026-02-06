@@ -465,12 +465,12 @@ class LiveTradingEngine:
         """Process a WebSocket candle update.
 
         Only processes closed candles. Execution flow:
-        1. Update current price
-        2. Sync pending orders status
-        3. Update context with new bar
-        4. Call strategy.on_bar()
-        5. Process order requests from strategy
-        6. Record equity snapshot
+        1. Update current price and context bar (fresh prices)
+        2. Sync balance from exchange (cash baseline)
+        3. Sync pending orders (fills adjust cash/positions)
+        4. Record equity snapshot (consistent pre-strategy state)
+        5. Call strategy.on_bar()
+        6. Process order requests from strategy
 
         Args:
             candle: WebSocket candle data.
@@ -512,16 +512,25 @@ class LiveTradingEngine:
             # Convert WSCandle to Bar
             bar = self._candle_to_bar(candle)
 
-            # Sync order status from exchange (poll pending orders)
-            await self._sync_pending_orders()
-
-            # Update context
+            # Update context prices first so position valuations use fresh data
             self._context._set_current_bar(bar)
             self._context._add_bar_to_history(bar)
 
-            # Update risk manager with current equity
+            # Sync balance as baseline, then sync orders so fills adjust
+            # cash incrementally on top of exchange truth (C-DEFER-8)
             await self._sync_balance()
+            await self._sync_pending_orders()
+
+            # Update risk manager with equity computed from consistent state
             self._risk_manager.update_equity(self._context.equity)
+
+            # Record equity snapshot BEFORE strategy execution to capture
+            # the portfolio state at bar close (C-DEFER-8)
+            self._context._record_equity_snapshot(bar.time)
+
+            # Track pending snapshot for persistence
+            if self._context.equity_curve:
+                self._pending_snapshots.append(self._context.equity_curve[-1])
 
             # Call strategy on_bar with resource limits (STR-013)
             from squant.config import get_settings
@@ -540,13 +549,6 @@ class LiveTradingEngine:
 
             # Process pending order requests from strategy
             await self._process_order_requests()
-
-            # Record equity snapshot
-            self._context._record_equity_snapshot(bar.time)
-
-            # Track pending snapshot for persistence
-            if self._context.equity_curve:
-                self._pending_snapshots.append(self._context.equity_curve[-1])
 
             self._bar_count += 1
 
@@ -710,6 +712,44 @@ class LiveTradingEngine:
                 f"Order sync: polled={polled_count}, skipped={skipped_count} "
                 f"(within {self._order_poll_min_interval}s interval)"
             )
+
+        # Cleanup completed and zombie orders (C-DEFER-4)
+        self._cleanup_stale_orders()
+
+    def _cleanup_stale_orders(self) -> None:
+        """Remove completed orders and mark zombie orders as rejected.
+
+        Completed orders (FILLED, CANCELLED, REJECTED) are removed from
+        _live_orders after they've been processed. Orders without an
+        exchange_order_id that are older than 60 seconds are considered
+        zombies and marked as REJECTED.
+        """
+        stale_threshold = 60  # seconds
+        now = datetime.now(UTC)
+        to_remove: list[str] = []
+
+        for internal_id, order in self._live_orders.items():
+            # Remove completed orders (already processed)
+            if order.is_complete:
+                to_remove.append(internal_id)
+                continue
+
+            # Mark zombie orders (no exchange_order_id, stuck in non-terminal state)
+            if not order.exchange_order_id and order.created_at:
+                age = (now - order.created_at).total_seconds()
+                if age > stale_threshold:
+                    logger.warning(
+                        f"Marking zombie order {internal_id} as REJECTED "
+                        f"(no exchange_order_id after {age:.0f}s)"
+                    )
+                    order.status = OrderStatus.REJECTED
+                    to_remove.append(internal_id)
+
+        for internal_id in to_remove:
+            order = self._live_orders.pop(internal_id)
+            # Clean up exchange_order_map if present
+            if order.exchange_order_id and order.exchange_order_id in self._exchange_order_map:
+                del self._exchange_order_map[order.exchange_order_id]
 
     def _update_order_from_response(self, live_order: LiveOrder, response: OrderResponse) -> None:
         """Update live order from exchange response."""
@@ -909,6 +949,12 @@ class LiveTradingEngine:
             )
 
             response = await self._adapter.place_order(request)
+
+            # Validate exchange returned an order ID (C-DEFER-4)
+            if not response.order_id:
+                raise ValueError(
+                    f"Exchange returned empty order_id for {order.symbol} {order.side.value}"
+                )
 
             # Create live order tracking
             live_order = LiveOrder(
