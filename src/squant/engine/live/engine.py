@@ -655,7 +655,7 @@ class LiveTradingEngine:
             if update.fee is not None:
                 fee_delta = update.fee - old_fee
                 if fee_delta < 0:
-                    fee_delta = None  # Fee went backwards; fall back to total
+                    fee_delta = Decimal("0")  # Fee went backwards; skip this increment
             self._process_order_fill(live_order, update, fill_delta, fee_delta)
 
             # Check if a trade was completed and record its PnL
@@ -843,7 +843,7 @@ class LiveTradingEngine:
             if response.fee is not None:
                 fee_delta = response.fee - old_fee
                 if fee_delta < 0:
-                    fee_delta = None  # Fee went backwards; fall back to total
+                    fee_delta = Decimal("0")  # Fee went backwards; skip this increment
 
             # Track trade count and circuit breaker state before processing
             trades_before = len(self._context.trades)
