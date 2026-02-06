@@ -8,10 +8,42 @@ Mark with pytest.mark.integration to skip in quick test runs.
 """
 
 import asyncio
+from collections.abc import Callable
 
 import pytest
 
 from squant.infra.exchange.ccxt import CCXTStreamProvider
+
+# Default timeout for waiting on WebSocket data (seconds).
+# Exchange WebSocket connections can be slow to establish, especially
+# under load or in CI environments with shared network resources.
+WS_DATA_TIMEOUT = 15
+
+
+async def wait_for_data(
+    check: Callable[[], bool],
+    timeout: float = WS_DATA_TIMEOUT,
+    poll_interval: float = 0.1,
+    description: str = "WebSocket data",
+) -> None:
+    """Wait until check() returns True, or raise on timeout.
+
+    Replaces hand-written polling loops across all WebSocket tests with
+    a single, configurable utility that gives clear timeout messages.
+
+    Args:
+        check: Callable that returns True when desired data has arrived.
+        timeout: Maximum wait time in seconds.
+        poll_interval: Sleep interval between checks.
+        description: Human-readable label for timeout error message.
+    """
+    elapsed = 0.0
+    while elapsed < timeout:
+        if check():
+            return
+        await asyncio.sleep(poll_interval)
+        elapsed += poll_interval
+    pytest.fail(f"Timed out after {timeout}s waiting for {description}")
 
 
 @pytest.mark.integration
@@ -76,14 +108,11 @@ class TestCCXTProviderPublicChannels:
             await provider.connect()
             await provider.watch_ticker("BTC/USDT")
 
-            # Wait for some data (with timeout)
-            for _ in range(50):  # 5 seconds max
-                await asyncio.sleep(0.1)
-                if received_data:
-                    break
+            await wait_for_data(
+                lambda: len(received_data) > 0,
+                description="OKX ticker data for BTC/USDT",
+            )
 
-            # Verify we received ticker data
-            assert len(received_data) > 0
             assert received_data[0]["type"] == "ticker"
             assert received_data[0]["data"].symbol == "BTC/USDT"
 
@@ -105,14 +134,11 @@ class TestCCXTProviderPublicChannels:
             await provider.connect()
             await provider.watch_ohlcv("BTC/USDT", "1m")
 
-            # Wait for some data (with timeout)
-            for _ in range(100):  # 10 seconds max
-                await asyncio.sleep(0.1)
-                if received_data:
-                    break
+            await wait_for_data(
+                lambda: len(received_data) > 0,
+                description="OKX OHLCV data for BTC/USDT 1m",
+            )
 
-            # Verify we received candle data
-            assert len(received_data) > 0
             assert received_data[0]["type"] == "candle"
             assert received_data[0]["data"].symbol == "BTC/USDT"
             assert received_data[0]["data"].timeframe == "1m"
@@ -135,14 +161,11 @@ class TestCCXTProviderPublicChannels:
             await provider.connect()
             await provider.watch_order_book("BTC/USDT", limit=5)
 
-            # Wait for some data (with timeout)
-            for _ in range(100):  # 10 seconds max
-                await asyncio.sleep(0.1)
-                if received_data:
-                    break
+            await wait_for_data(
+                lambda: len(received_data) > 0,
+                description="OKX orderbook data for BTC/USDT",
+            )
 
-            # Verify we received orderbook data
-            assert len(received_data) > 0
             assert received_data[0]["type"] == "orderbook"
             assert received_data[0]["data"].symbol == "BTC/USDT"
             assert len(received_data[0]["data"].bids) <= 5
@@ -173,11 +196,10 @@ class TestCCXTProviderMultipleSubscriptions:
             await provider.watch_ticker("BTC/USDT")
             await provider.watch_ticker("ETH/USDT")
 
-            # Wait for data from both symbols
-            for _ in range(100):  # 10 seconds max
-                await asyncio.sleep(0.1)
-                if len(received_symbols) >= 2:
-                    break
+            await wait_for_data(
+                lambda: len(received_symbols) >= 2,
+                description="ticker data for both BTC/USDT and ETH/USDT",
+            )
 
             assert "BTC/USDT" in received_symbols
             assert "ETH/USDT" in received_symbols
@@ -201,11 +223,10 @@ class TestCCXTProviderMultipleSubscriptions:
             await provider.watch_ticker("BTC/USDT")
             await provider.watch_order_book("BTC/USDT")
 
-            # Wait for data from both types
-            for _ in range(100):  # 10 seconds max
-                await asyncio.sleep(0.1)
-                if len(received_types) >= 2:
-                    break
+            await wait_for_data(
+                lambda: len(received_types) >= 2,
+                description="both ticker and orderbook data types",
+            )
 
             assert "ticker" in received_types
             assert "orderbook" in received_types
@@ -239,13 +260,10 @@ class TestCCXTProviderUnsubscribe:
             await provider.connect()
             await provider.watch_ticker("BTC/USDT")
 
-            # Wait for some data
-            for _ in range(30):
-                await asyncio.sleep(0.1)
-                if received_count_before > 0:
-                    break
-
-            assert received_count_before > 0
+            await wait_for_data(
+                lambda: received_count_before > 0,
+                description="initial OKX ticker data before unwatch",
+            )
 
             # Unwatch and set flag
             await provider.unwatch("ticker:BTC/USDT")
