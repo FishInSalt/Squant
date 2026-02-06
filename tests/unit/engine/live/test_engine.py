@@ -594,7 +594,7 @@ class TestEmergencyClose:
 
     @pytest.mark.asyncio
     async def test_emergency_close_closes_positions(self, engine, mock_adapter):
-        """Test that emergency close closes open positions."""
+        """Test that emergency close closes open positions and waits for fill."""
         await engine.start()
 
         # Simulate a position
@@ -602,13 +602,26 @@ class TestEmergencyClose:
         engine.context._positions["BTC/USDT"].is_open = True
         engine.context._positions["BTC/USDT"].amount = Decimal("0.5")
 
-        await engine.emergency_close()
+        # Mock place_order to return FILLED immediately (typical for market orders)
+        mock_adapter.place_order.return_value = OrderResponse(
+            order_id="close-123",
+            symbol="BTC/USDT",
+            side=OrderSide.SELL,
+            type=OrderType.MARKET,
+            status=OrderStatus.FILLED,
+            amount=Decimal("0.5"),
+            filled=Decimal("0.5"),
+            avg_price=Decimal("42000"),
+        )
+
+        results = await engine.emergency_close()
 
         # Should place market sell order
         mock_adapter.place_order.assert_called()
         call_args = mock_adapter.place_order.call_args[0][0]
         assert call_args.side == OrderSide.SELL
         assert call_args.type == "market"
+        assert results["positions_closed"] == 1
 
     @pytest.mark.asyncio
     async def test_emergency_close_stops_engine(self, engine):
@@ -663,9 +676,18 @@ class TestEmergencyClose:
         engine.context._positions["ETH/USDT"].is_open = True
         engine.context._positions["ETH/USDT"].amount = Decimal("2.0")
 
-        # First call succeeds, second fails
+        # First call succeeds with FILLED response, second fails
         mock_adapter.place_order.side_effect = [
-            MagicMock(),  # BTC/USDT succeeds
+            OrderResponse(
+                order_id="close-btc",
+                symbol="BTC/USDT",
+                side=OrderSide.SELL,
+                type=OrderType.MARKET,
+                status=OrderStatus.FILLED,
+                amount=Decimal("0.5"),
+                filled=Decimal("0.5"),
+                avg_price=Decimal("42000"),
+            ),
             Exception("Network timeout"),  # ETH/USDT fails
         ]
 
@@ -703,6 +725,16 @@ class TestEmergencyClose:
 
         # Cancel fails but place_order should still be called
         mock_adapter.cancel_order.side_effect = Exception("Cannot cancel")
+        mock_adapter.place_order.return_value = OrderResponse(
+            order_id="close-123",
+            symbol="BTC/USDT",
+            side=OrderSide.SELL,
+            type=OrderType.MARKET,
+            status=OrderStatus.FILLED,
+            amount=Decimal("0.5"),
+            filled=Decimal("0.5"),
+            avg_price=Decimal("42000"),
+        )
 
         await engine.emergency_close()
 
@@ -767,9 +799,18 @@ class TestEmergencyClose:
         engine.context._positions["ETH/USDT"].is_open = True
         engine.context._positions["ETH/USDT"].amount = Decimal("-2.0")  # Short position
 
-        # First call succeeds, second fails
+        # First call succeeds with FILLED, second fails
         mock_adapter.place_order.side_effect = [
-            MagicMock(),  # BTC/USDT succeeds
+            OrderResponse(
+                order_id="close-btc",
+                symbol="BTC/USDT",
+                side=OrderSide.SELL,
+                type=OrderType.MARKET,
+                status=OrderStatus.FILLED,
+                amount=Decimal("0.5"),
+                filled=Decimal("0.5"),
+                avg_price=Decimal("42000"),
+            ),
             Exception("Network timeout"),  # ETH/USDT fails
         ]
 
@@ -786,6 +827,46 @@ class TestEmergencyClose:
         assert remaining["symbol"] == "ETH/USDT"
         assert remaining["amount"] == "-2.0"
         assert remaining["side"] == "short"
+
+    @pytest.mark.asyncio
+    async def test_emergency_close_polls_for_fill(self, engine, mock_adapter):
+        """Test that emergency close polls get_order when order is not immediately filled."""
+        await engine.start()
+
+        # Simulate a position
+        engine.context._positions["BTC/USDT"] = MagicMock()
+        engine.context._positions["BTC/USDT"].is_open = True
+        engine.context._positions["BTC/USDT"].amount = Decimal("0.5")
+
+        # place_order returns SUBMITTED (not immediately filled)
+        mock_adapter.place_order.return_value = OrderResponse(
+            order_id="close-123",
+            symbol="BTC/USDT",
+            side=OrderSide.SELL,
+            type=OrderType.MARKET,
+            status=OrderStatus.SUBMITTED,
+            amount=Decimal("0.5"),
+            filled=Decimal("0"),
+        )
+
+        # get_order returns FILLED on first poll
+        mock_adapter.get_order.return_value = OrderResponse(
+            order_id="close-123",
+            symbol="BTC/USDT",
+            side=OrderSide.SELL,
+            type=OrderType.MARKET,
+            status=OrderStatus.FILLED,
+            amount=Decimal("0.5"),
+            filled=Decimal("0.5"),
+            avg_price=Decimal("42000"),
+        )
+
+        results = await engine.emergency_close()
+
+        # Should have polled get_order
+        mock_adapter.get_order.assert_called_with("BTC/USDT", "close-123")
+        assert results["positions_closed"] == 1
+        assert results["status"] == "completed"
 
     @pytest.mark.asyncio
     async def test_emergency_close_flag_reset_on_completion(self, engine, mock_adapter):

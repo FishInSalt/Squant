@@ -5,6 +5,7 @@ Drives strategy execution with actual order placement via exchange adapter.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -401,8 +402,9 @@ class LiveTradingEngine:
             cancelled = await self._cancel_all_orders()
             results["orders_cancelled"] = len(cancelled)
 
-            # Close all positions at market
-            for symbol, position in self._context.positions.items():
+            # Close all positions at market and wait for fills
+            pending_close_orders: list[tuple[str, OrderResponse]] = []  # (symbol, response)
+            for symbol, position in list(self._context.positions.items()):
                 if position.is_open:
                     try:
                         # Place market order to close
@@ -414,10 +416,11 @@ class LiveTradingEngine:
                             amount=abs(position.amount),
                         )
 
-                        await self._adapter.place_order(order_request)
-                        results["positions_closed"] += 1
+                        response = await self._adapter.place_order(order_request)
+                        pending_close_orders.append((symbol, response))
                         logger.info(
-                            f"Emergency close order placed: {symbol} {side.value} {abs(position.amount)}"
+                            f"Emergency close order placed: {symbol} {side.value} "
+                            f"{abs(position.amount)} (order_id={response.order_id})"
                         )
 
                     except Exception as e:
@@ -429,19 +432,43 @@ class LiveTradingEngine:
                             }
                         )
 
-            # TRD-038#5: Collect remaining positions after close attempts
-            for symbol, position in self._context.positions.items():
-                if position.is_open:
-                    # Check if this position had an error (meaning it wasn't closed)
-                    had_error = any(err["symbol"] == symbol for err in results["errors"])
-                    if had_error:
-                        results["remaining_positions"].append(
+            # Wait for close orders to fill
+            for symbol, response in pending_close_orders:
+                try:
+                    final = await self._wait_for_order_fill(symbol, response)
+                    if final.status == OrderStatus.FILLED:
+                        results["positions_closed"] += 1
+                    else:
+                        logger.warning(
+                            f"Emergency close order not filled: {symbol} "
+                            f"status={final.status.value}"
+                        )
+                        results["errors"].append(
                             {
                                 "symbol": symbol,
-                                "amount": str(position.amount),
-                                "side": "long" if position.amount > 0 else "short",
+                                "error": f"Order not filled: status={final.status.value}",
                             }
                         )
+                except Exception as e:
+                    logger.exception(f"Error waiting for close order fill: {symbol}: {e}")
+                    results["errors"].append(
+                        {
+                            "symbol": symbol,
+                            "error": f"Fill wait failed: {e}",
+                        }
+                    )
+
+            # TRD-038#5: Collect remaining positions based on unfilled orders
+            error_symbols = {err["symbol"] for err in results["errors"]}
+            for symbol, position in self._context.positions.items():
+                if position.is_open and symbol in error_symbols:
+                    results["remaining_positions"].append(
+                        {
+                            "symbol": symbol,
+                            "amount": str(position.amount),
+                            "side": "long" if position.amount > 0 else "short",
+                        }
+                    )
 
             # Set status based on results
             if results["remaining_positions"]:
@@ -615,7 +642,13 @@ class LiveTradingEngine:
             circuit_breaker_before = self._risk_manager.state.circuit_breaker_triggered
 
             # Calculate incremental fee (not cumulative)
-            fee_delta = (update.fee or Decimal("0")) - old_fee
+            # Only compute delta if exchange provides fee info; otherwise pass None
+            # to avoid negative deltas when fee is temporarily unavailable (LV-2)
+            fee_delta = None
+            if update.fee is not None:
+                fee_delta = update.fee - old_fee
+                if fee_delta < 0:
+                    fee_delta = None  # Fee went backwards; fall back to total
             self._process_order_fill(live_order, update, fill_delta, fee_delta)
 
             # Check if a trade was completed and record its PnL
@@ -771,7 +804,12 @@ class LiveTradingEngine:
         # Process new fills
         if response.filled > old_filled:
             fill_amount = response.filled - old_filled
-            fee_delta = (response.fee or Decimal("0")) - old_fee
+            # Only compute fee delta if fee info is available (LV-2)
+            fee_delta = None
+            if response.fee is not None:
+                fee_delta = response.fee - old_fee
+                if fee_delta < 0:
+                    fee_delta = None  # Fee went backwards; fall back to total
 
             # Track trade count and circuit breaker state before processing
             trades_before = len(self._context.trades)
@@ -1025,6 +1063,48 @@ class LiveTradingEngine:
                     logger.warning(f"Failed to cancel order {internal_id}: {e}")
 
         return cancelled
+
+    async def _wait_for_order_fill(
+        self,
+        symbol: str,
+        order_response: OrderResponse,
+        timeout: float = 30.0,
+        poll_interval: float = 1.0,
+    ) -> OrderResponse:
+        """Wait for an order to reach a terminal state (filled/cancelled/rejected).
+
+        Args:
+            symbol: Trading pair symbol.
+            order_response: Initial order response from place_order.
+            timeout: Maximum time to wait in seconds.
+            poll_interval: Time between status checks in seconds.
+
+        Returns:
+            Final order response.
+        """
+        terminal_statuses = {OrderStatus.FILLED, OrderStatus.CANCELLED, OrderStatus.REJECTED}
+
+        if order_response.status in terminal_statuses:
+            return order_response
+
+        deadline = datetime.now(UTC).timestamp() + timeout
+        order_id = order_response.order_id
+        last_response = order_response
+
+        while datetime.now(UTC).timestamp() < deadline:
+            await asyncio.sleep(poll_interval)
+            try:
+                last_response = await self._adapter.get_order(symbol, order_id)
+                if last_response.status in terminal_statuses:
+                    return last_response
+            except Exception as e:
+                logger.warning(f"Error polling order {order_id}: {e}")
+
+        logger.warning(
+            f"Timeout waiting for order {order_id} fill "
+            f"(last status: {last_response.status.value})"
+        )
+        return last_response
 
     def get_pending_snapshots(self) -> list[EquitySnapshot]:
         """Get and clear pending equity snapshots."""
