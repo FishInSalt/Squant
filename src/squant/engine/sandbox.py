@@ -356,11 +356,36 @@ def _build_restricted_globals() -> dict[str, Any]:
 
     restricted_builtins["Decimal"] = Decimal
 
-    # Add math module for technical analysis (sqrt, log, exp, etc.)
-    # math is a pure computation module with no IO, network, or filesystem access.
+    # Add restricted math module for technical analysis (SBX-2)
+    # Only expose functions needed for trading analysis; exclude combinatorial
+    # functions (factorial, comb, perm, etc.) that can be used for DoS attacks.
     import math
 
-    restricted_builtins["math"] = math
+    _SAFE_MATH_ATTRS = frozenset({
+        # Trigonometric
+        "sin", "cos", "tan", "asin", "acos", "atan", "atan2",
+        "sinh", "cosh", "tanh", "asinh", "acosh", "atanh",
+        "hypot", "degrees", "radians",
+        # Exponential / logarithmic
+        "exp", "expm1", "log", "log2", "log10", "log1p", "pow", "sqrt",
+        # Rounding / absolute
+        "ceil", "floor", "trunc", "fabs", "copysign", "remainder", "fmod",
+        # Statistics helpers
+        "fsum", "isfinite", "isinf", "isnan", "isclose",
+        # Constants
+        "pi", "e", "inf", "nan", "tau",
+    })
+
+    class _RestrictedMath:
+        """Proxy that exposes only safe math functions."""
+        pass
+
+    _restricted_math = _RestrictedMath()
+    for _attr in _SAFE_MATH_ATTRS:
+        if hasattr(math, _attr):
+            setattr(_restricted_math, _attr, getattr(math, _attr))
+
+    restricted_builtins["math"] = _restricted_math
 
     # Build globals with guards
     restricted_globals = {

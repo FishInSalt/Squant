@@ -250,6 +250,9 @@ class PaperTradingSettings(BaseSettings):
     persist_interval_seconds: int = Field(
         default=60, ge=10, description="Auto-persist interval (seconds)"
     )
+    max_sessions: int = Field(
+        default=20, ge=1, le=100, description="Max concurrent paper trading sessions"
+    )
 
 
 class CircuitBreakerSettings(BaseSettings):
@@ -573,6 +576,11 @@ class Settings(BaseSettings):
     def paper_persist_interval_seconds(self) -> int:
         """Alias for paper.persist_interval_seconds (backward compatibility)."""
         return self.paper.persist_interval_seconds
+
+    @property
+    def paper_max_sessions(self) -> int:
+        """Alias for paper.max_sessions (backward compatibility)."""
+        return self.paper.max_sessions
 
     # Circuit breaker aliases
     @property

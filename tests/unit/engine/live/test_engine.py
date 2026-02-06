@@ -2333,3 +2333,106 @@ class TestCircuitBreakerOrderProcessing:
 
         # Should call place_order
         mock_adapter.place_order.assert_called_once()
+
+
+class TestSyncConsecutiveFailures:
+    """Tests for exchange connection failure detection (LV-3)."""
+
+    @pytest.mark.asyncio
+    async def test_balance_sync_consecutive_failures_stop_engine(self, engine, mock_adapter):
+        """Test engine stops after consecutive balance sync failures."""
+        await engine.start()
+        assert engine.is_running is True
+
+        # Make get_balance fail
+        mock_adapter.get_balance.side_effect = Exception("Network error")
+
+        # Call _sync_balance 5 times (threshold)
+        for _ in range(5):
+            await engine._sync_balance()
+
+        assert engine.is_running is False
+        assert "Exchange connection lost" in engine.error_message
+        assert "consecutive sync failures" in engine.error_message
+
+    @pytest.mark.asyncio
+    async def test_balance_sync_success_resets_failure_counter(self, engine, mock_adapter):
+        """Test successful balance sync resets the failure counter."""
+        await engine.start()
+
+        # Fail 4 times (below threshold)
+        mock_adapter.get_balance.side_effect = Exception("Network error")
+        for _ in range(4):
+            await engine._sync_balance()
+
+        assert engine.is_running is True
+        assert engine._sync_consecutive_failures == 4
+
+        # Succeed once (resets counter)
+        mock_adapter.get_balance.side_effect = None
+        await engine._sync_balance()
+
+        assert engine._sync_consecutive_failures == 0
+        assert engine.is_running is True
+
+    @pytest.mark.asyncio
+    async def test_order_sync_consecutive_failures_stop_engine(self, engine, mock_adapter):
+        """Test engine stops after consecutive order sync failures."""
+        await engine.start()
+
+        # Disable rate limiting for this test
+        engine._order_poll_min_interval = 0
+
+        # Add a pending order for sync to process
+        engine._live_orders["order-1"] = LiveOrder(
+            internal_id="order-1",
+            exchange_order_id="exchange-1",
+            symbol="BTC/USDT",
+            side=OrderSide.BUY,
+            order_type="limit",
+            amount=Decimal("0.1"),
+            price=Decimal("40000"),
+            status=OrderStatus.SUBMITTED,
+        )
+
+        # Make get_order fail
+        mock_adapter.get_order.side_effect = Exception("Network error")
+
+        # Call _sync_pending_orders 5 times (threshold)
+        for _ in range(5):
+            await engine._sync_pending_orders()
+
+        assert engine.is_running is False
+        assert "Exchange connection lost" in engine.error_message
+
+
+class TestEmergencyCloseTimestamp:
+    """Tests for emergency close activity timestamp (LV-6)."""
+
+    @pytest.mark.asyncio
+    async def test_emergency_close_updates_last_active_at(self, engine, mock_adapter):
+        """Test that emergency close updates last_active_at timestamp."""
+        await engine.start()
+        initial_time = engine._last_active_at
+
+        # Simulate a position
+        engine.context._positions["BTC/USDT"] = MagicMock()
+        engine.context._positions["BTC/USDT"].is_open = True
+        engine.context._positions["BTC/USDT"].amount = Decimal("0.5")
+
+        # Mock place_order for market close
+        mock_adapter.place_order.return_value = OrderResponse(
+            order_id="close-123",
+            symbol="BTC/USDT",
+            side=OrderSide.SELL,
+            type=OrderType.MARKET,
+            status=OrderStatus.FILLED,
+            amount=Decimal("0.5"),
+            filled=Decimal("0.5"),
+            avg_price=Decimal("42000"),
+        )
+
+        await engine.emergency_close()
+
+        # last_active_at should have been updated during emergency close
+        assert engine._last_active_at >= initial_time

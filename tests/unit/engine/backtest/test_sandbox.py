@@ -362,13 +362,15 @@ class TestBuildRestrictedGlobals:
         assert "OrderType" in globals_dict
 
     def test_contains_math(self):
-        """Test restricted globals includes math module."""
+        """Test restricted globals includes restricted math proxy."""
         globals_dict = _build_restricted_globals()
         builtins = globals_dict["__builtins__"]
         assert "math" in builtins
-        import math
-
-        assert builtins["math"] is math
+        # math is now a restricted proxy, not the full module (SBX-2)
+        restricted_math = builtins["math"]
+        assert hasattr(restricted_math, "sin")
+        assert hasattr(restricted_math, "pi")
+        assert hasattr(restricted_math, "sqrt")
 
     def test_contains_guards(self):
         """Test restricted globals includes security guards."""
@@ -1135,6 +1137,36 @@ class AttackStrategy(Strategy):
         result = validate_strategy_code(code)
         assert result.valid is False
         assert any("type" in err for err in result.errors)
+
+    def test_restricted_math_safe_functions_accessible(self):
+        """Test restricted math allows safe functions (SBX-2)."""
+        globals_dict = _build_restricted_globals()
+        builtins = globals_dict["__builtins__"]
+        restricted_math = builtins["math"]
+
+        import math
+
+        # Verify safe functions work correctly
+        assert restricted_math.sin(0) == math.sin(0)
+        assert restricted_math.sqrt(4) == math.sqrt(4)
+        assert restricted_math.pi == math.pi
+        assert restricted_math.log(1) == math.log(1)
+        assert restricted_math.ceil(1.5) == math.ceil(1.5)
+        assert restricted_math.isnan(float("nan")) is True
+
+    def test_restricted_math_blocks_dangerous_functions(self):
+        """Test restricted math blocks DoS-capable functions (SBX-2)."""
+        globals_dict = _build_restricted_globals()
+        builtins = globals_dict["__builtins__"]
+        restricted_math = builtins["math"]
+
+        # These combinatorial functions could be used for DoS
+        assert not hasattr(restricted_math, "factorial")
+        assert not hasattr(restricted_math, "comb")
+        assert not hasattr(restricted_math, "perm")
+        assert not hasattr(restricted_math, "prod")
+        assert not hasattr(restricted_math, "gcd")
+        assert not hasattr(restricted_math, "lcm")
 
     def test_object_subclasses_blocked_by_attribute_guard(self):
         """Test that object.__subclasses__() is blocked by RestrictedPython.

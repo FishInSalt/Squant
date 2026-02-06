@@ -188,6 +188,10 @@ class LiveTradingEngine:
         self._order_last_poll: dict[str, datetime] = {}  # exchange_order_id -> last poll time
         self._order_poll_min_interval = 30.0  # Minimum seconds between polls for same order
 
+        # Exchange connection failure tracking (LV-3)
+        self._sync_consecutive_failures: int = 0
+        self._sync_failure_threshold: int = 5
+
     @property
     def run_id(self) -> UUID:
         """Get the strategy run ID."""
@@ -388,6 +392,8 @@ class LiveTradingEngine:
 
         self._emergency_close_in_progress = True
         try:
+            # Update activity timestamp to prevent health check timeout during close (LV-6)
+            self._last_active_at = datetime.now(UTC)
             logger.warning(f"Emergency close triggered for run {self._run_id}")
 
             results: dict[str, Any] = {
@@ -418,6 +424,7 @@ class LiveTradingEngine:
 
                         response = await self._adapter.place_order(order_request)
                         pending_close_orders.append((symbol, response))
+                        self._last_active_at = datetime.now(UTC)
                         logger.info(
                             f"Emergency close order placed: {symbol} {side.value} "
                             f"{abs(position.amount)} (order_id={response.order_id})"
@@ -696,8 +703,20 @@ class LiveTradingEngine:
             quote_balance = balance.get_balance(quote_currency)
             if quote_balance:
                 self._context._cash = quote_balance.available
+            self._sync_consecutive_failures = 0
         except Exception as e:
-            logger.warning(f"Failed to sync balance: {e}")
+            self._sync_consecutive_failures += 1
+            logger.warning(
+                f"Failed to sync balance: {e} "
+                f"(consecutive failures: {self._sync_consecutive_failures})"
+            )
+            if self._sync_consecutive_failures >= self._sync_failure_threshold:
+                self._error_message = (
+                    f"Exchange connection lost: {self._sync_consecutive_failures} "
+                    f"consecutive sync failures"
+                )
+                self._is_running = False
+                logger.error(f"Engine {self._run_id} stopped due to exchange connection failure")
 
     async def _sync_pending_orders(self) -> None:
         """Sync pending order status from exchange with rate limiting.
@@ -736,15 +755,30 @@ class LiveTradingEngine:
                 self._update_order_from_response(live_order, response)
                 self._order_last_poll[exchange_oid] = now
                 polled_count += 1
+                self._sync_consecutive_failures = 0
 
                 # Clean up tracking for completed orders
                 if live_order.is_complete and exchange_oid in self._order_last_poll:
                     del self._order_last_poll[exchange_oid]
 
             except Exception as e:
-                logger.warning(f"Failed to sync order {internal_id}: {e}")
+                self._sync_consecutive_failures += 1
+                logger.warning(
+                    f"Failed to sync order {internal_id}: {e} "
+                    f"(consecutive failures: {self._sync_consecutive_failures})"
+                )
                 # Still record the poll time to avoid hammering on errors
                 self._order_last_poll[exchange_oid] = now
+                if self._sync_consecutive_failures >= self._sync_failure_threshold:
+                    self._error_message = (
+                        f"Exchange connection lost: {self._sync_consecutive_failures} "
+                        f"consecutive sync failures"
+                    )
+                    self._is_running = False
+                    logger.error(
+                        f"Engine {self._run_id} stopped due to exchange connection failure"
+                    )
+                    return
 
         if polled_count > 0 or skipped_count > 0:
             logger.debug(
