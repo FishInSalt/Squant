@@ -478,6 +478,10 @@ class LiveTradingEngine:
         if not self._is_running:
             return
 
+        # Block new candle processing during emergency close (C-DEFER-3)
+        if self._emergency_close_in_progress:
+            return
+
         # Check if circuit breaker was triggered by order update (RSK-012)
         if self._circuit_breaker_triggered:
             logger.warning(f"Circuit breaker active for session {self._run_id}, stopping trading")
@@ -949,15 +953,22 @@ class LiveTradingEngine:
         for internal_id, live_order in self._live_orders.items():
             if not live_order.is_complete and live_order.exchange_order_id:
                 try:
-                    await self._adapter.cancel_order(
+                    response = await self._adapter.cancel_order(
                         CancelOrderRequest(
                             symbol=live_order.symbol,
                             order_id=live_order.exchange_order_id,
                         )
                     )
-                    live_order.status = OrderStatus.CANCELLED
-                    cancelled.append(internal_id)
-                    logger.info(f"Cancelled order {internal_id}")
+                    # Use exchange response as source of truth (C-DEFER-7)
+                    self._update_order_from_response(live_order, response)
+                    if live_order.status == OrderStatus.CANCELLED:
+                        cancelled.append(internal_id)
+                        logger.info(f"Cancelled order {internal_id}")
+                    else:
+                        logger.warning(
+                            f"Order {internal_id} was {live_order.status.value} "
+                            f"before cancel took effect (filled={live_order.filled_amount})"
+                        )
                 except Exception as e:
                     logger.warning(f"Failed to cancel order {internal_id}: {e}")
 

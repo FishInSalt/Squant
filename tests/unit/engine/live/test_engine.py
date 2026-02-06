@@ -125,8 +125,19 @@ def mock_adapter():
         )
     )
 
-    # Mock cancel_order
-    adapter.cancel_order = AsyncMock()
+    # Mock cancel_order — returns CANCELLED status by default
+    adapter.cancel_order = AsyncMock(
+        return_value=OrderResponse(
+            order_id="exchange-123",
+            symbol="BTC/USDT",
+            side=OrderSide.BUY,
+            type=OrderType.LIMIT,
+            status=OrderStatus.CANCELLED,
+            price=Decimal("40000"),
+            amount=Decimal("0.1"),
+            filled=Decimal("0"),
+        )
+    )
 
     return adapter
 
@@ -786,6 +797,36 @@ class TestEmergencyClose:
         # Flag should still be reset
         assert engine._emergency_close_in_progress is False
 
+    @pytest.mark.asyncio
+    async def test_process_candle_blocked_during_emergency_close(self, engine, mock_adapter):
+        """Test C-DEFER-3: process_candle returns early during emergency close.
+
+        When an emergency close is in progress, new candle processing should be
+        blocked to prevent the strategy from placing new orders that would
+        interfere with the emergency close operation.
+        """
+        await engine.start()
+
+        candle = WSCandle(
+            symbol="BTC/USDT",
+            timeframe="1m",
+            timestamp=datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC),
+            open=Decimal("45000"),
+            high=Decimal("46000"),
+            low=Decimal("44000"),
+            close=Decimal("45500"),
+            volume=Decimal("100"),
+            is_closed=True,
+        )
+
+        # Simulate emergency close in progress
+        engine._emergency_close_in_progress = True
+
+        await engine.process_candle(candle)
+
+        # Strategy should NOT have been called (no order placed)
+        mock_adapter.place_order.assert_not_called()
+
 
 class TestOrderUpdates:
     """Tests for WebSocket order updates."""
@@ -1068,6 +1109,90 @@ class TestCancelAllOrders:
 
         # Order should not be cancelled
         mock_adapter.cancel_order.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_cancel_uses_exchange_response(self, engine, mock_adapter):
+        """Test C-DEFER-7: cancel uses exchange response as source of truth.
+
+        If the order was filled before the cancel took effect, the local state
+        should reflect FILLED (not CANCELLED) with actual fill data.
+        """
+        await engine.start()
+
+        engine._live_orders["order-1"] = LiveOrder(
+            internal_id="order-1",
+            exchange_order_id="exchange-1",
+            symbol="BTC/USDT",
+            side=OrderSide.BUY,
+            order_type="limit",
+            amount=Decimal("0.1"),
+            price=Decimal("40000"),
+            status=OrderStatus.SUBMITTED,
+        )
+
+        # Exchange returns FILLED (order was filled before cancel arrived)
+        mock_adapter.cancel_order.return_value = OrderResponse(
+            order_id="exchange-1",
+            symbol="BTC/USDT",
+            side=OrderSide.BUY,
+            type=OrderType.LIMIT,
+            status=OrderStatus.FILLED,
+            price=Decimal("40000"),
+            amount=Decimal("0.1"),
+            filled=Decimal("0.1"),
+            avg_price=Decimal("40000"),
+            fee=Decimal("0.04"),
+        )
+
+        await engine.stop(cancel_orders=True)
+
+        # Order should be FILLED, not CANCELLED
+        order = engine._live_orders["order-1"]
+        assert order.status == OrderStatus.FILLED
+        assert order.filled_amount == Decimal("0.1")
+        assert order.avg_fill_price == Decimal("40000")
+
+    @pytest.mark.asyncio
+    async def test_cancel_partial_fill_before_cancel(self, engine, mock_adapter):
+        """Test C-DEFER-7: partially filled order returns accurate state.
+
+        If the order was partially filled before cancel, the response captures
+        the fill data rather than silently marking as cancelled.
+        """
+        await engine.start()
+
+        engine._live_orders["order-1"] = LiveOrder(
+            internal_id="order-1",
+            exchange_order_id="exchange-1",
+            symbol="BTC/USDT",
+            side=OrderSide.BUY,
+            order_type="limit",
+            amount=Decimal("0.1"),
+            price=Decimal("40000"),
+            status=OrderStatus.SUBMITTED,
+        )
+
+        # Exchange returns CANCELLED with partial fill
+        mock_adapter.cancel_order.return_value = OrderResponse(
+            order_id="exchange-1",
+            symbol="BTC/USDT",
+            side=OrderSide.BUY,
+            type=OrderType.LIMIT,
+            status=OrderStatus.CANCELLED,
+            price=Decimal("40000"),
+            amount=Decimal("0.1"),
+            filled=Decimal("0.03"),
+            avg_price=Decimal("40000"),
+            fee=Decimal("0.012"),
+        )
+
+        await engine.stop(cancel_orders=True)
+
+        # Order should be CANCELLED but with partial fill data preserved
+        order = engine._live_orders["order-1"]
+        assert order.status == OrderStatus.CANCELLED
+        assert order.filled_amount == Decimal("0.03")
+        assert order.fee == Decimal("0.012")
 
 
 class TestCircuitBreakerIntegration:
