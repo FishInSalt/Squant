@@ -2,6 +2,7 @@
 
 from datetime import UTC, datetime
 from decimal import Decimal
+from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
 import pytest
@@ -794,3 +795,64 @@ class TestInsufficientCashHandling:
 
         # Engine should have recorded equity snapshot before stopping
         assert len(engine.context.equity_curve) >= 1
+
+
+class TestDeadlockFix:
+    """Tests for ISSUE-300 fix: process_candle outer except must not deadlock
+    by calling stop() while holding _processing_lock."""
+
+    @pytest.fixture
+    def engine(self):
+        strategy = SimpleStrategy()
+        with patch("squant.config.get_settings") as mock_settings:
+            settings = MagicMock()
+            settings.paper_max_equity_curve_size = 10000
+            settings.paper_max_completed_orders = 1000
+            settings.paper_max_fills = 1000
+            settings.paper_max_trades = 1000
+            settings.paper_max_logs = 1000
+            settings.strategy.cpu_limit_seconds = 5
+            settings.strategy.memory_limit_mb = 256
+            mock_settings.return_value = settings
+
+            return PaperTradingEngine(
+                run_id=uuid4(),
+                strategy=strategy,
+                symbol="BTC/USDT",
+                timeframe="1m",
+                initial_capital=Decimal("10000"),
+                params={"threshold": Decimal("50000")},
+            )
+
+    @pytest.mark.asyncio
+    async def test_unexpected_error_stops_engine_without_deadlock(self, engine):
+        """Test that an unexpected error in process_candle stops the engine
+        cleanly without deadlocking on _processing_lock (ISSUE-300)."""
+        await engine.start()
+        assert engine.is_running is True
+
+        candle = WSCandle(
+            symbol="BTC/USDT",
+            timeframe="1m",
+            timestamp=datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC),
+            open=Decimal("45000"),
+            high=Decimal("46000"),
+            low=Decimal("44000"),
+            close=Decimal("45500"),
+            volume=Decimal("100"),
+            is_closed=True,
+        )
+
+        # Inject an error in _candle_to_bar to trigger the outer except
+        with patch.object(engine, "_candle_to_bar", side_effect=RuntimeError("boom")):
+            with pytest.raises(RuntimeError, match="boom"):
+                await engine.process_candle(candle)
+
+        # Engine should be stopped (not deadlocked)
+        assert engine.is_running is False
+        assert engine.stopped_at is not None
+        assert "Error processing candle" in engine.error_message
+
+        # Lock should be released — another stop() should be a no-op, not deadlock
+        await engine.stop()
+        assert engine.is_running is False
