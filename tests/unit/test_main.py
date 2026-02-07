@@ -23,7 +23,6 @@ from squant.infra.exchange.exceptions import (
 )
 from squant.main import create_app
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------

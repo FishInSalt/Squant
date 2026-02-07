@@ -190,7 +190,7 @@ class TestList:
 
     async def test_list_with_order_by_asc(self, db_session):
         repo = _StrategyRepo(db_session)
-        created = await self._seed(repo, 3)
+        await self._seed(repo, 3)
         results = await repo.list(order_by="name", desc=False, limit=100)
         names = [s.name for s in results]
         assert names == sorted(names)
@@ -230,8 +230,7 @@ class TestList:
     async def test_list_pagination(self, db_session):
         """Verify offset + limit gives correct pages."""
         repo = _StrategyRepo(db_session)
-        created = await self._seed(repo, 6)
-        created_sorted = sorted(created, key=lambda s: s.name)
+        await self._seed(repo, 6)
 
         page1 = await repo.list(order_by="name", offset=0, limit=3)
         page2 = await repo.list(order_by="name", offset=3, limit=3)
