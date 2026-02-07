@@ -142,7 +142,7 @@ class TestDisplayTopTradingPairs:
         data = response.json()
 
         # Should contain error message
-        assert "detail" in data
+        assert "message" in data
 
 
 class TestRealTimePriceDisplay:
@@ -273,8 +273,8 @@ class TestFilterByExchange:
         assert response.status_code == 400
         data = response.json()
 
-        assert "detail" in data
-        assert "unsupported" in data["detail"].lower()
+        assert "message" in data
+        assert "unsupported" in data["message"].lower()
 
 
 class TestMultipleTimeframes:
@@ -338,8 +338,8 @@ class TestMultipleTimeframes:
         assert response.status_code == 400
         data = response.json()
 
-        assert "detail" in data
-        assert "invalid timeframe" in data["detail"].lower()
+        assert "message" in data
+        assert "invalid timeframe" in data["message"].lower()
 
 
 class TestGetSingleTicker:

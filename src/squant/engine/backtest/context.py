@@ -85,6 +85,7 @@ class BacktestContext:
         self._fills: deque[Fill] = deque(maxlen=max_fills)
         self._trades: deque[TradeRecord] = deque(maxlen=max_trades)
         self._open_trade: TradeRecord | None = None
+        self._partial_exit_pnl: Decimal = Decimal("0")  # accumulated PnL from partial exits
 
         # Bar history (deque for efficient append/pop)
         self._bar_history: deque[Bar] = deque(maxlen=max_bar_history)
@@ -464,16 +465,20 @@ class BacktestContext:
         """Get pending orders for matching engine."""
         return self._pending_orders
 
-    def _process_fill(self, fill: Fill) -> None:
+    def _process_fill(self, fill: Fill, force: bool = False) -> None:
         """Process a fill from the matching engine.
 
         Updates positions, cash, and tracks the fill.
 
         Args:
             fill: Fill event to process.
+            force: If True, skip cash/position validation. Used by live trading
+                engine where fills are already executed on the exchange and must
+                be recorded locally regardless of tracking discrepancies.
 
         Raises:
-            ValueError: If insufficient cash for buy order or insufficient position for sell.
+            ValueError: If insufficient cash for buy order or insufficient position
+                for sell (only when force=False).
         """
         # Update position
         if fill.symbol not in self._positions:
@@ -486,7 +491,7 @@ class BacktestContext:
         if fill.side == OrderSide.BUY:
             cost = fill.price * fill.amount + fill.fee
             # Validate sufficient cash before executing
-            if self._cash < cost:
+            if not force and self._cash < cost:
                 raise ValueError(
                     f"Insufficient cash for fill: available={self._cash}, "
                     f"required={cost} (price={fill.price}, amount={fill.amount}, fee={fill.fee})"
@@ -494,7 +499,7 @@ class BacktestContext:
             self._cash -= cost
         else:
             # Validate sufficient position before executing (spot trading - no short)
-            if position.amount < fill.amount:
+            if not force and position.amount < fill.amount:
                 raise ValueError(
                     f"Insufficient position for sell fill: position={position.amount}, "
                     f"fill_amount={fill.amount}"
@@ -557,6 +562,7 @@ class BacktestContext:
         """
         # Position opened
         if prev_amount == Decimal("0") and new_amount != Decimal("0"):
+            self._partial_exit_pnl = Decimal("0")
             self._open_trade = TradeRecord(
                 symbol=fill.symbol,
                 side=fill.side,
@@ -582,18 +588,22 @@ class BacktestContext:
         # Position decreased or closed
         elif self._open_trade:
             self._open_trade.fees += fill.fee
+            fill_amount = abs(prev_amount) - abs(new_amount)
+
+            # Compute realized PnL for this fill
+            if self._open_trade.side == OrderSide.BUY:
+                fill_pnl = (fill.price - self._open_trade.entry_price) * fill_amount
+            else:
+                fill_pnl = (self._open_trade.entry_price - fill.price) * fill_amount
+            self._partial_exit_pnl += fill_pnl
 
             # Position closed
             if new_amount == Decimal("0"):
                 self._open_trade.exit_time = fill.timestamp
                 self._open_trade.exit_price = fill.price
 
-                # Calculate PnL
-                if self._open_trade.side == OrderSide.BUY:
-                    pnl = (fill.price - self._open_trade.entry_price) * self._open_trade.amount
-                else:
-                    pnl = (self._open_trade.entry_price - fill.price) * self._open_trade.amount
-                pnl -= self._open_trade.fees
+                # Total PnL = sum of all partial exit PnLs - total fees
+                pnl = self._partial_exit_pnl - self._open_trade.fees
                 self._open_trade.pnl = pnl
 
                 cost_basis = self._open_trade.entry_price * self._open_trade.amount

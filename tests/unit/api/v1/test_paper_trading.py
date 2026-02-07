@@ -13,6 +13,7 @@ import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 
+from squant.infra.redis import get_redis
 from squant.main import app
 from squant.models.enums import RunMode, RunStatus
 from squant.services.paper_trading import (
@@ -25,9 +26,15 @@ from squant.services.strategy import StrategyNotFoundError
 
 @pytest_asyncio.fixture
 async def client() -> AsyncGenerator[AsyncClient, None]:
-    """Create async test client."""
+    """Create async test client with mocked Redis dependency."""
+
+    async def _mock_redis():
+        yield MagicMock()
+
+    app.dependency_overrides[get_redis] = _mock_redis
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
         yield ac
+    app.dependency_overrides.pop(get_redis, None)
 
 
 @pytest.fixture

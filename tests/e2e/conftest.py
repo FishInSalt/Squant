@@ -53,7 +53,7 @@ async def api_client(api_base_url) -> AsyncGenerator[AsyncClient, None]:
             response = await client.get("/api/v1/health")
             assert response.status_code == 200, "API server not ready"
         except Exception as e:
-            pytest.skip(f"API server not available: {e}")
+            pytest.fail(f"API server not available at {api_base_url}: {e}")
 
         yield client
 

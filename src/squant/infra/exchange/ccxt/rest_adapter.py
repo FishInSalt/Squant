@@ -370,8 +370,8 @@ class CCXTRestAdapter(ExchangeAdapter):
                 symbol=request.symbol,
                 type=order_type,
                 side=side,
-                amount=float(request.amount),
-                price=float(request.price) if request.price else None,
+                amount=str(request.amount),
+                price=str(request.price) if request.price else None,
             )
 
             return self._transform_order(order)

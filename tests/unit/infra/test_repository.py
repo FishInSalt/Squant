@@ -480,10 +480,10 @@ class TestBaseRepositoryUpdate:
     @pytest.mark.asyncio
     @patch("squant.infra.repository.select")
     @patch("squant.infra.repository.update")
-    async def test_update_filters_none_values(
+    async def test_update_passes_none_to_set_null(
         self, mock_update, mock_select, repository, mock_session, mock_model_instance
     ):
-        """Test update filters out None values."""
+        """Test update passes explicit None to SQLAlchemy to set field to NULL (ISSUE-715)."""
         mock_update_stmt = MagicMock()
         mock_update_stmt.where.return_value = mock_update_stmt
         mock_update_stmt.values.return_value = mock_update_stmt
@@ -500,8 +500,8 @@ class TestBaseRepositoryUpdate:
         result = await repository.update(mock_model_instance.id, name="Updated", status=None)
 
         assert result is not None
-        # values() should only receive non-None values
-        mock_update_stmt.values.assert_called_once_with(name="Updated")
+        # None values must be passed through to set the column to NULL
+        mock_update_stmt.values.assert_called_once_with(name="Updated", status=None)
 
 
 class TestBaseRepositoryDelete:

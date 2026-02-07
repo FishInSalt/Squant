@@ -324,7 +324,14 @@ class PaperTradingEngine:
 
             except Exception as e:
                 logger.exception(f"Error processing candle in engine {self._run_id}: {e}")
-                await self.stop(error=f"Error processing candle: {e}")
+                # Use _stop_impl() directly since we already hold _processing_lock.
+                # Calling stop() would deadlock because asyncio.Lock is not re-entrant
+                # (ISSUE-300 fix). Only set error_message if not already set by an
+                # inner handler (e.g., ResourceLimitExceededError sets its own message).
+                if not self._error_message:
+                    self._error_message = f"Error processing candle: {e}"
+                if self._is_running:
+                    self._stop_impl()
                 raise
 
     def _candle_to_bar(self, candle: WSCandle) -> Bar:

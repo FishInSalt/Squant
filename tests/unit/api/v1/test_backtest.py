@@ -18,6 +18,7 @@ from squant.services.backtest import (
     BacktestNotFoundError,
     IncompleteDataError,
     InsufficientDataError,
+    InvalidInitialCapitalError,
 )
 from squant.services.strategy import StrategyNotFoundError
 
@@ -139,6 +140,25 @@ class TestRunBacktest:
 
             assert response.status_code == 400
 
+    @pytest.mark.asyncio
+    async def test_run_backtest_invalid_initial_capital(
+        self, client: AsyncClient, valid_run_request: dict
+    ) -> None:
+        """Test backtest with initial capital below minimum returns 400."""
+        from decimal import Decimal
+
+        with patch("squant.api.v1.backtest.BacktestService") as mock_service_class:
+            mock_service = MagicMock()
+            mock_service.create_and_run = AsyncMock(
+                side_effect=InvalidInitialCapitalError(Decimal("5"), Decimal("10"))
+            )
+            mock_service_class.return_value = mock_service
+
+            response = await client.post("/api/v1/backtest", json=valid_run_request)
+
+            assert response.status_code == 400
+            assert "below minimum" in response.json()["message"].lower()
+
 
 class TestCreateBacktestAsync:
     """Tests for POST /api/v1/backtest/async endpoint."""
@@ -176,6 +196,25 @@ class TestCreateBacktestAsync:
             response = await client.post("/api/v1/backtest/async", json=valid_run_request)
 
             assert response.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_create_backtest_invalid_initial_capital(
+        self, client: AsyncClient, valid_run_request: dict
+    ) -> None:
+        """Test async creation with invalid initial capital returns 400."""
+        from decimal import Decimal
+
+        with patch("squant.api.v1.backtest.BacktestService") as mock_service_class:
+            mock_service = MagicMock()
+            mock_service.create = AsyncMock(
+                side_effect=InvalidInitialCapitalError(Decimal("1"), Decimal("10"))
+            )
+            mock_service_class.return_value = mock_service
+
+            response = await client.post("/api/v1/backtest/async", json=valid_run_request)
+
+            assert response.status_code == 400
+            assert "below minimum" in response.json()["message"].lower()
 
 
 class TestExecuteBacktest:
@@ -234,7 +273,7 @@ class TestExecuteBacktest:
             response = await client.post(f"/api/v1/backtest/{mock_backtest_run.id}/run")
 
             assert response.status_code == 400
-            assert "Not enough data" in response.json()["detail"]
+            assert "Not enough data" in response.json()["message"]
 
     @pytest.mark.asyncio
     async def test_execute_backtest_incomplete_data(
@@ -251,7 +290,7 @@ class TestExecuteBacktest:
             response = await client.post(f"/api/v1/backtest/{mock_backtest_run.id}/run")
 
             assert response.status_code == 400
-            assert "cover" in response.json()["detail"].lower()
+            assert "cover" in response.json()["message"].lower()
 
     @pytest.mark.asyncio
     async def test_execute_backtest_strategy_not_found(

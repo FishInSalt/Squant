@@ -79,9 +79,11 @@ class BaseRepository[ModelT: Base]:
         return instance
 
     async def update(self, id: str | UUID, **data: Any) -> ModelT | None:
-        """Update a record by ID."""
-        # Remove None values to avoid overwriting with None
-        data = {k: v for k, v in data.items() if v is not None}
+        """Update a record by ID.
+
+        Pass explicit None to set a field to NULL. To skip updating a field,
+        simply omit it from the keyword arguments.
+        """
         if not data:
             return await self.get(id)
 

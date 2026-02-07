@@ -221,16 +221,24 @@ class CCXTDataTransformer:
         """
         fee_info = order.get("fee") or {}
 
+        # Map status, then detect partial fills (CCXT reports "open" for both
+        # unfilled and partially filled orders — ISSUE-506 fix)
+        status = CCXTDataTransformer._map_order_status(order.get("status", ""))
+        filled = Decimal(str(order.get("filled", 0)))
+        amount = Decimal(str(order.get("amount", 0)))
+        if status == "submitted" and filled > 0 and amount > 0 and filled < amount:
+            status = "partial"
+
         return WSOrderUpdate(
             order_id=str(order.get("id", "")),
             client_order_id=order.get("clientOrderId"),
             symbol=order.get("symbol", ""),
             side=order.get("side", "").lower(),
             order_type=order.get("type", "").lower(),
-            status=CCXTDataTransformer._map_order_status(order.get("status", "")),
+            status=status,
             price=Decimal(str(order["price"])) if order.get("price") is not None else None,
             size=Decimal(str(order.get("amount", 0))),
-            filled_size=Decimal(str(order.get("filled", 0))),
+            filled_size=filled,
             avg_price=Decimal(str(order["average"])) if order.get("average") is not None else None,
             fee=Decimal(str(fee_info["cost"])) if fee_info.get("cost") is not None else None,
             fee_currency=fee_info.get("currency"),

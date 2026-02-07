@@ -478,8 +478,9 @@ def assert_api_error():
         )
         json_data = response.json()
         if message_contains:
-            detail = json_data.get("detail", "")
-            assert message_contains in detail, f"Expected '{message_contains}' in '{detail}'"
+            # Support both unified format {"message": ...} and raw {"detail": ...}
+            message = json_data.get("message") or json_data.get("detail", "")
+            assert message_contains in message, f"Expected '{message_contains}' in '{message}'"
         return json_data
 
     return _assert

@@ -486,4 +486,4 @@ class TestManualOrderCancellation:
         data = response.json()
 
         # Should contain error message about order already filled
-        assert "filled" in data["detail"].lower() or "cancel" in data["detail"].lower()
+        assert "filled" in data["message"].lower() or "cancel" in data["message"].lower()

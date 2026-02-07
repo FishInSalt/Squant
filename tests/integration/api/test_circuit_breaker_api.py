@@ -83,7 +83,7 @@ class TestTriggerCircuitBreaker:
             response = await client.post("/api/v1/circuit-breaker/trigger", json=request_data)
 
         assert response.status_code == 409
-        assert "circuit breaker is already active" in response.json()["detail"].lower()
+        assert "circuit breaker is already active" in response.json()["message"].lower()
 
     async def test_trigger_circuit_breaker_operation_in_progress(self, client):
         """Test RSK-010-2: Cannot trigger if another operation in progress."""
@@ -98,7 +98,7 @@ class TestTriggerCircuitBreaker:
             response = await client.post("/api/v1/circuit-breaker/trigger", json=request_data)
 
         assert response.status_code == 409
-        assert "operation is in progress" in response.json()["detail"].lower()
+        assert "operation is in progress" in response.json()["message"].lower()
 
     async def test_trigger_circuit_breaker_with_errors(self, client):
         """Test RSK-010-3: Show errors encountered during trigger."""
@@ -431,12 +431,10 @@ class TestResetCircuitBreaker:
             response = await client.post("/api/v1/circuit-breaker/reset")
 
         assert response.status_code == 409
-        detail = response.json()["detail"]
-        assert "code" in detail
-        assert detail["code"] == 409
-        assert "message" in detail
-        assert "cooldown" in detail["message"].lower()
-        assert detail["data"]["cooldown_remaining_minutes"] == 15.5
+        body = response.json()
+        assert body["code"] == 409
+        assert "cooldown" in body["message"].lower()
+        assert body["data"]["cooldown_remaining_minutes"] == 15.5
 
     async def test_reset_not_active(self, client):
         """Test reset when circuit breaker is not active."""
