@@ -381,25 +381,41 @@ class CircuitBreakerService:
         Raises:
             CircuitBreakerNotActiveError: If not active.
             CircuitBreakerCooldownError: If in cooldown and not forced.
+            CircuitBreakerOperationInProgressError: If another operation is in progress.
         """
-        state = await self.get_state()
+        # Acquire distributed lock to prevent TOCTOU race with concurrent
+        # trigger() or reset() calls (ISSUE-109 fix)
+        lock_id = str(uuid.uuid4())
+        lock_acquired = await self.redis.set(
+            CIRCUIT_BREAKER_LOCK_KEY,
+            lock_id,
+            nx=True,
+            ex=30,
+        )
+        if not lock_acquired:
+            raise CircuitBreakerOperationInProgressError()
 
-        if not state.is_active:
-            return {"status": "not_active", "cooldown_remaining_minutes": None}
+        try:
+            state = await self.get_state()
 
-        # Check cooldown unless forced
-        if not force and state.cooldown_until:
-            now = datetime.now(UTC)
-            if now < state.cooldown_until:
-                remaining = (state.cooldown_until - now).total_seconds() / 60
-                raise CircuitBreakerCooldownError(remaining)
+            if not state.is_active:
+                return {"status": "not_active", "cooldown_remaining_minutes": None}
 
-        # Reset state
-        await self._save_state(CircuitBreakerState())
+            # Check cooldown unless forced
+            if not force and state.cooldown_until:
+                now = datetime.now(UTC)
+                if now < state.cooldown_until:
+                    remaining = (state.cooldown_until - now).total_seconds() / 60
+                    raise CircuitBreakerCooldownError(remaining)
 
-        logger.info("Circuit breaker reset")
+            # Reset state
+            await self._save_state(CircuitBreakerState())
 
-        return {"status": "reset", "cooldown_remaining_minutes": None}
+            logger.info("Circuit breaker reset")
+
+            return {"status": "reset", "cooldown_remaining_minutes": None}
+        finally:
+            await self._release_lock(lock_id)
 
     async def get_status(self) -> dict[str, Any]:
         """Get current circuit breaker status.
