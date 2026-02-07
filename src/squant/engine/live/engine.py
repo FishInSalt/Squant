@@ -183,6 +183,11 @@ class LiveTradingEngine:
         # Emergency close in progress flag (TRD-038#6)
         self._emergency_close_in_progress: bool = False
 
+        # Buffered WebSocket order updates (ISSUE-203 fix)
+        # Updates are queued here and drained synchronously within process_candle
+        # to prevent concurrent state mutation between WS callbacks and polling.
+        self._pending_ws_updates: list[WSOrderUpdate] = []
+
         # Order sync rate limiting - avoid excessive polling
         # Track last poll time per order to avoid redundant API calls
         self._order_last_poll: dict[str, datetime] = {}  # exchange_order_id -> last poll time
@@ -550,6 +555,10 @@ class LiveTradingEngine:
             self._context._set_current_bar(bar)
             self._context._add_bar_to_history(bar)
 
+            # Drain buffered WebSocket order updates before polling to ensure
+            # consistent state (ISSUE-203 fix: no concurrent mutation)
+            self._drain_ws_updates()
+
             # Sync balance as baseline, then sync orders so fills adjust
             # cash incrementally on top of exchange truth (C-DEFER-8)
             await self._sync_balance()
@@ -596,9 +605,11 @@ class LiveTradingEngine:
             raise
 
     def on_order_update(self, update: WSOrderUpdate) -> None:
-        """Handle WebSocket order update.
+        """Handle WebSocket order update by buffering it for later processing.
 
-        Called when exchange pushes order status updates.
+        Called when exchange pushes order status updates. Updates are queued
+        and processed synchronously within process_candle via _drain_ws_updates()
+        to prevent concurrent state mutation (ISSUE-203 fix).
 
         Args:
             update: Order update from WebSocket.
@@ -609,6 +620,29 @@ class LiveTradingEngine:
             logger.debug(f"Ignoring order update during emergency close: {update.order_id}")
             return
 
+        self._pending_ws_updates.append(update)
+
+    def _drain_ws_updates(self) -> None:
+        """Process all buffered WebSocket order updates.
+
+        Called synchronously within process_candle to ensure all WS state
+        mutations happen at a controlled point, not interleaved with polling.
+        """
+        if not self._pending_ws_updates:
+            return
+
+        updates = self._pending_ws_updates.copy()
+        self._pending_ws_updates.clear()
+
+        for update in updates:
+            self._process_single_ws_update(update)
+
+    def _process_single_ws_update(self, update: WSOrderUpdate) -> None:
+        """Process a single WebSocket order update.
+
+        Args:
+            update: Order update from WebSocket.
+        """
         exchange_id = update.order_id
         internal_id = self._exchange_order_map.get(exchange_id)
 
@@ -677,7 +711,8 @@ class LiveTradingEngine:
                     ):
                         logger.warning(
                             f"Circuit breaker triggered for session {self._run_id} "
-                            f"after {self._risk_manager.state.consecutive_losses} consecutive losses"
+                            f"after {self._risk_manager.state.consecutive_losses} "
+                            f"consecutive losses"
                         )
                         # Set flag for async handling - actual stop happens in main loop
                         self._circuit_breaker_triggered = True
@@ -711,12 +746,15 @@ class LiveTradingEngine:
                 f"(consecutive failures: {self._sync_consecutive_failures})"
             )
             if self._sync_consecutive_failures >= self._sync_failure_threshold:
-                self._error_message = (
+                msg = (
                     f"Exchange connection lost: {self._sync_consecutive_failures} "
                     f"consecutive sync failures"
                 )
-                self._is_running = False
-                logger.error(f"Engine {self._run_id} stopped due to exchange connection failure")
+                logger.error(f"Engine {self._run_id} stopping: {msg}")
+                # Raise instead of setting _is_running=False directly so that
+                # process_candle's outer handler calls stop() with proper cleanup
+                # (cancel orders, call strategy.on_stop, set timestamps) (ISSUE-202 fix)
+                raise RuntimeError(msg)
 
     async def _sync_pending_orders(self) -> None:
         """Sync pending order status from exchange with rate limiting.
@@ -770,15 +808,14 @@ class LiveTradingEngine:
                 # Still record the poll time to avoid hammering on errors
                 self._order_last_poll[exchange_oid] = now
                 if self._sync_consecutive_failures >= self._sync_failure_threshold:
-                    self._error_message = (
+                    msg = (
                         f"Exchange connection lost: {self._sync_consecutive_failures} "
                         f"consecutive sync failures"
                     )
-                    self._is_running = False
-                    logger.error(
-                        f"Engine {self._run_id} stopped due to exchange connection failure"
-                    )
-                    return
+                    logger.error(f"Engine {self._run_id} stopping: {msg}")
+                    # Raise instead of setting _is_running=False so process_candle
+                    # calls stop() with proper cleanup (ISSUE-202 fix)
+                    raise RuntimeError(msg)
 
         if polled_count > 0 or skipped_count > 0:
             logger.debug(
@@ -907,8 +944,10 @@ class LiveTradingEngine:
             timestamp=datetime.now(UTC),
         )
 
-        # Process in context
-        self._context._process_fill(fill)
+        # Process in context with force=True: in live trading, fills are already
+        # executed on the exchange and must be recorded regardless of local
+        # cash/position tracking discrepancies (ISSUE-201 fix)
+        self._context._process_fill(fill, force=True)
         self._context._move_completed_orders()
 
     def _process_incremental_fill(
@@ -942,7 +981,8 @@ class LiveTradingEngine:
             timestamp=datetime.now(UTC),
         )
 
-        self._context._process_fill(fill)
+        # force=True: live fills are already executed on the exchange (ISSUE-201 fix)
+        self._context._process_fill(fill, force=True)
         self._context._move_completed_orders()
 
     async def _process_order_requests(self) -> None:

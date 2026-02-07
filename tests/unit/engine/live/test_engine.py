@@ -971,7 +971,9 @@ class TestOrderUpdates:
             fee_currency="USDT",
         )
 
+        # on_order_update buffers, _drain_ws_updates processes (ISSUE-203 fix)
         engine_with_order.on_order_update(update)
+        engine_with_order._drain_ws_updates()
 
         live_order = engine_with_order._live_orders["internal-1"]
         assert live_order.status == OrderStatus.FILLED
@@ -990,8 +992,9 @@ class TestOrderUpdates:
             size=Decimal("0.1"),
         )
 
-        # Should not raise
+        # Should not raise (buffer + drain)
         engine_with_order.on_order_update(update)
+        engine_with_order._drain_ws_updates()
 
     def test_order_update_ignored_during_emergency_close(self, engine_with_order):
         """Test that order updates are blocked during emergency close (P0-2)."""
@@ -1407,46 +1410,43 @@ class TestCircuitBreakerIntegration:
         )
         engine._exchange_order_map[exchange_id] = internal_id
 
-        # Mock a completed trade with a loss
+        # Simulate trades list growing (indicating new trade completed)
+        mock_trade = MagicMock()
+        mock_trade.pnl = Decimal("-100")  # Loss
+
+        engine._context._trades = []  # Before: 0 trades
+
+        # Create order update
+        update = WSOrderUpdate(
+            order_id=exchange_id,
+            client_order_id=None,
+            status="filled",
+            symbol="BTC/USDT",
+            side="buy",
+            order_type="market",
+            price=Decimal("50000"),
+            size=Decimal("0.1"),
+            filled_size=Decimal("0.1"),
+            avg_price=Decimal("50000"),
+            fee=Decimal("0.05"),
+            fee_currency="USDT",
+            timestamp=datetime.now(UTC),
+        )
+
+        # Patch trades to return mock trade after processing
+        def mock_process_fill(*args, **kwargs):
+            engine._context._trades = [mock_trade]
+
         with (
-            patch.object(engine._context, "_process_fill"),
+            patch.object(engine._context, "_process_fill", side_effect=mock_process_fill),
             patch.object(engine._context, "_move_completed_orders"),
         ):
-            # Simulate trades list growing (indicating new trade completed)
-            mock_trade = MagicMock()
-            mock_trade.pnl = Decimal("-100")  # Loss
+            # Buffer the update, then drain to process (ISSUE-203 fix)
+            engine.on_order_update(update)
+            engine._drain_ws_updates()
 
-            engine._context._trades = []  # Before: 0 trades
-
-            # Create order update
-            update = WSOrderUpdate(
-                order_id=exchange_id,
-                client_order_id=None,
-                status="filled",
-                symbol="BTC/USDT",
-                side="buy",
-                order_type="market",
-                price=Decimal("50000"),
-                size=Decimal("0.1"),
-                filled_size=Decimal("0.1"),
-                avg_price=Decimal("50000"),
-                fee=Decimal("0.05"),
-                fee_currency="USDT",
-                timestamp=datetime.now(UTC),
-            )
-
-            # Patch trades to return mock trade after processing
-            def mock_process_fill(*args, **kwargs):
-                engine._context._trades = [mock_trade]
-
-            with (
-                patch.object(engine._context, "_process_fill", side_effect=mock_process_fill),
-                patch.object(engine._context, "_move_completed_orders"),
-            ):
-                engine.on_order_update(update)
-
-            # Check that consecutive_losses increased
-            assert engine._risk_manager.state.consecutive_losses == 1
+        # Check that consecutive_losses increased
+        assert engine._risk_manager.state.consecutive_losses == 1
 
     @pytest.mark.asyncio
     async def test_circuit_breaker_triggered_after_consecutive_losses(
@@ -2336,24 +2336,70 @@ class TestCircuitBreakerOrderProcessing:
 
 
 class TestSyncConsecutiveFailures:
-    """Tests for exchange connection failure detection (LV-3)."""
+    """Tests for exchange connection failure detection (LV-3).
+
+    After ISSUE-202 fix, _sync_balance and _sync_pending_orders raise
+    RuntimeError instead of silently setting _is_running=False. The outer
+    handler in process_candle catches the exception and calls stop() for
+    proper cleanup (order cancellation, strategy notification).
+    """
 
     @pytest.mark.asyncio
-    async def test_balance_sync_consecutive_failures_stop_engine(self, engine, mock_adapter):
-        """Test engine stops after consecutive balance sync failures."""
+    async def test_balance_sync_consecutive_failures_raises(self, engine, mock_adapter):
+        """Test _sync_balance raises RuntimeError after consecutive failures."""
         await engine.start()
         assert engine.is_running is True
 
         # Make get_balance fail
         mock_adapter.get_balance.side_effect = Exception("Network error")
 
-        # Call _sync_balance 5 times (threshold)
-        for _ in range(5):
+        # First 4 calls just increment the counter
+        for _ in range(4):
+            await engine._sync_balance()
+        assert engine._sync_consecutive_failures == 4
+        assert engine.is_running is True
+
+        # 5th call should raise RuntimeError (ISSUE-202 fix)
+        with pytest.raises(RuntimeError, match="Exchange connection lost"):
             await engine._sync_balance()
 
+    @pytest.mark.asyncio
+    async def test_balance_sync_failure_via_process_candle_calls_stop(
+        self, engine, mock_adapter
+    ):
+        """Test that balance sync failure through process_candle properly stops engine.
+
+        This verifies the ISSUE-202 fix: instead of silently setting _is_running=False,
+        the exception propagates to process_candle's outer handler which calls stop()
+        with proper cleanup (order cancellation, strategy.on_stop()).
+        """
+        await engine.start()
+        assert engine.is_running is True
+
+        # Pre-fail to reach threshold on next sync
+        engine._sync_consecutive_failures = 4
+        mock_adapter.get_balance.side_effect = Exception("Network error")
+
+        candle = WSCandle(
+            symbol="BTC/USDT",
+            timeframe="1m",
+            timestamp=datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC),
+            open=Decimal("45000"),
+            high=Decimal("46000"),
+            low=Decimal("44000"),
+            close=Decimal("45500"),
+            volume=Decimal("100"),
+            is_closed=True,
+        )
+
+        # process_candle should catch the RuntimeError and call stop()
+        with pytest.raises(RuntimeError, match="Exchange connection lost"):
+            await engine.process_candle(candle)
+
+        # Engine should be properly stopped via stop()
         assert engine.is_running is False
+        assert engine.stopped_at is not None
         assert "Exchange connection lost" in engine.error_message
-        assert "consecutive sync failures" in engine.error_message
 
     @pytest.mark.asyncio
     async def test_balance_sync_success_resets_failure_counter(self, engine, mock_adapter):
@@ -2376,8 +2422,8 @@ class TestSyncConsecutiveFailures:
         assert engine.is_running is True
 
     @pytest.mark.asyncio
-    async def test_order_sync_consecutive_failures_stop_engine(self, engine, mock_adapter):
-        """Test engine stops after consecutive order sync failures."""
+    async def test_order_sync_consecutive_failures_raises(self, engine, mock_adapter):
+        """Test _sync_pending_orders raises RuntimeError after consecutive failures."""
         await engine.start()
 
         # Disable rate limiting for this test
@@ -2398,12 +2444,14 @@ class TestSyncConsecutiveFailures:
         # Make get_order fail
         mock_adapter.get_order.side_effect = Exception("Network error")
 
-        # Call _sync_pending_orders 5 times (threshold)
-        for _ in range(5):
+        # First 4 calls just increment the counter
+        for _ in range(4):
             await engine._sync_pending_orders()
+        assert engine._sync_consecutive_failures == 4
 
-        assert engine.is_running is False
-        assert "Exchange connection lost" in engine.error_message
+        # 5th call should raise RuntimeError (ISSUE-202 fix)
+        with pytest.raises(RuntimeError, match="Exchange connection lost"):
+            await engine._sync_pending_orders()
 
 
 class TestEmergencyCloseTimestamp:
@@ -2436,3 +2484,171 @@ class TestEmergencyCloseTimestamp:
 
         # last_active_at should have been updated during emergency close
         assert engine._last_active_at >= initial_time
+
+
+class TestForceFillOnValueError:
+    """Tests for ISSUE-201 fix: live fills must be recorded even when local
+    cash/position tracking has discrepancies with exchange state."""
+
+    @pytest.fixture
+    def engine_with_buy_order(self, engine):
+        """Create engine with a tracked buy order."""
+        engine._live_orders["order-1"] = LiveOrder(
+            internal_id="order-1",
+            exchange_order_id="exchange-1",
+            symbol="BTC/USDT",
+            side=OrderSide.BUY,
+            order_type="market",
+            amount=Decimal("1.0"),
+            price=None,
+            status=OrderStatus.SUBMITTED,
+        )
+        engine._exchange_order_map["exchange-1"] = "order-1"
+        return engine
+
+    @pytest.mark.asyncio
+    async def test_ws_fill_recorded_despite_insufficient_cash(
+        self, engine_with_buy_order, mock_adapter
+    ):
+        """Test WS fill is recorded even when local cash is insufficient.
+
+        In live trading, fills are already executed on exchange. The engine
+        must record them locally regardless of cash discrepancy (ISSUE-201).
+        """
+        engine = engine_with_buy_order
+        await engine.start()
+
+        # Artificially deplete local cash to create discrepancy
+        engine._context._cash = Decimal("100")  # Much less than fill cost
+
+        update = WSOrderUpdate(
+            order_id="exchange-1",
+            client_order_id="order-1",
+            symbol="BTC/USDT",
+            side="buy",
+            order_type="market",
+            status="filled",
+            size=Decimal("1.0"),
+            filled_size=Decimal("1.0"),
+            avg_price=Decimal("45000"),
+            fee=Decimal("0.45"),
+            fee_currency="USDT",
+        )
+
+        # Buffer and drain — should NOT raise ValueError
+        engine.on_order_update(update)
+        engine._drain_ws_updates()
+
+        # Fill should be recorded (cash goes negative, which is OK in live)
+        assert len(engine._context.fills) == 1
+        assert engine._context.fills[0].amount == Decimal("1.0")
+        assert engine._context._cash < Decimal("0")  # Negative cash from discrepancy
+
+    @pytest.mark.asyncio
+    async def test_polling_fill_recorded_despite_insufficient_cash(
+        self, engine_with_buy_order, mock_adapter
+    ):
+        """Test polling-path fill is recorded even when local cash is insufficient."""
+        engine = engine_with_buy_order
+        await engine.start()
+
+        # Artificially deplete local cash
+        engine._context._cash = Decimal("50")
+
+        live_order = engine._live_orders["order-1"]
+        response = OrderResponse(
+            order_id="exchange-1",
+            symbol="BTC/USDT",
+            side=OrderSide.BUY,
+            type=OrderType.MARKET,
+            status=OrderStatus.FILLED,
+            price=None,
+            amount=Decimal("1.0"),
+            filled=Decimal("1.0"),
+            avg_price=Decimal("45000"),
+            fee=Decimal("0.45"),
+            fee_currency="USDT",
+        )
+
+        # Should NOT raise ValueError
+        engine._update_order_from_response(live_order, response)
+
+        # Fill should be recorded
+        assert len(engine._context.fills) == 1
+        assert engine._context._cash < Decimal("0")
+
+
+class TestWsUpdateBuffering:
+    """Tests for ISSUE-203 fix: WS updates are buffered and processed
+    synchronously within process_candle to prevent concurrent state mutation."""
+
+    @pytest.fixture
+    def engine_with_order(self, engine):
+        """Create an engine with a tracked order."""
+        engine._live_orders["internal-1"] = LiveOrder(
+            internal_id="internal-1",
+            exchange_order_id="exchange-1",
+            symbol="BTC/USDT",
+            side=OrderSide.BUY,
+            order_type="market",
+            amount=Decimal("0.1"),
+            price=None,
+            status=OrderStatus.SUBMITTED,
+        )
+        engine._exchange_order_map["exchange-1"] = "internal-1"
+        return engine
+
+    def test_on_order_update_buffers_not_processes(self, engine_with_order):
+        """Test on_order_update only buffers, does not immediately mutate state."""
+        update = WSOrderUpdate(
+            order_id="exchange-1",
+            client_order_id="internal-1",
+            symbol="BTC/USDT",
+            side="buy",
+            order_type="market",
+            status="filled",
+            size=Decimal("0.1"),
+            filled_size=Decimal("0.1"),
+            avg_price=Decimal("45000"),
+            fee=Decimal("0.45"),
+            fee_currency="USDT",
+        )
+
+        engine_with_order.on_order_update(update)
+
+        # Update should be buffered, NOT processed
+        assert len(engine_with_order._pending_ws_updates) == 1
+        live_order = engine_with_order._live_orders["internal-1"]
+        assert live_order.status == OrderStatus.SUBMITTED  # Unchanged
+        assert live_order.filled_amount == Decimal("0")  # Unchanged
+
+    def test_drain_ws_updates_processes_buffered(self, engine_with_order):
+        """Test _drain_ws_updates processes all buffered updates."""
+        update = WSOrderUpdate(
+            order_id="exchange-1",
+            client_order_id="internal-1",
+            symbol="BTC/USDT",
+            side="buy",
+            order_type="market",
+            status="filled",
+            size=Decimal("0.1"),
+            filled_size=Decimal("0.1"),
+            avg_price=Decimal("45000"),
+            fee=Decimal("0.45"),
+            fee_currency="USDT",
+        )
+
+        engine_with_order.on_order_update(update)
+        engine_with_order._drain_ws_updates()
+
+        # Now state should be updated
+        assert len(engine_with_order._pending_ws_updates) == 0
+        live_order = engine_with_order._live_orders["internal-1"]
+        assert live_order.status == OrderStatus.FILLED
+        assert live_order.filled_amount == Decimal("0.1")
+
+    def test_drain_ws_updates_noop_when_empty(self, engine_with_order):
+        """Test _drain_ws_updates is a no-op when queue is empty."""
+        # Should not raise
+        engine_with_order._drain_ws_updates()
+        assert len(engine_with_order._pending_ws_updates) == 0
