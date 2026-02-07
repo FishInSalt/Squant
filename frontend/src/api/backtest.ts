@@ -34,6 +34,6 @@ export const exportBacktestResult = (id: string, format: 'csv' | 'json' = 'csv')
 export const getRunningBacktests = () =>
   get<PaginatedData<BacktestRun>>('/backtest', { status: 'running' })
 
-// 停止回测
-export const stopBacktest = (id: string) =>
-  post<void>(`/backtest/${id}/stop`)
+// 取消回测
+export const cancelBacktest = (id: string) =>
+  post<void>(`/backtest/${id}/cancel`)

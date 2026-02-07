@@ -1,6 +1,6 @@
 // 交易相关类型
 export type TradingMode = 'backtest' | 'paper' | 'live'
-export type SessionStatus = 'pending' | 'running' | 'completed' | 'failed' | 'stopped'
+export type SessionStatus = 'pending' | 'running' | 'completed' | 'error' | 'stopped' | 'cancelled'
 
 // 回测配置
 export interface BacktestConfig {
@@ -131,10 +131,11 @@ export interface LiveSession {
 
 export interface RiskConfig {
   max_position_size: number
-  max_daily_loss: number
-  max_drawdown: number
-  stop_loss_percent?: number
-  take_profit_percent?: number
+  max_order_size: number
+  daily_trade_limit: number
+  daily_loss_limit: number
+  price_deviation_limit?: number
+  circuit_breaker_threshold?: number
 }
 
 // 运行日志

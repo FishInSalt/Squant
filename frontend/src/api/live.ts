@@ -4,12 +4,11 @@ import type { LiveSession, Position, RunLog, Trade, RiskConfig, PaginatedData, E
 // 启动实盘交易
 export const startLiveTrading = (config: {
   strategy_id: string
-  account_id: string
-  exchange: string
+  exchange_account_id: string
   symbol: string
   timeframe: string
   initial_equity: number
-  params: Record<string, unknown>
+  params?: Record<string, unknown>
   risk_config: RiskConfig
 }) =>
   post<LiveSession>('/live', config)

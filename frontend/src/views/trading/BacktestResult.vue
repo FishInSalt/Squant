@@ -29,7 +29,7 @@
       <p class="status-text">正在回测中...</p>
     </div>
 
-    <div v-if="backtest?.status === 'failed'" class="error-status card">
+    <div v-if="backtest?.status === 'error'" class="error-status card">
       <el-icon class="error-icon"><CircleCloseFilled /></el-icon>
       <p class="error-message">{{ backtest.error }}</p>
       <el-button type="primary" @click="runAgain">重新回测</el-button>

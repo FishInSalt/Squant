@@ -231,7 +231,7 @@ import { TIMEFRAME_OPTIONS } from '@/utils/constants'
 import { getSymbols } from '@/api/market'
 import { startBacktest, getBacktests } from '@/api/backtest'
 import { useNotification } from '@/composables/useNotification'
-import type { Strategy, BacktestRun } from '@/types'
+import type { BacktestRun } from '@/types'
 
 const router = useRouter()
 const route = useRoute()

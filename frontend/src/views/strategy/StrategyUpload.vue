@@ -109,8 +109,8 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { useRouter } from 'vue-router'
-import type { UploadInstance, UploadFile, UploadRawFile } from 'element-plus'
-import { uploadStrategy } from '@/api/strategy'
+import type { UploadInstance, UploadFile } from 'element-plus'
+import { createStrategy, validateStrategy } from '@/api/strategy'
 import { formatFileSize } from '@/utils/format'
 import { useNotification } from '@/composables/useNotification'
 import type { ValidationResult } from '@/types'
@@ -144,6 +144,15 @@ function clearFile() {
   uploadRef.value?.clearFiles()
 }
 
+async function readFileAsText(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(reader.result as string)
+    reader.onerror = () => reject(reader.error)
+    reader.readAsText(file)
+  })
+}
+
 async function handleUpload() {
   if (!selectedFile.value) return
 
@@ -151,18 +160,27 @@ async function handleUpload() {
   uploadProgress.value = 0
 
   try {
-    const response = await uploadStrategy(selectedFile.value, (percent) => {
-      uploadProgress.value = percent
-    })
+    // 读取文件内容为文本
+    const code = await readFileAsText(selectedFile.value)
+    uploadProgress.value = 30
 
-    validationResult.value = response.data.validation
-    uploadedStrategyId.value = response.data.strategy_id
+    // 先验证策略代码
+    const validateResponse = await validateStrategy(code)
+    uploadProgress.value = 60
+    validationResult.value = validateResponse.data
 
-    if (validationResult.value.valid) {
-      toastSuccess('策略上传成功')
-    } else {
+    if (!validationResult.value.valid) {
       toastError('策略验证失败，请检查错误信息')
+      return
     }
+
+    // 验证通过，创建策略
+    const name = selectedFile.value.name.replace(/\.py$/, '')
+    const createResponse = await createStrategy({ name, code })
+    uploadProgress.value = 100
+    uploadedStrategyId.value = createResponse.data.id
+
+    toastSuccess('策略上传成功')
   } catch (error) {
     toastError('上传失败，请重试')
   } finally {

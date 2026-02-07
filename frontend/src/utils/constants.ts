@@ -69,8 +69,9 @@ export const SESSION_STATUS_OPTIONS = [
   { label: '待启动', value: 'pending' },
   { label: '运行中', value: 'running' },
   { label: '已完成', value: 'completed' },
-  { label: '已失败', value: 'failed' },
+  { label: '错误', value: 'error' },
   { label: '已停止', value: 'stopped' },
+  { label: '已取消', value: 'cancelled' },
 ] as const
 
 // 风控规则类型选项

@@ -1,9 +1,8 @@
-// API 响应类型
+// API 响应类型 — 匹配后端 ApiResponse[T]
 export interface ApiResponse<T = unknown> {
-  success: boolean
+  code: number
+  message: string
   data: T
-  message?: string
-  error?: string
 }
 
 export interface PaginatedData<T> {
@@ -11,7 +10,6 @@ export interface PaginatedData<T> {
   total: number
   page: number
   page_size: number
-  total_pages: number
 }
 
 export interface PaginatedResponse<T> extends ApiResponse<PaginatedData<T>> {}

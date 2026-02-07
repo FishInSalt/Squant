@@ -44,25 +44,25 @@ export const toggleRiskRule = (id: string, enabled: boolean) =>
 export const getCircuitBreakerStatus = () =>
   get<CircuitBreakerStatus>('/circuit-breaker/status')
 
-// 激活熔断
-export const activateCircuitBreaker = (reason?: string) =>
-  post<void>('/circuit-breaker/activate', { reason })
+// 触发熔断
+export const triggerCircuitBreaker = (reason?: string) =>
+  post<void>('/circuit-breaker/trigger', { reason })
 
-// 解除熔断
-export const deactivateCircuitBreaker = () =>
-  post<void>('/circuit-breaker/deactivate')
+// 重置熔断
+export const resetCircuitBreaker = () =>
+  post<void>('/circuit-breaker/reset')
 
 // 紧急平仓所有持仓
 export const closeAllPositions = () =>
   post<void>('/circuit-breaker/close-all-positions')
 
-// 执行熔断操作 (兼容旧接口)
+// 执行熔断操作
 export const executeCircuitBreakerAction = (action: CircuitBreakerAction) => {
   switch (action.action) {
-    case 'activate':
-      return activateCircuitBreaker(action.reason)
-    case 'deactivate':
-      return deactivateCircuitBreaker()
+    case 'trigger':
+      return triggerCircuitBreaker(action.reason)
+    case 'reset':
+      return resetCircuitBreaker()
     case 'close_all_positions':
       return closeAllPositions()
     default:

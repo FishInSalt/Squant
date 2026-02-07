@@ -31,7 +31,7 @@ export const deleteAccount = (id: string) =>
 
 // 测试连接
 export const testConnection = (id: string) =>
-  post<{ success: boolean; message: string; latency_ms?: number }>(`/exchange-accounts/${id}/test`)
+  post<{ success: boolean; message: string | null; balance_count: number | null }>(`/exchange-accounts/${id}/test`)
 
 // 刷新账户状态
 export const refreshAccountStatus = (id: string) =>

@@ -56,7 +56,3 @@ export interface ValidationWarning {
   code: string
 }
 
-export interface StrategyUploadResponse {
-  strategy_id: string
-  validation: ValidationResult
-}

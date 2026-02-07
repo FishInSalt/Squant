@@ -131,7 +131,6 @@ import type { CircuitBreakerStatus, AutoHaltCondition } from '@/types'
 
 const { toastSuccess, toastError, confirmDanger } = useNotification()
 
-const loading = ref(false)
 const status = ref<CircuitBreakerStatus | null>(null)
 
 async function loadStatus() {
@@ -150,7 +149,7 @@ async function handleHalt() {
   if (!confirmed) return
 
   try {
-    await executeCircuitBreakerAction({ action: 'activate', reason: '手动触发熔断' })
+    await executeCircuitBreakerAction({ action: 'trigger', reason: '手动触发熔断' })
     toastSuccess('系统已熔断')
     loadStatus()
   } catch (error) {
@@ -163,7 +162,7 @@ async function handleResume() {
   if (!confirmed) return
 
   try {
-    await executeCircuitBreakerAction({ action: 'deactivate' })
+    await executeCircuitBreakerAction({ action: 'reset' })
     toastSuccess('交易已恢复')
     loadStatus()
   } catch (error) {

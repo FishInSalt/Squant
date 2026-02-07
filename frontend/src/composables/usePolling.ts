@@ -1,6 +1,6 @@
 import { ref, onMounted, onUnmounted, type Ref } from 'vue'
 
-interface UsePollingOptions<T> {
+interface UsePollingOptions {
   // 轮询间隔 (毫秒)
   interval?: number
   // 是否立即执行
@@ -25,7 +25,7 @@ interface UsePollingReturn<T> {
 
 export function usePolling<T>(
   fetchFn: () => Promise<T>,
-  options: UsePollingOptions<T> = {}
+  options: UsePollingOptions = {}
 ): UsePollingReturn<T> {
   const {
     interval = 5000,
@@ -123,7 +123,7 @@ export function usePolling<T>(
 export function useConditionalPolling<T>(
   fetchFn: () => Promise<T>,
   shouldStop: (data: T) => boolean,
-  options: UsePollingOptions<T> = {}
+  options: UsePollingOptions = {}
 ) {
   const polling = usePolling(fetchFn, {
     ...options,

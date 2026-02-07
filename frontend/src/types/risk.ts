@@ -62,6 +62,6 @@ export interface AutoHaltCondition {
 }
 
 export interface CircuitBreakerAction {
-  action: 'activate' | 'deactivate' | 'close_all_positions'
+  action: 'trigger' | 'reset' | 'close_all_positions'
   reason?: string
 }
