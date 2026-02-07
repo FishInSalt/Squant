@@ -9,7 +9,7 @@ import ast
 from dataclasses import dataclass, field
 from typing import Any
 
-from RestrictedPython import compile_restricted, safe_builtins
+from RestrictedPython import PrintCollector, compile_restricted, safe_builtins
 from RestrictedPython.Eval import default_guarded_getiter
 from RestrictedPython.Guards import (
     guarded_iter_unpack_sequence,
@@ -61,6 +61,15 @@ DISALLOWED_MODULES = frozenset(
         "io",
         "tempfile",
         "glob",
+        # Runtime introspection / manipulation
+        "signal",  # could reset SIGXCPU handler, disabling CPU limits
+        "resource",  # could raise resource limits
+        "gc",  # could disable garbage collection
+        "inspect",  # exposes frame objects and source code
+        "faulthandler",  # can trigger segfaults
+        "atexit",  # registers exit callbacks
+        "types",  # can construct code/function objects
+        "dis",  # bytecode disassembly
     }
 )
 
@@ -280,6 +289,8 @@ _DANGEROUS_DUNDER_ATTRS = frozenset(
         "__mro__",
         "__code__",
         "__func__",
+        "__class__",  # escape via __class__.__mro__[1].__subclasses__()
+        "__dict__",  # bypass _write_ and _getattr_ guards
     }
 )
 
@@ -393,8 +404,8 @@ def _build_restricted_globals() -> dict[str, Any]:
         "_getattr_": safer_getattr,
         "_getiter_": default_guarded_getiter,
         "_iter_unpack_sequence_": guarded_iter_unpack_sequence,
-        # Allow print for debugging
-        "_print_": print,
+        # PrintCollector: collects print() output safely instead of writing to stdout
+        "_print_": PrintCollector,
         "_getitem_": lambda obj, key: obj[key],
         "_write_": lambda x: x,
         # Required for class definitions in RestrictedPython
