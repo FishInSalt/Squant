@@ -799,6 +799,102 @@ class TestStopSession:
                         mock_engine.stop.assert_called_once_with(cancel_orders=True)
                         mock_manager.unregister.assert_called_once_with(run_id)
 
+    @pytest.mark.asyncio
+    async def test_stop_unsubscribe_failure_doesnt_fail(self, service: LiveTradingService) -> None:
+        """Test stop succeeds even if unsubscribe fails (Issue 021 fix).
+
+        DB should be committed before unsubscribe, so unsubscribe failures
+        don't leave the database in an inconsistent state.
+        """
+        run_id = uuid4()
+        mock_run = MagicMock()
+        mock_run.id = str(run_id)
+
+        with patch.object(service.run_repo, "get", new_callable=AsyncMock) as mock_get:
+            mock_get.return_value = mock_run
+
+            mock_engine = MagicMock()
+            mock_engine.run_id = run_id
+            mock_engine.symbol = "BTC/USDT"
+            mock_engine.timeframe = "1m"
+            mock_engine.error_message = None
+            mock_engine.get_pending_snapshots.return_value = []
+            mock_engine.stop = AsyncMock()
+
+            with patch("squant.services.live_trading.get_live_session_manager") as mock_get_manager:
+                mock_manager = MagicMock()
+                mock_manager.get.return_value = mock_engine
+                mock_manager.unregister = AsyncMock()
+                # Trigger unsubscribe (no other sessions)
+                mock_manager.get_subscribed_symbols.return_value = set()
+                mock_get_manager.return_value = mock_manager
+
+                with patch.object(
+                    service.run_repo, "update", new_callable=AsyncMock
+                ) as mock_update:
+                    mock_update.return_value = mock_run
+
+                    with patch(
+                        "squant.websocket.manager.get_stream_manager"
+                    ) as mock_stream_manager:
+                        mock_stream = MagicMock()
+                        # Simulate unsubscribe failure
+                        mock_stream.unsubscribe_candles = AsyncMock(
+                            side_effect=Exception("WS error")
+                        )
+                        mock_stream_manager.return_value = mock_stream
+
+                        # Should not raise despite unsubscribe failure
+                        result = await service.stop(run_id)
+
+                        # DB was still committed successfully
+                        service.session.commit.assert_called_once()
+                        assert result is not None
+                        mock_update.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_emergency_close_unsubscribe_failure_doesnt_fail(
+        self, service: LiveTradingService
+    ) -> None:
+        """Test emergency_close succeeds even if unsubscribe fails (Issue 021 fix)."""
+        run_id = uuid4()
+        mock_run = MagicMock()
+        mock_run.id = str(run_id)
+
+        with patch.object(service.run_repo, "get", new_callable=AsyncMock) as mock_get:
+            mock_get.return_value = mock_run
+
+            mock_engine = MagicMock()
+            mock_engine.run_id = run_id
+            mock_engine.symbol = "BTC/USDT"
+            mock_engine.timeframe = "1m"
+            mock_engine.emergency_close = AsyncMock(
+                return_value={"orders_cancelled": 1, "positions_closed": 0}
+            )
+
+            with patch("squant.services.live_trading.get_live_session_manager") as mock_get_manager:
+                mock_manager = MagicMock()
+                mock_manager.get.return_value = mock_engine
+                mock_manager.unregister = AsyncMock()
+                mock_manager.get_subscribed_symbols.return_value = set()
+                mock_get_manager.return_value = mock_manager
+
+                with patch.object(service.run_repo, "update", new_callable=AsyncMock):
+                    with patch(
+                        "squant.websocket.manager.get_stream_manager"
+                    ) as mock_stream_manager:
+                        mock_stream = MagicMock()
+                        mock_stream.unsubscribe_candles = AsyncMock(
+                            side_effect=Exception("WS error")
+                        )
+                        mock_stream_manager.return_value = mock_stream
+
+                        # Should not raise despite unsubscribe failure
+                        result = await service.emergency_close(run_id)
+
+                        assert result["status"] == "closed"
+                        service.session.commit.assert_called_once()
+
 
 class TestEmergencyClose:
     """Tests for emergency close functionality."""

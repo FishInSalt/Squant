@@ -994,6 +994,45 @@ class TestBacktestCancellation:
         # No longer running after cleanup
         assert BacktestService.is_running(run_id) is False
 
+    @pytest.mark.asyncio
+    async def test_create_and_run_cancelled_preserves_status(self, mock_session, mock_run):
+        """Test that create_and_run does not overwrite CANCELLED status with ERROR.
+
+        When run() raises BacktestCancelledError, it already sets the status to
+        CANCELLED. create_and_run() must not catch it in the generic Exception
+        handler and overwrite with ERROR.
+        """
+        from squant.engine.backtest.runner import BacktestCancelledError
+
+        strategy_id = uuid4()
+        run_id = str(uuid4())
+        mock_run.id = run_id
+
+        with (
+            patch.object(BacktestService, "create", new_callable=AsyncMock) as mock_create,
+            patch.object(BacktestService, "run", new_callable=AsyncMock) as mock_run_method,
+            patch.object(StrategyRunRepository, "update", new_callable=AsyncMock) as mock_update,
+        ):
+            mock_create.return_value = mock_run
+            mock_run_method.side_effect = BacktestCancelledError(run_id)
+
+            service = BacktestService(mock_session)
+
+            with pytest.raises(BacktestCancelledError):
+                await service.create_and_run(
+                    strategy_id=strategy_id,
+                    symbol="BTC/USDT",
+                    exchange="okx",
+                    timeframe="1h",
+                    start_date=datetime.now(UTC) - timedelta(days=30),
+                    end_date=datetime.now(UTC),
+                    initial_capital=Decimal("10000"),
+                )
+
+            # The generic Exception handler should NOT have been called
+            # (which would set status to ERROR)
+            mock_update.assert_not_called()
+
 
 class TestBacktestReportExport:
     """Tests for backtest report export (TRD-009#4)."""
