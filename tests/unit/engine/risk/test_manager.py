@@ -269,22 +269,21 @@ class TestPositionSizeValidation:
         assert result.passed is False
         assert result.rule_type == RiskRuleType.MAX_POSITION_SIZE
 
-    def test_sell_resulting_position_still_exceeds_limit_rejected(self, risk_manager):
-        """Test that sell orders are rejected if resulting position still exceeds limit.
+    def test_sell_reducing_over_limit_position_passes(self, risk_manager):
+        """Test that sell orders reducing an over-limit position are allowed.
 
-        Even when selling (reducing position), if the remaining position would still
-        exceed the maximum position size limit, the order should be rejected.
-
-        Note: We use a lower price so the order size check passes first, then
-        position check can be triggered.
+        When the current position already exceeds the limit, sell orders that
+        partially reduce the position should be approved (not blocked), even if
+        the resulting position still exceeds the limit. Blocking sell orders on
+        over-limit positions would trap the user, preventing them from reducing
+        their exposure.
         """
         # Config: max_position_size = 10% of $10,000 equity = $1,000
         #         max_order_size = 5% of $10,000 equity = $500
-        # Use price $10,000 so order value is manageable
         # Current position: 0.15 BTC at $10,000 = $1,500 = 15% of equity (exceeds limit)
         # Sell order: 0.04 BTC at $10,000 = $400 (4% of equity, passes order size check)
         # Resulting position: 0.11 BTC at $10,000 = $1,100 = 11% of equity
-        # Since 11% > 10% max position limit, order should be rejected
+        # Even though 11% > 10% limit, sell reduces exposure so it must pass
         order = OrderRequest(
             symbol="BTC/USDT",
             side=OrderSide.SELL,
@@ -297,9 +296,8 @@ class TestPositionSizeValidation:
             order, current_price, current_position_amount=Decimal("0.15")
         )
 
-        # 11% > 10% limit, should fail due to position size
-        assert result.passed is False
-        assert result.rule_type == RiskRuleType.MAX_POSITION_SIZE
+        # Sell orders always pass position size check (they reduce exposure)
+        assert result.passed is True
 
     def test_sell_to_close_position_passes(self, risk_manager):
         """Test that selling entire position passes."""

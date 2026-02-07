@@ -425,7 +425,7 @@ class RiskManager:
         else:
             new_position_amount = current_position_amount - order.amount
 
-        # Issue 011: Check for negative position (spot trading - no short selling)
+        # Check for negative position (spot trading - no short selling)
         if new_position_amount < 0:
             return RiskCheckResult.reject(
                 rule_type=RiskRuleType.MAX_POSITION_SIZE,
@@ -435,6 +435,11 @@ class RiskManager:
                 current_position=float(current_position_amount),
                 sell_amount=float(order.amount),
             )
+
+        # Sell orders only reduce exposure, so skip position limit checks.
+        # The negative-position check above is the only constraint for sells.
+        if order.side == OrderSide.SELL:
+            return RiskCheckResult.ok()
 
         new_position_value = new_position_amount * price
 
