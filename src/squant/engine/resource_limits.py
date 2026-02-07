@@ -114,16 +114,20 @@ def resource_limiter(
         memory_bytes = memory_mb * 1024 * 1024
 
         # Try to set CPU time limit
-        # In some environments (containers), we may not be able to change limits
+        # RLIMIT_CPU tracks *cumulative* CPU time since process start. We must
+        # add the current usage so the strategy gets cpu_seconds of *additional*
+        # time, not cpu_seconds total from boot (ISSUE-414 fix).
         # NOTE: Only modify the soft limit. Non-root processes cannot raise hard
         # limits once lowered, so changing the hard limit would make restoration
         # impossible. The soft limit is what triggers SIGXCPU.
         try:
-            if old_cpu_hard == resource.RLIM_INFINITY or cpu_seconds <= old_cpu_hard:
-                resource.setrlimit(resource.RLIMIT_CPU, (cpu_seconds, old_cpu_hard))
+            current_cpu = int(resource.getrusage(resource.RUSAGE_SELF).ru_utime)
+            cpu_limit = current_cpu + cpu_seconds
+            if old_cpu_hard == resource.RLIM_INFINITY or cpu_limit <= old_cpu_hard:
+                resource.setrlimit(resource.RLIMIT_CPU, (cpu_limit, old_cpu_hard))
             else:
                 logger.warning(
-                    f"Cannot set CPU limit to {cpu_seconds}s (hard limit is {old_cpu_hard}s)"
+                    f"Cannot set CPU limit to {cpu_limit}s (hard limit is {old_cpu_hard}s)"
                 )
         except (ValueError, OSError) as e:
             logger.warning(f"Cannot set CPU time limit: {e}")
