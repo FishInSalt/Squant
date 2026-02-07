@@ -230,7 +230,7 @@ class TestCCXTDataTransformer:
         assert result.symbol == "BTC/USDT"
         assert result.side == "buy"
         assert result.order_type == "limit"
-        assert result.status == "submitted"  # Mapped from 'open'
+        assert result.status == "partial"  # open + filled > 0 → partial (ISSUE-506 fix)
         assert result.price == Decimal("50000.0")
         assert result.size == Decimal("0.1")
         assert result.filled_size == Decimal("0.05")
