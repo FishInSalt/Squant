@@ -19,6 +19,7 @@ from squant.schemas.backtest import (
     CreateBacktestRequest,
     DataAvailabilityResponse,
     EquityCurvePoint,
+    ExportFormat,
     RunBacktestRequest,
 )
 from squant.services.backtest import (
@@ -410,7 +411,7 @@ async def list_available_symbols(
 @router.get("/{run_id}/export", response_model=ApiResponse[dict])
 async def export_backtest_report(
     run_id: UUID,
-    format: str = Query("json", description="Export format: json or csv"),
+    format: ExportFormat = Query(ExportFormat.JSON, description="Export format: json or csv"),
     session: AsyncSession = Depends(get_session),
 ) -> ApiResponse[dict]:
     """Export backtest report (TRD-009#4).
@@ -433,7 +434,7 @@ async def export_backtest_report(
     try:
         report = await service.export_report(run_id, format=format)
 
-        if format == "csv":
+        if format == ExportFormat.CSV:
             csv_content = service.generate_csv_report(report)
             return ApiResponse(
                 data={
