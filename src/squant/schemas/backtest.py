@@ -1,5 +1,6 @@
 """Pydantic schemas for backtest API requests and responses."""
 
+import enum
 from datetime import datetime
 from decimal import Decimal
 from typing import Any
@@ -188,7 +189,7 @@ class AvailableSymbolResponse(BaseModel):
     last_bar: datetime | None
 
 
-class ExportFormat(str):
+class ExportFormat(str, enum.Enum):
     """Export format enum (TRD-009#4)."""
 
     JSON = "json"
