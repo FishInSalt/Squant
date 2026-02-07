@@ -923,3 +923,204 @@ class TestTradeTracking:
         assert context._open_trade.entry_price == Decimal("40000")
         # Trade should not be in completed trades yet
         assert len(context.trades) == 0
+
+    def test_partial_close_pnl_uses_each_fill_price(self, context: BacktestContext) -> None:
+        """Test that PnL accounts for each partial exit price, not just the last one.
+
+        Regression test for ISSUE-007: Buy 2 BTC @ $40K, Sell 1 @ $42K, Sell 1 @ $44K.
+        Correct PnL = ($42K-$40K)*1 + ($44K-$40K)*1 - fees = $6,000 - fees
+        Bug was: PnL = ($44K-$40K)*2 - fees = $8,000 - fees (used last price × total amount)
+        """
+        bar1 = Bar(
+            time=datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC),
+            symbol="BTC/USDT",
+            open=Decimal("40000"),
+            high=Decimal("41000"),
+            low=Decimal("39000"),
+            close=Decimal("40000"),
+            volume=Decimal("1000"),
+        )
+        context._set_current_bar(bar1)
+        context._add_bar_to_history(bar1)
+
+        # Buy 2 BTC at $40,000
+        order1 = context.buy("BTC/USDT", Decimal("2"))
+        fill_buy = Fill(
+            order_id=order1,
+            symbol="BTC/USDT",
+            side=OrderSide.BUY,
+            price=Decimal("40000"),
+            amount=Decimal("2"),
+            fee=Decimal("80"),  # 0.1%
+            timestamp=bar1.time,
+        )
+        context._process_fill(fill_buy)
+        context._move_completed_orders()
+
+        assert context._open_trade is not None
+        assert context._open_trade.amount == Decimal("2")
+
+        # Sell 1 BTC at $42,000 (partial close)
+        bar2 = Bar(
+            time=datetime(2024, 1, 2, 12, 0, 0, tzinfo=UTC),
+            symbol="BTC/USDT",
+            open=Decimal("42000"),
+            high=Decimal("43000"),
+            low=Decimal("41000"),
+            close=Decimal("42000"),
+            volume=Decimal("1000"),
+        )
+        context._set_current_bar(bar2)
+        context._add_bar_to_history(bar2)
+
+        sell_id1 = context.sell("BTC/USDT", Decimal("1"))
+        fill_sell1 = Fill(
+            order_id=sell_id1,
+            symbol="BTC/USDT",
+            side=OrderSide.SELL,
+            price=Decimal("42000"),
+            amount=Decimal("1"),
+            fee=Decimal("42"),
+            timestamp=bar2.time,
+        )
+        context._process_fill(fill_sell1)
+        context._move_completed_orders()
+
+        # Trade still open
+        assert context._open_trade is not None
+        assert len(context.trades) == 0
+
+        # Sell remaining 1 BTC at $44,000 (full close)
+        bar3 = Bar(
+            time=datetime(2024, 1, 3, 12, 0, 0, tzinfo=UTC),
+            symbol="BTC/USDT",
+            open=Decimal("44000"),
+            high=Decimal("45000"),
+            low=Decimal("43000"),
+            close=Decimal("44000"),
+            volume=Decimal("1000"),
+        )
+        context._set_current_bar(bar3)
+        context._add_bar_to_history(bar3)
+
+        sell_id2 = context.sell("BTC/USDT", Decimal("1"))
+        fill_sell2 = Fill(
+            order_id=sell_id2,
+            symbol="BTC/USDT",
+            side=OrderSide.SELL,
+            price=Decimal("44000"),
+            amount=Decimal("1"),
+            fee=Decimal("44"),
+            timestamp=bar3.time,
+        )
+        context._process_fill(fill_sell2)
+
+        # Trade should be closed
+        assert context._open_trade is None
+        assert len(context.trades) == 1
+        trade = context.trades[0]
+
+        # PnL = (42000-40000)*1 + (44000-40000)*1 - (80+42+44) = 2000+4000-166 = 5834
+        assert trade.pnl == Decimal("5834")
+        assert trade.exit_price == Decimal("44000")
+        assert trade.entry_price == Decimal("40000")
+        # pnl_pct = 5834 / (40000*2) * 100
+        expected_pnl_pct = Decimal("5834") / Decimal("80000") * 100
+        assert trade.pnl_pct == expected_pnl_pct
+
+    def test_partial_close_three_exits_pnl(self) -> None:
+        """Test PnL with three separate partial exits."""
+        context = BacktestContext(
+            initial_capital=Decimal("200000"),
+            commission_rate=Decimal("0.001"),
+        )
+        bar1 = Bar(
+            time=datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC),
+            symbol="BTC/USDT",
+            open=Decimal("40000"),
+            high=Decimal("41000"),
+            low=Decimal("39000"),
+            close=Decimal("40000"),
+            volume=Decimal("1000"),
+        )
+        context._set_current_bar(bar1)
+        context._add_bar_to_history(bar1)
+
+        # Buy 3 BTC at $40,000
+        order1 = context.buy("BTC/USDT", Decimal("3"))
+        fill_buy = Fill(
+            order_id=order1,
+            symbol="BTC/USDT",
+            side=OrderSide.BUY,
+            price=Decimal("40000"),
+            amount=Decimal("3"),
+            fee=Decimal("0"),  # zero fee for simpler math
+            timestamp=bar1.time,
+        )
+        context._process_fill(fill_buy)
+        context._move_completed_orders()
+
+        # Sell 1 @ $41,000
+        bar2 = Bar(
+            time=datetime(2024, 1, 2, 12, 0, 0, tzinfo=UTC),
+            symbol="BTC/USDT",
+            open=Decimal("41000"),
+            high=Decimal("42000"),
+            low=Decimal("40500"),
+            close=Decimal("41000"),
+            volume=Decimal("1000"),
+        )
+        context._set_current_bar(bar2)
+        context._add_bar_to_history(bar2)
+        sid1 = context.sell("BTC/USDT", Decimal("1"))
+        context._process_fill(Fill(
+            order_id=sid1, symbol="BTC/USDT", side=OrderSide.SELL,
+            price=Decimal("41000"), amount=Decimal("1"),
+            fee=Decimal("0"), timestamp=bar2.time,
+        ))
+        context._move_completed_orders()
+
+        # Sell 1 @ $43,000
+        bar3 = Bar(
+            time=datetime(2024, 1, 3, 12, 0, 0, tzinfo=UTC),
+            symbol="BTC/USDT",
+            open=Decimal("43000"),
+            high=Decimal("44000"),
+            low=Decimal("42000"),
+            close=Decimal("43000"),
+            volume=Decimal("1000"),
+        )
+        context._set_current_bar(bar3)
+        context._add_bar_to_history(bar3)
+        sid2 = context.sell("BTC/USDT", Decimal("1"))
+        context._process_fill(Fill(
+            order_id=sid2, symbol="BTC/USDT", side=OrderSide.SELL,
+            price=Decimal("43000"), amount=Decimal("1"),
+            fee=Decimal("0"), timestamp=bar3.time,
+        ))
+        context._move_completed_orders()
+
+        # Sell 1 @ $39,000 (losing exit)
+        bar4 = Bar(
+            time=datetime(2024, 1, 4, 12, 0, 0, tzinfo=UTC),
+            symbol="BTC/USDT",
+            open=Decimal("39000"),
+            high=Decimal("40000"),
+            low=Decimal("38000"),
+            close=Decimal("39000"),
+            volume=Decimal("1000"),
+        )
+        context._set_current_bar(bar4)
+        context._add_bar_to_history(bar4)
+        sid3 = context.sell("BTC/USDT", Decimal("1"))
+        context._process_fill(Fill(
+            order_id=sid3, symbol="BTC/USDT", side=OrderSide.SELL,
+            price=Decimal("39000"), amount=Decimal("1"),
+            fee=Decimal("0"), timestamp=bar4.time,
+        ))
+
+        assert context._open_trade is None
+        assert len(context.trades) == 1
+        trade = context.trades[0]
+        # PnL = (41K-40K)*1 + (43K-40K)*1 + (39K-40K)*1 = 1000+3000+(-1000) = 3000
+        assert trade.pnl == Decimal("3000")
