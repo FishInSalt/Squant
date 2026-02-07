@@ -19,72 +19,91 @@ from squant.infra.exchange.exceptions import (
 )
 from squant.websocket import close_stream_manager, init_stream_manager
 
-# Configure logging from settings
-_settings = get_settings()
-_log_level = getattr(logging, _settings.log_level.upper(), logging.INFO)
-logging.basicConfig(
-    level=_log_level,
-    format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S",
-)
-logging.getLogger("squant").setLevel(_log_level)
-
 logger = logging.getLogger(__name__)
+
+
+def _configure_logging() -> None:
+    """Configure logging from settings. Called once during create_app()."""
+    settings = get_settings()
+    log_level = getattr(logging, settings.log_level.upper(), logging.INFO)
+    logging.basicConfig(
+        level=log_level,
+        format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
+    logging.getLogger("squant").setLevel(log_level)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """Application lifespan manager."""
-    # Startup
+    # Startup — clean up already-initialized resources on failure
     logger.info("Starting application...")
-    await init_db()
-    logger.info("Database connection initialized")
-    await init_redis()
-    logger.info("Redis connection initialized")
-
-    # WebSocket stream manager - optional, continues if connection fails
+    db_initialized = False
+    redis_initialized = False
     try:
-        await init_stream_manager()
-        logger.info("Stream manager initialized")
-    except Exception as e:
-        logger.warning(
-            f"Failed to initialize stream manager: {e}. Real-time data will be unavailable."
+        await init_db()
+        db_initialized = True
+        logger.info("Database connection initialized")
+        await init_redis()
+        redis_initialized = True
+        logger.info("Redis connection initialized")
+
+        # WebSocket stream manager - optional, continues if connection fails
+        try:
+            await init_stream_manager()
+            logger.info("Stream manager initialized")
+        except Exception as e:
+            logger.warning(
+                f"Failed to initialize stream manager: {e}. "
+                f"Real-time data will be unavailable."
+            )
+            logger.warning("The application will continue without WebSocket connectivity.")
+            # Start retry loop to attempt reconnection in the background
+            from squant.websocket.manager import get_stream_manager
+
+            stream_manager = get_stream_manager()
+            stream_manager.start_retry_loop()
+
+        # Recover orphaned trading sessions (NFR-013)
+        from squant.infra.database import get_session_context
+        from squant.services.live_trading import LiveTradingService
+        from squant.services.paper_trading import StrategyRunRepository
+
+        async with get_session_context() as session:
+            # Paper trading sessions
+            repo = StrategyRunRepository(session)
+            paper_count = await repo.mark_orphaned_sessions()
+            if paper_count > 0:
+                logger.warning(
+                    f"Marked {paper_count} orphaned paper trading sessions as ERROR"
+                )
+
+            # Live trading sessions
+            live_service = LiveTradingService(session)
+            live_count = await live_service.mark_orphaned_sessions()
+            if live_count > 0:
+                logger.warning(
+                    f"Marked {live_count} orphaned live trading sessions as ERROR"
+                )
+
+        # Start background tasks for paper trading
+        from squant.services.background import get_task_manager
+
+        settings = get_settings()
+        task_manager = get_task_manager()
+        task_manager.start(
+            persist_interval=settings.paper_persist_interval_seconds,
+            health_check_interval=settings.paper_health_check_interval_seconds,
         )
-        logger.warning("The application will continue without WebSocket connectivity.")
-        # Start retry loop to attempt reconnection in the background
-        from squant.websocket.manager import get_stream_manager
-
-        stream_manager = get_stream_manager()
-        stream_manager.start_retry_loop()
-
-    # Recover orphaned trading sessions (NFR-013)
-    from squant.infra.database import get_session_context
-    from squant.services.live_trading import LiveTradingService
-    from squant.services.paper_trading import StrategyRunRepository
-
-    async with get_session_context() as session:
-        # Paper trading sessions
-        repo = StrategyRunRepository(session)
-        paper_count = await repo.mark_orphaned_sessions()
-        if paper_count > 0:
-            logger.warning(f"Marked {paper_count} orphaned paper trading sessions as ERROR")
-
-        # Live trading sessions
-        live_service = LiveTradingService(session)
-        live_count = await live_service.mark_orphaned_sessions()
-        if live_count > 0:
-            logger.warning(f"Marked {live_count} orphaned live trading sessions as ERROR")
-
-    # Start background tasks for paper trading
-    from squant.services.background import get_task_manager
-
-    settings = get_settings()
-    task_manager = get_task_manager()
-    task_manager.start(
-        persist_interval=settings.paper_persist_interval_seconds,
-        health_check_interval=settings.paper_health_check_interval_seconds,
-    )
-    logger.info("Background tasks started")
+        logger.info("Background tasks started")
+    except Exception:
+        logger.exception("Startup failed, cleaning up initialized resources")
+        if redis_initialized:
+            await close_redis()
+        if db_initialized:
+            await close_db()
+        raise
 
     yield
 
@@ -126,6 +145,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
 def create_app() -> FastAPI:
     """Create and configure FastAPI application."""
+    _configure_logging()
     settings = get_settings()
 
     app = FastAPI(
