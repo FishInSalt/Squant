@@ -26,6 +26,7 @@ from squant.services.backtest import (
     BacktestService,
     IncompleteDataError,
     InsufficientDataError,
+    InvalidInitialCapitalError,
 )
 from squant.services.data_loader import DataLoader
 from squant.services.strategy import StrategyNotFoundError
@@ -73,6 +74,8 @@ async def run_backtest(
         return ApiResponse(data=BacktestRunResponse.model_validate(run))
     except StrategyNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
+    except InvalidInitialCapitalError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except InsufficientDataError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except BacktestError as e:
@@ -117,6 +120,8 @@ async def create_backtest(
         return ApiResponse(data=BacktestRunResponse.model_validate(run))
     except StrategyNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
+    except InvalidInitialCapitalError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 @router.post("/{run_id}/run", response_model=ApiResponse[BacktestRunResponse])
