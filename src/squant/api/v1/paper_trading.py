@@ -36,8 +36,8 @@ router = APIRouter()
 @router.post("", response_model=ApiResponse[PaperTradingRunResponse])
 async def start_paper_trading(
     request: StartPaperTradingRequest,
+    redis: RedisClient,
     session: AsyncSession = Depends(get_session),
-    redis: RedisClient = None,
 ) -> ApiResponse[PaperTradingRunResponse]:
     """Start a paper trading session.
 
