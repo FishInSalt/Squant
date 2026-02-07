@@ -277,7 +277,7 @@ class TestMarketCandlestickEndpoints:
         response = await client.get("/api/v1/market/candles/BTC/USDT?timeframe=invalid")
 
         assert response.status_code == 400
-        assert "Invalid timeframe" in response.json()["detail"]
+        assert "Invalid timeframe" in response.json()["message"]
 
 
 class TestErrorHandling:
@@ -319,10 +319,7 @@ class TestErrorHandling:
 
         assert response.status_code == 500
         # Should not expose internal error details
-        detail = response.json()["detail"]
-        if isinstance(detail, dict):
-            assert detail["message"] == "Internal server error"
-        else:
-            assert detail == "Internal server error"
+        data = response.json()
+        assert data["message"] == "Internal server error"
         assert "secret123" not in response.text
         assert "Database" not in response.text

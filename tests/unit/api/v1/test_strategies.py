@@ -444,4 +444,4 @@ class TestDeleteStrategy:
             response = await client.delete(f"/api/v1/strategies/{strategy_id}")
 
             assert response.status_code == 409
-            assert "running" in response.json()["detail"].lower()
+            assert "running" in response.json()["message"].lower()

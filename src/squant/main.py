@@ -4,7 +4,7 @@ import logging
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
@@ -164,6 +164,27 @@ def create_app() -> FastAPI:
 
     # Include API router
     app.include_router(api_router, prefix=settings.api_prefix)
+
+    # Exception handlers for exchange errors (caught in dependencies)
+    # Global HTTPException handler — converts all HTTPException responses to
+    # the uniform {"code", "message", "data"} shape (ISSUE-605).
+    @app.exception_handler(HTTPException)
+    async def http_exception_handler(request: Request, exc: HTTPException) -> JSONResponse:
+        if isinstance(exc.detail, dict) and "message" in exc.detail:
+            message = exc.detail["message"]
+        elif isinstance(exc.detail, str):
+            message = exc.detail
+        else:
+            message = str(exc.detail)
+        return JSONResponse(
+            status_code=exc.status_code,
+            content={
+                "code": exc.status_code,
+                "message": message,
+                "data": None,
+            },
+            headers=getattr(exc, "headers", None),
+        )
 
     # Exception handlers for exchange errors (caught in dependencies)
     @app.exception_handler(ExchangeConnectionError)
