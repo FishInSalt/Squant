@@ -619,7 +619,47 @@ class TestCCXTRestAdapterOrderMethods:
         result = await authenticated_adapter.place_order(request)
 
         assert result.order_id == "12345"
-        authenticated_adapter._exchange.create_order.assert_called_once()
+        authenticated_adapter._exchange.create_order.assert_called_once_with(
+            symbol="BTC/USDT",
+            type="market",
+            side="buy",
+            amount="0.1",
+            price=None,
+        )
+
+    @pytest.mark.asyncio
+    async def test_place_order_preserves_decimal_precision(self, authenticated_adapter):
+        """Test that place_order passes amount/price as strings to preserve Decimal precision."""
+        authenticated_adapter._exchange.create_order = AsyncMock(
+            return_value={
+                "id": "99999",
+                "symbol": "BTC/USDT",
+                "side": "buy",
+                "type": "limit",
+                "amount": 0.12345678,
+                "filled": 0,
+                "status": "open",
+                "timestamp": 1704067200000,
+            }
+        )
+
+        request = OrderRequest(
+            symbol="BTC/USDT",
+            side=OrderSide.BUY,
+            type=OrderType.LIMIT,
+            amount=Decimal("0.12345678"),
+            price=Decimal("43210.87654321"),
+        )
+
+        await authenticated_adapter.place_order(request)
+
+        authenticated_adapter._exchange.create_order.assert_called_once_with(
+            symbol="BTC/USDT",
+            type="limit",
+            side="buy",
+            amount="0.12345678",
+            price="43210.87654321",
+        )
 
     @pytest.mark.asyncio
     async def test_cancel_order_success(self, authenticated_adapter):
