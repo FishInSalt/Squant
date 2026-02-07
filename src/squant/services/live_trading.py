@@ -524,10 +524,8 @@ class LiveTradingService:
             # Unregister from session manager
             await session_manager.unregister(run_id)
 
-            # Check if we should unsubscribe from candles
-            await self._check_unsubscribe(engine.symbol, engine.timeframe)
-
-        # Update run status
+        # Update run status and commit BEFORE unsubscribing (Issue 021 fix)
+        # This ensures database state is consistent even if unsubscribe fails
         run = await self.run_repo.update(
             run.id,
             status=RunStatus.STOPPED,
@@ -535,6 +533,14 @@ class LiveTradingService:
             error_message=engine.error_message if engine else None,
         )
         await self.session.commit()
+
+        # Now unsubscribe if needed (after database is consistent)
+        if engine:
+            try:
+                await self._check_unsubscribe(engine.symbol, engine.timeframe)
+            except Exception as e:
+                # Log but don't fail - database is already updated
+                logger.warning(f"Failed to unsubscribe from candles: {e}")
 
         logger.info(f"Stopped live trading session {run_id}")
         return run
@@ -574,10 +580,8 @@ class LiveTradingService:
         # Unregister from session manager
         await session_manager.unregister(run_id)
 
-        # Check if we should unsubscribe from candles
-        await self._check_unsubscribe(engine.symbol, engine.timeframe)
-
-        # Update run status
+        # Update run status and commit BEFORE unsubscribing (Issue 021 fix)
+        # This ensures database state is consistent even if unsubscribe fails
         await self.run_repo.update(
             run.id,
             status=RunStatus.STOPPED,
@@ -585,6 +589,13 @@ class LiveTradingService:
             error_message="Emergency close executed",
         )
         await self.session.commit()
+
+        # Now unsubscribe if needed (after database is consistent)
+        try:
+            await self._check_unsubscribe(engine.symbol, engine.timeframe)
+        except Exception as e:
+            # Log but don't fail - database is already updated
+            logger.warning(f"Failed to unsubscribe from candles after emergency close: {e}")
 
         logger.warning(f"Emergency close executed for live session {run_id}")
 

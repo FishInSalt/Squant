@@ -56,6 +56,7 @@ class TestRunStatus:
         assert RunStatus.PENDING == "pending"
         assert RunStatus.RUNNING == "running"
         assert RunStatus.STOPPED == "stopped"
+        assert RunStatus.CANCELLED == "cancelled"
         assert RunStatus.ERROR == "error"
         assert RunStatus.COMPLETED == "completed"
 

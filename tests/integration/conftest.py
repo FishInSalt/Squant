@@ -458,7 +458,7 @@ async def websocket_manager(redis):
     yield manager
 
     # 清理
-    await manager.cleanup()
+    await manager.stop()
 
 
 # ============================================================================
