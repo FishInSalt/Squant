@@ -327,8 +327,8 @@ class TestAutoSaveToLibrary:
         assert response.status_code == 409
         data = response.json()
 
-        assert "detail" in data
-        assert "exists" in data["detail"].lower() or "已存在" in data["detail"]
+        assert "message" in data
+        assert "exists" in data["message"].lower() or "已存在" in data["message"]
 
 
 class TestStrategyListDisplay:

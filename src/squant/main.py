@@ -190,8 +190,10 @@ def create_app() -> FastAPI:
     # the uniform {"code", "message", "data"} shape (ISSUE-605).
     @app.exception_handler(HTTPException)
     async def http_exception_handler(request: Request, exc: HTTPException) -> JSONResponse:
+        data = None
         if isinstance(exc.detail, dict) and "message" in exc.detail:
             message = exc.detail["message"]
+            data = exc.detail.get("data")
         elif isinstance(exc.detail, str):
             message = exc.detail
         else:
@@ -201,7 +203,7 @@ def create_app() -> FastAPI:
             content={
                 "code": exc.status_code,
                 "message": message,
-                "data": None,
+                "data": data,
             },
             headers=getattr(exc, "headers", None),
         )

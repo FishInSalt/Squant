@@ -151,7 +151,7 @@ class TestSetBacktestTimeRange:
 
         response = await client.post("/api/v1/backtest", json=invalid_config)
 
-        # Should return validation error (422)
+        # Should return validation error (422 uses FastAPI's default format)
         assert response.status_code == 422
         data = response.json()
         assert "detail" in data
@@ -521,7 +521,7 @@ class TestStartBacktestTask:
 
         assert response.status_code == 400
         data = response.json()
-        assert "insufficient" in data["detail"].lower() or "data" in data["detail"].lower()
+        assert "insufficient" in data["message"].lower() or "data" in data["message"].lower()
 
 
 class TestGenerateBacktestReport:
@@ -781,7 +781,7 @@ class TestBacktestListAndManagement:
 
         assert response.status_code == 400
         data = response.json()
-        assert "invalid" in data["detail"].lower()
+        assert "invalid" in data["message"].lower()
 
     @pytest.mark.asyncio
     async def test_delete_backtest(self, client, db_session, sample_strategy):

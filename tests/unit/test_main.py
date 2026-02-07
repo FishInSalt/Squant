@@ -78,6 +78,15 @@ def test_app():
             detail={"message": "Internal server error", "extra": "info"},
         )
 
+    async def raise_http_dict_detail_with_data():
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": "Cooldown active",
+                "data": {"remaining_minutes": 15.5},
+            },
+        )
+
     async def raise_http_non_string_detail():
         raise HTTPException(status_code=422, detail=["validation", "errors"])
 
@@ -92,6 +101,7 @@ def test_app():
     app.add_api_route("/test/http-404", raise_http_404)
     app.add_api_route("/test/http-403", raise_http_403)
     app.add_api_route("/test/http-dict-detail", raise_http_dict_detail)
+    app.add_api_route("/test/http-dict-detail-with-data", raise_http_dict_detail_with_data)
     app.add_api_route("/test/http-non-string-detail", raise_http_non_string_detail)
     app.add_api_route("/test/success", successful_route)
 
@@ -229,6 +239,15 @@ class TestHTTPExceptionHandler:
         assert body["code"] == 500
         assert body["message"] == "Internal server error"
         assert body["data"] is None
+
+    async def test_dict_detail_passes_through_data(self, client: AsyncClient):
+        """When detail is a dict with 'data' key, it is passed through."""
+        resp = await client.get("/test/http-dict-detail-with-data")
+        assert resp.status_code == 409
+        body = resp.json()
+        assert body["code"] == 409
+        assert body["message"] == "Cooldown active"
+        assert body["data"] == {"remaining_minutes": 15.5}
 
     async def test_non_string_detail_converted_to_str(self, client: AsyncClient):
         """When detail is neither str nor dict-with-message, it is str()'d."""

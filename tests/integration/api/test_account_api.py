@@ -68,7 +68,7 @@ class TestAddExchangeAPIConfiguration:
         assert response.status_code == 422  # Validation error
         data = response.json()
 
-        # Should have validation error for missing api_key
+        # Should have validation error for missing api_key (422 uses FastAPI's default format)
         assert "detail" in data
 
     @pytest.mark.asyncio
@@ -259,7 +259,7 @@ class TestOKXExchangeSupport:
         data = response.json()
 
         # Should mention passphrase requirement
-        assert "passphrase" in data["detail"].lower()
+        assert "passphrase" in data["message"].lower()
 
 
 class TestAPIKeyEncryptedStorage:
@@ -507,4 +507,4 @@ class TestEditDeleteAPIConfiguration:
         data = response.json()
 
         # Should mention account is in use
-        assert "in use" in data["detail"].lower() or "使用" in data["detail"]
+        assert "in use" in data["message"].lower() or "使用" in data["message"]

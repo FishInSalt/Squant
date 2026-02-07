@@ -137,11 +137,11 @@ class TestStartPaperTrading:
             new_callable=AsyncMock,
             side_effect=StrategyNotFoundError("Strategy not found"),
         ):
-            response = await client.post("/api/v1/paper-trading", json=invalid_config)
+            response = await client.post("/api/v1/paper", json=invalid_config)
 
         assert response.status_code == 404
         data = response.json()
-        assert "detail" in data
+        assert "message" in data
 
     @pytest.mark.asyncio
     async def test_validation_error_for_invalid_initial_capital(self, client, sample_paper_config):
@@ -168,7 +168,7 @@ class TestStartPaperTrading:
 
         assert response.status_code == 400
         data = response.json()
-        assert "detail" in data
+        assert "message" in data
 
     @pytest.mark.asyncio
     async def test_start_with_custom_parameters(self, client, sample_paper_config):
@@ -330,7 +330,7 @@ class TestPaperTradingStatus:
 
         assert response.status_code == 404
         data = response.json()
-        assert "detail" in data
+        assert "message" in data
 
     @pytest.mark.asyncio
     async def test_get_status_shows_runtime_duration(self, client):
@@ -474,7 +474,7 @@ class TestStopPaperTrading:
 
         assert response.status_code == 404
         data = response.json()
-        assert "detail" in data
+        assert "message" in data
 
 
 class TestPaperTradingList:
@@ -608,7 +608,7 @@ class TestPaperTradingList:
 
         assert response.status_code == 400
         data = response.json()
-        assert "detail" in data
+        assert "message" in data
 
 
 class TestPaperTradingDetails:
@@ -668,7 +668,7 @@ class TestPaperTradingDetails:
 
         assert response.status_code == 404
         data = response.json()
-        assert "detail" in data
+        assert "message" in data
 
 
 class TestEquityCurve:
@@ -734,7 +734,7 @@ class TestEquityCurve:
 
         assert response.status_code == 404
         data = response.json()
-        assert "detail" in data
+        assert "message" in data
 
 
 class TestPersistSnapshots:
@@ -774,4 +774,4 @@ class TestPersistSnapshots:
 
         assert response.status_code == 404
         data = response.json()
-        assert "detail" in data
+        assert "message" in data

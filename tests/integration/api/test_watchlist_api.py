@@ -45,7 +45,7 @@ class TestWatchlistCRUD:
         )
 
         assert response.status_code == 409
-        assert "already in watchlist" in response.json()["detail"].lower()
+        assert "already in watchlist" in response.json()["message"].lower()
 
     @pytest.mark.asyncio
     async def test_list_watchlist(self, client, db_session):
@@ -142,7 +142,7 @@ class TestWatchlistCRUD:
         response = await client.delete(f"/api/v1/watchlist/{fake_id}")
 
         assert response.status_code == 404
-        assert "not found" in response.json()["detail"].lower()
+        assert "not found" in response.json()["message"].lower()
 
 
 class TestWatchlistReorder:

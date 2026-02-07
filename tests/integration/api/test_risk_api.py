@@ -283,7 +283,7 @@ class TestGetRiskRule:
 
         assert response.status_code == 404
         data = response.json()
-        assert "detail" in data
+        assert "message" in data
 
 
 class TestUpdateRiskRule:
@@ -364,7 +364,7 @@ class TestUpdateRiskRule:
 
         assert response.status_code == 404
         data = response.json()
-        assert "detail" in data
+        assert "message" in data
 
 
 class TestDeleteRiskRule:
@@ -404,7 +404,7 @@ class TestDeleteRiskRule:
 
         assert response.status_code == 404
         data = response.json()
-        assert "detail" in data
+        assert "message" in data
 
 
 class TestToggleRiskRule:
@@ -485,7 +485,7 @@ class TestToggleRiskRule:
 
         assert response.status_code == 404
         data = response.json()
-        assert "detail" in data
+        assert "message" in data
 
 
 class TestAllRiskRuleTypes:

@@ -117,7 +117,7 @@ class TestConfigureRiskRules:
 
         assert response.status_code == 400
         data = response.json()
-        assert "risk configuration error" in data["detail"].lower()
+        assert "risk configuration error" in data["message"].lower()
 
 
 class TestDoubleConfirmation:
@@ -782,7 +782,7 @@ class TestLiveTradingDetails:
 
         assert response.status_code == 404
         data = response.json()
-        assert "detail" in data
+        assert "message" in data
 
 
 class TestEquityCurve:
