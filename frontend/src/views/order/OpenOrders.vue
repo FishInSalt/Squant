@@ -89,6 +89,12 @@
           </template>
         </el-table-column>
 
+        <el-table-column prop="remaining_amount" label="剩余" width="100" align="right">
+          <template #default="{ row }">
+            {{ formatNumber(row.remaining_amount, 4) }}
+          </template>
+        </el-table-column>
+
         <el-table-column prop="status" label="状态" width="100">
           <template #default="{ row }">
             <StatusBadge :status="row.status" />

@@ -184,3 +184,89 @@ export interface Position {
   unrealized_pnl?: number
   unrealized_pnl_percent?: number
 }
+
+// 待处理订单信息（匹配后端 PendingOrderInfo）
+export interface PendingOrderInfo {
+  id: string
+  symbol: string
+  side: string
+  type: string
+  amount: number
+  price?: number
+  status: string
+  created_at?: string
+}
+
+// 模拟交易实时状态（匹配后端 PaperTradingStatusResponse）
+export interface PaperTradingStatus {
+  run_id: string
+  symbol: string
+  timeframe: string
+  is_running: boolean
+  started_at?: string
+  stopped_at?: string
+  error_message?: string
+  bar_count: number
+  cash: number
+  equity: number
+  initial_capital: number
+  total_fees: number
+  unrealized_pnl: number
+  realized_pnl: number
+  positions: Record<string, Position>
+  pending_orders: PendingOrderInfo[]
+  completed_orders_count: number
+  trades_count: number
+}
+
+// 实盘订单信息（匹配后端 LiveOrderInfo）
+export interface LiveOrderInfo {
+  internal_id: string
+  exchange_order_id?: string
+  symbol: string
+  side: string
+  type: string
+  amount: number
+  filled_amount: number
+  price?: number
+  avg_fill_price?: number
+  status: string
+  created_at?: string
+  updated_at?: string
+}
+
+// 风控状态（匹配后端 RiskStateResponse）
+export interface RiskState {
+  daily_pnl: number
+  daily_trade_count: number
+  consecutive_losses: number
+  circuit_breaker_active: boolean
+  max_position_size: number
+  max_order_size: number
+  daily_trade_limit: number
+  daily_loss_limit: number
+}
+
+// 实盘交易实时状态（匹配后端 LiveTradingStatusResponse）
+export interface LiveTradingStatus {
+  run_id: string
+  symbol: string
+  timeframe: string
+  is_running: boolean
+  started_at?: string
+  stopped_at?: string
+  error_message?: string
+  bar_count: number
+  cash: number
+  equity: number
+  initial_capital: number
+  total_fees: number
+  unrealized_pnl: number
+  realized_pnl: number
+  positions: Record<string, Position>
+  pending_orders: Record<string, unknown>[]
+  live_orders: LiveOrderInfo[]
+  completed_orders_count: number
+  trades_count: number
+  risk_state?: RiskState
+}

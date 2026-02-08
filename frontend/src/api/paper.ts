@@ -1,5 +1,5 @@
 import { get, post, del } from './index'
-import type { PaperSession, Position, RunLog, Trade, PaginatedData } from '@/types'
+import type { PaperSession, PaperTradingStatus, Position, RunLog, Trade, PaginatedData } from '@/types'
 
 // 启动模拟交易
 export const startPaperTrading = (config: {
@@ -22,7 +22,7 @@ export const getPaperSession = (id: string) =>
 
 // 获取会话实时状态
 export const getPaperSessionStatus = (id: string) =>
-  get<PaperSession>(`/paper/${id}/status`)
+  get<PaperTradingStatus>(`/paper/${id}/status`)
 
 // 获取会话列表
 export const getPaperSessions = (params?: {
