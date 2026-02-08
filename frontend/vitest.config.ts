@@ -19,7 +19,7 @@ export default mergeConfig(
       coverage: {
         provider: 'v8',
         reporter: ['text', 'lcov', 'json-summary'],
-        include: ['src/utils/**', 'src/stores/**', 'src/composables/**', 'src/components/**'],
+        include: ['src/utils/**', 'src/stores/**', 'src/composables/**', 'src/components/**', 'src/views/**'],
         exclude: [
           'src/**/*.d.ts',
           'src/**/*.test.ts',
