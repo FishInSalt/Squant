@@ -180,6 +180,100 @@ class TestOrderDetail:
         """Test model has from_attributes config."""
         assert OrderDetail.model_config.get("from_attributes") is True
 
+    def test_commission_default_zero(self):
+        """Test commission defaults to 0 (OD-003)."""
+        now = datetime.now(UTC)
+        detail = OrderDetail(
+            id=uuid4(),
+            account_id=uuid4(),
+            exchange="okx",
+            symbol="BTC/USDT",
+            side=OrderSide.BUY,
+            type=OrderType.MARKET,
+            status=OrderStatus.FILLED,
+            amount=Decimal("0.1"),
+            filled=Decimal("0.1"),
+            created_at=now,
+            updated_at=now,
+        )
+        assert detail.commission == Decimal("0")
+
+    def test_remaining_amount_default_zero(self):
+        """Test remaining_amount defaults to 0 (OD-003)."""
+        now = datetime.now(UTC)
+        detail = OrderDetail(
+            id=uuid4(),
+            account_id=uuid4(),
+            exchange="okx",
+            symbol="BTC/USDT",
+            side=OrderSide.BUY,
+            type=OrderType.MARKET,
+            status=OrderStatus.FILLED,
+            amount=Decimal("0.1"),
+            filled=Decimal("0.1"),
+            created_at=now,
+            updated_at=now,
+        )
+        assert detail.remaining_amount == Decimal("0")
+
+    def test_commission_and_remaining_set(self):
+        """Test commission and remaining_amount can be set (OD-003)."""
+        now = datetime.now(UTC)
+        detail = OrderDetail(
+            id=uuid4(),
+            account_id=uuid4(),
+            exchange="okx",
+            symbol="BTC/USDT",
+            side=OrderSide.BUY,
+            type=OrderType.LIMIT,
+            status=OrderStatus.PARTIAL,
+            amount=Decimal("1.0"),
+            filled=Decimal("0.3"),
+            commission=Decimal("0.15"),
+            remaining_amount=Decimal("0.7"),
+            created_at=now,
+            updated_at=now,
+        )
+        assert detail.commission == Decimal("0.15")
+        assert detail.remaining_amount == Decimal("0.7")
+
+    def test_status_display_default_empty(self):
+        """Test status_display defaults to empty string (OD-004)."""
+        now = datetime.now(UTC)
+        detail = OrderDetail(
+            id=uuid4(),
+            account_id=uuid4(),
+            exchange="okx",
+            symbol="BTC/USDT",
+            side=OrderSide.BUY,
+            type=OrderType.MARKET,
+            status=OrderStatus.FILLED,
+            amount=Decimal("0.1"),
+            filled=Decimal("0.1"),
+            created_at=now,
+            updated_at=now,
+        )
+        assert detail.status_display == ""
+
+    def test_status_display_set(self):
+        """Test status_display can be set (OD-004)."""
+        now = datetime.now(UTC)
+        detail = OrderDetail(
+            id=uuid4(),
+            account_id=uuid4(),
+            exchange="okx",
+            symbol="BTC/USDT",
+            side=OrderSide.BUY,
+            type=OrderType.MARKET,
+            status=OrderStatus.SUBMITTED,
+            amount=Decimal("0.1"),
+            filled=Decimal("0"),
+            status_display="open",
+            created_at=now,
+            updated_at=now,
+        )
+        assert detail.status_display == "open"
+
 
 class TestTradeDetail:
     """Tests for TradeDetail schema."""
@@ -438,6 +532,33 @@ class TestOrderStatsResponse:
             + stats.rejected
             <= stats.total
         )
+
+    def test_open_field_default_zero(self):
+        """Test open field defaults to 0 (OD-004)."""
+        stats = OrderStatsResponse(
+            total=100,
+            pending=5,
+            submitted=10,
+            partial=3,
+            filled=70,
+            cancelled=10,
+            rejected=2,
+        )
+        assert stats.open == 0
+
+    def test_open_field_set(self):
+        """Test open field can be set (OD-004)."""
+        stats = OrderStatsResponse(
+            total=100,
+            open=15,
+            pending=5,
+            submitted=10,
+            partial=3,
+            filled=70,
+            cancelled=10,
+            rejected=2,
+        )
+        assert stats.open == 15
 
     def test_all_fields_required(self):
         """Test all fields are required."""

@@ -66,6 +66,8 @@ class PositionInfo(BaseModel):
 
     amount: NumberDecimal
     avg_entry_price: NumberDecimal
+    current_price: NumberDecimal | None = None
+    unrealized_pnl: NumberDecimal | None = None
 
 
 class PendingOrderInfo(BaseModel):
@@ -96,6 +98,8 @@ class PaperTradingStatusResponse(BaseModel):
     equity: NumberDecimal
     initial_capital: NumberDecimal
     total_fees: NumberDecimal
+    unrealized_pnl: NumberDecimal = Field(default=Decimal("0"))
+    total_pnl: NumberDecimal = Field(default=Decimal("0"))
     positions: dict[str, PositionInfo]
     pending_orders: list[PendingOrderInfo]
     completed_orders_count: int

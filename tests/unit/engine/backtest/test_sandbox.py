@@ -304,6 +304,40 @@ class MyStrategy(Strategy):
         result = validate_strategy_code(minimal_strategy)
         assert result.valid is True
 
+    def test_strategy_info_populated_on_valid(self, valid_strategy):
+        """Test strategy_info is populated when code is valid (ST-003)."""
+        result = validate_strategy_code(valid_strategy)
+        assert result.valid is True
+        assert result.strategy_info is not None
+        assert result.strategy_info["class_name"] == "MyStrategy"
+        assert result.strategy_info["has_on_bar"] is True
+
+    def test_strategy_info_none_on_invalid(self):
+        """Test strategy_info is None when code is invalid (ST-003)."""
+        result = validate_strategy_code("")
+        assert result.valid is False
+        assert result.strategy_info is None
+
+    def test_strategy_info_has_init(self):
+        """Test strategy_info detects __init__ method (ST-003)."""
+        code = '''
+class TestStrat(Strategy):
+    def __init__(self):
+        self.x = 0
+    def on_bar(self, bar):
+        pass
+'''
+        result = validate_strategy_code(code)
+        assert result.valid is True
+        assert result.strategy_info["has_init"] is True
+
+    def test_strategy_info_no_init(self, minimal_strategy):
+        """Test strategy_info reports has_init=False when no __init__ (ST-003)."""
+        result = validate_strategy_code(minimal_strategy)
+        assert result.valid is True
+        assert result.strategy_info["has_init"] is False
+        assert result.strategy_info["class_name"] == "MinimalStrategy"
+
 
 class TestCompileStrategy:
     """Tests for compile_strategy function."""

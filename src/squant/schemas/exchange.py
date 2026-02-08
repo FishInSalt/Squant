@@ -25,6 +25,9 @@ class BalanceResponse(BaseModel):
     exchange: str = Field(..., description="Exchange name")
     balances: list[BalanceItem] = Field(..., description="Currency balances")
     timestamp: datetime = Field(..., description="Response timestamp")
+    total_usd_value: NumberDecimal | None = Field(
+        None, description="Total portfolio value in USD (AC-003 placeholder)"
+    )
 
 
 # Ticker schemas

@@ -1175,8 +1175,7 @@ class LiveTradingEngine:
                 logger.warning(f"Error polling order {order_id}: {e}")
 
         logger.warning(
-            f"Timeout waiting for order {order_id} fill "
-            f"(last status: {last_response.status.value})"
+            f"Timeout waiting for order {order_id} fill (last status: {last_response.status.value})"
         )
         return last_response
 
@@ -1207,11 +1206,22 @@ class LiveTradingEngine:
     def get_state_snapshot(self) -> dict[str, Any]:
         """Get current engine state snapshot."""
         positions = {}
+        unrealized_pnl_total = Decimal("0")
         for symbol, pos in self._context.positions.items():
             if pos.is_open:
+                price = self._context._last_prices.get(symbol)
+                pos_pnl = None
+                if price is not None:
+                    if pos.amount > 0:
+                        pos_pnl = (price - pos.avg_entry_price) * pos.amount
+                    else:
+                        pos_pnl = (pos.avg_entry_price - price) * abs(pos.amount)
+                    unrealized_pnl_total += pos_pnl
                 positions[symbol] = {
                     "amount": str(pos.amount),
                     "avg_entry_price": str(pos.avg_entry_price),
+                    "current_price": str(price) if price is not None else None,
+                    "unrealized_pnl": str(pos_pnl) if pos_pnl is not None else None,
                 }
 
         pending_orders = []
@@ -1245,6 +1255,8 @@ class LiveTradingEngine:
                     }
                 )
 
+        realized_pnl = sum((t.pnl for t in self._context.trades), Decimal("0"))
+
         return {
             "run_id": str(self._run_id),
             "symbol": self._symbol,
@@ -1258,6 +1270,8 @@ class LiveTradingEngine:
             "equity": str(self._context.equity),
             "initial_capital": str(self._context.initial_capital),
             "total_fees": str(self._context.total_fees),
+            "unrealized_pnl": str(unrealized_pnl_total),
+            "total_pnl": str(realized_pnl + unrealized_pnl_total),
             "positions": positions,
             "pending_orders": pending_orders,
             "live_orders": live_orders,

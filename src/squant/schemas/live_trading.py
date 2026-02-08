@@ -96,6 +96,8 @@ class LivePositionInfo(BaseModel):
 
     amount: NumberDecimal
     avg_entry_price: NumberDecimal
+    current_price: NumberDecimal | None = None
+    unrealized_pnl: NumberDecimal | None = None
 
 
 class LiveOrderInfo(BaseModel):
@@ -143,6 +145,8 @@ class LiveTradingStatusResponse(BaseModel):
     equity: NumberDecimal
     initial_capital: NumberDecimal
     total_fees: NumberDecimal
+    unrealized_pnl: NumberDecimal = Field(default=Decimal("0"))
+    total_pnl: NumberDecimal = Field(default=Decimal("0"))
     positions: dict[str, LivePositionInfo]
     pending_orders: list[dict[str, Any]]
     live_orders: list[LiveOrderInfo]

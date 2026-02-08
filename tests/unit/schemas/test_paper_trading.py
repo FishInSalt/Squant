@@ -225,6 +225,33 @@ class TestPositionInfo:
 
         assert position.amount == Decimal("0")
 
+    def test_current_price_default_none(self):
+        """Test current_price defaults to None (PP-003)."""
+        position = PositionInfo(
+            amount=Decimal("0.5"),
+            avg_entry_price=Decimal("50000"),
+        )
+        assert position.current_price is None
+
+    def test_unrealized_pnl_default_none(self):
+        """Test unrealized_pnl defaults to None (PP-003)."""
+        position = PositionInfo(
+            amount=Decimal("0.5"),
+            avg_entry_price=Decimal("50000"),
+        )
+        assert position.unrealized_pnl is None
+
+    def test_with_price_and_pnl(self):
+        """Test position with current_price and unrealized_pnl (PP-003)."""
+        position = PositionInfo(
+            amount=Decimal("0.5"),
+            avg_entry_price=Decimal("50000"),
+            current_price=Decimal("52000"),
+            unrealized_pnl=Decimal("1000"),
+        )
+        assert position.current_price == Decimal("52000")
+        assert position.unrealized_pnl == Decimal("1000")
+
 
 class TestPendingOrderInfo:
     """Tests for PendingOrderInfo schema."""
@@ -354,6 +381,85 @@ class TestPaperTradingStatusResponse:
         )
 
         assert len(response.pending_orders) == 1
+
+    def test_unrealized_pnl_default_zero(self):
+        """Test unrealized_pnl defaults to 0 (PP-002)."""
+        now = datetime.now(UTC)
+        response = PaperTradingStatusResponse(
+            run_id=uuid4(),
+            symbol="BTC/USDT",
+            timeframe="1m",
+            is_running=True,
+            started_at=now,
+            stopped_at=None,
+            error_message=None,
+            bar_count=0,
+            cash=Decimal("10000"),
+            equity=Decimal("10000"),
+            initial_capital=Decimal("10000"),
+            total_fees=Decimal("0"),
+            positions={},
+            pending_orders=[],
+            completed_orders_count=0,
+            trades_count=0,
+        )
+        assert response.unrealized_pnl == Decimal("0")
+        assert response.total_pnl == Decimal("0")
+
+    def test_pnl_fields_set(self):
+        """Test unrealized_pnl and total_pnl can be set (PP-002)."""
+        now = datetime.now(UTC)
+        response = PaperTradingStatusResponse(
+            run_id=uuid4(),
+            symbol="BTC/USDT",
+            timeframe="1m",
+            is_running=True,
+            started_at=now,
+            stopped_at=None,
+            error_message=None,
+            bar_count=100,
+            cash=Decimal("5000"),
+            equity=Decimal("10500"),
+            initial_capital=Decimal("10000"),
+            total_fees=Decimal("25"),
+            unrealized_pnl=Decimal("300"),
+            total_pnl=Decimal("525"),
+            positions={},
+            pending_orders=[],
+            completed_orders_count=10,
+            trades_count=8,
+        )
+        assert response.unrealized_pnl == Decimal("300")
+        assert response.total_pnl == Decimal("525")
+
+    def test_pnl_json_serializes_as_float(self):
+        """Test PNL fields serialize as float in JSON (PP-002)."""
+        now = datetime.now(UTC)
+        response = PaperTradingStatusResponse(
+            run_id=uuid4(),
+            symbol="BTC/USDT",
+            timeframe="1m",
+            is_running=True,
+            started_at=now,
+            stopped_at=None,
+            error_message=None,
+            bar_count=0,
+            cash=Decimal("10000"),
+            equity=Decimal("10000"),
+            initial_capital=Decimal("10000"),
+            total_fees=Decimal("0"),
+            unrealized_pnl=Decimal("123.45"),
+            total_pnl=Decimal("456.78"),
+            positions={},
+            pending_orders=[],
+            completed_orders_count=0,
+            trades_count=0,
+        )
+        data = response.model_dump(mode="json")
+        assert isinstance(data["unrealized_pnl"], float)
+        assert isinstance(data["total_pnl"], float)
+        assert data["unrealized_pnl"] == 123.45
+        assert data["total_pnl"] == 456.78
 
 
 class TestPaperTradingListItem:

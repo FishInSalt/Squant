@@ -38,12 +38,23 @@ class ValidateCodeRequest(BaseModel):
     code: str = Field(..., min_length=1, description="Strategy code to validate")
 
 
+class StrategyInfo(BaseModel):
+    """Metadata extracted from validated strategy code (ST-003)."""
+
+    class_name: str | None = Field(None, description="Strategy class name")
+    has_on_bar: bool = Field(default=False, description="Whether strategy has on_bar method")
+    has_init: bool = Field(default=False, description="Whether strategy has __init__ method")
+
+
 class ValidationResultResponse(BaseModel):
     """Response for code validation."""
 
     valid: bool = Field(..., description="Whether the code is valid")
     errors: list[str] = Field(default_factory=list, description="Validation errors")
     warnings: list[str] = Field(default_factory=list, description="Validation warnings")
+    strategy_info: StrategyInfo | None = Field(
+        None, description="Strategy metadata (only when valid)"
+    )
 
 
 class StrategyResponse(BaseModel):
