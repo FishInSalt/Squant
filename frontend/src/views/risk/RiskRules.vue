@@ -36,8 +36,8 @@
         </div>
 
         <div class="rule-footer">
-          <span v-if="rule.last_triggered" class="last-triggered">
-            上次触发: {{ formatRelativeTime(rule.last_triggered) }}
+          <span v-if="rule.last_triggered_at" class="last-triggered">
+            上次触发: {{ formatRelativeTime(rule.last_triggered_at) }}
           </span>
         </div>
 

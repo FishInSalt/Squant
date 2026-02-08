@@ -4348,8 +4348,8 @@ export interface components {
             type: string;
             /** Enabled */
             enabled: boolean;
-            /** Last Triggered */
-            last_triggered?: string | null;
+            /** Last Triggered At */
+            last_triggered_at?: string | null;
             /**
              * Created At
              * Format: date-time
@@ -4378,8 +4378,8 @@ export interface components {
             };
             /** Enabled */
             enabled: boolean;
-            /** Last Triggered */
-            last_triggered?: string | null;
+            /** Last Triggered At */
+            last_triggered_at?: string | null;
             /**
              * Created At
              * Format: date-time

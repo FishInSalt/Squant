@@ -22,7 +22,7 @@ const mockRules = [
     description: '限制最大持仓比例',
     params: { max_percent: 50 },
     enabled: true,
-    last_triggered: '2024-06-01T00:00:00Z',
+    last_triggered_at: '2024-06-01T00:00:00Z',
     created_at: '2024-01-01T00:00:00Z',
     updated_at: '2024-01-01T00:00:00Z',
   },

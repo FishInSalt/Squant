@@ -116,9 +116,6 @@ jobs:
     - name: Install dependencies
       run: cd frontend && pnpm install
 
-    - name: Run tests
-      run: cd frontend && pnpm test
-
     - name: Run tests with coverage
       run: cd frontend && pnpm test:coverage
 

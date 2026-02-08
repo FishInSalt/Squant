@@ -17,7 +17,7 @@ export interface RiskRule {
   description?: string
   enabled: boolean
   params: Record<string, unknown>
-  last_triggered?: string
+  last_triggered_at?: string
   created_at: string
   updated_at: string
 }
