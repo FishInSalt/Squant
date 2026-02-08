@@ -28,7 +28,7 @@ export const deleteBacktest = (id: string) =>
 
 // 导出回测结果
 export const exportBacktestResult = (id: string, format: 'csv' | 'json' = 'csv') =>
-  get<{ download_url: string }>(`/backtest/${id}/export`, { format })
+  get<{ content: string; filename: string; content_type: string }>(`/backtest/${id}/export`, { format })
 
 // 获取正在运行的回测
 export const getRunningBacktests = () =>

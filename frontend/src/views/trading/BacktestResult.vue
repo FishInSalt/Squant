@@ -282,7 +282,13 @@ function runAgain() {
 async function exportResult() {
   try {
     const response = await exportBacktestResult(props.id, 'csv')
-    window.open(response.data.download_url, '_blank')
+    const blob = new Blob([response.data.content], { type: response.data.content_type || 'text/csv' })
+    const url = window.URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = response.data.filename || `backtest_${props.id}.csv`
+    link.click()
+    window.URL.revokeObjectURL(url)
     toastSuccess('导出成功')
   } catch (error) {
     toastError('导出失败')

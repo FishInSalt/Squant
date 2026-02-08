@@ -67,6 +67,7 @@ export function usePolling<T>(
     if (!isPolling.value) return
 
     timer = setTimeout(async () => {
+      retryCount = 0
       await fetch()
       scheduleNext()
     }, interval)

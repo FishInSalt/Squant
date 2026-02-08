@@ -292,12 +292,13 @@ describe('formatSessionStatus', () => {
     ['completed', '已完成'],
     ['failed', '已失败'],
     ['stopped', '已停止'],
+    ['cancelled', '已取消'],
   ])('formats %s to %s', (input, expected) => {
     expect(formatSessionStatus(input)).toBe(expected)
   })
 
   it('returns raw value for unknown status', () => {
-    expect(formatSessionStatus('cancelled')).toBe('cancelled')
+    expect(formatSessionStatus('unknown_status')).toBe('unknown_status')
   })
 })
 

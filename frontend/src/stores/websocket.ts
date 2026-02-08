@@ -115,6 +115,10 @@ export const useWebSocketStore = defineStore('websocket', () => {
       return
     }
 
+    // 重置服务不可用标志，允许显式重连
+    serviceUnavailable.value = false
+    serviceUnavailableMessage.value = ''
+
     // 设置连接中标志
     connecting.value = true
 
