@@ -94,6 +94,42 @@ jobs:
         fi
         echo "API contract types are up to date."
 
+  frontend-tests:
+    name: Frontend Tests
+    runs-on: ubuntu-latest
+    needs: lint
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+
+    - name: Install pnpm
+      uses: pnpm/action-setup@v4
+      with:
+        version: 9
+
+    - name: Install dependencies
+      run: cd frontend && pnpm install
+
+    - name: Run tests
+      run: cd frontend && pnpm test
+
+    - name: Run tests with coverage
+      run: cd frontend && pnpm test:coverage
+
+    - name: Upload coverage
+      uses: codecov/codecov-action@v4
+      with:
+        files: ./frontend/coverage/lcov.info
+        flags: frontend
+      env:
+        CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+
   unit-tests:
     name: Unit Tests
     runs-on: ubuntu-latest
@@ -304,7 +340,7 @@ jobs:
   summary:
     name: CI Summary
     runs-on: ubuntu-latest
-    needs: [lint, api-contract-check, unit-tests, integration-tests, e2e-tests, build-check]
+    needs: [lint, api-contract-check, frontend-tests, unit-tests, integration-tests, e2e-tests, build-check]
     if: always()
 
     steps:
@@ -314,6 +350,7 @@ jobs:
         echo "" >> $GITHUB_STEP_SUMMARY
         echo "- Lint: ${{ needs.lint.result }}" >> $GITHUB_STEP_SUMMARY
         echo "- API Contract Check: ${{ needs.api-contract-check.result }}" >> $GITHUB_STEP_SUMMARY
+        echo "- Frontend Tests: ${{ needs.frontend-tests.result }}" >> $GITHUB_STEP_SUMMARY
         echo "- Unit Tests: ${{ needs.unit-tests.result }}" >> $GITHUB_STEP_SUMMARY
         echo "- Integration Tests: ${{ needs.integration-tests.result }}" >> $GITHUB_STEP_SUMMARY
         echo "- E2E Tests: ${{ needs.e2e-tests.result }}" >> $GITHUB_STEP_SUMMARY
@@ -323,6 +360,7 @@ jobs:
       if: |
         needs.lint.result == 'failure' ||
         needs.api-contract-check.result == 'failure' ||
+        needs.frontend-tests.result == 'failure' ||
         needs.unit-tests.result == 'failure' ||
         needs.integration-tests.result == 'failure' ||
         needs.e2e-tests.result == 'failure' ||
