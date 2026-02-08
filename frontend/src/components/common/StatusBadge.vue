@@ -8,7 +8,7 @@
 import { computed } from 'vue'
 
 type Status = 'pending' | 'running' | 'completed' | 'failed' | 'stopped' |
-              'open' | 'partial' | 'filled' | 'cancelled' | 'rejected' | 'expired' |
+              'open' | 'partial' | 'filled' | 'cancelled' | 'rejected' |
               'active' | 'inactive' | 'triggered' | 'connected' | 'disconnected' | 'error'
 
 interface Props {
@@ -37,7 +37,6 @@ const statusConfig: Record<Status, { type: 'success' | 'warning' | 'info' | 'dan
   filled: { type: 'success', text: '已成交' },
   cancelled: { type: 'info', text: '已取消' },
   rejected: { type: 'danger', text: '已拒绝' },
-  expired: { type: 'info', text: '已过期' },
   // 规则状态
   active: { type: 'success', text: '启用' },
   inactive: { type: 'info', text: '禁用' },

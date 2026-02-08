@@ -29,9 +29,9 @@ export interface ExchangeAccountUpdate {
 }
 
 export interface Balance {
-  asset: string
-  free: number
-  locked: number
+  currency: string
+  available: number
+  frozen: number
   total: number
   usd_value?: number
 }

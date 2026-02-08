@@ -41,7 +41,7 @@
                 :key="s.id"
                 :label="s.name"
                 :value="s.id"
-                :disabled="!s.is_valid"
+                :disabled="s.status !== 'active'"
               />
             </el-select>
           </el-form-item>

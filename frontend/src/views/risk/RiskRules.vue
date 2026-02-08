@@ -36,9 +36,6 @@
         </div>
 
         <div class="rule-footer">
-          <span class="action-badge" :class="rule.action">
-            {{ getActionLabel(rule.action) }}
-          </span>
           <span v-if="rule.last_triggered" class="last-triggered">
             上次触发: {{ formatRelativeTime(rule.last_triggered) }}
           </span>
@@ -88,14 +85,6 @@
           <el-input v-model="form.description" type="textarea" :rows="2" />
         </el-form-item>
 
-        <el-form-item label="触发动作" prop="action">
-          <el-radio-group v-model="form.action">
-            <el-radio value="warn">警告</el-radio>
-            <el-radio value="block">阻止</el-radio>
-            <el-radio value="halt">熔断</el-radio>
-          </el-radio-group>
-        </el-form-item>
-
         <el-divider>规则参数</el-divider>
 
         <template v-if="form.type === 'max_position_size'">
@@ -143,7 +132,7 @@
 import { ref, reactive, onMounted } from 'vue'
 import type { FormInstance, FormRules } from 'element-plus'
 import { formatRelativeTime } from '@/utils/format'
-import { RISK_RULE_TYPE_OPTIONS, RISK_ACTION_OPTIONS } from '@/utils/constants'
+import { RISK_RULE_TYPE_OPTIONS } from '@/utils/constants'
 import {
   getRiskRules,
   createRiskRule,
@@ -173,24 +162,18 @@ const form = reactive({
   name: '',
   type: 'max_position_size' as RiskRuleType,
   description: '',
-  action: 'warn' as 'warn' | 'block' | 'halt',
   params: {} as RuleParams,
 })
 
 const formRules: FormRules = {
   name: [{ required: true, message: '请输入规则名称', trigger: 'blur' }],
   type: [{ required: true, message: '请选择规则类型', trigger: 'change' }],
-  action: [{ required: true, message: '请选择触发动作', trigger: 'change' }],
 }
 
 const ruleTypeOptions = RISK_RULE_TYPE_OPTIONS
 
 function getRuleTypeLabel(type: string) {
   return ruleTypeOptions.find((t) => t.value === type)?.label || type
-}
-
-function getActionLabel(action: string) {
-  return RISK_ACTION_OPTIONS.find((a) => a.value === action)?.label || action
 }
 
 async function loadRules() {
@@ -210,7 +193,6 @@ function showCreateDialog() {
   form.name = ''
   form.type = 'max_position_size'
   form.description = ''
-  form.action = 'warn'
   form.params = { max_percent: 50 } as RuleParams
   dialogVisible.value = true
 }
@@ -220,7 +202,6 @@ function showEditDialog(rule: RiskRule) {
   form.name = rule.name
   form.type = rule.type
   form.description = rule.description
-  form.action = rule.action
   form.params = { ...rule.params } as RuleParams
   dialogVisible.value = true
 }
@@ -254,7 +235,6 @@ async function handleSubmit() {
       name: form.name,
       type: form.type,
       description: form.description,
-      action: form.action,
       params: form.params,
       enabled: true,
     }
@@ -384,30 +364,9 @@ onMounted(() => {
 
     .rule-footer {
       display: flex;
-      justify-content: space-between;
+      justify-content: flex-end;
       align-items: center;
       margin-bottom: 12px;
-
-      .action-badge {
-        padding: 2px 8px;
-        border-radius: 4px;
-        font-size: 12px;
-
-        &.warn {
-          background: #fff7e6;
-          color: #fa8c16;
-        }
-
-        &.block {
-          background: #fff1f0;
-          color: #f5222d;
-        }
-
-        &.halt {
-          background: #f9f0ff;
-          color: #722ed1;
-        }
-      }
 
       .last-triggered {
         font-size: 12px;

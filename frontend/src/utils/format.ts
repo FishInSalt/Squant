@@ -149,7 +149,6 @@ export function formatOrderStatus(status: string): string {
     filled: '已成交',
     cancelled: '已取消',
     rejected: '已拒绝',
-    expired: '已过期',
   }
   return statuses[status] || status
 }

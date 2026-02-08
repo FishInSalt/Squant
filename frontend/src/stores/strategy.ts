@@ -17,7 +17,7 @@ export const useStrategyStore = defineStore('strategy', () => {
 
   // Getters
   const validStrategies = computed(() =>
-    strategies.value.filter((s) => s.is_valid)
+    strategies.value.filter((s) => s.status === 'active')
   )
 
   const strategyById = computed(() => (id: string) =>
@@ -29,7 +29,7 @@ export const useStrategyStore = defineStore('strategy', () => {
     page?: number
     pageSize?: number
     search?: string
-    isValid?: boolean
+    status?: string
   }) {
     loading.value = true
     try {
@@ -37,7 +37,7 @@ export const useStrategyStore = defineStore('strategy', () => {
         page: params?.page || pagination.value.page,
         page_size: params?.pageSize || pagination.value.pageSize,
         search: params?.search || searchQuery.value || undefined,
-        is_valid: params?.isValid,
+        status: params?.status,
       })
       const data = response.data as PaginatedData<Strategy>
       strategies.value = data.items

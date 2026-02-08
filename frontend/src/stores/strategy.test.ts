@@ -28,19 +28,19 @@ describe('useStrategyStore', () => {
   })
 
   describe('validStrategies', () => {
-    it('filters strategies by is_valid', () => {
+    it('filters strategies by status active', () => {
       const store = useStrategyStore()
       store.strategies = [
-        createMockStrategy({ id: 's-1', is_valid: true }),
-        createMockStrategy({ id: 's-2', is_valid: false }),
-        createMockStrategy({ id: 's-3', is_valid: true }),
+        createMockStrategy({ id: 's-1', status: 'active' }),
+        createMockStrategy({ id: 's-2', status: 'archived' }),
+        createMockStrategy({ id: 's-3', status: 'active' }),
       ]
       expect(store.validStrategies).toHaveLength(2)
     })
 
-    it('returns empty when none valid', () => {
+    it('returns empty when none active', () => {
       const store = useStrategyStore()
-      store.strategies = [createMockStrategy({ is_valid: false })]
+      store.strategies = [createMockStrategy({ status: 'archived' })]
       expect(store.validStrategies).toHaveLength(0)
     })
   })

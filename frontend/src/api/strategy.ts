@@ -6,7 +6,7 @@ export const getStrategies = (params?: {
   page?: number
   page_size?: number
   search?: string
-  is_valid?: boolean
+  status?: string
 }) =>
   get<PaginatedData<Strategy>>('/strategies', params)
 

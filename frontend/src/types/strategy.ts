@@ -5,13 +5,10 @@ export interface Strategy {
   description: string
   code: string
   version: string
-  author: string
-  filename: string
-  class_name: string
+  status: 'active' | 'archived'
   params_schema: ParamsSchema
   created_at: string
   updated_at: string
-  is_valid: boolean
   validation_errors?: string[]
 }
 

@@ -113,7 +113,7 @@
 <script setup lang="ts">
 import { ref, reactive, onMounted } from 'vue'
 import { formatDateTime } from '@/utils/format'
-import { RISK_RULE_TYPE_OPTIONS, RISK_ACTION_OPTIONS } from '@/utils/constants'
+import { RISK_RULE_TYPE_OPTIONS } from '@/utils/constants'
 import { getRiskTriggers } from '@/api/risk'
 import type { RiskTrigger } from '@/types'
 
@@ -136,8 +136,14 @@ function getRuleTypeLabel(type: string) {
   return ruleTypeOptions.find((t) => t.value === type)?.label || type
 }
 
+const ACTION_LABELS: Record<string, string> = {
+  warn: '警告',
+  block: '阻止',
+  halt: '熔断',
+}
+
 function getActionLabel(action: string) {
-  return RISK_ACTION_OPTIONS.find((a) => a.value === action)?.label || action
+  return ACTION_LABELS[action] || action
 }
 
 function getActionTagType(action: string): 'success' | 'warning' | 'danger' | 'info' | 'primary' {

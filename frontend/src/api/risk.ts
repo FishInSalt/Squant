@@ -4,7 +4,6 @@ import type {
   RiskTrigger,
   CircuitBreakerStatus,
   CircuitBreakerAction,
-  AutoHaltCondition,
   PaginatedData
 } from '@/types'
 
@@ -69,10 +68,6 @@ export const executeCircuitBreakerAction = (action: CircuitBreakerAction) => {
       return Promise.reject(new Error(`Unknown action: ${action.action}`))
   }
 }
-
-// 更新自动熔断条件
-export const updateAutoHaltCondition = (id: string, condition: Partial<AutoHaltCondition>) =>
-  put<AutoHaltCondition>(`/circuit-breaker/conditions/${id}`, condition)
 
 // ================== 触发记录 (/risk-triggers) ==================
 

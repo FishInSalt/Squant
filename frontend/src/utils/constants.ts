@@ -68,7 +68,6 @@ export const ORDER_STATUS_OPTIONS = [
   { label: '已成交', value: 'filled' },
   { label: '已取消', value: 'cancelled' },
   { label: '已拒绝', value: 'rejected' },
-  { label: '已过期', value: 'expired' },
 ] as const
 
 // 会话状态选项
@@ -91,13 +90,6 @@ export const RISK_RULE_TYPE_OPTIONS = [
   { label: '交易时段', value: 'trading_hours' },
   { label: '价格偏离', value: 'price_deviation' },
   { label: '自定义', value: 'custom' },
-] as const
-
-// 风控动作选项
-export const RISK_ACTION_OPTIONS = [
-  { label: '警告', value: 'warn' },
-  { label: '阻止', value: 'block' },
-  { label: '熔断', value: 'halt' },
 ] as const
 
 // 日志级别选项

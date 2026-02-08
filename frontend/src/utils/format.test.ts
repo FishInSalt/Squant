@@ -276,7 +276,6 @@ describe('formatOrderStatus', () => {
     ['filled', '已成交'],
     ['cancelled', '已取消'],
     ['rejected', '已拒绝'],
-    ['expired', '已过期'],
   ])('formats %s to %s', (input, expected) => {
     expect(formatOrderStatus(input)).toBe(expected)
   })

@@ -28,17 +28,13 @@
         <div class="card-header">
           <h3 class="strategy-name">{{ strategy.name }}</h3>
           <StatusBadge
-            :status="strategy.is_valid ? 'active' : 'error'"
+            :status="strategy.status === 'active' ? 'active' : 'error'"
           />
         </div>
 
         <p class="strategy-description">{{ strategy.description || '暂无描述' }}</p>
 
         <div class="strategy-meta">
-          <span class="meta-item">
-            <el-icon><User /></el-icon>
-            {{ strategy.author || '未知' }}
-          </span>
           <span class="meta-item">
             <el-icon><Clock /></el-icon>
             {{ formatRelativeTime(strategy.updated_at) }}

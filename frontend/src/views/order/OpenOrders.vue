@@ -77,15 +77,15 @@
           </template>
         </el-table-column>
 
-        <el-table-column prop="quantity" label="数量" width="120" align="right">
+        <el-table-column prop="amount" label="数量" width="120" align="right">
           <template #default="{ row }">
-            {{ formatNumber(row.quantity, 4) }}
+            {{ formatNumber(row.amount, 4) }}
           </template>
         </el-table-column>
 
-        <el-table-column prop="filled_quantity" label="已成交" width="120" align="right">
+        <el-table-column prop="filled" label="已成交" width="120" align="right">
           <template #default="{ row }">
-            {{ formatNumber(row.filled_quantity, 4) }}
+            {{ formatNumber(row.filled, 4) }}
           </template>
         </el-table-column>
 

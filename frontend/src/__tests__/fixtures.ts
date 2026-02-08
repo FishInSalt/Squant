@@ -41,13 +41,10 @@ export function createMockStrategy(overrides?: Partial<Strategy>): Strategy {
     description: 'A test strategy',
     code: 'class TestStrategy:\n  pass',
     version: '1.0.0',
-    author: 'test',
-    filename: 'test_strategy.py',
-    class_name: 'TestStrategy',
+    status: 'active',
     params_schema: { type: 'object', properties: {} },
     created_at: '2024-01-01T00:00:00Z',
     updated_at: '2024-01-01T00:00:00Z',
-    is_valid: true,
     ...overrides,
   }
 }

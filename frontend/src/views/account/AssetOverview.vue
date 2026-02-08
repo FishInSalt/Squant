@@ -50,10 +50,10 @@
             <div class="balance-list">
               <div
                 v-for="balance in getTopBalances(account.balances)"
-                :key="balance.asset"
+                :key="balance.currency"
                 class="balance-item"
               >
-                <span class="asset">{{ balance.asset }}</span>
+                <span class="asset">{{ balance.currency }}</span>
                 <span class="amount">{{ formatNumber(balance.total, 6) }}</span>
                 <span class="usd-value" v-if="balance.usd_value">
                   ${{ formatNumber(balance.usd_value, 2) }}
@@ -78,9 +78,9 @@
       </div>
 
       <el-table :data="filteredBalances" stripe>
-        <el-table-column prop="asset" label="资产" width="100">
+        <el-table-column prop="currency" label="资产" width="100">
           <template #default="{ row }">
-            <span class="asset-name">{{ row.asset }}</span>
+            <span class="asset-name">{{ row.currency }}</span>
           </template>
         </el-table-column>
         <el-table-column prop="account_name" label="账户" width="150" />
@@ -89,14 +89,14 @@
             {{ formatExchangeName(row.exchange) }}
           </template>
         </el-table-column>
-        <el-table-column prop="free" label="可用" width="150" align="right">
+        <el-table-column prop="available" label="可用" width="150" align="right">
           <template #default="{ row }">
-            {{ formatNumber(row.free, 6) }}
+            {{ formatNumber(row.available, 6) }}
           </template>
         </el-table-column>
-        <el-table-column prop="locked" label="冻结" width="150" align="right">
+        <el-table-column prop="frozen" label="冻结" width="150" align="right">
           <template #default="{ row }">
-            {{ formatNumber(row.locked, 6) }}
+            {{ formatNumber(row.frozen, 6) }}
           </template>
         </el-table-column>
         <el-table-column prop="total" label="总计" width="150" align="right">
@@ -161,7 +161,7 @@ const filteredBalances = computed(() => {
   if (!searchQuery.value) return allBalances.value
 
   const query = searchQuery.value.toUpperCase()
-  return allBalances.value.filter((b) => b.asset.toUpperCase().includes(query))
+  return allBalances.value.filter((b) => b.currency.toUpperCase().includes(query))
 })
 
 function getTopBalances(balances: Balance[], limit = 5) {

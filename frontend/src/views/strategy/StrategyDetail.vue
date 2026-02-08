@@ -5,7 +5,7 @@
         <el-button icon="ArrowLeft" @click="goBack">返回</el-button>
         <div class="strategy-info">
           <h1 class="strategy-name">{{ strategy.name }}</h1>
-          <StatusBadge :status="strategy.is_valid ? 'active' : 'error'" />
+          <StatusBadge :status="strategy.status === 'active' ? 'active' : 'error'" />
         </div>
       </div>
       <div class="header-right">
@@ -42,18 +42,6 @@
             <div class="info-item">
               <span class="label">版本</span>
               <span class="value">v{{ strategy.version }}</span>
-            </div>
-            <div class="info-item">
-              <span class="label">作者</span>
-              <span class="value">{{ strategy.author || '-' }}</span>
-            </div>
-            <div class="info-item">
-              <span class="label">类名</span>
-              <span class="value text-mono">{{ strategy.class_name }}</span>
-            </div>
-            <div class="info-item">
-              <span class="label">文件名</span>
-              <span class="value text-mono">{{ strategy.filename }}</span>
             </div>
             <div class="info-item">
               <span class="label">创建时间</span>
