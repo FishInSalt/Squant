@@ -667,7 +667,7 @@ class LiveTradingService:
             "initial_capital": str(run.initial_capital) if run.initial_capital else "0",
             "total_fees": "0",
             "unrealized_pnl": "0",
-            "total_pnl": "0",
+            "realized_pnl": "0",
             "positions": {},
             "pending_orders": [],
             "live_orders": [],

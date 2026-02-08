@@ -1271,7 +1271,7 @@ class LiveTradingEngine:
             "initial_capital": str(self._context.initial_capital),
             "total_fees": str(self._context.total_fees),
             "unrealized_pnl": str(unrealized_pnl_total),
-            "total_pnl": str(realized_pnl + unrealized_pnl_total),
+            "realized_pnl": str(realized_pnl),
             "positions": positions,
             "pending_orders": pending_orders,
             "live_orders": live_orders,

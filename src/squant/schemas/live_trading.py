@@ -146,7 +146,7 @@ class LiveTradingStatusResponse(BaseModel):
     initial_capital: NumberDecimal
     total_fees: NumberDecimal
     unrealized_pnl: NumberDecimal = Field(default=Decimal("0"))
-    total_pnl: NumberDecimal = Field(default=Decimal("0"))
+    realized_pnl: NumberDecimal = Field(default=Decimal("0"))
     positions: dict[str, LivePositionInfo]
     pending_orders: list[dict[str, Any]]
     live_orders: list[LiveOrderInfo]

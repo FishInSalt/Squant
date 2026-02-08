@@ -515,10 +515,10 @@ class TestLiveTradingStatusResponse:
             risk_state=None,
         )
         assert response.unrealized_pnl == Decimal("0")
-        assert response.total_pnl == Decimal("0")
+        assert response.realized_pnl == Decimal("0")
 
     def test_pnl_fields_set(self):
-        """Test unrealized_pnl and total_pnl can be set (LV-002)."""
+        """Test unrealized_pnl and realized_pnl can be set (LV-002)."""
         now = datetime.now(UTC)
         response = LiveTradingStatusResponse(
             run_id=uuid4(),
@@ -534,7 +534,7 @@ class TestLiveTradingStatusResponse:
             initial_capital=Decimal("10000"),
             total_fees=Decimal("30"),
             unrealized_pnl=Decimal("500"),
-            total_pnl=Decimal("1030"),
+            realized_pnl=Decimal("1030"),
             positions={},
             pending_orders=[],
             live_orders=[],
@@ -543,7 +543,7 @@ class TestLiveTradingStatusResponse:
             risk_state=None,
         )
         assert response.unrealized_pnl == Decimal("500")
-        assert response.total_pnl == Decimal("1030")
+        assert response.realized_pnl == Decimal("1030")
 
     def test_pnl_json_serializes_as_float(self):
         """Test PNL fields serialize as float in JSON (LV-002)."""
@@ -562,7 +562,7 @@ class TestLiveTradingStatusResponse:
             initial_capital=Decimal("10000"),
             total_fees=Decimal("0"),
             unrealized_pnl=Decimal("123.45"),
-            total_pnl=Decimal("456.78"),
+            realized_pnl=Decimal("456.78"),
             positions={},
             pending_orders=[],
             live_orders=[],
@@ -572,9 +572,9 @@ class TestLiveTradingStatusResponse:
         )
         data = response.model_dump(mode="json")
         assert isinstance(data["unrealized_pnl"], float)
-        assert isinstance(data["total_pnl"], float)
+        assert isinstance(data["realized_pnl"], float)
         assert data["unrealized_pnl"] == 123.45
-        assert data["total_pnl"] == 456.78
+        assert data["realized_pnl"] == 456.78
 
 
 class TestLiveTradingListItem:

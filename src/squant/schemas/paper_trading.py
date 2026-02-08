@@ -99,7 +99,7 @@ class PaperTradingStatusResponse(BaseModel):
     initial_capital: NumberDecimal
     total_fees: NumberDecimal
     unrealized_pnl: NumberDecimal = Field(default=Decimal("0"))
-    total_pnl: NumberDecimal = Field(default=Decimal("0"))
+    realized_pnl: NumberDecimal = Field(default=Decimal("0"))
     positions: dict[str, PositionInfo]
     pending_orders: list[PendingOrderInfo]
     completed_orders_count: int
