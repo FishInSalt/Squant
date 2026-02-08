@@ -117,10 +117,8 @@ function initChart() {
 function updateData(data: EquityPoint[]) {
   if (!chart) return
 
-  const equityData = data.map((d) => [d.timestamp, d.equity])
-  const benchmarkData = props.showBenchmark
-    ? data.filter((d) => d.benchmark !== undefined).map((d) => [d.timestamp, d.benchmark])
-    : []
+  const equityData = data.map((d) => [d.time, d.equity])
+  const benchmarkData: unknown[] = []
 
   const series: any[] = [{ data: equityData }]
   if (props.showBenchmark) {

@@ -63,6 +63,7 @@ export const ORDER_TYPE_OPTIONS = [
 // 订单状态选项
 export const ORDER_STATUS_OPTIONS = [
   { label: '待处理', value: 'pending' },
+  { label: '已提交', value: 'submitted' },
   { label: '挂单中', value: 'open' },
   { label: '部分成交', value: 'partial' },
   { label: '已成交', value: 'filled' },

@@ -204,7 +204,7 @@
               <StatusBadge :status="backtest.status" />
             </div>
             <div class="item-meta">
-              <span>{{ backtest.config.symbol }}</span>
+              <span>{{ backtest.symbol }}</span>
               <span>{{ formatDateTime(backtest.created_at, 'MM-DD HH:mm') }}</span>
             </div>
             <el-progress

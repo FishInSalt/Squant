@@ -80,8 +80,8 @@ describe('ORDER_TYPE_OPTIONS', () => {
 })
 
 describe('ORDER_STATUS_OPTIONS', () => {
-  it('has 6 statuses', () => {
-    expect(ORDER_STATUS_OPTIONS).toHaveLength(6)
+  it('has 7 statuses', () => {
+    expect(ORDER_STATUS_OPTIONS).toHaveLength(7)
   })
 })
 
