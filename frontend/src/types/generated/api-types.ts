@@ -2612,12 +2612,15 @@ export interface components {
         };
         /**
          * BacktestDetailResponse
-         * @description Detailed backtest response including equity curve and trades.
+         * @description Detailed backtest response including equity curve, metrics, and trades.
          */
         BacktestDetailResponse: {
             run: components["schemas"]["BacktestRunResponse"];
+            metrics?: components["schemas"]["BacktestMetrics"] | null;
             /** Equity Curve */
             equity_curve: components["schemas"]["EquityCurvePoint"][];
+            /** Trades */
+            trades?: components["schemas"]["TradeRecordResponse"][];
             /** Total Bars */
             total_bars?: number | null;
         };
@@ -2636,6 +2639,8 @@ export interface components {
              * Format: uuid
              */
             strategy_id: string;
+            /** Strategy Name */
+            strategy_name?: string | null;
             /** Symbol */
             symbol: string;
             /** Exchange */
@@ -2649,7 +2654,7 @@ export interface components {
             /** Backtest End */
             backtest_end: string | null;
             /** Initial Capital */
-            initial_capital: string | null;
+            initial_capital: number | null;
             /** Result */
             result: {
                 [key: string]: unknown;
@@ -2659,6 +2664,135 @@ export interface components {
              * Format: date-time
              */
             created_at: string;
+        };
+        /**
+         * BacktestMetrics
+         * @description Strongly-typed backtest performance metrics (BT-004).
+         *
+         *     Replaces dict[str, Any] for type-safe metric access.
+         *     Values come from PerformanceMetrics.to_dict() stored in StrategyRun.result.
+         */
+        BacktestMetrics: {
+            /**
+             * Total Return
+             * @default 0
+             */
+            total_return: number;
+            /**
+             * Total Return Pct
+             * @default 0
+             */
+            total_return_pct: number;
+            /**
+             * Annualized Return
+             * @default 0
+             */
+            annualized_return: number;
+            /**
+             * Max Drawdown
+             * @default 0
+             */
+            max_drawdown: number;
+            /**
+             * Max Drawdown Pct
+             * @default 0
+             */
+            max_drawdown_pct: number;
+            /**
+             * Max Drawdown Duration Hours
+             * @default 0
+             */
+            max_drawdown_duration_hours: number;
+            /**
+             * Sharpe Ratio
+             * @default 0
+             */
+            sharpe_ratio: number;
+            /**
+             * Sortino Ratio
+             * @default 0
+             */
+            sortino_ratio: number;
+            /**
+             * Calmar Ratio
+             * @default 0
+             */
+            calmar_ratio: number;
+            /**
+             * Volatility
+             * @default 0
+             */
+            volatility: number;
+            /**
+             * Total Trades
+             * @default 0
+             */
+            total_trades: number;
+            /**
+             * Winning Trades
+             * @default 0
+             */
+            winning_trades: number;
+            /**
+             * Losing Trades
+             * @default 0
+             */
+            losing_trades: number;
+            /**
+             * Win Rate
+             * @default 0
+             */
+            win_rate: number;
+            /**
+             * Profit Factor
+             * @default 0
+             */
+            profit_factor: number;
+            /**
+             * Avg Trade Return
+             * @default 0
+             */
+            avg_trade_return: number;
+            /**
+             * Avg Win
+             * @default 0
+             */
+            avg_win: number;
+            /**
+             * Avg Loss
+             * @default 0
+             */
+            avg_loss: number;
+            /**
+             * Largest Win
+             * @default 0
+             */
+            largest_win: number;
+            /**
+             * Largest Loss
+             * @default 0
+             */
+            largest_loss: number;
+            /**
+             * Max Consecutive Losses
+             * @default 0
+             */
+            max_consecutive_losses: number;
+            /**
+             * Avg Trade Duration Hours
+             * @default 0
+             */
+            avg_trade_duration_hours: number;
+            /**
+             * Total Duration Days
+             * @default 0
+             */
+            total_duration_days: number;
+            /**
+             * Total Fees
+             * @default 0
+             */
+            total_fees: number;
         };
         /**
          * BacktestRunResponse
@@ -2675,6 +2809,8 @@ export interface components {
              * Format: uuid
              */
             strategy_id: string;
+            /** Strategy Name */
+            strategy_name?: string | null;
             /** Mode */
             mode: string;
             /** Symbol */
@@ -2685,16 +2821,21 @@ export interface components {
             timeframe: string;
             /** Status */
             status: string;
+            /**
+             * Progress
+             * @default 0
+             */
+            progress: number;
             /** Backtest Start */
             backtest_start: string | null;
             /** Backtest End */
             backtest_end: string | null;
             /** Initial Capital */
-            initial_capital: string | null;
+            initial_capital: number | null;
             /** Commission Rate */
-            commission_rate: string;
+            commission_rate: number;
             /** Slippage */
-            slippage: string | null;
+            slippage: number | null;
             /** Params */
             params: {
                 [key: string]: unknown;
@@ -2734,17 +2875,17 @@ export interface components {
              * Available
              * @description Available balance
              */
-            available: string;
+            available: number;
             /**
              * Frozen
              * @description Frozen balance
              */
-            frozen: string;
+            frozen: number;
             /**
              * Total
              * @description Total balance
              */
-            total: string;
+            total: number;
         };
         /**
          * BalanceResponse
@@ -2767,6 +2908,11 @@ export interface components {
              * @description Response timestamp
              */
             timestamp: string;
+            /**
+             * Total Usd Value
+             * @description Total portfolio value in USD (AC-003 placeholder)
+             */
+            total_usd_value?: number | null;
         };
         /**
          * CandlestickItem
@@ -2783,27 +2929,27 @@ export interface components {
              * Open
              * @description Open price
              */
-            open: string;
+            open: number;
             /**
              * High
              * @description High price
              */
-            high: string;
+            high: number;
             /**
              * Low
              * @description Low price
              */
-            low: string;
+            low: number;
             /**
              * Close
              * @description Close price
              */
-            close: string;
+            close: number;
             /**
              * Volume
              * @description Volume
              */
-            volume: string;
+            volume: number;
         };
         /**
          * CandlestickResponse
@@ -3108,6 +3254,11 @@ export interface components {
              * @description Rule name
              */
             name: string;
+            /**
+             * Description
+             * @description Rule description
+             */
+            description?: string | null;
             /** @description Risk rule type */
             type: components["schemas"]["RiskRuleType"];
             /**
@@ -3246,13 +3397,13 @@ export interface components {
              */
             time: string;
             /** Equity */
-            equity: string;
+            equity: number;
             /** Cash */
-            cash: string;
+            cash: number;
             /** Position Value */
-            position_value: string;
+            position_value: number;
             /** Unrealized Pnl */
-            unrealized_pnl: string;
+            unrealized_pnl: number;
         };
         /**
          * ExchangeAccountListItem
@@ -3356,13 +3507,13 @@ export interface components {
             /** Type */
             type: string;
             /** Amount */
-            amount: string;
+            amount: number;
             /** Filled Amount */
-            filled_amount: string;
+            filled_amount: number;
             /** Price */
-            price: string | null;
+            price: number | null;
             /** Avg Fill Price */
-            avg_fill_price: string | null;
+            avg_fill_price: number | null;
             /** Status */
             status: string;
             /** Created At */
@@ -3376,9 +3527,13 @@ export interface components {
          */
         LivePositionInfo: {
             /** Amount */
-            amount: string;
+            amount: number;
             /** Avg Entry Price */
-            avg_entry_price: string;
+            avg_entry_price: number;
+            /** Current Price */
+            current_price?: number | null;
+            /** Unrealized Pnl */
+            unrealized_pnl?: number | null;
         };
         /**
          * LiveTradingListItem
@@ -3395,6 +3550,10 @@ export interface components {
              * Format: uuid
              */
             strategy_id: string;
+            /** Strategy Name */
+            strategy_name?: string | null;
+            /** Account Id */
+            account_id?: string | null;
             /** Symbol */
             symbol: string;
             /** Timeframe */
@@ -3406,9 +3565,9 @@ export interface components {
             /** Bar Count */
             bar_count: number;
             /** Equity */
-            equity: string;
+            equity: number;
             /** Cash */
-            cash: string;
+            cash: number;
         };
         /**
          * LiveTradingRunResponse
@@ -3425,6 +3584,10 @@ export interface components {
              * Format: uuid
              */
             strategy_id: string;
+            /** Strategy Name */
+            strategy_name?: string | null;
+            /** Account Id */
+            account_id?: string | null;
             /** Mode */
             mode: string;
             /** Symbol */
@@ -3436,11 +3599,11 @@ export interface components {
             /** Status */
             status: string;
             /** Initial Capital */
-            initial_capital: string | null;
+            initial_capital: number | null;
             /** Commission Rate */
-            commission_rate: string;
+            commission_rate: number;
             /** Slippage */
-            slippage: string | null;
+            slippage: number | null;
             /** Params */
             params: {
                 [key: string]: unknown;
@@ -3487,13 +3650,23 @@ export interface components {
             /** Bar Count */
             bar_count: number;
             /** Cash */
-            cash: string;
+            cash: number;
             /** Equity */
-            equity: string;
+            equity: number;
             /** Initial Capital */
-            initial_capital: string;
+            initial_capital: number;
             /** Total Fees */
-            total_fees: string;
+            total_fees: number;
+            /**
+             * Unrealized Pnl
+             * @default 0
+             */
+            unrealized_pnl: number;
+            /**
+             * Realized Pnl
+             * @default 0
+             */
+            realized_pnl: number;
             /** Positions */
             positions: {
                 [key: string]: components["schemas"]["LivePositionInfo"];
@@ -3557,27 +3730,55 @@ export interface components {
              * Price
              * @description Order price
              */
-            price?: string | null;
+            price?: number | null;
             /**
              * Amount
              * @description Order amount
              */
-            amount: string;
+            amount: number;
             /**
              * Filled
              * @description Filled amount
              */
-            filled: string;
+            filled: number;
             /**
              * Avg Price
              * @description Average fill price
              */
-            avg_price?: string | null;
+            avg_price?: number | null;
             /**
              * Reject Reason
              * @description Rejection reason if rejected
              */
             reject_reason?: string | null;
+            /**
+             * Commission
+             * @description Total commission (sum of trade fees)
+             * @default 0
+             */
+            commission: number;
+            /**
+             * Commission Asset
+             * @description Commission currency (from trades)
+             */
+            commission_asset?: string | null;
+            /**
+             * Remaining Amount
+             * @description Remaining unfilled amount (amount - filled)
+             * @default 0
+             */
+            remaining_amount: number;
+            /**
+             * Status Display
+             * @description Frontend-friendly status (submitted→open)
+             * @default
+             */
+            status_display: string;
+            /**
+             * Strategy Name
+             * @description Strategy name (from run.strategy)
+             */
+            strategy_name?: string | null;
             /**
              * Created At
              * Format: date-time
@@ -3633,6 +3834,12 @@ export interface components {
              * @description Total orders
              */
             total: number;
+            /**
+             * Open
+             * @description Open orders (pending + submitted)
+             * @default 0
+             */
+            open: number;
             /**
              * Pending
              * @description Pending orders
@@ -3723,27 +3930,55 @@ export interface components {
              * Price
              * @description Order price
              */
-            price?: string | null;
+            price?: number | null;
             /**
              * Amount
              * @description Order amount
              */
-            amount: string;
+            amount: number;
             /**
              * Filled
              * @description Filled amount
              */
-            filled: string;
+            filled: number;
             /**
              * Avg Price
              * @description Average fill price
              */
-            avg_price?: string | null;
+            avg_price?: number | null;
             /**
              * Reject Reason
              * @description Rejection reason if rejected
              */
             reject_reason?: string | null;
+            /**
+             * Commission
+             * @description Total commission (sum of trade fees)
+             * @default 0
+             */
+            commission: number;
+            /**
+             * Commission Asset
+             * @description Commission currency (from trades)
+             */
+            commission_asset?: string | null;
+            /**
+             * Remaining Amount
+             * @description Remaining unfilled amount (amount - filled)
+             * @default 0
+             */
+            remaining_amount: number;
+            /**
+             * Status Display
+             * @description Frontend-friendly status (submitted→open)
+             * @default
+             */
+            status_display: string;
+            /**
+             * Strategy Name
+             * @description Strategy name (from run.strategy)
+             */
+            strategy_name?: string | null;
             /**
              * Created At
              * Format: date-time
@@ -3843,6 +4078,8 @@ export interface components {
              * Format: uuid
              */
             strategy_id: string;
+            /** Strategy Name */
+            strategy_name?: string | null;
             /** Symbol */
             symbol: string;
             /** Timeframe */
@@ -3854,9 +4091,9 @@ export interface components {
             /** Bar Count */
             bar_count: number;
             /** Equity */
-            equity: string;
+            equity: number;
             /** Cash */
-            cash: string;
+            cash: number;
         };
         /**
          * PaperTradingRunResponse
@@ -3873,6 +4110,8 @@ export interface components {
              * Format: uuid
              */
             strategy_id: string;
+            /** Strategy Name */
+            strategy_name?: string | null;
             /** Mode */
             mode: string;
             /** Symbol */
@@ -3884,11 +4123,11 @@ export interface components {
             /** Status */
             status: string;
             /** Initial Capital */
-            initial_capital: string | null;
+            initial_capital: number | null;
             /** Commission Rate */
-            commission_rate: string;
+            commission_rate: number;
             /** Slippage */
-            slippage: string | null;
+            slippage: number | null;
             /** Params */
             params: {
                 [key: string]: unknown;
@@ -3935,13 +4174,23 @@ export interface components {
             /** Bar Count */
             bar_count: number;
             /** Cash */
-            cash: string;
+            cash: number;
             /** Equity */
-            equity: string;
+            equity: number;
             /** Initial Capital */
-            initial_capital: string;
+            initial_capital: number;
             /** Total Fees */
-            total_fees: string;
+            total_fees: number;
+            /**
+             * Unrealized Pnl
+             * @default 0
+             */
+            unrealized_pnl: number;
+            /**
+             * Realized Pnl
+             * @default 0
+             */
+            realized_pnl: number;
             /** Positions */
             positions: {
                 [key: string]: components["schemas"]["PositionInfo"];
@@ -3967,9 +4216,9 @@ export interface components {
             /** Type */
             type: string;
             /** Amount */
-            amount: string;
+            amount: number;
             /** Price */
-            price: string | null;
+            price: number | null;
             /** Status */
             status: string;
             /** Created At */
@@ -3981,9 +4230,13 @@ export interface components {
          */
         PositionInfo: {
             /** Amount */
-            amount: string;
+            amount: number;
             /** Avg Entry Price */
-            avg_entry_price: string;
+            avg_entry_price: number;
+            /** Current Price */
+            current_price?: number | null;
+            /** Unrealized Pnl */
+            unrealized_pnl?: number | null;
         };
         /**
          * RemainingPosition
@@ -4095,6 +4348,8 @@ export interface components {
             type: string;
             /** Enabled */
             enabled: boolean;
+            /** Last Triggered */
+            last_triggered?: string | null;
             /**
              * Created At
              * Format: date-time
@@ -4113,6 +4368,8 @@ export interface components {
             id: string;
             /** Name */
             name: string;
+            /** Description */
+            description?: string | null;
             /** Type */
             type: string;
             /** Params */
@@ -4121,6 +4378,8 @@ export interface components {
             };
             /** Enabled */
             enabled: boolean;
+            /** Last Triggered */
+            last_triggered?: string | null;
             /**
              * Created At
              * Format: date-time
@@ -4144,7 +4403,7 @@ export interface components {
          */
         RiskStateResponse: {
             /** Daily Pnl */
-            daily_pnl: string;
+            daily_pnl: number;
             /** Daily Trade Count */
             daily_trade_count: number;
             /** Consecutive Losses */
@@ -4152,13 +4411,13 @@ export interface components {
             /** Circuit Breaker Active */
             circuit_breaker_active: boolean;
             /** Max Position Size */
-            max_position_size: string;
+            max_position_size: number;
             /** Max Order Size */
-            max_order_size: string;
+            max_order_size: number;
             /** Daily Trade Limit */
             daily_trade_limit: number;
             /** Daily Loss Limit */
-            daily_loss_limit: string;
+            daily_loss_limit: number;
         };
         /**
          * RiskTriggerListItem
@@ -4181,6 +4440,20 @@ export interface components {
             run_id?: string | null;
             /** Trigger Type */
             trigger_type: string;
+            /** Details */
+            details: {
+                [key: string]: unknown;
+            };
+            /** Rule Name */
+            rule_name?: string | null;
+            /** Rule Type */
+            rule_type?: string | null;
+            /** Strategy Name */
+            strategy_name?: string | null;
+            /** Symbol */
+            symbol?: string | null;
+            /** Message */
+            message?: string | null;
         };
         /**
          * RunBacktestRequest
@@ -4351,6 +4624,29 @@ export interface components {
             cancel_orders: boolean;
         };
         /**
+         * StrategyInfo
+         * @description Metadata extracted from validated strategy code (ST-003).
+         */
+        StrategyInfo: {
+            /**
+             * Class Name
+             * @description Strategy class name
+             */
+            class_name?: string | null;
+            /**
+             * Has On Bar
+             * @description Whether strategy has on_bar method
+             * @default false
+             */
+            has_on_bar: boolean;
+            /**
+             * Has Init
+             * @description Whether strategy has __init__ method
+             * @default false
+             */
+            has_init: boolean;
+        };
+        /**
          * StrategyListItem
          * @description Strategy item for list response (without code).
          */
@@ -4454,47 +4750,47 @@ export interface components {
              * Last
              * @description Last price
              */
-            last: string;
+            last: number;
             /**
              * Bid
              * @description Best bid price
              */
-            bid?: string | null;
+            bid?: number | null;
             /**
              * Ask
              * @description Best ask price
              */
-            ask?: string | null;
+            ask?: number | null;
             /**
              * High 24H
              * @description 24h high
              */
-            high_24h?: string | null;
+            high_24h?: number | null;
             /**
              * Low 24H
              * @description 24h low
              */
-            low_24h?: string | null;
+            low_24h?: number | null;
             /**
              * Volume 24H
              * @description 24h volume in base currency
              */
-            volume_24h?: string | null;
+            volume_24h?: number | null;
             /**
              * Volume Quote 24H
              * @description 24h volume in quote currency (USDT)
              */
-            volume_quote_24h?: string | null;
+            volume_quote_24h?: number | null;
             /**
              * Change 24H
              * @description 24h price change
              */
-            change_24h?: string | null;
+            change_24h?: number | null;
             /**
              * Change Pct 24H
              * @description 24h price change percentage
              */
-            change_pct_24h?: string | null;
+            change_pct_24h?: number | null;
             /**
              * Timestamp
              * Format: date-time
@@ -4539,17 +4835,17 @@ export interface components {
              * Price
              * @description Execution price
              */
-            price: string;
+            price: number;
             /**
              * Amount
              * @description Execution amount
              */
-            amount: string;
+            amount: number;
             /**
              * Fee
              * @description Trading fee
              */
-            fee: string;
+            fee: number;
             /**
              * Fee Currency
              * @description Fee currency
@@ -4561,6 +4857,35 @@ export interface components {
              * @description Execution time
              */
             timestamp: string;
+        };
+        /**
+         * TradeRecordResponse
+         * @description Trade record response.
+         */
+        TradeRecordResponse: {
+            /** Symbol */
+            symbol: string;
+            /** Side */
+            side: string;
+            /**
+             * Entry Time
+             * Format: date-time
+             */
+            entry_time: string;
+            /** Entry Price */
+            entry_price: number;
+            /** Exit Time */
+            exit_time: string | null;
+            /** Exit Price */
+            exit_price: number | null;
+            /** Amount */
+            amount: number;
+            /** Pnl */
+            pnl: number;
+            /** Pnl Pct */
+            pnl_pct: number;
+            /** Fees */
+            fees: number;
         };
         /**
          * TriggerCircuitBreakerRequest
@@ -4655,6 +4980,11 @@ export interface components {
              * @description New name
              */
             name?: string | null;
+            /**
+             * Description
+             * @description Rule description
+             */
+            description?: string | null;
             /** @description New rule type */
             type?: components["schemas"]["RiskRuleType"] | null;
             /**
@@ -4747,6 +5077,8 @@ export interface components {
              * @description Validation warnings
              */
             warnings?: string[];
+            /** @description Strategy metadata (only when valid) */
+            strategy_info?: components["schemas"]["StrategyInfo"] | null;
         };
         /**
          * WatchlistCheckResponse

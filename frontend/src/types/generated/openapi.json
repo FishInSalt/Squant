@@ -4748,12 +4748,29 @@
           "run": {
             "$ref": "#/components/schemas/BacktestRunResponse"
           },
+          "metrics": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/BacktestMetrics"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "equity_curve": {
             "items": {
               "$ref": "#/components/schemas/EquityCurvePoint"
             },
             "type": "array",
             "title": "Equity Curve"
+          },
+          "trades": {
+            "items": {
+              "$ref": "#/components/schemas/TradeRecordResponse"
+            },
+            "type": "array",
+            "title": "Trades"
           },
           "total_bars": {
             "anyOf": [
@@ -4773,7 +4790,7 @@
           "equity_curve"
         ],
         "title": "BacktestDetailResponse",
-        "description": "Detailed backtest response including equity curve and trades."
+        "description": "Detailed backtest response including equity curve, metrics, and trades."
       },
       "BacktestListItem": {
         "properties": {
@@ -4786,6 +4803,17 @@
             "type": "string",
             "format": "uuid",
             "title": "Strategy Id"
+          },
+          "strategy_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Strategy Name"
           },
           "symbol": {
             "type": "string",
@@ -4830,8 +4858,7 @@
           "initial_capital": {
             "anyOf": [
               {
-                "type": "string",
-                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
+                "type": "number"
               },
               {
                 "type": "null"
@@ -4874,6 +4901,133 @@
         "title": "BacktestListItem",
         "description": "Backtest list item (summary)."
       },
+      "BacktestMetrics": {
+        "properties": {
+          "total_return": {
+            "type": "number",
+            "title": "Total Return",
+            "default": 0.0
+          },
+          "total_return_pct": {
+            "type": "number",
+            "title": "Total Return Pct",
+            "default": 0.0
+          },
+          "annualized_return": {
+            "type": "number",
+            "title": "Annualized Return",
+            "default": 0.0
+          },
+          "max_drawdown": {
+            "type": "number",
+            "title": "Max Drawdown",
+            "default": 0.0
+          },
+          "max_drawdown_pct": {
+            "type": "number",
+            "title": "Max Drawdown Pct",
+            "default": 0.0
+          },
+          "max_drawdown_duration_hours": {
+            "type": "integer",
+            "title": "Max Drawdown Duration Hours",
+            "default": 0
+          },
+          "sharpe_ratio": {
+            "type": "number",
+            "title": "Sharpe Ratio",
+            "default": 0.0
+          },
+          "sortino_ratio": {
+            "type": "number",
+            "title": "Sortino Ratio",
+            "default": 0.0
+          },
+          "calmar_ratio": {
+            "type": "number",
+            "title": "Calmar Ratio",
+            "default": 0.0
+          },
+          "volatility": {
+            "type": "number",
+            "title": "Volatility",
+            "default": 0.0
+          },
+          "total_trades": {
+            "type": "integer",
+            "title": "Total Trades",
+            "default": 0
+          },
+          "winning_trades": {
+            "type": "integer",
+            "title": "Winning Trades",
+            "default": 0
+          },
+          "losing_trades": {
+            "type": "integer",
+            "title": "Losing Trades",
+            "default": 0
+          },
+          "win_rate": {
+            "type": "number",
+            "title": "Win Rate",
+            "default": 0.0
+          },
+          "profit_factor": {
+            "type": "number",
+            "title": "Profit Factor",
+            "default": 0.0
+          },
+          "avg_trade_return": {
+            "type": "number",
+            "title": "Avg Trade Return",
+            "default": 0.0
+          },
+          "avg_win": {
+            "type": "number",
+            "title": "Avg Win",
+            "default": 0.0
+          },
+          "avg_loss": {
+            "type": "number",
+            "title": "Avg Loss",
+            "default": 0.0
+          },
+          "largest_win": {
+            "type": "number",
+            "title": "Largest Win",
+            "default": 0.0
+          },
+          "largest_loss": {
+            "type": "number",
+            "title": "Largest Loss",
+            "default": 0.0
+          },
+          "max_consecutive_losses": {
+            "type": "integer",
+            "title": "Max Consecutive Losses",
+            "default": 0
+          },
+          "avg_trade_duration_hours": {
+            "type": "number",
+            "title": "Avg Trade Duration Hours",
+            "default": 0.0
+          },
+          "total_duration_days": {
+            "type": "integer",
+            "title": "Total Duration Days",
+            "default": 0
+          },
+          "total_fees": {
+            "type": "number",
+            "title": "Total Fees",
+            "default": 0.0
+          }
+        },
+        "type": "object",
+        "title": "BacktestMetrics",
+        "description": "Strongly-typed backtest performance metrics (BT-004).\n\nReplaces dict[str, Any] for type-safe metric access.\nValues come from PerformanceMetrics.to_dict() stored in StrategyRun.result."
+      },
       "BacktestRunResponse": {
         "properties": {
           "id": {
@@ -4885,6 +5039,17 @@
             "type": "string",
             "format": "uuid",
             "title": "Strategy Id"
+          },
+          "strategy_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Strategy Name"
           },
           "mode": {
             "type": "string",
@@ -4905,6 +5070,11 @@
           "status": {
             "type": "string",
             "title": "Status"
+          },
+          "progress": {
+            "type": "number",
+            "title": "Progress",
+            "default": 0.0
           },
           "backtest_start": {
             "anyOf": [
@@ -4933,8 +5103,7 @@
           "initial_capital": {
             "anyOf": [
               {
-                "type": "string",
-                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
+                "type": "number"
               },
               {
                 "type": "null"
@@ -4943,15 +5112,13 @@
             "title": "Initial Capital"
           },
           "commission_rate": {
-            "type": "string",
-            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "type": "number",
             "title": "Commission Rate"
           },
           "slippage": {
             "anyOf": [
               {
-                "type": "string",
-                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
+                "type": "number"
               },
               {
                 "type": "null"
@@ -5055,20 +5222,17 @@
             "description": "Currency symbol"
           },
           "available": {
-            "type": "string",
-            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "type": "number",
             "title": "Available",
             "description": "Available balance"
           },
           "frozen": {
-            "type": "string",
-            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "type": "number",
             "title": "Frozen",
             "description": "Frozen balance"
           },
           "total": {
-            "type": "string",
-            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "type": "number",
             "title": "Total",
             "description": "Total balance"
           }
@@ -5103,6 +5267,18 @@
             "format": "date-time",
             "title": "Timestamp",
             "description": "Response timestamp"
+          },
+          "total_usd_value": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Total Usd Value",
+            "description": "Total portfolio value in USD (AC-003 placeholder)"
           }
         },
         "type": "object",
@@ -5123,32 +5299,27 @@
             "description": "Candle open time"
           },
           "open": {
-            "type": "string",
-            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "type": "number",
             "title": "Open",
             "description": "Open price"
           },
           "high": {
-            "type": "string",
-            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "type": "number",
             "title": "High",
             "description": "High price"
           },
           "low": {
-            "type": "string",
-            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "type": "number",
             "title": "Low",
             "description": "Low price"
           },
           "close": {
-            "type": "string",
-            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "type": "number",
             "title": "Close",
             "description": "Close price"
           },
           "volume": {
-            "type": "string",
-            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "type": "number",
             "title": "Volume",
             "description": "Volume"
           }
@@ -5703,6 +5874,19 @@
             "title": "Name",
             "description": "Rule name"
           },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 500
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description",
+            "description": "Rule description"
+          },
           "type": {
             "$ref": "#/components/schemas/RiskRuleType",
             "description": "Risk rule type"
@@ -5992,23 +6176,19 @@
             "title": "Time"
           },
           "equity": {
-            "type": "string",
-            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "type": "number",
             "title": "Equity"
           },
           "cash": {
-            "type": "string",
-            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "type": "number",
             "title": "Cash"
           },
           "position_value": {
-            "type": "string",
-            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "type": "number",
             "title": "Position Value"
           },
           "unrealized_pnl": {
-            "type": "string",
-            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "type": "number",
             "title": "Unrealized Pnl"
           }
         },
@@ -6194,20 +6374,17 @@
             "title": "Type"
           },
           "amount": {
-            "type": "string",
-            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "type": "number",
             "title": "Amount"
           },
           "filled_amount": {
-            "type": "string",
-            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "type": "number",
             "title": "Filled Amount"
           },
           "price": {
             "anyOf": [
               {
-                "type": "string",
-                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
+                "type": "number"
               },
               {
                 "type": "null"
@@ -6218,8 +6395,7 @@
           "avg_fill_price": {
             "anyOf": [
               {
-                "type": "string",
-                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
+                "type": "number"
               },
               {
                 "type": "null"
@@ -6277,14 +6453,34 @@
       "LivePositionInfo": {
         "properties": {
           "amount": {
-            "type": "string",
-            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "type": "number",
             "title": "Amount"
           },
           "avg_entry_price": {
-            "type": "string",
-            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "type": "number",
             "title": "Avg Entry Price"
+          },
+          "current_price": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Current Price"
+          },
+          "unrealized_pnl": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unrealized Pnl"
           }
         },
         "type": "object",
@@ -6306,6 +6502,28 @@
             "type": "string",
             "format": "uuid",
             "title": "Strategy Id"
+          },
+          "strategy_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Strategy Name"
+          },
+          "account_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Account Id"
           },
           "symbol": {
             "type": "string",
@@ -6336,13 +6554,11 @@
             "title": "Bar Count"
           },
           "equity": {
-            "type": "string",
-            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "type": "number",
             "title": "Equity"
           },
           "cash": {
-            "type": "string",
-            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "type": "number",
             "title": "Cash"
           }
         },
@@ -6373,6 +6589,28 @@
             "format": "uuid",
             "title": "Strategy Id"
           },
+          "strategy_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Strategy Name"
+          },
+          "account_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Account Id"
+          },
           "mode": {
             "type": "string",
             "title": "Mode"
@@ -6396,8 +6634,7 @@
           "initial_capital": {
             "anyOf": [
               {
-                "type": "string",
-                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
+                "type": "number"
               },
               {
                 "type": "null"
@@ -6406,15 +6643,13 @@
             "title": "Initial Capital"
           },
           "commission_rate": {
-            "type": "string",
-            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "type": "number",
             "title": "Commission Rate"
           },
           "slippage": {
             "anyOf": [
               {
-                "type": "string",
-                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
+                "type": "number"
               },
               {
                 "type": "null"
@@ -6554,24 +6789,30 @@
             "title": "Bar Count"
           },
           "cash": {
-            "type": "string",
-            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "type": "number",
             "title": "Cash"
           },
           "equity": {
-            "type": "string",
-            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "type": "number",
             "title": "Equity"
           },
           "initial_capital": {
-            "type": "string",
-            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "type": "number",
             "title": "Initial Capital"
           },
           "total_fees": {
-            "type": "string",
-            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "type": "number",
             "title": "Total Fees"
+          },
+          "unrealized_pnl": {
+            "type": "number",
+            "title": "Unrealized Pnl",
+            "default": 0.0
+          },
+          "realized_pnl": {
+            "type": "number",
+            "title": "Realized Pnl",
+            "default": 0.0
           },
           "positions": {
             "additionalProperties": {
@@ -6702,8 +6943,7 @@
           "price": {
             "anyOf": [
               {
-                "type": "string",
-                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
+                "type": "number"
               },
               {
                 "type": "null"
@@ -6713,22 +6953,19 @@
             "description": "Order price"
           },
           "amount": {
-            "type": "string",
-            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "type": "number",
             "title": "Amount",
             "description": "Order amount"
           },
           "filled": {
-            "type": "string",
-            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "type": "number",
             "title": "Filled",
             "description": "Filled amount"
           },
           "avg_price": {
             "anyOf": [
               {
-                "type": "string",
-                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
+                "type": "number"
               },
               {
                 "type": "null"
@@ -6748,6 +6985,48 @@
             ],
             "title": "Reject Reason",
             "description": "Rejection reason if rejected"
+          },
+          "commission": {
+            "type": "number",
+            "title": "Commission",
+            "description": "Total commission (sum of trade fees)",
+            "default": 0.0
+          },
+          "commission_asset": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Commission Asset",
+            "description": "Commission currency (from trades)"
+          },
+          "remaining_amount": {
+            "type": "number",
+            "title": "Remaining Amount",
+            "description": "Remaining unfilled amount (amount - filled)",
+            "default": 0.0
+          },
+          "status_display": {
+            "type": "string",
+            "title": "Status Display",
+            "description": "Frontend-friendly status (submitted→open)",
+            "default": ""
+          },
+          "strategy_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Strategy Name",
+            "description": "Strategy name (from run.strategy)"
           },
           "created_at": {
             "type": "string",
@@ -6830,6 +7109,12 @@
             "type": "integer",
             "title": "Total",
             "description": "Total orders"
+          },
+          "open": {
+            "type": "integer",
+            "title": "Open",
+            "description": "Open orders (pending + submitted)",
+            "default": 0
           },
           "pending": {
             "type": "integer",
@@ -6961,8 +7246,7 @@
           "price": {
             "anyOf": [
               {
-                "type": "string",
-                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
+                "type": "number"
               },
               {
                 "type": "null"
@@ -6972,22 +7256,19 @@
             "description": "Order price"
           },
           "amount": {
-            "type": "string",
-            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "type": "number",
             "title": "Amount",
             "description": "Order amount"
           },
           "filled": {
-            "type": "string",
-            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "type": "number",
             "title": "Filled",
             "description": "Filled amount"
           },
           "avg_price": {
             "anyOf": [
               {
-                "type": "string",
-                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
+                "type": "number"
               },
               {
                 "type": "null"
@@ -7007,6 +7288,48 @@
             ],
             "title": "Reject Reason",
             "description": "Rejection reason if rejected"
+          },
+          "commission": {
+            "type": "number",
+            "title": "Commission",
+            "description": "Total commission (sum of trade fees)",
+            "default": 0.0
+          },
+          "commission_asset": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Commission Asset",
+            "description": "Commission currency (from trades)"
+          },
+          "remaining_amount": {
+            "type": "number",
+            "title": "Remaining Amount",
+            "description": "Remaining unfilled amount (amount - filled)",
+            "default": 0.0
+          },
+          "status_display": {
+            "type": "string",
+            "title": "Status Display",
+            "description": "Frontend-friendly status (submitted→open)",
+            "default": ""
+          },
+          "strategy_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Strategy Name",
+            "description": "Strategy name (from run.strategy)"
           },
           "created_at": {
             "type": "string",
@@ -7244,6 +7567,17 @@
             "format": "uuid",
             "title": "Strategy Id"
           },
+          "strategy_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Strategy Name"
+          },
           "symbol": {
             "type": "string",
             "title": "Symbol"
@@ -7273,13 +7607,11 @@
             "title": "Bar Count"
           },
           "equity": {
-            "type": "string",
-            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "type": "number",
             "title": "Equity"
           },
           "cash": {
-            "type": "string",
-            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "type": "number",
             "title": "Cash"
           }
         },
@@ -7310,6 +7642,17 @@
             "format": "uuid",
             "title": "Strategy Id"
           },
+          "strategy_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Strategy Name"
+          },
           "mode": {
             "type": "string",
             "title": "Mode"
@@ -7333,8 +7676,7 @@
           "initial_capital": {
             "anyOf": [
               {
-                "type": "string",
-                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
+                "type": "number"
               },
               {
                 "type": "null"
@@ -7343,15 +7685,13 @@
             "title": "Initial Capital"
           },
           "commission_rate": {
-            "type": "string",
-            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "type": "number",
             "title": "Commission Rate"
           },
           "slippage": {
             "anyOf": [
               {
-                "type": "string",
-                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
+                "type": "number"
               },
               {
                 "type": "null"
@@ -7491,24 +7831,30 @@
             "title": "Bar Count"
           },
           "cash": {
-            "type": "string",
-            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "type": "number",
             "title": "Cash"
           },
           "equity": {
-            "type": "string",
-            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "type": "number",
             "title": "Equity"
           },
           "initial_capital": {
-            "type": "string",
-            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "type": "number",
             "title": "Initial Capital"
           },
           "total_fees": {
-            "type": "string",
-            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "type": "number",
             "title": "Total Fees"
+          },
+          "unrealized_pnl": {
+            "type": "number",
+            "title": "Unrealized Pnl",
+            "default": 0.0
+          },
+          "realized_pnl": {
+            "type": "number",
+            "title": "Realized Pnl",
+            "default": 0.0
           },
           "positions": {
             "additionalProperties": {
@@ -7574,15 +7920,13 @@
             "title": "Type"
           },
           "amount": {
-            "type": "string",
-            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "type": "number",
             "title": "Amount"
           },
           "price": {
             "anyOf": [
               {
-                "type": "string",
-                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
+                "type": "number"
               },
               {
                 "type": "null"
@@ -7624,14 +7968,34 @@
       "PositionInfo": {
         "properties": {
           "amount": {
-            "type": "string",
-            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "type": "number",
             "title": "Amount"
           },
           "avg_entry_price": {
-            "type": "string",
-            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "type": "number",
             "title": "Avg Entry Price"
+          },
+          "current_price": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Current Price"
+          },
+          "unrealized_pnl": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unrealized Pnl"
           }
         },
         "type": "object",
@@ -7842,6 +8206,18 @@
             "type": "boolean",
             "title": "Enabled"
           },
+          "last_triggered": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Triggered"
+          },
           "created_at": {
             "type": "string",
             "format": "date-time",
@@ -7870,6 +8246,17 @@
             "type": "string",
             "title": "Name"
           },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
           "type": {
             "type": "string",
             "title": "Type"
@@ -7882,6 +8269,18 @@
           "enabled": {
             "type": "boolean",
             "title": "Enabled"
+          },
+          "last_triggered": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Triggered"
           },
           "created_at": {
             "type": "string",
@@ -7923,8 +8322,7 @@
       "RiskStateResponse": {
         "properties": {
           "daily_pnl": {
-            "type": "string",
-            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "type": "number",
             "title": "Daily Pnl"
           },
           "daily_trade_count": {
@@ -7940,13 +8338,11 @@
             "title": "Circuit Breaker Active"
           },
           "max_position_size": {
-            "type": "string",
-            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "type": "number",
             "title": "Max Position Size"
           },
           "max_order_size": {
-            "type": "string",
-            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "type": "number",
             "title": "Max Order Size"
           },
           "daily_trade_limit": {
@@ -7954,8 +8350,7 @@
             "title": "Daily Trade Limit"
           },
           "daily_loss_limit": {
-            "type": "string",
-            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "type": "number",
             "title": "Daily Loss Limit"
           }
         },
@@ -8012,13 +8407,74 @@
           "trigger_type": {
             "type": "string",
             "title": "Trigger Type"
+          },
+          "details": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Details"
+          },
+          "rule_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rule Name"
+          },
+          "rule_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rule Type"
+          },
+          "strategy_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Strategy Name"
+          },
+          "symbol": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Symbol"
+          },
+          "message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Message"
           }
         },
         "type": "object",
         "required": [
           "id",
           "time",
-          "trigger_type"
+          "trigger_type",
+          "details"
         ],
         "title": "RiskTriggerListItem",
         "description": "Risk trigger list item for paginated response."
@@ -8324,6 +8780,37 @@
         "title": "StopLiveTradingRequest",
         "description": "Request to stop live trading session."
       },
+      "StrategyInfo": {
+        "properties": {
+          "class_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Class Name",
+            "description": "Strategy class name"
+          },
+          "has_on_bar": {
+            "type": "boolean",
+            "title": "Has On Bar",
+            "description": "Whether strategy has on_bar method",
+            "default": false
+          },
+          "has_init": {
+            "type": "boolean",
+            "title": "Has Init",
+            "description": "Whether strategy has __init__ method",
+            "default": false
+          }
+        },
+        "type": "object",
+        "title": "StrategyInfo",
+        "description": "Metadata extracted from validated strategy code (ST-003)."
+      },
       "StrategyListItem": {
         "properties": {
           "id": {
@@ -8490,16 +8977,14 @@
             "description": "Trading pair"
           },
           "last": {
-            "type": "string",
-            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "type": "number",
             "title": "Last",
             "description": "Last price"
           },
           "bid": {
             "anyOf": [
               {
-                "type": "string",
-                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
+                "type": "number"
               },
               {
                 "type": "null"
@@ -8511,8 +8996,7 @@
           "ask": {
             "anyOf": [
               {
-                "type": "string",
-                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
+                "type": "number"
               },
               {
                 "type": "null"
@@ -8524,8 +9008,7 @@
           "high_24h": {
             "anyOf": [
               {
-                "type": "string",
-                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
+                "type": "number"
               },
               {
                 "type": "null"
@@ -8537,8 +9020,7 @@
           "low_24h": {
             "anyOf": [
               {
-                "type": "string",
-                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
+                "type": "number"
               },
               {
                 "type": "null"
@@ -8550,8 +9032,7 @@
           "volume_24h": {
             "anyOf": [
               {
-                "type": "string",
-                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
+                "type": "number"
               },
               {
                 "type": "null"
@@ -8563,8 +9044,7 @@
           "volume_quote_24h": {
             "anyOf": [
               {
-                "type": "string",
-                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
+                "type": "number"
               },
               {
                 "type": "null"
@@ -8576,8 +9056,7 @@
           "change_24h": {
             "anyOf": [
               {
-                "type": "string",
-                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
+                "type": "number"
               },
               {
                 "type": "null"
@@ -8589,8 +9068,7 @@
           "change_pct_24h": {
             "anyOf": [
               {
-                "type": "string",
-                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
+                "type": "number"
               },
               {
                 "type": "null"
@@ -8657,20 +9135,17 @@
             "description": "Exchange trade ID"
           },
           "price": {
-            "type": "string",
-            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "type": "number",
             "title": "Price",
             "description": "Execution price"
           },
           "amount": {
-            "type": "string",
-            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "type": "number",
             "title": "Amount",
             "description": "Execution amount"
           },
           "fee": {
-            "type": "string",
-            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "type": "number",
             "title": "Fee",
             "description": "Trading fee"
           },
@@ -8704,6 +9179,81 @@
         ],
         "title": "TradeDetail",
         "description": "Trade execution detail."
+      },
+      "TradeRecordResponse": {
+        "properties": {
+          "symbol": {
+            "type": "string",
+            "title": "Symbol"
+          },
+          "side": {
+            "type": "string",
+            "title": "Side"
+          },
+          "entry_time": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Entry Time"
+          },
+          "entry_price": {
+            "type": "number",
+            "title": "Entry Price"
+          },
+          "exit_time": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Exit Time"
+          },
+          "exit_price": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Exit Price"
+          },
+          "amount": {
+            "type": "number",
+            "title": "Amount"
+          },
+          "pnl": {
+            "type": "number",
+            "title": "Pnl"
+          },
+          "pnl_pct": {
+            "type": "number",
+            "title": "Pnl Pct"
+          },
+          "fees": {
+            "type": "number",
+            "title": "Fees"
+          }
+        },
+        "type": "object",
+        "required": [
+          "symbol",
+          "side",
+          "entry_time",
+          "entry_price",
+          "exit_time",
+          "exit_price",
+          "amount",
+          "pnl",
+          "pnl_pct",
+          "fees"
+        ],
+        "title": "TradeRecordResponse",
+        "description": "Trade record response."
       },
       "TriggerCircuitBreakerRequest": {
         "properties": {
@@ -8879,6 +9429,19 @@
             ],
             "title": "Name",
             "description": "New name"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 500
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description",
+            "description": "Rule description"
           },
           "type": {
             "anyOf": [
@@ -9076,6 +9639,17 @@
             "type": "array",
             "title": "Warnings",
             "description": "Validation warnings"
+          },
+          "strategy_info": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/StrategyInfo"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Strategy metadata (only when valid)"
           }
         },
         "type": "object",
