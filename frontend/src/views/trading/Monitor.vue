@@ -75,7 +75,6 @@ import { ref, computed, onMounted, onUnmounted, defineComponent, h } from 'vue'
 import { useRouter } from 'vue-router'
 import { useTradingStore } from '@/stores/trading'
 import StatusBadge from '@/components/common/StatusBadge.vue'
-import PriceCell from '@/components/common/PriceCell.vue'
 import { formatExchangeName, formatNumber, formatRelativeTime } from '@/utils/format'
 import { stopPaperTrading } from '@/api/paper'
 import { stopLiveTrading, emergencyClosePositions } from '@/api/live'
@@ -126,17 +125,8 @@ const SessionCard = defineComponent({
 
         !isBacktest && h('div', { class: 'session-stats' }, [
           h('div', { class: 'stat' }, [
-            h('span', { class: 'label' }, '当前权益'),
-            h('span', { class: 'value' }, formatNumber((session as any).current_equity, 2)),
-          ]),
-          h('div', { class: 'stat' }, [
-            h('span', { class: 'label' }, '收益'),
-            h(PriceCell, {
-              value: (session as any).realized_pnl + (session as any).unrealized_pnl,
-              change: (session as any).realized_pnl + (session as any).unrealized_pnl,
-              showSign: true,
-              class: 'value',
-            }),
+            h('span', { class: 'label' }, '初始资金'),
+            h('span', { class: 'value' }, formatNumber((session as any).initial_capital, 2)),
           ]),
         ]),
 

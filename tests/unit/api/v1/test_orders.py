@@ -79,6 +79,7 @@ def mock_order():
     order.id = str(uuid4())
     order.account_id = str(uuid4())
     order.run_id = None
+    order.run = None
     order.exchange = "okx"
     order.exchange_oid = "EXC123456"
     order.symbol = "BTC/USDT"

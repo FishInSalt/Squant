@@ -11,6 +11,7 @@ from pydantic import ValidationError
 from squant.models.enums import StrategyStatus
 from squant.schemas.strategy import (
     CreateStrategyRequest,
+    StrategyInfo,
     StrategyListItem,
     StrategyResponse,
     UpdateStrategyRequest,
@@ -187,6 +188,38 @@ class TestValidationResultResponse:
 
         assert response.valid is True
         assert len(response.warnings) == 1
+
+    def test_strategy_info_default_none(self):
+        """Test strategy_info defaults to None (ST-003)."""
+        response = ValidationResultResponse(valid=False, errors=["error"])
+        assert response.strategy_info is None
+
+    def test_strategy_info_set(self):
+        """Test strategy_info can be set (ST-003)."""
+        info = StrategyInfo(class_name="MyStrategy", has_on_bar=True, has_init=False)
+        response = ValidationResultResponse(valid=True, strategy_info=info)
+        assert response.strategy_info is not None
+        assert response.strategy_info.class_name == "MyStrategy"
+        assert response.strategy_info.has_on_bar is True
+        assert response.strategy_info.has_init is False
+
+
+class TestStrategyInfo:
+    """Tests for StrategyInfo schema (ST-003)."""
+
+    def test_defaults(self):
+        """Test default values."""
+        info = StrategyInfo()
+        assert info.class_name is None
+        assert info.has_on_bar is False
+        assert info.has_init is False
+
+    def test_full_info(self):
+        """Test with all fields."""
+        info = StrategyInfo(class_name="MACrossover", has_on_bar=True, has_init=True)
+        assert info.class_name == "MACrossover"
+        assert info.has_on_bar is True
+        assert info.has_init is True
 
 
 class TestStrategyResponse:

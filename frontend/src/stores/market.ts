@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import type { Ticker, WatchlistItem, Timeframe } from '@/types'
+import type { Ticker, Timeframe } from '@/types'
+import type { WatchlistItemResponse } from '@/types/generated'
 import * as marketApi from '@/api/market'
 
 export const useMarketStore = defineStore('market', () => {
@@ -9,7 +10,7 @@ export const useMarketStore = defineStore('market', () => {
   const currentExchange = ref<string>('okx')
   const supportedExchanges = ref<string[]>(['okx', 'binance', 'bybit'])
   const tickers = ref<Map<string, Ticker>>(new Map())
-  const watchlist = ref<WatchlistItem[]>([])
+  const watchlist = ref<WatchlistItemResponse[]>([])
   const watchlistLoading = ref(false)
   const timeframes = ref<Timeframe[]>(['1m', '5m', '15m', '30m', '1h', '4h', '1d'])
   const loading = ref(false)

@@ -286,14 +286,50 @@ class TestRiskTriggerListItem:
             rule_id=uuid4(),
             run_id=uuid4(),
             trigger_type="auto",
+            details={"rule_type": "daily_loss_limit", "reason": "test"},
         )
 
         assert item.trigger_type == "auto"
+        assert item.details["rule_type"] == "daily_loss_limit"
 
-    def test_no_details_in_list(self):
-        """Test list item doesn't include details."""
-        fields = RiskTriggerListItem.model_fields
-        assert "details" not in fields
+    def test_list_item_with_joined_fields(self):
+        """Test list item with joined fields from relationships."""
+        now = datetime.now(UTC)
+        item = RiskTriggerListItem(
+            id=uuid4(),
+            time=now,
+            rule_id=uuid4(),
+            run_id=uuid4(),
+            trigger_type="order_rejected",
+            details={"rule_type": "daily_loss_limit", "reason": "Loss limit hit"},
+            rule_name="Daily Loss Rule",
+            rule_type="daily_loss_limit",
+            strategy_name="Test Strategy",
+            symbol="BTC/USDT",
+            message="Loss limit hit",
+        )
+
+        assert item.rule_name == "Daily Loss Rule"
+        assert item.rule_type == "daily_loss_limit"
+        assert item.strategy_name == "Test Strategy"
+        assert item.symbol == "BTC/USDT"
+        assert item.message == "Loss limit hit"
+
+    def test_list_item_joined_fields_optional(self):
+        """Test list item joined fields are all optional."""
+        now = datetime.now(UTC)
+        item = RiskTriggerListItem(
+            id=uuid4(),
+            time=now,
+            trigger_type="auto",
+            details={},
+        )
+
+        assert item.rule_name is None
+        assert item.rule_type is None
+        assert item.strategy_name is None
+        assert item.symbol is None
+        assert item.message is None
 
 
 class TestCircuitBreakerEventResponse:

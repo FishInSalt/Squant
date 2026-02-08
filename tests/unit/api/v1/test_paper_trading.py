@@ -43,6 +43,7 @@ def mock_run():
     run = MagicMock()
     run.id = uuid4()
     run.strategy_id = str(uuid4())  # Must be string for UUID() conversion in endpoint
+    run.strategy_name = "Test Strategy"
     run.mode = RunMode.PAPER.value
     run.symbol = "BTC/USDT"
     run.exchange = "okx"

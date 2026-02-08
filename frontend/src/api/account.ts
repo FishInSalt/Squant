@@ -31,11 +31,7 @@ export const deleteAccount = (id: string) =>
 
 // 测试连接
 export const testConnection = (id: string) =>
-  post<{ success: boolean; message: string; latency_ms?: number }>(`/exchange-accounts/${id}/test`)
-
-// 刷新账户状态
-export const refreshAccountStatus = (id: string) =>
-  post<ExchangeAccount>(`/exchange-accounts/${id}/refresh`)
+  post<{ success: boolean; message: string | null; balance_count: number | null }>(`/exchange-accounts/${id}/test`)
 
 // ================== 账户余额 (/account) ==================
 
@@ -43,14 +39,6 @@ export const refreshAccountStatus = (id: string) =>
 export const getAccountBalance = (exchange?: string) =>
   get<AccountBalance>('/account/balance', { exchange })
 
-// 获取所有账户余额
-export const getAllBalances = () =>
-  get<AccountBalance[]>('/account/balances')
-
 // 获取资产概览
 export const getAssetOverview = () =>
   get<AssetOverview>('/account/overview')
-
-// 获取支持的交易所
-export const getSupportedExchanges = () =>
-  get<{ id: string; name: string; has_testnet: boolean }[]>('/exchange-accounts/supported')

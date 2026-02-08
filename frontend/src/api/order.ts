@@ -1,4 +1,4 @@
-import { get, post, del } from './index'
+import { get, post } from './index'
 import type { Order, OrderFilter, PaginatedData, OrderStats } from '@/types'
 
 // 获取当前挂单

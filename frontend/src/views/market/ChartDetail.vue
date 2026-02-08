@@ -115,7 +115,7 @@
 
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
-import { useRouter, useRoute } from 'vue-router'
+import { useRouter } from 'vue-router'
 import { useMarketStore } from '@/stores/market'
 import { useWebSocketStore, type CandleUpdate } from '@/stores/websocket'
 import KLineChart from '@/components/charts/KLineChart.vue'
@@ -132,7 +132,6 @@ const props = defineProps<{
 }>()
 
 const router = useRouter()
-const route = useRoute()
 const marketStore = useMarketStore()
 const wsStore = useWebSocketStore()
 

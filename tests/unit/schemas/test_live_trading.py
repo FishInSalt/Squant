@@ -311,6 +311,33 @@ class TestLivePositionInfo:
 
         assert position.amount == Decimal("-0.5")
 
+    def test_current_price_default_none(self):
+        """Test current_price defaults to None (LV-004)."""
+        position = LivePositionInfo(
+            amount=Decimal("0.5"),
+            avg_entry_price=Decimal("50000"),
+        )
+        assert position.current_price is None
+
+    def test_unrealized_pnl_default_none(self):
+        """Test unrealized_pnl defaults to None (LV-004)."""
+        position = LivePositionInfo(
+            amount=Decimal("0.5"),
+            avg_entry_price=Decimal("50000"),
+        )
+        assert position.unrealized_pnl is None
+
+    def test_with_price_and_pnl(self):
+        """Test position with current_price and unrealized_pnl (LV-004)."""
+        position = LivePositionInfo(
+            amount=Decimal("0.5"),
+            avg_entry_price=Decimal("50000"),
+            current_price=Decimal("52000"),
+            unrealized_pnl=Decimal("1000"),
+        )
+        assert position.current_price == Decimal("52000")
+        assert position.unrealized_pnl == Decimal("1000")
+
 
 class TestLiveOrderInfo:
     """Tests for LiveOrderInfo schema."""
@@ -463,6 +490,91 @@ class TestLiveTradingStatusResponse:
         )
 
         assert response.risk_state is None
+
+    def test_unrealized_pnl_default_zero(self):
+        """Test unrealized_pnl defaults to 0 (LV-002)."""
+        now = datetime.now(UTC)
+        response = LiveTradingStatusResponse(
+            run_id=uuid4(),
+            symbol="BTC/USDT",
+            timeframe="1m",
+            is_running=True,
+            started_at=now,
+            stopped_at=None,
+            error_message=None,
+            bar_count=0,
+            cash=Decimal("10000"),
+            equity=Decimal("10000"),
+            initial_capital=Decimal("10000"),
+            total_fees=Decimal("0"),
+            positions={},
+            pending_orders=[],
+            live_orders=[],
+            completed_orders_count=0,
+            trades_count=0,
+            risk_state=None,
+        )
+        assert response.unrealized_pnl == Decimal("0")
+        assert response.realized_pnl == Decimal("0")
+
+    def test_pnl_fields_set(self):
+        """Test unrealized_pnl and realized_pnl can be set (LV-002)."""
+        now = datetime.now(UTC)
+        response = LiveTradingStatusResponse(
+            run_id=uuid4(),
+            symbol="BTC/USDT",
+            timeframe="1m",
+            is_running=True,
+            started_at=now,
+            stopped_at=None,
+            error_message=None,
+            bar_count=200,
+            cash=Decimal("5000"),
+            equity=Decimal("11000"),
+            initial_capital=Decimal("10000"),
+            total_fees=Decimal("30"),
+            unrealized_pnl=Decimal("500"),
+            realized_pnl=Decimal("1030"),
+            positions={},
+            pending_orders=[],
+            live_orders=[],
+            completed_orders_count=15,
+            trades_count=12,
+            risk_state=None,
+        )
+        assert response.unrealized_pnl == Decimal("500")
+        assert response.realized_pnl == Decimal("1030")
+
+    def test_pnl_json_serializes_as_float(self):
+        """Test PNL fields serialize as float in JSON (LV-002)."""
+        now = datetime.now(UTC)
+        response = LiveTradingStatusResponse(
+            run_id=uuid4(),
+            symbol="BTC/USDT",
+            timeframe="1m",
+            is_running=True,
+            started_at=now,
+            stopped_at=None,
+            error_message=None,
+            bar_count=0,
+            cash=Decimal("10000"),
+            equity=Decimal("10000"),
+            initial_capital=Decimal("10000"),
+            total_fees=Decimal("0"),
+            unrealized_pnl=Decimal("123.45"),
+            realized_pnl=Decimal("456.78"),
+            positions={},
+            pending_orders=[],
+            live_orders=[],
+            completed_orders_count=0,
+            trades_count=0,
+            risk_state=None,
+        )
+        data = response.model_dump(mode="json")
+        assert isinstance(data["unrealized_pnl"], float)
+        assert isinstance(data["realized_pnl"], float)
+        assert data["unrealized_pnl"] == 123.45
+        assert data["realized_pnl"] == 456.78
 
 
 class TestLiveTradingListItem:

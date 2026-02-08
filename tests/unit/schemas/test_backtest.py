@@ -13,6 +13,7 @@ from squant.schemas.backtest import (
     AvailableSymbolResponse,
     BacktestDetailResponse,
     BacktestListItem,
+    BacktestMetrics,
     BacktestRunResponse,
     CheckDataRequest,
     CreateBacktestRequest,
@@ -474,6 +475,85 @@ class TestBacktestDetailResponse:
         response = BacktestDetailResponse(run=run, equity_curve=[])
 
         assert response.total_bars is None
+
+
+class TestBacktestMetrics:
+    """Tests for BacktestMetrics schema (BT-004)."""
+
+    def test_all_defaults_are_zero(self):
+        """Test all fields default to zero values."""
+        metrics = BacktestMetrics()
+        assert metrics.total_return == 0.0
+        assert metrics.sharpe_ratio == 0.0
+        assert metrics.total_trades == 0
+        assert metrics.win_rate == 0.0
+        assert metrics.max_drawdown_duration_hours == 0
+        assert metrics.total_fees == 0.0
+
+    def test_from_complete_dict(self):
+        """Test parsing from a complete PerformanceMetrics.to_dict() output."""
+        raw = {
+            "total_return": "1500.50",
+            "total_return_pct": "15.005",
+            "annualized_return": "30.01",
+            "max_drawdown": "500.25",
+            "max_drawdown_pct": "5.0025",
+            "max_drawdown_duration_hours": 72,
+            "sharpe_ratio": "1.85",
+            "sortino_ratio": "2.10",
+            "calmar_ratio": "3.0",
+            "volatility": "0.15",
+            "total_trades": 42,
+            "winning_trades": 28,
+            "losing_trades": 14,
+            "win_rate": "0.6667",
+            "profit_factor": "2.5",
+            "avg_trade_return": "35.73",
+            "avg_win": "80.0",
+            "avg_loss": "-32.0",
+            "largest_win": "500.0",
+            "largest_loss": "-200.0",
+            "max_consecutive_losses": 3,
+            "avg_trade_duration_hours": "4.5",
+            "total_duration_days": 180,
+            "total_fees": "42.0",
+        }
+        metrics = BacktestMetrics(**raw)
+        assert metrics.total_return == 1500.50
+        assert metrics.total_trades == 42
+        assert metrics.win_rate == pytest.approx(0.6667)
+        assert metrics.max_consecutive_losses == 3
+
+    def test_string_to_float_coercion(self):
+        """Test string values from to_dict() are coerced to float."""
+        metrics = BacktestMetrics(total_return="1000", sharpe_ratio="1.5")
+        assert isinstance(metrics.total_return, float)
+        assert isinstance(metrics.sharpe_ratio, float)
+        assert metrics.total_return == 1000.0
+        assert metrics.sharpe_ratio == 1.5
+
+    def test_string_to_int_coercion(self):
+        """Test string int values are coerced properly."""
+        metrics = BacktestMetrics(total_trades="10", winning_trades="7")
+        assert isinstance(metrics.total_trades, int)
+        assert metrics.total_trades == 10
+        assert metrics.winning_trades == 7
+
+    def test_ignores_unknown_fields(self):
+        """Test extra fields from result dict are silently ignored."""
+        raw = {"total_return": 100.0, "trades": [], "unknown_field": "value"}
+        # Filter to known fields (as done in the API route)
+        filtered = {k: v for k, v in raw.items() if k in BacktestMetrics.model_fields}
+        metrics = BacktestMetrics(**filtered)
+        assert metrics.total_return == 100.0
+
+    def test_partial_dict(self):
+        """Test parsing from dict with only some fields — rest use defaults."""
+        metrics = BacktestMetrics(total_return=500.0, total_trades=10)
+        assert metrics.total_return == 500.0
+        assert metrics.total_trades == 10
+        assert metrics.sharpe_ratio == 0.0
+        assert metrics.volatility == 0.0
 
 
 class TestDataAvailabilityResponse:

@@ -1,12 +1,12 @@
-import { get, post, put, del, upload } from './index'
-import type { Strategy, ValidationResult, StrategyUploadResponse, PaginatedData } from '@/types'
+import { get, post, put, del } from './index'
+import type { Strategy, ValidationResult, PaginatedData } from '@/types'
 
 // 获取策略列表
 export const getStrategies = (params?: {
   page?: number
   page_size?: number
   search?: string
-  is_valid?: boolean
+  status?: string
 }) =>
   get<PaginatedData<Strategy>>('/strategies', params)
 
@@ -14,9 +14,15 @@ export const getStrategies = (params?: {
 export const getStrategy = (id: string) =>
   get<Strategy>(`/strategies/${id}`)
 
-// 上传策略文件
-export const uploadStrategy = (file: File, onProgress?: (percent: number) => void) =>
-  upload<StrategyUploadResponse>('/strategies', file, onProgress)
+// 创建策略 (JSON body: name, code, description)
+export const createStrategy = (data: {
+  name: string
+  code: string
+  description?: string
+  params_schema?: Record<string, unknown>
+  default_params?: Record<string, unknown>
+}) =>
+  post<Strategy>('/strategies', data)
 
 // 验证策略代码
 export const validateStrategy = (code: string) =>
@@ -30,13 +36,3 @@ export const updateStrategy = (id: string, data: Partial<Strategy>) =>
 export const deleteStrategy = (id: string) =>
   del<void>(`/strategies/${id}`)
 
-// 获取策略代码
-export const getStrategyCode = (id: string) =>
-  get<{ code: string }>(`/strategies/${id}/code`)
-
-// 获取策略的回测历史
-export const getStrategyBacktests = (id: string, limit?: number) =>
-  get<{ backtest_id: string; created_at: string; status: string }[]>(
-    `/strategies/${id}/backtests`,
-    { limit }
-  )

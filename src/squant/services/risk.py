@@ -5,11 +5,13 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from uuid import UUID
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from squant.infra.repository import BaseRepository
 from squant.models.risk import RiskRule, RiskTrigger
+from squant.models.strategy import StrategyRun
 from squant.schemas.risk import CreateRiskRuleRequest, UpdateRiskRuleRequest
 
 
@@ -242,7 +244,13 @@ class RiskTriggerRepository(BaseRepository[RiskTrigger]):
         Returns:
             List of risk triggers.
         """
-        stmt = select(RiskTrigger)
+        stmt = (
+            select(RiskTrigger)
+            .options(
+                selectinload(RiskTrigger.rule),
+                selectinload(RiskTrigger.run).selectinload(StrategyRun.strategy),
+            )
+        )
 
         if start_time is not None:
             stmt = stmt.where(RiskTrigger.time >= start_time)
@@ -326,8 +334,9 @@ class RiskTriggerService:
         Returns:
             Created RiskTrigger record.
         """
+        trigger_time = datetime.now(UTC)
         trigger = await self.repository.create(
-            time=datetime.now(UTC),
+            time=trigger_time,
             rule_id=str(rule_id) if rule_id else None,
             run_id=str(run_id) if run_id else None,
             trigger_type=trigger_type,
@@ -336,6 +345,12 @@ class RiskTriggerService:
                 **details,
             },
         )
+        if rule_id:
+            await self.session.execute(
+                update(RiskRule)
+                .where(RiskRule.id == str(rule_id))
+                .values(last_triggered_at=trigger_time)
+            )
         await self.session.commit()
         return trigger
 

@@ -23,33 +23,13 @@
               <span class="exchange-name">{{ formatExchangeName(account.exchange) }}</span>
             </div>
           </div>
-          <StatusBadge :status="account.connection_status" />
-        </div>
-
-        <div class="account-meta">
-          <el-tag v-if="account.is_testnet" type="warning" size="small">测试网</el-tag>
-          <el-tag v-if="!account.is_active" type="info" size="small">已禁用</el-tag>
-        </div>
-
-        <div class="account-permissions">
-          <span class="label">权限:</span>
-          <el-tag
-            v-for="perm in account.permissions"
-            :key="perm"
-            size="small"
-            type="info"
-          >
-            {{ perm }}
+          <el-tag :type="account.is_active ? 'success' : 'info'" size="small">
+            {{ account.is_active ? '已启用' : '已禁用' }}
           </el-tag>
         </div>
 
-        <div v-if="account.last_connected" class="last-connected">
-          最后连接: {{ formatRelativeTime(account.last_connected) }}
-        </div>
-
-        <div v-if="account.error_message" class="error-message">
-          <el-icon><WarningFilled /></el-icon>
-          {{ account.error_message }}
+        <div class="account-meta">
+          <el-tag v-if="account.testnet" type="warning" size="small">测试网</el-tag>
         </div>
 
         <div class="account-actions">
@@ -124,7 +104,7 @@
         </el-form-item>
 
         <el-form-item v-if="!editingAccount">
-          <el-checkbox v-model="form.is_testnet">使用测试网</el-checkbox>
+          <el-checkbox v-model="form.testnet">使用测试网</el-checkbox>
         </el-form-item>
       </el-form>
 
@@ -141,18 +121,17 @@
 <script setup lang="ts">
 import { ref, reactive, computed, onMounted, watch } from 'vue'
 import type { FormInstance, FormRules } from 'element-plus'
-import StatusBadge from '@/components/common/StatusBadge.vue'
-import { formatExchangeName, formatRelativeTime } from '@/utils/format'
+import { formatExchangeName } from '@/utils/format'
 import {
   getAccounts,
-  getSupportedExchanges,
   createAccount,
   updateAccount,
   deleteAccount,
   testConnection as apiTestConnection,
 } from '@/api/account'
+import { SUPPORTED_EXCHANGES } from '@/utils/constants'
 import { useNotification } from '@/composables/useNotification'
-import type { ExchangeAccount, ExchangeType } from '@/types'
+import type { ExchangeAccount } from '@/types'
 
 const { toastSuccess, toastError, confirmDelete } = useNotification()
 
@@ -160,18 +139,18 @@ const loading = ref(false)
 const submitting = ref(false)
 const testingId = ref<string | null>(null)
 const accounts = ref<ExchangeAccount[]>([])
-const supportedExchanges = ref<{ id: string; name: string; has_testnet: boolean }[]>([])
+const supportedExchanges = SUPPORTED_EXCHANGES
 const dialogVisible = ref(false)
 const editingAccount = ref<ExchangeAccount | null>(null)
 const formRef = ref<FormInstance>()
 
 const form = reactive({
   name: '',
-  exchange: 'binance' as ExchangeType,
+  exchange: 'binance',
   api_key: '',
   api_secret: '',
   passphrase: '',
-  is_testnet: false,
+  testnet: false,
 })
 
 const formRules: FormRules = {
@@ -206,15 +185,6 @@ async function loadAccounts() {
   }
 }
 
-async function loadSupportedExchanges() {
-  try {
-    const response = await getSupportedExchanges()
-    supportedExchanges.value = response.data
-  } catch (error) {
-    console.error('Failed to load supported exchanges:', error)
-  }
-}
-
 function showCreateDialog() {
   editingAccount.value = null
   form.name = ''
@@ -222,7 +192,7 @@ function showCreateDialog() {
   form.api_key = ''
   form.api_secret = ''
   form.passphrase = ''
-  form.is_testnet = false
+  form.testnet = false
   dialogVisible.value = true
 }
 
@@ -257,7 +227,7 @@ async function handleSubmit() {
         api_key: form.api_key,
         api_secret: form.api_secret,
         passphrase: form.passphrase || undefined,
-        is_testnet: form.is_testnet,
+        testnet: form.testnet,
       })
       toastSuccess('账户已添加')
     }
@@ -276,9 +246,9 @@ async function testConnection(account: ExchangeAccount) {
   try {
     const response = await apiTestConnection(account.id)
     if (response.data.success) {
-      toastSuccess(`连接成功，延迟: ${response.data.latency_ms}ms`)
+      toastSuccess('连接成功')
     } else {
-      toastError(response.data.message)
+      toastError(response.data.message || '连接失败')
     }
     loadAccounts()
   } catch (error) {
@@ -303,7 +273,6 @@ async function handleDelete(account: ExchangeAccount) {
 
 onMounted(() => {
   loadAccounts()
-  loadSupportedExchanges()
 })
 </script>
 

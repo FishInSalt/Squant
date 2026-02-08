@@ -25,6 +25,9 @@ class TestListRiskTriggers:
             trigger.rule_id = uuid4()
             trigger.run_id = uuid4()
             trigger.trigger_type = "daily_loss_limit"
+            trigger.details = {"rule_type": "daily_loss_limit", "reason": "test"}
+            trigger.rule = None
+            trigger.run = None
             triggers.append(trigger)
 
         with patch(
@@ -63,6 +66,9 @@ class TestListRiskTriggers:
         trigger.rule_id = uuid4()
         trigger.run_id = None
         trigger.trigger_type = "position_limit"
+        trigger.details = {"rule_type": "position_limit", "reason": "test"}
+        trigger.rule = None
+        trigger.run = None
 
         with patch(
             "squant.services.risk.RiskTriggerService.list_triggers",
@@ -110,6 +116,9 @@ class TestListRiskTriggers:
         trigger.rule_id = uuid4()
         trigger.run_id = uuid4()
         trigger.trigger_type = "order_limit"
+        trigger.details = {"rule_type": "order_limit", "reason": "test"}
+        trigger.rule = None
+        trigger.run = None
 
         with patch(
             "squant.services.risk.RiskTriggerService.list_triggers",
@@ -148,6 +157,9 @@ class TestListRiskTriggers:
             trigger.rule_id = rule_id
             trigger.run_id = uuid4()
             trigger.trigger_type = "daily_loss_limit"
+            trigger.details = {"rule_type": "daily_loss_limit", "reason": "test"}
+            trigger.rule = None
+            trigger.run = None
             triggers.append(trigger)
 
         with patch(
@@ -183,6 +195,9 @@ class TestListRiskTriggers:
         trigger.rule_id = uuid4()
         trigger.run_id = run_id
         trigger.trigger_type = "position_limit"
+        trigger.details = {"rule_type": "position_limit", "reason": "test"}
+        trigger.rule = None
+        trigger.run = None
 
         with patch(
             "squant.services.risk.RiskTriggerService.list_triggers",
@@ -219,6 +234,9 @@ class TestListRiskTriggers:
         trigger.rule_id = rule_id
         trigger.run_id = run_id
         trigger.trigger_type = "total_loss_limit"
+        trigger.details = {"rule_type": "total_loss_limit", "reason": "test"}
+        trigger.rule = None
+        trigger.run = None
 
         with patch(
             "squant.services.risk.RiskTriggerService.list_triggers",
@@ -266,6 +284,9 @@ class TestListRiskTriggers:
             trigger.rule_id = uuid4()
             trigger.run_id = uuid4()
             trigger.trigger_type = trigger_type
+            trigger.details = {"rule_type": trigger_type, "reason": "test"}
+            trigger.rule = None
+            trigger.run = None
             triggers.append(trigger)
 
         with patch(
@@ -294,6 +315,9 @@ class TestListRiskTriggers:
         trigger.rule_id = None  # Manual trigger without rule
         trigger.run_id = uuid4()
         trigger.trigger_type = "circuit_breaker"
+        trigger.details = {"rule_type": "circuit_breaker", "reason": "test"}
+        trigger.rule = None
+        trigger.run = None
 
         with patch(
             "squant.services.risk.RiskTriggerService.list_triggers",
@@ -318,6 +342,9 @@ class TestListRiskTriggers:
         trigger.rule_id = uuid4()
         trigger.run_id = None  # Global trigger not tied to specific run
         trigger.trigger_type = "circuit_breaker"
+        trigger.details = {"rule_type": "circuit_breaker", "reason": "test"}
+        trigger.rule = None
+        trigger.run = None
 
         with patch(
             "squant.services.risk.RiskTriggerService.list_triggers",

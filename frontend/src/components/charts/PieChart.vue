@@ -5,7 +5,7 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, watch } from 'vue'
 import * as echarts from 'echarts'
-import { formatNumber, formatPercent } from '@/utils/format'
+import { formatNumber } from '@/utils/format'
 
 interface PieDataItem {
   name: string
@@ -61,7 +61,7 @@ function initChart() {
     tooltip: {
       trigger: 'item',
       formatter: (params: any) => {
-        const percent = ((params.value / total) * 100).toFixed(2)
+        const percent = total > 0 ? ((params.value / total) * 100).toFixed(2) : '0.00'
         return `${params.name}<br/>
           <span style="display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: ${params.color}; margin-right: 4px;"></span>
           ${formatNumber(params.value, 2)} (${percent}%)`
@@ -93,7 +93,7 @@ function initChart() {
           show: true,
           position: 'outside',
           formatter: (params: any) => {
-            const percent = ((params.value / total) * 100).toFixed(1)
+            const percent = total > 0 ? ((params.value / total) * 100).toFixed(1) : '0.0'
             return `${params.name}\n${percent}%`
           },
           fontSize: 11,

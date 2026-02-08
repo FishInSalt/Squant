@@ -53,6 +53,17 @@ class TestListRiskTriggers:
         mock_trigger.rule_id = str(rule_id)
         mock_trigger.run_id = str(run_id)
         mock_trigger.trigger_type = "daily_loss_limit"
+        mock_trigger.details = {
+            "rule_type": "daily_loss_limit",
+            "reason": "Daily loss limit reached",
+        }
+        mock_trigger.rule = MagicMock()
+        mock_trigger.rule.name = "Daily Loss Rule"
+        mock_trigger.rule.type = "daily_loss_limit"
+        mock_trigger.run = MagicMock()
+        mock_trigger.run.strategy = MagicMock()
+        mock_trigger.run.strategy.name = "Test Strategy"
+        mock_trigger.run.symbol = "BTC/USDT"
 
         with patch("squant.api.v1.risk_triggers.RiskTriggerService") as mock_service_class:
             mock_service = MagicMock()

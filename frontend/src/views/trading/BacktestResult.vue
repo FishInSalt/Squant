@@ -29,13 +29,13 @@
       <p class="status-text">正在回测中...</p>
     </div>
 
-    <div v-if="backtest?.status === 'failed'" class="error-status card">
+    <div v-if="backtest?.status === 'error'" class="error-status card">
       <el-icon class="error-icon"><CircleCloseFilled /></el-icon>
-      <p class="error-message">{{ backtest.error }}</p>
+      <p class="error-message">{{ backtest.error_message }}</p>
       <el-button type="primary" @click="runAgain">重新回测</el-button>
     </div>
 
-    <div v-if="backtest?.status === 'completed' && result" class="result-content">
+    <div v-if="backtest?.status === 'completed' && result && result.metrics" class="result-content">
       <div class="metrics-grid">
         <div class="metric-card card">
           <span class="label">总收益</span>
@@ -50,8 +50,8 @@
         <div class="metric-card card">
           <span class="label">年化收益</span>
           <PriceCell
-            :value="result.metrics.annual_return"
-            :change="result.metrics.annual_return"
+            :value="result.metrics.annualized_return"
+            :change="result.metrics.annualized_return"
             :decimals="2"
             show-sign
             class="value"
@@ -78,8 +78,8 @@
           <span class="value">{{ result.metrics.total_trades }}</span>
         </div>
         <div class="metric-card card">
-          <span class="label">最终资金</span>
-          <span class="value">{{ formatNumber(result.metrics.end_capital, 2) }}</span>
+          <span class="label">总手续费</span>
+          <span class="value">{{ formatNumber(result.metrics.total_fees, 2) }}</span>
         </div>
       </div>
 
@@ -96,9 +96,9 @@
           <span class="trade-count">共 {{ result.trades.length }} 笔</span>
         </div>
         <el-table :data="result.trades" stripe max-height="400">
-          <el-table-column prop="timestamp" label="时间" width="180">
+          <el-table-column prop="entry_time" label="入场时间" width="180">
             <template #default="{ row }">
-              {{ formatDateTime(row.timestamp) }}
+              {{ formatDateTime(row.entry_time) }}
             </template>
           </el-table-column>
           <el-table-column prop="side" label="方向" width="80">
@@ -108,19 +108,24 @@
               </el-tag>
             </template>
           </el-table-column>
-          <el-table-column prop="price" label="价格" width="120" align="right">
+          <el-table-column prop="entry_price" label="入场价" width="120" align="right">
             <template #default="{ row }">
-              {{ formatPrice(row.price) }}
+              {{ formatPrice(row.entry_price) }}
             </template>
           </el-table-column>
-          <el-table-column prop="quantity" label="数量" width="120" align="right">
+          <el-table-column prop="exit_price" label="出场价" width="120" align="right">
             <template #default="{ row }">
-              {{ formatNumber(row.quantity, 4) }}
+              {{ row.exit_price ? formatPrice(row.exit_price) : '-' }}
             </template>
           </el-table-column>
-          <el-table-column prop="commission" label="手续费" width="100" align="right">
+          <el-table-column prop="amount" label="数量" width="120" align="right">
             <template #default="{ row }">
-              {{ formatNumber(row.commission, 4) }}
+              {{ formatNumber(row.amount, 4) }}
+            </template>
+          </el-table-column>
+          <el-table-column prop="fees" label="手续费" width="100" align="right">
+            <template #default="{ row }">
+              {{ formatNumber(row.fees, 4) }}
             </template>
           </el-table-column>
           <el-table-column prop="pnl" label="盈亏" width="120" align="right">
@@ -134,12 +139,12 @@
               <span v-else>-</span>
             </template>
           </el-table-column>
-          <el-table-column prop="pnl_percent" label="盈亏%" width="100" align="right">
+          <el-table-column prop="pnl_pct" label="盈亏%" width="100" align="right">
             <template #default="{ row }">
               <PriceCell
-                v-if="row.pnl_percent !== undefined"
-                :value="row.pnl_percent"
-                :change="row.pnl_percent"
+                v-if="row.pnl_pct !== undefined"
+                :value="row.pnl_pct"
+                :change="row.pnl_pct"
                 :decimals="2"
                 show-sign
               />
@@ -179,12 +184,12 @@
             <span class="value danger">{{ formatPercent(result.metrics.avg_loss) }}</span>
           </div>
           <div class="detail-item">
-            <span class="label">最大连胜</span>
-            <span class="value">{{ result.metrics.max_consecutive_wins }}</span>
-          </div>
-          <div class="detail-item">
             <span class="label">最大连亏</span>
             <span class="value">{{ result.metrics.max_consecutive_losses }}</span>
+          </div>
+          <div class="detail-item">
+            <span class="label">卡尔玛比率</span>
+            <span class="value">{{ formatNumber(result.metrics.calmar_ratio, 2) }}</span>
           </div>
         </div>
       </div>
@@ -267,8 +272,8 @@ function runAgain() {
       path: '/trading/backtest',
       query: {
         strategy_id: backtest.value.strategy_id,
-        exchange: backtest.value.config.exchange,
-        symbol: backtest.value.config.symbol,
+        exchange: backtest.value.exchange,
+        symbol: backtest.value.symbol,
       },
     })
   }
@@ -277,7 +282,13 @@ function runAgain() {
 async function exportResult() {
   try {
     const response = await exportBacktestResult(props.id, 'csv')
-    window.open(response.data.download_url, '_blank')
+    const blob = new Blob([response.data.content], { type: response.data.content_type || 'text/csv' })
+    const url = window.URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = response.data.filename || `backtest_${props.id}.csv`
+    link.click()
+    window.URL.revokeObjectURL(url)
     toastSuccess('导出成功')
   } catch (error) {
     toastError('导出失败')

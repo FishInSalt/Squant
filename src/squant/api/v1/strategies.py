@@ -11,6 +11,7 @@ from squant.infra.database import get_session
 from squant.models.enums import StrategyStatus
 from squant.schemas.strategy import (
     CreateStrategyRequest,
+    StrategyInfo,
     StrategyListItem,
     StrategyResponse,
     UpdateStrategyRequest,
@@ -52,11 +53,16 @@ async def validate_strategy_code(
 
     result = validate(request.code)
 
+    strategy_info = None
+    if result.strategy_info:
+        strategy_info = StrategyInfo(**result.strategy_info)
+
     return ApiResponse(
         data=ValidationResultResponse(
             valid=result.valid,
             errors=result.errors,
             warnings=result.warnings,
+            strategy_info=strategy_info,
         )
     )
 

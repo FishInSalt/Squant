@@ -52,6 +52,7 @@ def mock_run():
     run = MagicMock()
     run.id = str(uuid4())
     run.strategy_id = str(uuid4())
+    run.strategy_name = "Test Strategy"
     run.mode = RunMode.PAPER
     run.symbol = "BTC/USDT"
     run.exchange = "okx"

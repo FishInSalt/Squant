@@ -515,6 +515,7 @@ def sample_backtest_run(sample_strategy):
     run = MagicMock()
     run.id = uuid4()
     run.strategy_id = sample_strategy.id
+    run.strategy_name = sample_strategy.name
     run.mode = "backtest"
     run.symbol = "BTC/USDT"
     run.exchange = "okx"
@@ -526,6 +527,7 @@ def sample_backtest_run(sample_strategy):
     run.slippage = 0.0005
     run.params = {}
     run.status = RunStatus.COMPLETED.value
+    run.progress = 1.0
     run.result = {"total_return": 0.2, "max_drawdown": 0.1}
     run.error_message = None
     run.started_at = datetime.now(UTC)

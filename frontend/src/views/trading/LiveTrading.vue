@@ -41,7 +41,7 @@
                 :key="s.id"
                 :label="s.name"
                 :value="s.id"
-                :disabled="!s.is_valid"
+                :disabled="s.status !== 'active'"
               />
             </el-select>
           </el-form-item>
@@ -58,11 +58,11 @@
                 :key="a.id"
                 :label="`${a.name} (${formatExchangeName(a.exchange)})`"
                 :value="a.id"
-                :disabled="a.connection_status !== 'connected'"
+                :disabled="!a.is_active"
               >
                 <div class="account-option">
                   <span>{{ a.name }}</span>
-                  <StatusBadge :status="a.connection_status" />
+                  <el-tag v-if="a.testnet" type="warning" size="small">测试网</el-tag>
                 </div>
               </el-option>
             </el-select>
@@ -113,21 +113,25 @@
 
           <el-row :gutter="16">
             <el-col :span="12">
-              <el-form-item label="最大持仓 (%)">
+              <el-form-item label="最大持仓比例">
                 <el-input-number
                   v-model="form.risk_config.max_position_size"
-                  :min="1"
-                  :max="100"
+                  :min="0.01"
+                  :max="1"
+                  :step="0.1"
+                  :precision="2"
                   style="width: 100%"
                 />
               </el-form-item>
             </el-col>
             <el-col :span="12">
-              <el-form-item label="日最大亏损 (%)">
+              <el-form-item label="最大单笔下单比例">
                 <el-input-number
-                  v-model="form.risk_config.max_daily_loss"
-                  :min="1"
-                  :max="100"
+                  v-model="form.risk_config.max_order_size"
+                  :min="0.01"
+                  :max="1"
+                  :step="0.1"
+                  :precision="2"
                   style="width: 100%"
                 />
               </el-form-item>
@@ -136,22 +140,23 @@
 
           <el-row :gutter="16">
             <el-col :span="12">
-              <el-form-item label="最大回撤 (%)">
+              <el-form-item label="每日交易限制">
                 <el-input-number
-                  v-model="form.risk_config.max_drawdown"
+                  v-model="form.risk_config.daily_trade_limit"
                   :min="1"
-                  :max="100"
+                  :max="1000"
                   style="width: 100%"
                 />
               </el-form-item>
             </el-col>
             <el-col :span="12">
-              <el-form-item label="止损 (%)">
+              <el-form-item label="日最大亏损比例">
                 <el-input-number
-                  v-model="form.risk_config.stop_loss_percent"
-                  :min="0"
-                  :max="100"
-                  :precision="1"
+                  v-model="form.risk_config.daily_loss_limit"
+                  :min="0.01"
+                  :max="1"
+                  :step="0.01"
+                  :precision="2"
                   style="width: 100%"
                 />
               </el-form-item>
@@ -223,17 +228,8 @@
             </div>
             <div class="item-stats">
               <div class="stat">
-                <span class="label">当前权益</span>
-                <span class="value">{{ formatNumber(session.current_equity, 2) }}</span>
-              </div>
-              <div class="stat">
-                <span class="label">总收益</span>
-                <PriceCell
-                  :value="session.realized_pnl + session.unrealized_pnl"
-                  :change="session.realized_pnl + session.unrealized_pnl"
-                  show-sign
-                  class="value"
-                />
+                <span class="label">初始资金</span>
+                <span class="value">{{ formatNumber(session.initial_capital ?? 0, 2) }}</span>
               </div>
             </div>
             <div class="item-actions" @click.stop>
@@ -271,7 +267,6 @@ import { useRouter, useRoute } from 'vue-router'
 import type { FormInstance, FormRules } from 'element-plus'
 import { useStrategyStore } from '@/stores/strategy'
 import StatusBadge from '@/components/common/StatusBadge.vue'
-import PriceCell from '@/components/common/PriceCell.vue'
 import { formatExchangeName, formatNumber } from '@/utils/format'
 import { TIMEFRAME_OPTIONS } from '@/utils/constants'
 import { getSymbols } from '@/api/market'
@@ -301,10 +296,12 @@ const form = reactive({
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   params: {} as Record<string, any>,
   risk_config: {
-    max_position_size: 50,
-    max_daily_loss: 5,
-    max_drawdown: 10,
-    stop_loss_percent: 2,
+    max_position_size: 0.5,
+    max_order_size: 0.2,
+    daily_trade_limit: 50,
+    daily_loss_limit: 0.05,
+    price_deviation_limit: 0.02,
+    circuit_breaker_threshold: 3,
   },
 })
 
@@ -395,8 +392,7 @@ async function handleSubmit() {
   try {
     const config = {
       strategy_id: form.strategy_id,
-      account_id: form.account_id,
-      exchange: account.exchange,
+      exchange_account_id: form.account_id,
       symbol: form.symbol,
       timeframe: form.timeframe,
       initial_equity: form.initial_capital,

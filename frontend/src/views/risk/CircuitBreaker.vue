@@ -4,34 +4,36 @@
       <h1 class="page-title">熔断控制</h1>
     </div>
 
-    <div class="status-panel card" :class="{ halted: status?.global_halt }">
+    <div class="status-panel card" :class="{ halted: status?.is_active }">
       <div class="status-indicator">
-        <el-icon :size="64" :class="status?.global_halt ? 'danger' : 'success'">
-          <Warning v-if="status?.global_halt" />
+        <el-icon :size="64" :class="status?.is_active ? 'danger' : 'success'">
+          <Warning v-if="status?.is_active" />
           <CircleCheck v-else />
         </el-icon>
       </div>
 
       <div class="status-info">
         <h2 class="status-title">
-          {{ status?.global_halt ? '系统已熔断' : '系统运行正常' }}
+          {{ status?.is_active ? '系统已熔断' : '系统运行正常' }}
         </h2>
-        <p v-if="status?.global_halt" class="halt-reason">
-          原因: {{ status.halt_reason || '手动触发' }}
+        <p v-if="status?.is_active" class="halt-reason">
+          原因: {{ status.trigger_reason || '手动触发' }}
         </p>
-        <p v-if="status?.halted_at" class="halt-time">
-          熔断时间: {{ formatDateTime(status.halted_at) }}
+        <p v-if="status?.triggered_at" class="halt-time">
+          熔断时间: {{ formatDateTime(status.triggered_at) }}
+        </p>
+        <p v-if="status?.trigger_type" class="halt-type">
+          触发类型: {{ status.trigger_type }}
+        </p>
+        <p v-if="status?.cooldown_until" class="cooldown">
+          冷却截止: {{ formatDateTime(status.cooldown_until) }}
         </p>
       </div>
 
       <div class="status-stats">
         <div class="stat">
-          <span class="value">{{ status?.active_sessions_count || 0 }}</span>
+          <span class="value">{{ (status?.active_live_sessions || 0) + (status?.active_paper_sessions || 0) }}</span>
           <span class="label">运行中策略</span>
-        </div>
-        <div class="stat">
-          <span class="value">{{ status?.pending_orders_count || 0 }}</span>
-          <span class="label">待处理订单</span>
         </div>
       </div>
     </div>
@@ -44,7 +46,7 @@
       <div class="actions-grid">
         <div class="action-item">
           <el-button
-            v-if="!status?.global_halt"
+            v-if="!status?.is_active"
             type="danger"
             size="large"
             @click="handleHalt"
@@ -62,7 +64,7 @@
             恢复交易
           </el-button>
           <p class="action-desc">
-            {{ status?.global_halt ? '恢复所有交易功能' : '立即停止所有交易活动' }}
+            {{ status?.is_active ? '恢复所有交易功能' : '立即停止所有交易活动' }}
           </p>
         </div>
 
@@ -71,7 +73,7 @@
             type="warning"
             size="large"
             @click="handleCloseAll"
-            :disabled="status?.active_sessions_count === 0"
+            :disabled="(status?.active_live_sessions || 0) + (status?.active_paper_sessions || 0) === 0"
           >
             <el-icon><Position /></el-icon>
             一键平仓
@@ -79,39 +81,6 @@
           <p class="action-desc">
             平掉所有运行中策略的持仓
           </p>
-        </div>
-      </div>
-    </div>
-
-    <div class="conditions-panel card">
-      <div class="card-header">
-        <h3 class="card-title">自动熔断条件</h3>
-      </div>
-
-      <div class="conditions-list">
-        <div
-          v-for="condition in status?.auto_halt_conditions || []"
-          :key="condition.id"
-          class="condition-item"
-        >
-          <div class="condition-header">
-            <span class="condition-name">{{ condition.name }}</span>
-            <el-switch
-              v-model="condition.enabled"
-              @change="handleConditionToggle(condition)"
-            />
-          </div>
-
-          <div class="condition-progress">
-            <el-progress
-              :percentage="getConditionProgress(condition)"
-              :color="getConditionColor(condition)"
-              :stroke-width="8"
-            />
-            <span class="progress-text">
-              {{ formatConditionValue(condition) }} / {{ condition.threshold }}{{ getConditionUnit(condition) }}
-            </span>
-          </div>
         </div>
       </div>
     </div>
@@ -124,14 +93,12 @@ import { formatDateTime } from '@/utils/format'
 import {
   getCircuitBreakerStatus,
   executeCircuitBreakerAction,
-  updateAutoHaltCondition,
 } from '@/api/risk'
 import { useNotification } from '@/composables/useNotification'
-import type { CircuitBreakerStatus, AutoHaltCondition } from '@/types'
+import type { CircuitBreakerStatus } from '@/types'
 
 const { toastSuccess, toastError, confirmDanger } = useNotification()
 
-const loading = ref(false)
 const status = ref<CircuitBreakerStatus | null>(null)
 
 async function loadStatus() {
@@ -150,7 +117,7 @@ async function handleHalt() {
   if (!confirmed) return
 
   try {
-    await executeCircuitBreakerAction({ action: 'activate', reason: '手动触发熔断' })
+    await executeCircuitBreakerAction({ action: 'trigger', reason: '手动触发熔断' })
     toastSuccess('系统已熔断')
     loadStatus()
   } catch (error) {
@@ -163,7 +130,7 @@ async function handleResume() {
   if (!confirmed) return
 
   try {
-    await executeCircuitBreakerAction({ action: 'deactivate' })
+    await executeCircuitBreakerAction({ action: 'reset' })
     toastSuccess('交易已恢复')
     loadStatus()
   } catch (error) {
@@ -183,47 +150,6 @@ async function handleCloseAll() {
     loadStatus()
   } catch (error) {
     toastError('操作失败')
-  }
-}
-
-async function handleConditionToggle(condition: AutoHaltCondition) {
-  try {
-    await updateAutoHaltCondition(condition.id, { enabled: condition.enabled })
-    toastSuccess(condition.enabled ? '条件已启用' : '条件已禁用')
-  } catch (error) {
-    condition.enabled = !condition.enabled
-    toastError('操作失败')
-  }
-}
-
-function getConditionProgress(condition: AutoHaltCondition) {
-  if (condition.threshold === 0) return 0
-  return Math.min(100, (Math.abs(condition.current_value) / condition.threshold) * 100)
-}
-
-function getConditionColor(condition: AutoHaltCondition) {
-  const progress = getConditionProgress(condition)
-  if (progress >= 100) return '#ff4d4f'
-  if (progress >= 80) return '#ff9800'
-  if (progress >= 50) return '#faad14'
-  return '#4caf50'
-}
-
-function formatConditionValue(condition: AutoHaltCondition) {
-  return condition.current_value.toFixed(2)
-}
-
-function getConditionUnit(condition: AutoHaltCondition) {
-  switch (condition.condition_type) {
-    case 'total_loss':
-    case 'drawdown':
-      return '%'
-    case 'consecutive_losses':
-      return '次'
-    case 'error_rate':
-      return '%'
-    default:
-      return ''
   }
 }
 
@@ -286,7 +212,9 @@ onUnmounted(() => {
       }
 
       .halt-reason,
-      .halt-time {
+      .halt-time,
+      .halt-type,
+      .cooldown {
         color: #606266;
         margin: 4px 0;
       }
@@ -336,41 +264,6 @@ onUnmounted(() => {
         color: #909399;
         font-size: 14px;
         margin: 0;
-      }
-    }
-  }
-
-  .conditions-panel {
-    .conditions-list {
-      display: grid;
-      grid-template-columns: repeat(2, 1fr);
-      gap: 16px;
-    }
-
-    .condition-item {
-      padding: 16px;
-      background: #f5f7fa;
-      border-radius: 8px;
-
-      .condition-header {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        margin-bottom: 12px;
-
-        .condition-name {
-          font-weight: 500;
-        }
-      }
-
-      .condition-progress {
-        .progress-text {
-          display: block;
-          text-align: right;
-          font-size: 12px;
-          color: #909399;
-          margin-top: 4px;
-        }
       }
     }
   }

@@ -29,7 +29,7 @@
                 :key="s.id"
                 :label="s.name"
                 :value="s.id"
-                :disabled="!s.is_valid"
+                :disabled="s.status !== 'active'"
               />
             </el-select>
           </el-form-item>
@@ -161,17 +161,8 @@
             </div>
             <div class="item-stats">
               <div class="stat">
-                <span class="label">当前权益</span>
-                <span class="value">{{ formatNumber(session.current_equity, 2) }}</span>
-              </div>
-              <div class="stat">
-                <span class="label">总收益</span>
-                <PriceCell
-                  :value="session.realized_pnl + session.unrealized_pnl"
-                  :change="session.realized_pnl + session.unrealized_pnl"
-                  show-sign
-                  class="value"
-                />
+                <span class="label">初始资金</span>
+                <span class="value">{{ formatNumber(session.initial_capital ?? 0, 2) }}</span>
               </div>
             </div>
             <div class="item-actions" @click.stop>
@@ -210,7 +201,6 @@ import type { FormInstance, FormRules } from 'element-plus'
 import { useMarketStore } from '@/stores/market'
 import { useStrategyStore } from '@/stores/strategy'
 import StatusBadge from '@/components/common/StatusBadge.vue'
-import PriceCell from '@/components/common/PriceCell.vue'
 import { formatExchangeName, formatNumber } from '@/utils/format'
 import { TIMEFRAME_OPTIONS } from '@/utils/constants'
 import { getSymbols } from '@/api/market'

@@ -7,7 +7,7 @@ dayjs.locale('zh-cn')
 
 // 格式化数字 - 添加千分位
 export function formatNumber(value: number, decimals = 2): string {
-  if (value === null || value === undefined || isNaN(value)) {
+  if (value === null || value === undefined || isNaN(value) || !isFinite(value)) {
     return '-'
   }
   return value.toLocaleString('zh-CN', {
@@ -35,7 +35,7 @@ export function formatPrice(value: number): string {
 
 // 格式化百分比
 export function formatPercent(value: number, decimals = 2): string {
-  if (value === null || value === undefined || isNaN(value)) {
+  if (value === null || value === undefined || isNaN(value) || !isFinite(value)) {
     return '-'
   }
   const sign = value > 0 ? '+' : ''
@@ -44,7 +44,7 @@ export function formatPercent(value: number, decimals = 2): string {
 
 // 格式化大数字 (K, M, B)
 export function formatLargeNumber(value: number): string {
-  if (value === null || value === undefined || isNaN(value)) {
+  if (value === null || value === undefined || isNaN(value) || !isFinite(value)) {
     return '-'
   }
 
@@ -88,7 +88,7 @@ export function formatRelativeTime(value: string | number | Date): string {
 
 // 格式化时长 (秒)
 export function formatDuration(seconds: number): string {
-  if (seconds === null || seconds === undefined || isNaN(seconds)) {
+  if (seconds === null || seconds === undefined || isNaN(seconds) || !isFinite(seconds) || seconds < 0) {
     return '-'
   }
 
@@ -108,7 +108,7 @@ export function formatDuration(seconds: number): string {
 
 // 格式化文件大小
 export function formatFileSize(bytes: number): string {
-  if (bytes === null || bytes === undefined || isNaN(bytes)) {
+  if (bytes === null || bytes === undefined || isNaN(bytes) || !isFinite(bytes)) {
     return '-'
   }
 
@@ -149,7 +149,6 @@ export function formatOrderStatus(status: string): string {
     filled: '已成交',
     cancelled: '已取消',
     rejected: '已拒绝',
-    expired: '已过期',
   }
   return statuses[status] || status
 }
@@ -162,6 +161,7 @@ export function formatSessionStatus(status: string): string {
     completed: '已完成',
     failed: '已失败',
     stopped: '已停止',
+    cancelled: '已取消',
   }
   return statuses[status] || status
 }

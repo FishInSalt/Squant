@@ -46,7 +46,7 @@ onMounted(async () => {
   try {
     const response = await getAccounts()
     connectedExchanges.value = response.data
-      .filter(a => a.connection_status === 'connected')
+      .filter(a => a.is_active)
       .map(a => a.exchange.toUpperCase())
   } catch (error) {
     console.error('Failed to load accounts:', error)

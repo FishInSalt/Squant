@@ -30,7 +30,7 @@
                 :key="s.id"
                 :label="s.name"
                 :value="s.id"
-                :disabled="!s.is_valid"
+                :disabled="s.status !== 'active'"
               />
             </el-select>
           </el-form-item>
@@ -204,7 +204,7 @@
               <StatusBadge :status="backtest.status" />
             </div>
             <div class="item-meta">
-              <span>{{ backtest.config.symbol }}</span>
+              <span>{{ backtest.symbol }}</span>
               <span>{{ formatDateTime(backtest.created_at, 'MM-DD HH:mm') }}</span>
             </div>
             <el-progress
@@ -231,7 +231,7 @@ import { TIMEFRAME_OPTIONS } from '@/utils/constants'
 import { getSymbols } from '@/api/market'
 import { startBacktest, getBacktests } from '@/api/backtest'
 import { useNotification } from '@/composables/useNotification'
-import type { Strategy, BacktestRun } from '@/types'
+import type { BacktestRun } from '@/types'
 
 const router = useRouter()
 const route = useRoute()

@@ -1,22 +1,12 @@
 import { get, put, post, del } from './index'
-import type { Ticker, TickerResponse, Candle, Timeframe, WatchlistItem } from '@/types'
-
-// 后端返回的原始 K 线类型（timestamp 是 ISO 字符串）
-interface CandlestickItemResponse {
-  timestamp: string  // ISO 字符串格式
-  open: number | string
-  high: number | string
-  low: number | string
-  close: number | string
-  volume: number | string
-}
-
-// K线响应类型
-interface CandlestickResponse {
-  symbol: string
-  timeframe: string
-  candles: CandlestickItemResponse[]
-}
+import type { Ticker, Candle, Timeframe } from '@/types'
+import type {
+  TickerResponse,
+  CandlestickResponse,
+  CandlestickItem,
+  WatchlistItemResponse,
+  WatchlistCheckResponse,
+} from '@/types/generated'
 
 // 交易所配置响应类型
 interface ExchangeConfigResponse {
@@ -31,14 +21,14 @@ interface ExchangeSwitchResponse {
 }
 
 // 转换后端 Candle 响应为前端 Candle 类型
-function transformCandle(data: CandlestickItemResponse): Candle {
+function transformCandle(data: CandlestickItem): Candle {
   return {
     timestamp: new Date(data.timestamp).getTime(),  // 转换为毫秒时间戳
-    open: typeof data.open === 'string' ? parseFloat(data.open) : data.open,
-    high: typeof data.high === 'string' ? parseFloat(data.high) : data.high,
-    low: typeof data.low === 'string' ? parseFloat(data.low) : data.low,
-    close: typeof data.close === 'string' ? parseFloat(data.close) : data.close,
-    volume: typeof data.volume === 'string' ? parseFloat(data.volume) : data.volume,
+    open: data.open,
+    high: data.high,
+    low: data.low,
+    close: data.close,
+    volume: data.volume,
   }
 }
 
@@ -47,22 +37,19 @@ let currentExchangeId = 'okx'
 
 // 转换后端 Ticker 响应为前端 Ticker 类型
 function transformTicker(data: TickerResponse): Ticker {
-  const last = parseFloat(data.last) || 0
-  const high = parseFloat(data.high_24h || '0') || last
-  const low = parseFloat(data.low_24h || '0') || last
-
+  const last = data.last ?? 0
   return {
     exchange: currentExchangeId,
     symbol: data.symbol,
     last_price: last,
-    bid_price: parseFloat(data.bid || '0') || 0,
-    ask_price: parseFloat(data.ask || '0') || 0,
-    high_24h: high,
-    low_24h: low,
-    volume_24h: parseFloat(data.volume_24h || '0') || 0,
-    quote_volume_24h: parseFloat(data.volume_quote_24h || '0') || 0,
-    change_24h: parseFloat(data.change_24h || '0') || 0,
-    change_percent_24h: parseFloat(data.change_pct_24h || '0') || 0,
+    bid_price: data.bid ?? 0,
+    ask_price: data.ask ?? 0,
+    high_24h: data.high_24h ?? last,
+    low_24h: data.low_24h ?? last,
+    volume_24h: data.volume_24h ?? 0,
+    quote_volume_24h: data.volume_quote_24h ?? 0,
+    change_24h: data.change_24h ?? 0,
+    change_percent_24h: data.change_pct_24h ?? 0,
     timestamp: new Date(data.timestamp).getTime(),
   }
 }
@@ -174,19 +161,19 @@ export const getTimeframes = async (_exchange?: string) => ({
 // ============ 自选列表 API ============
 
 // 获取自选列表
-export const getWatchlistApi = () => get<WatchlistItem[]>('/watchlist')
+export const getWatchlistApi = () => get<WatchlistItemResponse[]>('/watchlist')
 
 // 添加到自选列表
 export const addWatchlistItem = (exchange: string, symbol: string) =>
-  post<WatchlistItem>('/watchlist', { exchange, symbol })
+  post<WatchlistItemResponse>('/watchlist', { exchange, symbol })
 
 // 从自选列表移除
 export const removeWatchlistItem = (id: string) => del<void>(`/watchlist/${id}`)
 
 // 检查是否在自选列表
 export const checkWatchlistItem = (exchange: string, symbol: string) =>
-  get<{ in_watchlist: boolean; item_id: string | null }>('/watchlist/check', { exchange, symbol })
+  get<WatchlistCheckResponse>('/watchlist/check', { exchange, symbol })
 
 // 重新排序自选列表
 export const reorderWatchlistApi = (items: { id: string; sort_order: number }[]) =>
-  put<WatchlistItem[]>('/watchlist/reorder', { items })
+  put<WatchlistItemResponse[]>('/watchlist/reorder', { items })

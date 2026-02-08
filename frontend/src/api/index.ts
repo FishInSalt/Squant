@@ -26,9 +26,11 @@ api.interceptors.request.use(
 api.interceptors.response.use(
   (response) => {
     const data = response.data as ApiResponse
-    if (data.success === false) {
-      ElMessage.error(data.message || data.error || '请求失败')
-      return Promise.reject(new Error(data.message || data.error))
+    // 后端成功响应: { code: 0, message: "success", data: T }
+    // 非0 code 表示业务错误
+    if (data.code !== undefined && data.code !== 0) {
+      ElMessage.error(data.message || '请求失败')
+      return Promise.reject(new Error(data.message))
     }
     return response.data
   },

@@ -173,6 +173,7 @@ class ValidationResult:
     valid: bool
     errors: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
+    strategy_info: dict[str, Any] | None = field(default=None)
 
     def add_error(self, message: str) -> None:
         """Add an error message."""
@@ -304,9 +305,7 @@ class DangerousAttributeValidator(ast.NodeVisitor):
     def visit_Attribute(self, node: ast.Attribute) -> None:
         """Check attribute access for dangerous dunder attributes."""
         if node.attr in _DANGEROUS_DUNDER_ATTRS:
-            self.result.add_error(
-                f"Line {node.lineno}: Access to '{node.attr}' is not allowed"
-            )
+            self.result.add_error(f"Line {node.lineno}: Access to '{node.attr}' is not allowed")
         self.generic_visit(node)
 
     def visit_Subscript(self, node: ast.Subscript) -> None:
@@ -325,9 +324,7 @@ class DangerousAttributeValidator(ast.NodeVisitor):
                 )
         # Check dangerous name as subscript target: __builtins__["eval"]
         if isinstance(node.value, ast.Name) and node.value.id in _DANGEROUS_DUNDER_ATTRS:
-            self.result.add_error(
-                f"Line {node.lineno}: Access to '{node.value.id}' is not allowed"
-            )
+            self.result.add_error(f"Line {node.lineno}: Access to '{node.value.id}' is not allowed")
         self.generic_visit(node)
 
 
@@ -372,23 +369,60 @@ def _build_restricted_globals() -> dict[str, Any]:
     # functions (factorial, comb, perm, etc.) that can be used for DoS attacks.
     import math
 
-    _SAFE_MATH_ATTRS = frozenset({
-        # Trigonometric
-        "sin", "cos", "tan", "asin", "acos", "atan", "atan2",
-        "sinh", "cosh", "tanh", "asinh", "acosh", "atanh",
-        "hypot", "degrees", "radians",
-        # Exponential / logarithmic
-        "exp", "expm1", "log", "log2", "log10", "log1p", "pow", "sqrt",
-        # Rounding / absolute
-        "ceil", "floor", "trunc", "fabs", "copysign", "remainder", "fmod",
-        # Statistics helpers
-        "fsum", "isfinite", "isinf", "isnan", "isclose",
-        # Constants
-        "pi", "e", "inf", "nan", "tau",
-    })
+    _SAFE_MATH_ATTRS = frozenset(
+        {
+            # Trigonometric
+            "sin",
+            "cos",
+            "tan",
+            "asin",
+            "acos",
+            "atan",
+            "atan2",
+            "sinh",
+            "cosh",
+            "tanh",
+            "asinh",
+            "acosh",
+            "atanh",
+            "hypot",
+            "degrees",
+            "radians",
+            # Exponential / logarithmic
+            "exp",
+            "expm1",
+            "log",
+            "log2",
+            "log10",
+            "log1p",
+            "pow",
+            "sqrt",
+            # Rounding / absolute
+            "ceil",
+            "floor",
+            "trunc",
+            "fabs",
+            "copysign",
+            "remainder",
+            "fmod",
+            # Statistics helpers
+            "fsum",
+            "isfinite",
+            "isinf",
+            "isnan",
+            "isclose",
+            # Constants
+            "pi",
+            "e",
+            "inf",
+            "nan",
+            "tau",
+        }
+    )
 
     class _RestrictedMath:
         """Proxy that exposes only safe math functions."""
+
         pass
 
     _restricted_math = _RestrictedMath()
@@ -480,6 +514,20 @@ def validate_strategy_code(code: str) -> ValidationResult:
             result.add_error(f"Restricted Python syntax error: {e}")
         except Exception as e:
             result.add_error(f"Compilation error: {e}")
+
+    # ST-003: Populate strategy_info when validation passes
+    if result.valid:
+        has_init = False
+        if structure_validator.found_strategy_class:
+            for child in ast.walk(tree):
+                if isinstance(child, ast.FunctionDef) and child.name == "__init__":
+                    has_init = True
+                    break
+        result.strategy_info = {
+            "class_name": structure_validator.current_class,
+            "has_on_bar": structure_validator.has_on_bar,
+            "has_init": has_init,
+        }
 
     return result
 

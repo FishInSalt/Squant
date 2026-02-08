@@ -14,7 +14,7 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted } from 'vue'
+import { onMounted, onUnmounted } from 'vue'
 import AppHeader from '@/components/layout/AppHeader.vue'
 import AppNav from '@/components/layout/AppNav.vue'
 import AppFooter from '@/components/layout/AppFooter.vue'
@@ -38,6 +38,10 @@ onMounted(async () => {
 
   // 连接 WebSocket
   wsStore.connect()
+})
+
+onUnmounted(() => {
+  wsStore.disconnect()
 })
 </script>
 

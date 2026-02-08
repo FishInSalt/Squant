@@ -8,6 +8,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field, model_validator
 
+from squant.schemas.types import NumberDecimal
+
 
 class RunBacktestRequest(BaseModel):
     """Request to create and run a backtest."""
@@ -89,16 +91,18 @@ class BacktestRunResponse(BaseModel):
 
     id: UUID
     strategy_id: UUID
+    strategy_name: str | None = None
     mode: str
     symbol: str
     exchange: str
     timeframe: str
     status: str
+    progress: float = 0.0
     backtest_start: datetime | None
     backtest_end: datetime | None
-    initial_capital: Decimal | None
-    commission_rate: Decimal
-    slippage: Decimal | None
+    initial_capital: NumberDecimal | None
+    commission_rate: NumberDecimal
+    slippage: NumberDecimal | None
     params: dict[str, Any]
     result: dict[str, Any] | None
     error_message: str | None
@@ -115,13 +119,14 @@ class BacktestListItem(BaseModel):
 
     id: UUID
     strategy_id: UUID
+    strategy_name: str | None = None
     symbol: str
     exchange: str
     timeframe: str
     status: str
     backtest_start: datetime | None
     backtest_end: datetime | None
-    initial_capital: Decimal | None
+    initial_capital: NumberDecimal | None
     result: dict[str, Any] | None
     created_at: datetime
 
@@ -132,10 +137,10 @@ class EquityCurvePoint(BaseModel):
     """Single point in equity curve."""
 
     time: datetime
-    equity: Decimal
-    cash: Decimal
-    position_value: Decimal
-    unrealized_pnl: Decimal
+    equity: NumberDecimal
+    cash: NumberDecimal
+    position_value: NumberDecimal
+    unrealized_pnl: NumberDecimal
 
     model_config = {"from_attributes": True}
 
@@ -146,20 +151,64 @@ class TradeRecordResponse(BaseModel):
     symbol: str
     side: str
     entry_time: datetime
-    entry_price: Decimal
+    entry_price: NumberDecimal
     exit_time: datetime | None
-    exit_price: Decimal | None
-    amount: Decimal
-    pnl: Decimal
-    pnl_pct: Decimal
-    fees: Decimal
+    exit_price: NumberDecimal | None
+    amount: NumberDecimal
+    pnl: NumberDecimal
+    pnl_pct: NumberDecimal
+    fees: NumberDecimal
+
+
+class BacktestMetrics(BaseModel):
+    """Strongly-typed backtest performance metrics (BT-004).
+
+    Replaces dict[str, Any] for type-safe metric access.
+    Values come from PerformanceMetrics.to_dict() stored in StrategyRun.result.
+    """
+
+    # Return metrics
+    total_return: float = 0.0
+    total_return_pct: float = 0.0
+    annualized_return: float = 0.0
+
+    # Risk metrics
+    max_drawdown: float = 0.0
+    max_drawdown_pct: float = 0.0
+    max_drawdown_duration_hours: int = 0
+    sharpe_ratio: float = 0.0
+    sortino_ratio: float = 0.0
+    calmar_ratio: float = 0.0
+    volatility: float = 0.0
+
+    # Trade statistics
+    total_trades: int = 0
+    winning_trades: int = 0
+    losing_trades: int = 0
+    win_rate: float = 0.0
+    profit_factor: float = 0.0
+    avg_trade_return: float = 0.0
+    avg_win: float = 0.0
+    avg_loss: float = 0.0
+    largest_win: float = 0.0
+    largest_loss: float = 0.0
+    max_consecutive_losses: int = 0
+
+    # Duration metrics
+    avg_trade_duration_hours: float = 0.0
+    total_duration_days: int = 0
+
+    # Fee metrics
+    total_fees: float = 0.0
 
 
 class BacktestDetailResponse(BaseModel):
-    """Detailed backtest response including equity curve and trades."""
+    """Detailed backtest response including equity curve, metrics, and trades."""
 
     run: BacktestRunResponse
+    metrics: BacktestMetrics | None = None
     equity_curve: list[EquityCurvePoint]
+    trades: list[TradeRecordResponse] = Field(default_factory=list)
     total_bars: int | None = None
 
 
@@ -208,10 +257,10 @@ class BacktestReportExport(BaseModel):
     timeframe: str
     start_date: datetime
     end_date: datetime
-    initial_capital: Decimal
-    final_equity: Decimal
-    commission_rate: Decimal
-    slippage: Decimal
+    initial_capital: NumberDecimal
+    final_equity: NumberDecimal
+    commission_rate: NumberDecimal
+    slippage: NumberDecimal
 
     # Performance metrics
     metrics: dict[str, Any]

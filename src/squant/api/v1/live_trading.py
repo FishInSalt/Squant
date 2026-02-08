@@ -304,6 +304,8 @@ async def list_active_sessions(
             LiveTradingListItem(
                 run_id=UUID(sess["run_id"]),
                 strategy_id=strategy_id,
+                strategy_name=run.strategy_name,
+                account_id=run.account_id,
                 symbol=sess["symbol"],
                 timeframe=sess["timeframe"],
                 is_running=sess["is_running"],

@@ -11,6 +11,7 @@ the /api/v1/exchange-accounts endpoint with properly encrypted credentials.
 """
 
 import logging
+from decimal import Decimal
 from typing import Annotated
 from uuid import UUID
 
@@ -148,8 +149,26 @@ def _handle_order_error(e: Exception) -> None:
     handle_exchange_error(e)
 
 
+def _status_display(status: OrderStatus | str) -> str:
+    """Map order status to frontend-friendly display value (OD-004)."""
+    status_str = status.value if isinstance(status, OrderStatus) else status
+    if status_str in ("pending", "submitted"):
+        return "open"
+    return status_str
+
+
 def _to_order_detail(order) -> OrderDetail:
     """Convert Order model to OrderDetail schema."""
+    commission = sum((t.fee for t in order.trades), Decimal("0")) if order.trades else Decimal("0")
+    commission_asset = None
+    if order.trades:
+        # Use fee_currency from the first trade (typically consistent across trades)
+        commission_asset = next(
+            (t.fee_currency for t in order.trades if t.fee_currency), None
+        )
+    strategy_name = None
+    if order.run and order.run.strategy:
+        strategy_name = order.run.strategy.name
     return OrderDetail(
         id=UUID(order.id),
         account_id=UUID(order.account_id),
@@ -165,6 +184,11 @@ def _to_order_detail(order) -> OrderDetail:
         filled=order.filled,
         avg_price=order.avg_price,
         reject_reason=order.reject_reason,
+        commission=commission,
+        commission_asset=commission_asset,
+        remaining_amount=order.amount - order.filled,
+        status_display=_status_display(order.status),
+        strategy_name=strategy_name,
         created_at=order.created_at,
         updated_at=order.updated_at,
     )
@@ -172,6 +196,28 @@ def _to_order_detail(order) -> OrderDetail:
 
 def _to_order_with_trades(order) -> OrderWithTrades:
     """Convert Order model to OrderWithTrades schema."""
+    trades = [
+        TradeDetail(
+            id=UUID(t.id),
+            order_id=UUID(t.order_id),
+            exchange_tid=t.exchange_tid,
+            price=t.price,
+            amount=t.amount,
+            fee=t.fee,
+            fee_currency=t.fee_currency,
+            timestamp=t.timestamp,
+        )
+        for t in order.trades
+    ]
+    commission = sum((t.fee for t in order.trades), Decimal("0")) if order.trades else Decimal("0")
+    commission_asset = None
+    if order.trades:
+        commission_asset = next(
+            (t.fee_currency for t in order.trades if t.fee_currency), None
+        )
+    strategy_name = None
+    if order.run and order.run.strategy:
+        strategy_name = order.run.strategy.name
     return OrderWithTrades(
         id=UUID(order.id),
         account_id=UUID(order.account_id),
@@ -187,21 +233,14 @@ def _to_order_with_trades(order) -> OrderWithTrades:
         filled=order.filled,
         avg_price=order.avg_price,
         reject_reason=order.reject_reason,
+        commission=commission,
+        commission_asset=commission_asset,
+        remaining_amount=order.amount - order.filled,
+        status_display=_status_display(order.status),
+        strategy_name=strategy_name,
         created_at=order.created_at,
         updated_at=order.updated_at,
-        trades=[
-            TradeDetail(
-                id=UUID(t.id),
-                order_id=UUID(t.order_id),
-                exchange_tid=t.exchange_tid,
-                price=t.price,
-                amount=t.amount,
-                fee=t.fee,
-                fee_currency=t.fee_currency,
-                timestamp=t.timestamp,
-            )
-            for t in order.trades
-        ],
+        trades=trades,
     )
 
 
@@ -295,6 +334,7 @@ async def get_order_stats(
         stats = await service.get_order_stats()
         data = OrderStatsResponse(
             total=stats["total"],
+            open=stats["pending"] + stats["submitted"],
             pending=stats["pending"],
             submitted=stats["submitted"],
             partial=stats["partial"],

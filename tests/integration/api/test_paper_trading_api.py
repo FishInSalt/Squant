@@ -69,6 +69,7 @@ class TestStartPaperTrading:
         mock_run.stopped_at = None
         mock_run.created_at = datetime.now(UTC)
         mock_run.updated_at = datetime.now(UTC)
+        mock_run.strategy_name = None
 
         with patch(
             "squant.services.paper_trading.PaperTradingService.start",
@@ -85,7 +86,7 @@ class TestStartPaperTrading:
         assert result["status"] == "running"
         assert result["mode"] == "paper"
         assert result["symbol"] == "BTC/USDT"
-        assert result["initial_capital"] == "10000"
+        assert result["initial_capital"] == 10000
 
     @pytest.mark.asyncio
     async def test_start_paper_trading_shows_running_status(self, client, sample_paper_config):
@@ -107,6 +108,7 @@ class TestStartPaperTrading:
         mock_run.stopped_at = None
         mock_run.created_at = datetime.now(UTC)
         mock_run.updated_at = datetime.now(UTC)
+        mock_run.strategy_name = None
 
         with patch(
             "squant.services.paper_trading.PaperTradingService.start",
@@ -197,6 +199,7 @@ class TestStartPaperTrading:
         mock_run.stopped_at = None
         mock_run.created_at = datetime.now(UTC)
         mock_run.updated_at = datetime.now(UTC)
+        mock_run.strategy_name = None
 
         with patch(
             "squant.services.paper_trading.PaperTradingService.start",
@@ -261,7 +264,7 @@ class TestPaperTradingStatus:
         assert Decimal(result["equity"]) == Decimal("11200.00")
         assert Decimal(result["cash"]) == Decimal("8500.00")
         assert "BTC/USDT" in result["positions"]
-        assert Decimal(result["positions"]["BTC/USDT"]["amount"]) == Decimal("0.05")
+        assert result["positions"]["BTC/USDT"]["amount"] == 0.05
 
     @pytest.mark.asyncio
     async def test_get_status_shows_trade_updates(self, client):
@@ -397,6 +400,7 @@ class TestStopPaperTrading:
         mock_run.stopped_at = datetime.now(UTC)
         mock_run.created_at = datetime.now(UTC)
         mock_run.updated_at = datetime.now(UTC)
+        mock_run.strategy_name = None
 
         with patch(
             "squant.services.paper_trading.PaperTradingService.stop",
@@ -434,6 +438,7 @@ class TestStopPaperTrading:
         mock_run.stopped_at = datetime.now(UTC)
         mock_run.created_at = datetime.now(UTC)
         mock_run.updated_at = datetime.now(UTC)
+        mock_run.strategy_name = None
 
         with patch(
             "squant.services.paper_trading.PaperTradingService.stop",
@@ -549,6 +554,7 @@ class TestPaperTradingList:
         mock_run.stopped_at = datetime.now(UTC)
         mock_run.created_at = datetime.now(UTC)
         mock_run.updated_at = datetime.now(UTC)
+        mock_run.strategy_name = None
 
         with patch(
             "squant.services.paper_trading.PaperTradingService.list_runs",
@@ -586,6 +592,7 @@ class TestPaperTradingList:
         mock_run.stopped_at = None
         mock_run.created_at = datetime.now(UTC)
         mock_run.updated_at = datetime.now(UTC)
+        mock_run.strategy_name = None
 
         with patch(
             "squant.services.paper_trading.PaperTradingService.list_runs",
@@ -636,6 +643,7 @@ class TestPaperTradingDetails:
         mock_run.stopped_at = datetime.now(UTC)
         mock_run.created_at = datetime.now(UTC)
         mock_run.updated_at = datetime.now(UTC)
+        mock_run.strategy_name = None
 
         with patch(
             "squant.services.paper_trading.PaperTradingService.get_run",

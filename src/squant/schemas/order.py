@@ -7,6 +7,7 @@ from uuid import UUID
 from pydantic import BaseModel, Field
 
 from squant.models.enums import OrderSide, OrderStatus, OrderType
+from squant.schemas.types import NumberDecimal
 
 
 class CreateOrderRequest(BaseModel):
@@ -35,11 +36,20 @@ class OrderDetail(BaseModel):
     side: OrderSide = Field(..., description="Order side")
     type: OrderType = Field(..., description="Order type")
     status: OrderStatus = Field(..., description="Order status")
-    price: Decimal | None = Field(None, description="Order price")
-    amount: Decimal = Field(..., description="Order amount")
-    filled: Decimal = Field(..., description="Filled amount")
-    avg_price: Decimal | None = Field(None, description="Average fill price")
+    price: NumberDecimal | None = Field(None, description="Order price")
+    amount: NumberDecimal = Field(..., description="Order amount")
+    filled: NumberDecimal = Field(..., description="Filled amount")
+    avg_price: NumberDecimal | None = Field(None, description="Average fill price")
     reject_reason: str | None = Field(None, description="Rejection reason if rejected")
+    commission: NumberDecimal = Field(
+        default=Decimal("0"), description="Total commission (sum of trade fees)"
+    )
+    commission_asset: str | None = Field(None, description="Commission currency (from trades)")
+    remaining_amount: NumberDecimal = Field(
+        default=Decimal("0"), description="Remaining unfilled amount (amount - filled)"
+    )
+    status_display: str = Field(default="", description="Frontend-friendly status (submitted→open)")
+    strategy_name: str | None = Field(None, description="Strategy name (from run.strategy)")
     created_at: datetime = Field(..., description="Creation time")
     updated_at: datetime = Field(..., description="Last update time")
 
@@ -52,9 +62,9 @@ class TradeDetail(BaseModel):
     id: UUID = Field(..., description="Trade ID")
     order_id: UUID = Field(..., description="Order ID")
     exchange_tid: str | None = Field(None, description="Exchange trade ID")
-    price: Decimal = Field(..., description="Execution price")
-    amount: Decimal = Field(..., description="Execution amount")
-    fee: Decimal = Field(..., description="Trading fee")
+    price: NumberDecimal = Field(..., description="Execution price")
+    amount: NumberDecimal = Field(..., description="Execution amount")
+    fee: NumberDecimal = Field(..., description="Trading fee")
     fee_currency: str | None = Field(None, description="Fee currency")
     timestamp: datetime = Field(..., description="Execution time")
 
@@ -97,6 +107,7 @@ class OrderStatsResponse(BaseModel):
     """Order statistics response."""
 
     total: int = Field(..., description="Total orders")
+    open: int = Field(default=0, description="Open orders (pending + submitted)")
     pending: int = Field(..., description="Pending orders")
     submitted: int = Field(..., description="Submitted orders")
     partial: int = Field(..., description="Partially filled orders")

@@ -1,7 +1,7 @@
 // 订单相关类型
 export type OrderSide = 'buy' | 'sell'
 export type OrderType = 'market' | 'limit' | 'stop' | 'stop_limit'
-export type OrderStatus = 'pending' | 'open' | 'partial' | 'filled' | 'cancelled' | 'rejected' | 'expired'
+export type OrderStatus = 'pending' | 'submitted' | 'open' | 'partial' | 'filled' | 'cancelled' | 'rejected'
 
 export interface Order {
   id: string
@@ -13,10 +13,10 @@ export interface Order {
   status: OrderStatus
   price?: number
   stop_price?: number
-  quantity: number
-  filled_quantity: number
-  remaining_quantity: number
-  avg_fill_price?: number
+  amount: number
+  filled: number
+  remaining_amount: number
+  avg_price?: number
   commission?: number
   commission_asset?: string
   session_id?: string

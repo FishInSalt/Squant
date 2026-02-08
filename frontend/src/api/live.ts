@@ -1,15 +1,14 @@
 import { get, post, del } from './index'
-import type { LiveSession, Position, RunLog, Trade, RiskConfig, PaginatedData, EquityCurvePoint } from '@/types'
+import type { LiveSession, LiveTradingStatus, Position, RunLog, Trade, RiskConfig, PaginatedData, EquityCurvePoint } from '@/types'
 
 // 启动实盘交易
 export const startLiveTrading = (config: {
   strategy_id: string
-  account_id: string
-  exchange: string
+  exchange_account_id: string
   symbol: string
   timeframe: string
   initial_equity: number
-  params: Record<string, unknown>
+  params?: Record<string, unknown>
   risk_config: RiskConfig
 }) =>
   post<LiveSession>('/live', config)
@@ -28,7 +27,7 @@ export const getLiveSession = (id: string) =>
 
 // 获取会话实时状态
 export const getLiveSessionStatus = (id: string) =>
-  get<LiveSession>(`/live/${id}/status`)
+  get<LiveTradingStatus>(`/live/${id}/status`)
 
 // 获取会话列表
 export const getLiveSessions = (params?: {

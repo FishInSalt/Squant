@@ -96,7 +96,7 @@ const routes: RouteRecordRaw[] = [
       {
         path: 'monitor/:type/:id',
         name: 'SessionMonitor',
-        component: () => import('@/views/trading/Monitor.vue'),
+        component: () => import('@/views/trading/SessionDetail.vue'),
         meta: { title: '会话监控' },
         props: true,
       },

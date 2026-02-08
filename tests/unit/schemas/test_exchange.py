@@ -99,6 +99,29 @@ class TestBalanceResponse:
 
         assert response.balances == []
 
+    def test_total_usd_value_default_none(self):
+        """Test total_usd_value defaults to None (AC-003)."""
+        now = datetime.now(UTC)
+        response = BalanceResponse(
+            exchange="okx",
+            balances=[],
+            timestamp=now,
+        )
+        assert response.total_usd_value is None
+
+    def test_total_usd_value_with_value(self):
+        """Test total_usd_value can be set (AC-003)."""
+        now = datetime.now(UTC)
+        response = BalanceResponse(
+            exchange="okx",
+            balances=[],
+            timestamp=now,
+            total_usd_value=Decimal("50000.50"),
+        )
+        assert response.total_usd_value == Decimal("50000.50")
+        data = response.model_dump(mode="json")
+        assert isinstance(data["total_usd_value"], float)
+
 
 class TestTickerResponse:
     """Tests for TickerResponse schema."""

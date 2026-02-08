@@ -115,13 +115,22 @@ export const useWebSocketStore = defineStore('websocket', () => {
       return
     }
 
+    // 重置服务不可用标志，允许显式重连
+    serviceUnavailable.value = false
+    serviceUnavailableMessage.value = ''
+
     // 设置连接中标志
     connecting.value = true
 
     // 清理之前的连接（已关闭或关闭中的）
     cleanup()
 
-    const wsUrl = import.meta.env.VITE_WS_BASE_URL || 'ws://localhost:8000/api/v1/ws'
+    let wsUrl: string = import.meta.env.VITE_WS_BASE_URL || 'ws://localhost:8000/api/v1/ws'
+    // 处理生产环境相对路径：将 /ws 转换为绝对 WebSocket URL
+    if (wsUrl.startsWith('/')) {
+      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+      wsUrl = `${protocol}//${window.location.host}${wsUrl}`
+    }
     console.debug(`Connecting to WebSocket: ${wsUrl}`)
 
     try {

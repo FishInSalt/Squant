@@ -60,9 +60,7 @@ class MaxSessionsReachedError(PaperTradingError):
     """Maximum number of concurrent paper trading sessions reached."""
 
     def __init__(self, max_sessions: int):
-        super().__init__(
-            f"Maximum concurrent paper trading sessions reached: {max_sessions}"
-        )
+        super().__init__(f"Maximum concurrent paper trading sessions reached: {max_sessions}")
 
 
 class StrategyInstantiationError(PaperTradingError):
@@ -550,6 +548,8 @@ class PaperTradingService:
             "equity": str(run.initial_capital) if run.initial_capital else "0",
             "initial_capital": str(run.initial_capital) if run.initial_capital else "0",
             "total_fees": "0",
+            "unrealized_pnl": "0",
+            "realized_pnl": "0",
             "positions": {},
             "pending_orders": [],
             "completed_orders_count": 0,

@@ -87,21 +87,21 @@
           </template>
         </el-table-column>
 
-        <el-table-column prop="avg_fill_price" label="成交均价" width="120" align="right">
+        <el-table-column prop="avg_price" label="成交均价" width="120" align="right">
           <template #default="{ row }">
-            {{ row.avg_fill_price ? formatPrice(row.avg_fill_price) : '-' }}
+            {{ row.avg_price ? formatPrice(row.avg_price) : '-' }}
           </template>
         </el-table-column>
 
-        <el-table-column prop="quantity" label="委托数量" width="100" align="right">
+        <el-table-column prop="amount" label="委托数量" width="100" align="right">
           <template #default="{ row }">
-            {{ formatNumber(row.quantity, 4) }}
+            {{ formatNumber(row.amount, 4) }}
           </template>
         </el-table-column>
 
-        <el-table-column prop="filled_quantity" label="成交数量" width="100" align="right">
+        <el-table-column prop="filled" label="成交数量" width="100" align="right">
           <template #default="{ row }">
-            {{ formatNumber(row.filled_quantity, 4) }}
+            {{ formatNumber(row.filled, 4) }}
           </template>
         </el-table-column>
 
