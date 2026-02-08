@@ -124,9 +124,9 @@
           <div v-if="backtestHistory.length > 0" class="history-list">
             <div
               v-for="backtest in backtestHistory"
-              :key="backtest.backtest_id"
+              :key="backtest.id"
               class="history-item"
-              @click="goToBacktestResult(backtest.backtest_id)"
+              @click="goToBacktestResult(backtest.id)"
             >
               <StatusBadge :status="backtest.status as any" />
               <span class="time">{{ formatRelativeTime(backtest.created_at) }}</span>
@@ -157,7 +157,7 @@ import { useStrategyStore } from '@/stores/strategy'
 import StatusBadge from '@/components/common/StatusBadge.vue'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import { formatDateTime, formatRelativeTime } from '@/utils/format'
-import { getStrategyCode, getStrategyBacktests } from '@/api/strategy'
+import { getBacktests } from '@/api/backtest'
 import { useNotification } from '@/composables/useNotification'
 import type { Strategy } from '@/types'
 
@@ -172,7 +172,7 @@ const { toastSuccess, toastError } = useNotification()
 const loading = ref(false)
 const strategy = ref<Strategy | null>(null)
 const strategyCode = ref('')
-const backtestHistory = ref<{ backtest_id: string; created_at: string; status: string }[]>([])
+const backtestHistory = ref<{ id: string; created_at: string; status: string }[]>([])
 const showDeleteDialog = ref(false)
 const deleteLoading = ref(false)
 
@@ -182,13 +182,16 @@ async function loadStrategy() {
     strategy.value = await strategyStore.loadStrategy(props.id)
 
     if (strategy.value) {
-      // 加载代码
-      const codeResponse = await getStrategyCode(props.id)
-      strategyCode.value = codeResponse.data.code
+      // 代码已包含在策略详情中
+      strategyCode.value = strategy.value.code || ''
 
-      // 加载回测历史
-      const historyResponse = await getStrategyBacktests(props.id, 10)
-      backtestHistory.value = historyResponse.data
+      // 加载回测历史（复用分页接口，取最近 10 条）
+      try {
+        const historyResponse = await getBacktests({ strategy_id: props.id, page_size: 10 })
+        backtestHistory.value = historyResponse.data.items
+      } catch {
+        backtestHistory.value = []
+      }
     }
   } finally {
     loading.value = false

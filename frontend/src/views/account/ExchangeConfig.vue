@@ -124,12 +124,12 @@ import type { FormInstance, FormRules } from 'element-plus'
 import { formatExchangeName } from '@/utils/format'
 import {
   getAccounts,
-  getSupportedExchanges,
   createAccount,
   updateAccount,
   deleteAccount,
   testConnection as apiTestConnection,
 } from '@/api/account'
+import { SUPPORTED_EXCHANGES } from '@/utils/constants'
 import { useNotification } from '@/composables/useNotification'
 import type { ExchangeAccount } from '@/types'
 
@@ -139,7 +139,7 @@ const loading = ref(false)
 const submitting = ref(false)
 const testingId = ref<string | null>(null)
 const accounts = ref<ExchangeAccount[]>([])
-const supportedExchanges = ref<{ id: string; name: string; has_testnet: boolean }[]>([])
+const supportedExchanges = SUPPORTED_EXCHANGES
 const dialogVisible = ref(false)
 const editingAccount = ref<ExchangeAccount | null>(null)
 const formRef = ref<FormInstance>()
@@ -182,15 +182,6 @@ async function loadAccounts() {
     console.error('Failed to load accounts:', error)
   } finally {
     loading.value = false
-  }
-}
-
-async function loadSupportedExchanges() {
-  try {
-    const response = await getSupportedExchanges()
-    supportedExchanges.value = response.data
-  } catch (error) {
-    console.error('Failed to load supported exchanges:', error)
   }
 }
 
@@ -282,7 +273,6 @@ async function handleDelete(account: ExchangeAccount) {
 
 onMounted(() => {
   loadAccounts()
-  loadSupportedExchanges()
 })
 </script>
 

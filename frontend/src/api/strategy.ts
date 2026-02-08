@@ -36,13 +36,3 @@ export const updateStrategy = (id: string, data: Partial<Strategy>) =>
 export const deleteStrategy = (id: string) =>
   del<void>(`/strategies/${id}`)
 
-// 获取策略代码
-export const getStrategyCode = (id: string) =>
-  get<{ code: string }>(`/strategies/${id}/code`)
-
-// 获取策略的回测历史
-export const getStrategyBacktests = (id: string, limit?: number) =>
-  get<{ backtest_id: string; created_at: string; status: string }[]>(
-    `/strategies/${id}/backtests`,
-    { limit }
-  )

@@ -87,6 +87,3 @@ export const getRiskTriggers = (params?: {
 }) =>
   get<PaginatedData<RiskTrigger>>('/risk-triggers', params)
 
-// 获取最近的触发记录
-export const getRecentTriggers = (limit?: number) =>
-  get<RiskTrigger[]>('/risk-triggers/recent', { limit })

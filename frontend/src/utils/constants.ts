@@ -39,6 +39,13 @@ export const EXCHANGE_OPTIONS = [
   { label: 'Gate.io', value: 'gate' },
 ] as const
 
+// 支持的交易所（用于账户配置）
+export const SUPPORTED_EXCHANGES = [
+  { id: 'okx', name: 'OKX', has_testnet: true },
+  { id: 'binance', name: 'Binance', has_testnet: true },
+  { id: 'bybit', name: 'Bybit', has_testnet: true },
+] as const
+
 // 订单方向选项
 export const ORDER_SIDE_OPTIONS = [
   { label: '买入', value: 'buy' },

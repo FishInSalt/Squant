@@ -3,6 +3,7 @@ export interface Strategy {
   id: string
   name: string
   description: string
+  code: string
   version: string
   author: string
   filename: string
