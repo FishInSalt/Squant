@@ -59,12 +59,12 @@
 
       <div v-if="validationResult.strategy_info" class="strategy-info">
         <div class="info-item">
-          <span class="label">策略名称:</span>
-          <span class="value">{{ validationResult.strategy_info.name }}</span>
-        </div>
-        <div class="info-item">
           <span class="label">类名:</span>
           <span class="value">{{ validationResult.strategy_info.class_name }}</span>
+        </div>
+        <div class="info-item">
+          <span class="label">on_bar:</span>
+          <span class="value">{{ validationResult.strategy_info.has_on_bar ? '有' : '无' }}</span>
         </div>
       </div>
 

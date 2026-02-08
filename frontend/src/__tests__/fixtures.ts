@@ -43,6 +43,7 @@ export function createMockStrategy(overrides?: Partial<Strategy>): Strategy {
     version: '1.0.0',
     status: 'active',
     params_schema: { type: 'object', properties: {} },
+    default_params: {},
     created_at: '2024-01-01T00:00:00Z',
     updated_at: '2024-01-01T00:00:00Z',
     ...overrides,

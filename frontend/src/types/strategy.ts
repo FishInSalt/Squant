@@ -1,4 +1,5 @@
 // 策略相关类型
+// 匹配后端 StrategyResponse
 export interface Strategy {
   id: string
   name: string
@@ -7,9 +8,9 @@ export interface Strategy {
   version: string
   status: 'active' | 'archived'
   params_schema: ParamsSchema
+  default_params: Record<string, unknown>
   created_at: string
   updated_at: string
-  validation_errors?: string[]
 }
 
 export interface ParamsSchema {
@@ -33,10 +34,11 @@ export interface ValidationResult {
   valid: boolean
   errors: ValidationError[]
   warnings: ValidationWarning[]
+  // 匹配后端 StrategyInfo
   strategy_info?: {
-    name: string
-    class_name: string
-    params_schema: ParamsSchema
+    class_name?: string
+    has_on_bar: boolean
+    has_init: boolean
   }
 }
 

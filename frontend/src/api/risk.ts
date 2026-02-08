@@ -22,7 +22,7 @@ export const getRiskRule = (id: string) =>
   get<RiskRule>(`/risk-rules/${id}`)
 
 // 创建风控规则
-export const createRiskRule = (rule: Omit<RiskRule, 'id' | 'created_at' | 'updated_at' | 'status' | 'last_triggered'>) =>
+export const createRiskRule = (rule: Omit<RiskRule, 'id' | 'created_at' | 'updated_at' | 'last_triggered'>) =>
   post<RiskRule>('/risk-rules', rule)
 
 // 更新风控规则

@@ -201,7 +201,7 @@ function showEditDialog(rule: RiskRule) {
   editingRule.value = rule
   form.name = rule.name
   form.type = rule.type
-  form.description = rule.description
+  form.description = rule.description ?? ''
   form.params = { ...rule.params } as RuleParams
   dialogVisible.value = true
 }

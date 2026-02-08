@@ -35,21 +35,22 @@
 
     <div class="records-table card">
       <el-table :data="records" v-loading="loading" stripe>
-        <el-table-column prop="created_at" label="触发时间" width="180">
+        <el-table-column prop="time" label="触发时间" width="180">
           <template #default="{ row }">
-            {{ formatDateTime(row.created_at) }}
+            {{ formatDateTime(row.time) }}
           </template>
         </el-table-column>
 
         <el-table-column prop="rule_name" label="规则名称" width="150">
           <template #default="{ row }">
-            <span class="rule-name">{{ row.rule_name }}</span>
+            <span class="rule-name">{{ row.rule_name || '-' }}</span>
           </template>
         </el-table-column>
 
         <el-table-column prop="rule_type" label="规则类型" width="120">
           <template #default="{ row }">
-            <el-tag size="small" type="info">{{ getRuleTypeLabel(row.rule_type) }}</el-tag>
+            <el-tag v-if="row.rule_type" size="small" type="info">{{ getRuleTypeLabel(row.rule_type) }}</el-tag>
+            <span v-else>{{ row.trigger_type }}</span>
           </template>
         </el-table-column>
 
@@ -71,26 +72,9 @@
           </template>
         </el-table-column>
 
-        <el-table-column label="阈值" width="120">
-          <template #default="{ row }">
-            {{ row.threshold_value }}
-          </template>
-        </el-table-column>
-
-        <el-table-column prop="action_taken" label="执行动作" width="100">
-          <template #default="{ row }">
-            <el-tag
-              :type="getActionTagType(row.action_taken)"
-              size="small"
-            >
-              {{ getActionLabel(row.action_taken) }}
-            </el-tag>
-          </template>
-        </el-table-column>
-
         <el-table-column prop="message" label="详情" min-width="200">
           <template #default="{ row }">
-            {{ row.message }}
+            {{ row.message || '-' }}
           </template>
         </el-table-column>
       </el-table>
@@ -136,31 +120,9 @@ function getRuleTypeLabel(type: string) {
   return ruleTypeOptions.find((t) => t.value === type)?.label || type
 }
 
-const ACTION_LABELS: Record<string, string> = {
-  warn: '警告',
-  block: '阻止',
-  halt: '熔断',
-}
-
-function getActionLabel(action: string) {
-  return ACTION_LABELS[action] || action
-}
-
-function getActionTagType(action: string): 'success' | 'warning' | 'danger' | 'info' | 'primary' {
-  switch (action) {
-    case 'warn':
-      return 'warning'
-    case 'block':
-      return 'danger'
-    case 'halt':
-      return 'primary'
-    default:
-      return 'info'
-  }
-}
-
 function formatTriggerValue(row: RiskTrigger) {
-  const value = row.trigger_value
+  const value = row.details?.trigger_value ?? row.details?.value
+  if (value == null) return '-'
   if (typeof value === 'number') {
     return value.toFixed(2)
   }
