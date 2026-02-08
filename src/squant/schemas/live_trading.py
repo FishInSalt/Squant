@@ -7,6 +7,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
+from squant.schemas.types import NumberDecimal
+
 
 class RiskConfigRequest(BaseModel):
     """Risk configuration for live trading."""
@@ -69,14 +71,16 @@ class LiveTradingRunResponse(BaseModel):
 
     id: UUID
     strategy_id: UUID
+    strategy_name: str | None = None
+    account_id: str | None = None
     mode: str
     symbol: str
     exchange: str
     timeframe: str
     status: str
-    initial_capital: Decimal | None
-    commission_rate: Decimal
-    slippage: Decimal | None
+    initial_capital: NumberDecimal | None
+    commission_rate: NumberDecimal
+    slippage: NumberDecimal | None
     params: dict[str, Any]
     error_message: str | None
     started_at: datetime | None
@@ -90,8 +94,8 @@ class LiveTradingRunResponse(BaseModel):
 class LivePositionInfo(BaseModel):
     """Position information for live trading."""
 
-    amount: Decimal
-    avg_entry_price: Decimal
+    amount: NumberDecimal
+    avg_entry_price: NumberDecimal
 
 
 class LiveOrderInfo(BaseModel):
@@ -102,10 +106,10 @@ class LiveOrderInfo(BaseModel):
     symbol: str
     side: str
     type: str
-    amount: Decimal
-    filled_amount: Decimal
-    price: Decimal | None
-    avg_fill_price: Decimal | None
+    amount: NumberDecimal
+    filled_amount: NumberDecimal
+    price: NumberDecimal | None
+    avg_fill_price: NumberDecimal | None
     status: str
     created_at: datetime | None
     updated_at: datetime | None
@@ -114,14 +118,14 @@ class LiveOrderInfo(BaseModel):
 class RiskStateResponse(BaseModel):
     """Risk management state response."""
 
-    daily_pnl: Decimal
+    daily_pnl: NumberDecimal
     daily_trade_count: int
     consecutive_losses: int
     circuit_breaker_active: bool
-    max_position_size: Decimal
-    max_order_size: Decimal
+    max_position_size: NumberDecimal
+    max_order_size: NumberDecimal
     daily_trade_limit: int
-    daily_loss_limit: Decimal
+    daily_loss_limit: NumberDecimal
 
 
 class LiveTradingStatusResponse(BaseModel):
@@ -135,10 +139,10 @@ class LiveTradingStatusResponse(BaseModel):
     stopped_at: datetime | None
     error_message: str | None
     bar_count: int
-    cash: Decimal
-    equity: Decimal
-    initial_capital: Decimal
-    total_fees: Decimal
+    cash: NumberDecimal
+    equity: NumberDecimal
+    initial_capital: NumberDecimal
+    total_fees: NumberDecimal
     positions: dict[str, LivePositionInfo]
     pending_orders: list[dict[str, Any]]
     live_orders: list[LiveOrderInfo]
@@ -152,13 +156,15 @@ class LiveTradingListItem(BaseModel):
 
     run_id: UUID
     strategy_id: UUID
+    strategy_name: str | None = None
+    account_id: str | None = None
     symbol: str
     timeframe: str
     is_running: bool
     started_at: datetime | None
     bar_count: int
-    equity: Decimal
-    cash: Decimal
+    equity: NumberDecimal
+    cash: NumberDecimal
 
 
 class StopLiveTradingRequest(BaseModel):

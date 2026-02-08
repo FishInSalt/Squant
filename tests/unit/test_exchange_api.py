@@ -92,8 +92,8 @@ class TestAccountBalanceEndpoints:
         assert data["exchange"] == "okx"
         assert len(data["balances"]) == 2
         assert data["balances"][0]["currency"] == "BTC"
-        assert data["balances"][0]["available"] == "1.5"
-        assert Decimal(data["balances"][0]["total"]) == Decimal("2")
+        assert data["balances"][0]["available"] == 1.5
+        assert data["balances"][0]["total"] == 2.0
 
     @pytest.mark.asyncio
     async def test_get_balance_currency(
@@ -113,7 +113,7 @@ class TestAccountBalanceEndpoints:
         assert json_resp["code"] == 0
         data = json_resp["data"]
         assert data["currency"] == "BTC"
-        assert data["available"] == "1.5"
+        assert data["available"] == 1.5
 
     @pytest.mark.asyncio
     async def test_get_balance_currency_not_found(
@@ -167,8 +167,8 @@ class TestMarketTickerEndpoints:
         assert json_resp["code"] == 0
         data = json_resp["data"]
         assert data["symbol"] == "BTC/USDT"
-        assert data["last"] == "42000.5"
-        assert data["bid"] == "41999"
+        assert data["last"] == 42000.5
+        assert data["bid"] == 41999
 
     @pytest.mark.asyncio
     async def test_get_tickers(self, client: AsyncClient, mock_exchange: AsyncMock) -> None:

@@ -208,6 +208,7 @@ async def list_active_sessions(
             PaperTradingListItem(
                 run_id=UUID(sess["run_id"]),
                 strategy_id=strategy_id,
+                strategy_name=run.strategy_name,
                 symbol=sess["symbol"],
                 timeframe=sess["timeframe"],
                 is_running=sess["is_running"],

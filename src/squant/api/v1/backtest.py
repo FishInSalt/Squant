@@ -14,6 +14,7 @@ from squant.schemas.backtest import (
     AvailableSymbolResponse,
     BacktestDetailResponse,
     BacktestListItem,
+    BacktestMetrics,
     BacktestRunResponse,
     CheckDataRequest,
     CreateBacktestRequest,
@@ -21,6 +22,7 @@ from squant.schemas.backtest import (
     EquityCurvePoint,
     ExportFormat,
     RunBacktestRequest,
+    TradeRecordResponse,
 )
 from squant.services.backtest import (
     BacktestNotFoundError,
@@ -296,10 +298,26 @@ async def get_backtest_detail(
         run = await service.get(run_id)
         equity_curve = await service.get_equity_curve(run_id)
 
+        # Extract strongly-typed metrics from run.result dict (BT-004)
+        metrics = None
+        trades: list[TradeRecordResponse] = []
+        if run.result:
+            metrics = BacktestMetrics(
+                **{k: v for k, v in run.result.items() if k in BacktestMetrics.model_fields}
+            )
+            # Extract trades if stored in result
+            raw_trades = run.result.get("trades", [])
+            if raw_trades and isinstance(raw_trades, list):
+                for t in raw_trades:
+                    if isinstance(t, dict):
+                        trades.append(TradeRecordResponse(**t))
+
         return ApiResponse(
             data=BacktestDetailResponse(
                 run=BacktestRunResponse.model_validate(run),
+                metrics=metrics,
                 equity_curve=[EquityCurvePoint.model_validate(e) for e in equity_curve],
+                trades=trades,
                 total_bars=len(equity_curve),
             )
         )

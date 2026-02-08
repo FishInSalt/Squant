@@ -7,6 +7,7 @@ from uuid import UUID
 from pydantic import BaseModel, Field
 
 from squant.models.enums import OrderSide, OrderStatus, OrderType
+from squant.schemas.types import NumberDecimal
 
 
 class CreateOrderRequest(BaseModel):
@@ -35,10 +36,10 @@ class OrderDetail(BaseModel):
     side: OrderSide = Field(..., description="Order side")
     type: OrderType = Field(..., description="Order type")
     status: OrderStatus = Field(..., description="Order status")
-    price: Decimal | None = Field(None, description="Order price")
-    amount: Decimal = Field(..., description="Order amount")
-    filled: Decimal = Field(..., description="Filled amount")
-    avg_price: Decimal | None = Field(None, description="Average fill price")
+    price: NumberDecimal | None = Field(None, description="Order price")
+    amount: NumberDecimal = Field(..., description="Order amount")
+    filled: NumberDecimal = Field(..., description="Filled amount")
+    avg_price: NumberDecimal | None = Field(None, description="Average fill price")
     reject_reason: str | None = Field(None, description="Rejection reason if rejected")
     created_at: datetime = Field(..., description="Creation time")
     updated_at: datetime = Field(..., description="Last update time")
@@ -52,9 +53,9 @@ class TradeDetail(BaseModel):
     id: UUID = Field(..., description="Trade ID")
     order_id: UUID = Field(..., description="Order ID")
     exchange_tid: str | None = Field(None, description="Exchange trade ID")
-    price: Decimal = Field(..., description="Execution price")
-    amount: Decimal = Field(..., description="Execution amount")
-    fee: Decimal = Field(..., description="Trading fee")
+    price: NumberDecimal = Field(..., description="Execution price")
+    amount: NumberDecimal = Field(..., description="Execution amount")
+    fee: NumberDecimal = Field(..., description="Trading fee")
     fee_currency: str | None = Field(None, description="Fee currency")
     timestamp: datetime = Field(..., description="Execution time")
 

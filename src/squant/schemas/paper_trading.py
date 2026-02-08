@@ -7,6 +7,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
+from squant.schemas.types import NumberDecimal
+
 
 class StartPaperTradingRequest(BaseModel):
     """Request to start a paper trading session."""
@@ -40,14 +42,15 @@ class PaperTradingRunResponse(BaseModel):
 
     id: UUID
     strategy_id: UUID
+    strategy_name: str | None = None
     mode: str
     symbol: str
     exchange: str
     timeframe: str
     status: str
-    initial_capital: Decimal | None
-    commission_rate: Decimal
-    slippage: Decimal | None
+    initial_capital: NumberDecimal | None
+    commission_rate: NumberDecimal
+    slippage: NumberDecimal | None
     params: dict[str, Any]
     error_message: str | None
     started_at: datetime | None
@@ -61,8 +64,8 @@ class PaperTradingRunResponse(BaseModel):
 class PositionInfo(BaseModel):
     """Position information."""
 
-    amount: Decimal
-    avg_entry_price: Decimal
+    amount: NumberDecimal
+    avg_entry_price: NumberDecimal
 
 
 class PendingOrderInfo(BaseModel):
@@ -72,8 +75,8 @@ class PendingOrderInfo(BaseModel):
     symbol: str
     side: str
     type: str
-    amount: Decimal
-    price: Decimal | None
+    amount: NumberDecimal
+    price: NumberDecimal | None
     status: str
     created_at: datetime | None
 
@@ -89,10 +92,10 @@ class PaperTradingStatusResponse(BaseModel):
     stopped_at: datetime | None
     error_message: str | None
     bar_count: int
-    cash: Decimal
-    equity: Decimal
-    initial_capital: Decimal
-    total_fees: Decimal
+    cash: NumberDecimal
+    equity: NumberDecimal
+    initial_capital: NumberDecimal
+    total_fees: NumberDecimal
     positions: dict[str, PositionInfo]
     pending_orders: list[PendingOrderInfo]
     completed_orders_count: int
@@ -104,10 +107,11 @@ class PaperTradingListItem(BaseModel):
 
     run_id: UUID
     strategy_id: UUID
+    strategy_name: str | None = None
     symbol: str
     timeframe: str
     is_running: bool
     started_at: datetime | None
     bar_count: int
-    equity: Decimal
-    cash: Decimal
+    equity: NumberDecimal
+    cash: NumberDecimal

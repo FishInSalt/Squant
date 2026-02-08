@@ -100,9 +100,30 @@ class StrategyRun(Base, UUIDMixin):
     )
 
     # Relationships
-    strategy: Mapped["Strategy"] = relationship(back_populates="runs")
+    strategy: Mapped["Strategy"] = relationship(back_populates="runs", lazy="selectin")
     account: Mapped["ExchangeAccount | None"] = relationship(back_populates="strategy_runs")
     orders: Mapped[list["Order"]] = relationship(back_populates="run", lazy="selectin")
+
+    @property
+    def strategy_name(self) -> str | None:
+        """Get strategy name from loaded relationship."""
+        return self.strategy.name if self.strategy else None
+
+    @property
+    def progress(self) -> float:
+        """Get backtest progress (BT-002 placeholder).
+
+        Returns 1.0 for terminal states, 0.0 otherwise.
+        Future: read real-time progress from Redis for running backtests.
+        """
+        if self.status in (
+            RunStatus.COMPLETED,
+            RunStatus.ERROR,
+            RunStatus.CANCELLED,
+            RunStatus.STOPPED,
+        ):
+            return 1.0
+        return 0.0
 
     __table_args__ = (
         Index("idx_strategy_runs_strategy", "strategy_id"),
