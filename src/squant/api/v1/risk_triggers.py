@@ -58,7 +58,22 @@ async def list_risk_triggers(
         run_id=run_id,
     )
 
-    items = [RiskTriggerListItem.model_validate(t) for t in triggers]
+    items = [
+        RiskTriggerListItem(
+            id=t.id,
+            time=t.time,
+            rule_id=t.rule_id,
+            run_id=t.run_id,
+            trigger_type=t.trigger_type,
+            details=t.details,
+            rule_name=t.rule.name if t.rule else None,
+            rule_type=t.rule.type if t.rule else t.details.get("rule_type"),
+            strategy_name=t.run.strategy.name if t.run and t.run.strategy else None,
+            symbol=t.run.symbol if t.run else t.details.get("order_symbol"),
+            message=t.details.get("reason"),
+        )
+        for t in triggers
+    ]
 
     return ApiResponse(
         data=PaginatedData(

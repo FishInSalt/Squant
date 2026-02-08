@@ -98,8 +98,13 @@ class RiskTriggerListItem(BaseModel):
     rule_id: UUID | None = None
     run_id: UUID | None = None
     trigger_type: str
-
-    model_config = {"from_attributes": True}
+    details: dict[str, Any]
+    # Joined fields
+    rule_name: str | None = None
+    rule_type: str | None = None
+    strategy_name: str | None = None
+    symbol: str | None = None
+    message: str | None = None
 
 
 class CircuitBreakerEventResponse(BaseModel):

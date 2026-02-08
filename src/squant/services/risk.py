@@ -7,9 +7,11 @@ from uuid import UUID
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from squant.infra.repository import BaseRepository
 from squant.models.risk import RiskRule, RiskTrigger
+from squant.models.strategy import StrategyRun
 from squant.schemas.risk import CreateRiskRuleRequest, UpdateRiskRuleRequest
 
 
@@ -242,7 +244,13 @@ class RiskTriggerRepository(BaseRepository[RiskTrigger]):
         Returns:
             List of risk triggers.
         """
-        stmt = select(RiskTrigger)
+        stmt = (
+            select(RiskTrigger)
+            .options(
+                selectinload(RiskTrigger.rule),
+                selectinload(RiskTrigger.run).selectinload(StrategyRun.strategy),
+            )
+        )
 
         if start_time is not None:
             stmt = stmt.where(RiskTrigger.time >= start_time)

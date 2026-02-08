@@ -44,10 +44,12 @@ class OrderDetail(BaseModel):
     commission: NumberDecimal = Field(
         default=Decimal("0"), description="Total commission (sum of trade fees)"
     )
+    commission_asset: str | None = Field(None, description="Commission currency (from trades)")
     remaining_amount: NumberDecimal = Field(
         default=Decimal("0"), description="Remaining unfilled amount (amount - filled)"
     )
     status_display: str = Field(default="", description="Frontend-friendly status (submitted→open)")
+    strategy_name: str | None = Field(None, description="Strategy name (from run.strategy)")
     created_at: datetime = Field(..., description="Creation time")
     updated_at: datetime = Field(..., description="Last update time")
 

@@ -29,9 +29,12 @@ def mock_risk_rule():
     rule = MagicMock()
     rule.id = uuid4()
     rule.name = "Max Position Size"
+    rule.description = None
     rule.type = RiskRuleType.POSITION_LIMIT.value
     rule.params = {"max_position": 1.0, "symbol": "BTC/USDT"}
     rule.enabled = True
+    rule.triggers = []
+    rule.last_triggered = None
     rule.created_at = datetime.now(UTC)
     rule.updated_at = datetime.now(UTC)
     return rule

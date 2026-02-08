@@ -160,6 +160,15 @@ def _status_display(status: OrderStatus | str) -> str:
 def _to_order_detail(order) -> OrderDetail:
     """Convert Order model to OrderDetail schema."""
     commission = sum((t.fee for t in order.trades), Decimal("0")) if order.trades else Decimal("0")
+    commission_asset = None
+    if order.trades:
+        # Use fee_currency from the first trade (typically consistent across trades)
+        commission_asset = next(
+            (t.fee_currency for t in order.trades if t.fee_currency), None
+        )
+    strategy_name = None
+    if order.run and order.run.strategy:
+        strategy_name = order.run.strategy.name
     return OrderDetail(
         id=UUID(order.id),
         account_id=UUID(order.account_id),
@@ -176,8 +185,10 @@ def _to_order_detail(order) -> OrderDetail:
         avg_price=order.avg_price,
         reject_reason=order.reject_reason,
         commission=commission,
+        commission_asset=commission_asset,
         remaining_amount=order.amount - order.filled,
         status_display=_status_display(order.status),
+        strategy_name=strategy_name,
         created_at=order.created_at,
         updated_at=order.updated_at,
     )
@@ -199,6 +210,14 @@ def _to_order_with_trades(order) -> OrderWithTrades:
         for t in order.trades
     ]
     commission = sum((t.fee for t in order.trades), Decimal("0")) if order.trades else Decimal("0")
+    commission_asset = None
+    if order.trades:
+        commission_asset = next(
+            (t.fee_currency for t in order.trades if t.fee_currency), None
+        )
+    strategy_name = None
+    if order.run and order.run.strategy:
+        strategy_name = order.run.strategy.name
     return OrderWithTrades(
         id=UUID(order.id),
         account_id=UUID(order.account_id),
@@ -215,8 +234,10 @@ def _to_order_with_trades(order) -> OrderWithTrades:
         avg_price=order.avg_price,
         reject_reason=order.reject_reason,
         commission=commission,
+        commission_asset=commission_asset,
         remaining_amount=order.amount - order.filled,
         status_display=_status_display(order.status),
+        strategy_name=strategy_name,
         created_at=order.created_at,
         updated_at=order.updated_at,
         trades=trades,

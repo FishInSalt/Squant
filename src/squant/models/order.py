@@ -43,7 +43,7 @@ class Order(Base, UUIDMixin, TimestampMixin):
     reject_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     # Relationships
-    run: Mapped["StrategyRun | None"] = relationship(back_populates="orders")
+    run: Mapped["StrategyRun | None"] = relationship(back_populates="orders", lazy="selectin")
     account: Mapped["ExchangeAccount"] = relationship(back_populates="orders")
     trades: Mapped[list["Trade"]] = relationship(back_populates="order", lazy="selectin")
 
