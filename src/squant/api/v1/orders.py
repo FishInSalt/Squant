@@ -149,11 +149,12 @@ def _handle_order_error(e: Exception) -> None:
     handle_exchange_error(e)
 
 
-def _status_display(status: OrderStatus) -> str:
+def _status_display(status: OrderStatus | str) -> str:
     """Map order status to frontend-friendly display value (OD-004)."""
-    if status in (OrderStatus.PENDING, OrderStatus.SUBMITTED):
+    status_str = status.value if isinstance(status, OrderStatus) else status
+    if status_str in ("pending", "submitted"):
         return "open"
-    return status.value
+    return status_str
 
 
 def _to_order_detail(order) -> OrderDetail:

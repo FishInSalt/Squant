@@ -75,6 +75,8 @@ class TestConfigureRiskRules:
         mock_run.stopped_at = None
         mock_run.created_at = datetime.now(UTC)
         mock_run.updated_at = datetime.now(UTC)
+        mock_run.strategy_name = None
+        mock_run.account_id = None
 
         with patch(
             "squant.services.live_trading.LiveTradingService.start",
@@ -143,6 +145,8 @@ class TestDoubleConfirmation:
         mock_run.stopped_at = None
         mock_run.created_at = datetime.now(UTC)
         mock_run.updated_at = datetime.now(UTC)
+        mock_run.strategy_name = None
+        mock_run.account_id = None
 
         with patch(
             "squant.services.live_trading.LiveTradingService.start",
@@ -352,7 +356,7 @@ class TestOrderSync:
         order = result["live_orders"][0]
         assert order["exchange_order_id"] == "EXCH_1"
         assert order["status"] == "partially_filled"
-        assert Decimal(order["filled_amount"]) == Decimal("0.005")
+        assert order["filled_amount"] == 0.005
 
     @pytest.mark.asyncio
     async def test_trade_info_updated_realtime(self, client):
@@ -480,6 +484,8 @@ class TestStopLiveTrading:
         mock_run.stopped_at = datetime.now(UTC)
         mock_run.created_at = datetime.now(UTC)
         mock_run.updated_at = datetime.now(UTC)
+        mock_run.strategy_name = None
+        mock_run.account_id = None
 
         with patch(
             "squant.services.live_trading.LiveTradingService.stop",
@@ -518,6 +524,8 @@ class TestStopLiveTrading:
         mock_run.stopped_at = datetime.now(UTC)
         mock_run.created_at = datetime.now(UTC)
         mock_run.updated_at = datetime.now(UTC)
+        mock_run.strategy_name = None
+        mock_run.account_id = None
 
         with patch(
             "squant.services.live_trading.LiveTradingService.stop",
@@ -673,6 +681,8 @@ class TestLiveTradingList:
         mock_run.stopped_at = datetime.now(UTC)
         mock_run.created_at = datetime.now(UTC)
         mock_run.updated_at = datetime.now(UTC)
+        mock_run.strategy_name = None
+        mock_run.account_id = None
 
         with patch(
             "squant.services.live_trading.LiveTradingService.list_runs",
@@ -710,6 +720,8 @@ class TestLiveTradingList:
         mock_run.stopped_at = None
         mock_run.created_at = datetime.now(UTC)
         mock_run.updated_at = datetime.now(UTC)
+        mock_run.strategy_name = None
+        mock_run.account_id = None
 
         with patch(
             "squant.services.live_trading.LiveTradingService.list_runs",
@@ -751,6 +763,8 @@ class TestLiveTradingDetails:
         mock_run.stopped_at = datetime.now(UTC)
         mock_run.created_at = datetime.now(UTC)
         mock_run.updated_at = datetime.now(UTC)
+        mock_run.strategy_name = None
+        mock_run.account_id = None
 
         with patch(
             "squant.services.live_trading.LiveTradingService.get_run",

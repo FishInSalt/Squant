@@ -292,6 +292,8 @@ class TestSetInitialCapital:
         mock_run.stopped_at = datetime.now(UTC)
         mock_run.created_at = datetime.now(UTC)
         mock_run.updated_at = datetime.now(UTC)
+        mock_run.strategy_name = None
+        mock_run.progress = 0.0
 
         with patch(
             "squant.services.backtest.BacktestService.create_and_run",
@@ -344,6 +346,8 @@ class TestSetCommissionRate:
         mock_run.stopped_at = None
         mock_run.created_at = datetime.now(UTC)
         mock_run.updated_at = datetime.now(UTC)
+        mock_run.strategy_name = None
+        mock_run.progress = 0.0
 
         with patch(
             "squant.services.backtest.BacktestService.create_and_run",
@@ -411,6 +415,8 @@ class TestConfigureStrategyParameters:
         mock_run.stopped_at = None
         mock_run.created_at = datetime.now(UTC)
         mock_run.updated_at = datetime.now(UTC)
+        mock_run.strategy_name = None
+        mock_run.progress = 0.0
 
         with patch(
             "squant.services.backtest.BacktestService.create_and_run",
@@ -461,6 +467,8 @@ class TestStartBacktestTask:
         mock_run.stopped_at = datetime.now(UTC)
         mock_run.created_at = datetime.now(UTC)
         mock_run.updated_at = datetime.now(UTC)
+        mock_run.strategy_name = None
+        mock_run.progress = 0.0
 
         with patch(
             "squant.services.backtest.BacktestService.create_and_run",
@@ -845,6 +853,8 @@ class TestAsyncBacktestCreation:
         mock_run.stopped_at = None
         mock_run.created_at = datetime.now(UTC)
         mock_run.updated_at = datetime.now(UTC)
+        mock_run.strategy_name = None
+        mock_run.progress = 0.0
 
         with patch(
             "squant.services.backtest.BacktestService.create",
@@ -901,6 +911,8 @@ class TestAsyncBacktestCreation:
         mock_completed_run.stopped_at = datetime.now(UTC)
         mock_completed_run.created_at = datetime.now(UTC)
         mock_completed_run.updated_at = datetime.now(UTC)
+        mock_completed_run.strategy_name = None
+        mock_completed_run.progress = 0.0
 
         with patch(
             "squant.services.backtest.BacktestService.run",
