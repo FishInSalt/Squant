@@ -44,7 +44,7 @@ class RiskRuleResponse(BaseModel):
     type: str
     params: dict[str, Any]
     enabled: bool
-    last_triggered: datetime | None = None
+    last_triggered_at: datetime | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -58,7 +58,7 @@ class RiskRuleListItem(BaseModel):
     name: str
     type: str
     enabled: bool
-    last_triggered: datetime | None = None
+    last_triggered_at: datetime | None = None
     created_at: datetime
 
     model_config = {"from_attributes": True}

@@ -34,7 +34,7 @@ def mock_risk_rule():
     rule.params = {"max_position": 1.0, "symbol": "BTC/USDT"}
     rule.enabled = True
     rule.triggers = []
-    rule.last_triggered = None
+    rule.last_triggered_at = None
     rule.created_at = datetime.now(UTC)
     rule.updated_at = datetime.now(UTC)
     return rule

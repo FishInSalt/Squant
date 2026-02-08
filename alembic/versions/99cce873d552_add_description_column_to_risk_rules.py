@@ -1,4 +1,4 @@
-"""add description column to risk_rules
+"""add description and last_triggered_at columns to risk_rules
 
 Revision ID: 99cce873d552
 Revises: 7b07702de1bf
@@ -19,8 +19,10 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    op.add_column('risk_rules', sa.Column('description', sa.Text(), nullable=True))
+    op.add_column('risk_rules', sa.Column('description', sa.String(500), nullable=True))
+    op.add_column('risk_rules', sa.Column('last_triggered_at', sa.DateTime(timezone=True), nullable=True))
 
 
 def downgrade() -> None:
+    op.drop_column('risk_rules', 'last_triggered_at')
     op.drop_column('risk_rules', 'description')

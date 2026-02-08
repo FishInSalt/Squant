@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from uuid import UUID
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -334,8 +334,9 @@ class RiskTriggerService:
         Returns:
             Created RiskTrigger record.
         """
+        trigger_time = datetime.now(UTC)
         trigger = await self.repository.create(
-            time=datetime.now(UTC),
+            time=trigger_time,
             rule_id=str(rule_id) if rule_id else None,
             run_id=str(run_id) if run_id else None,
             trigger_type=trigger_type,
@@ -344,6 +345,12 @@ class RiskTriggerService:
                 **details,
             },
         )
+        if rule_id:
+            await self.session.execute(
+                update(RiskRule)
+                .where(RiskRule.id == str(rule_id))
+                .values(last_triggered_at=trigger_time)
+            )
         await self.session.commit()
         return trigger
 

@@ -25,7 +25,7 @@ class TestCreateRiskRule:
         mock_rule.params = {"max_order_value": 1000, "currency": "USDT"}
         mock_rule.enabled = True
         mock_rule.description = None
-        mock_rule.last_triggered = None
+        mock_rule.last_triggered_at = None
         mock_rule.created_at = datetime.now(UTC)
         mock_rule.updated_at = datetime.now(UTC)
 
@@ -62,7 +62,7 @@ class TestCreateRiskRule:
         mock_rule.params = {"max_position_pct": 0.5, "symbol": "BTC/USDT"}
         mock_rule.enabled = True
         mock_rule.description = None
-        mock_rule.last_triggered = None
+        mock_rule.last_triggered_at = None
         mock_rule.created_at = datetime.now(UTC)
         mock_rule.updated_at = datetime.now(UTC)
 
@@ -97,7 +97,7 @@ class TestCreateRiskRule:
         mock_rule.params = {"max_daily_loss": 500, "currency": "USDT"}
         mock_rule.enabled = True
         mock_rule.description = None
-        mock_rule.last_triggered = None
+        mock_rule.last_triggered_at = None
         mock_rule.created_at = datetime.now(UTC)
         mock_rule.updated_at = datetime.now(UTC)
 
@@ -131,7 +131,7 @@ class TestCreateRiskRule:
         mock_rule.params = {"max_trades_per_hour": 10}
         mock_rule.enabled = False
         mock_rule.description = None
-        mock_rule.last_triggered = None
+        mock_rule.last_triggered_at = None
         mock_rule.created_at = datetime.now(UTC)
         mock_rule.updated_at = datetime.now(UTC)
 
@@ -259,7 +259,7 @@ class TestGetRiskRule:
         mock_rule.params = {"max_order_value": 1000}
         mock_rule.enabled = True
         mock_rule.description = None
-        mock_rule.last_triggered = None
+        mock_rule.last_triggered_at = None
         mock_rule.created_at = datetime.now(UTC)
         mock_rule.updated_at = datetime.now(UTC)
 
@@ -311,7 +311,7 @@ class TestUpdateRiskRule:
         mock_rule.params = {"max_order_value": 1000}
         mock_rule.enabled = True
         mock_rule.description = None
-        mock_rule.last_triggered = None
+        mock_rule.last_triggered_at = None
         mock_rule.created_at = datetime.now(UTC)
         mock_rule.updated_at = datetime.now(UTC)
 
@@ -342,7 +342,7 @@ class TestUpdateRiskRule:
         mock_rule.params = {"max_daily_loss": 1000, "currency": "USDT"}
         mock_rule.enabled = True
         mock_rule.description = None
-        mock_rule.last_triggered = None
+        mock_rule.last_triggered_at = None
         mock_rule.created_at = datetime.now(UTC)
         mock_rule.updated_at = datetime.now(UTC)
 
@@ -436,7 +436,7 @@ class TestToggleRiskRule:
         mock_rule.params = {"max_order_value": 1000}
         mock_rule.enabled = True
         mock_rule.description = None
-        mock_rule.last_triggered = None
+        mock_rule.last_triggered_at = None
         mock_rule.created_at = datetime.now(UTC)
         mock_rule.updated_at = datetime.now(UTC)
 
@@ -467,7 +467,7 @@ class TestToggleRiskRule:
         mock_rule.params = {"max_position_pct": 0.5}
         mock_rule.enabled = False
         mock_rule.description = None
-        mock_rule.last_triggered = None
+        mock_rule.last_triggered_at = None
         mock_rule.created_at = datetime.now(UTC)
         mock_rule.updated_at = datetime.now(UTC)
 
@@ -519,7 +519,7 @@ class TestAllRiskRuleTypes:
         mock_rule.params = {"max_total_loss": 2000, "currency": "USDT"}
         mock_rule.enabled = True
         mock_rule.description = None
-        mock_rule.last_triggered = None
+        mock_rule.last_triggered_at = None
         mock_rule.created_at = datetime.now(UTC)
         mock_rule.updated_at = datetime.now(UTC)
 
@@ -551,7 +551,7 @@ class TestAllRiskRuleTypes:
         mock_rule.params = {"max_trades_per_day": 50}
         mock_rule.enabled = True
         mock_rule.description = None
-        mock_rule.last_triggered = None
+        mock_rule.last_triggered_at = None
         mock_rule.created_at = datetime.now(UTC)
         mock_rule.updated_at = datetime.now(UTC)
 
@@ -583,7 +583,7 @@ class TestAllRiskRuleTypes:
         mock_rule.params = {"volatility_threshold": 0.1, "lookback_period": 60}
         mock_rule.enabled = True
         mock_rule.description = None
-        mock_rule.last_triggered = None
+        mock_rule.last_triggered_at = None
         mock_rule.created_at = datetime.now(UTC)
         mock_rule.updated_at = datetime.now(UTC)
 

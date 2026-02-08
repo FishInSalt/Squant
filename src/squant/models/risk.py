@@ -3,7 +3,7 @@
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Index, String, Text
+from sqlalchemy import Boolean, DateTime, ForeignKey, Index, String
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -20,20 +20,16 @@ class RiskRule(Base, UUIDMixin, TimestampMixin):
     __tablename__ = "risk_rules"
 
     name: Mapped[str] = mapped_column(String(64), nullable=False)
-    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    description: Mapped[str | None] = mapped_column(String(500), nullable=True)
     type: Mapped[RiskRuleType] = mapped_column(String(32), nullable=False)
     params: Mapped[dict] = mapped_column(JSONB, nullable=False)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    last_triggered_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
     # Relationships
     triggers: Mapped[list["RiskTrigger"]] = relationship(back_populates="rule", lazy="selectin")
-
-    @property
-    def last_triggered(self) -> datetime | None:
-        """Get the time of the most recent trigger, or None if never triggered."""
-        if self.triggers:
-            return max(t.time for t in self.triggers)
-        return None
 
     def __repr__(self) -> str:
         return f"<RiskRule(id={self.id}, name={self.name}, type={self.type})>"
