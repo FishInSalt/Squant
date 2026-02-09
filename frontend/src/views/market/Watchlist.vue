@@ -147,10 +147,10 @@ function resubscribe() {
   }
 }
 
-watch(() => watchlist.value.length, () => {
+watch(watchlist, () => {
   loadWatchlistData()
   resubscribe()
-})
+}, { deep: true })
 
 onMounted(async () => {
   // 先加载当前交易所配置

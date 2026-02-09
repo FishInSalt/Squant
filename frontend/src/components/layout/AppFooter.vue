@@ -32,10 +32,10 @@
 <script setup lang="ts">
 import { version } from '../../../package.json'
 import { ref, computed, onMounted } from 'vue'
-
-const appVersion = version
 import { useTradingStore } from '@/stores/trading'
 import { getAccounts } from '@/api/account'
+
+const appVersion = version
 
 const tradingStore = useTradingStore()
 

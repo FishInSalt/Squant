@@ -267,7 +267,7 @@ const rules: FormRules = {
     { required: true, message: '请选择时间范围', trigger: 'change' },
     {
       validator: (_rule: unknown, value: string[], callback: (error?: string | Error) => void) => {
-        if (value && value.length === 2 && value[0] >= value[1]) {
+        if (value && value.length === 2 && new Date(value[0]) >= new Date(value[1])) {
           callback(new Error('开始日期必须早于结束日期'))
         } else {
           callback()

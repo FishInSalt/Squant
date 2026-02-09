@@ -25,7 +25,7 @@
           </div>
           <el-switch
             :model-value="account.is_active"
-            @change="(val: string | number | boolean) => toggleActive(account, Boolean(val))"
+            @change="(val: string | number | boolean) => toggleActive(account, val as boolean)"
             active-text="已启用"
             inactive-text="已禁用"
             inline-prompt
@@ -136,7 +136,7 @@ import {
 } from '@/api/account'
 import { SUPPORTED_EXCHANGES } from '@/utils/constants'
 import { useNotification } from '@/composables/useNotification'
-import type { ExchangeAccount } from '@/types'
+import type { ExchangeAccount, ExchangeAccountUpdate } from '@/types'
 
 const { toastSuccess, toastError, confirmDelete } = useNotification()
 
@@ -223,12 +223,12 @@ async function handleSubmit() {
   submitting.value = true
   try {
     if (editingAccount.value) {
-      const data: Record<string, unknown> = { name: form.name }
+      const data: ExchangeAccountUpdate = { name: form.name }
       if (form.api_key) data.api_key = form.api_key
       if (form.api_secret) data.api_secret = form.api_secret
       if (form.passphrase) data.passphrase = form.passphrase
 
-      await updateAccount(editingAccount.value.id, data as any)
+      await updateAccount(editingAccount.value.id, data)
       toastSuccess('账户已更新')
     } else {
       await createAccount({
@@ -270,7 +270,7 @@ async function testConnection(account: ExchangeAccount) {
 
 async function toggleActive(account: ExchangeAccount, val: boolean) {
   try {
-    await updateAccount(account.id, { is_active: val } as any)
+    await updateAccount(account.id, { is_active: val })
     toastSuccess(val ? '账户已启用' : '账户已禁用')
     loadAccounts()
   } catch (error) {
