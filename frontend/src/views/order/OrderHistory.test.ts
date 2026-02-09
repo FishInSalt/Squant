@@ -6,7 +6,6 @@ import { wrapPaginatedResponse } from '@/__tests__/fixtures'
 
 vi.mock('@/api/order', () => ({
   getOrderHistory: vi.fn(),
-  exportOrders: vi.fn(),
 }))
 
 const mockOrders = [
@@ -63,12 +62,6 @@ describe('OrderHistory', () => {
     expect(orderApi.getOrderHistory).toHaveBeenCalled()
     expect(wrapper.text()).toContain('BTC/USDT')
     expect(wrapper.text()).toContain('ETH/USDT')
-  })
-
-  it('shows export button', async () => {
-    const wrapper = mountView(OrderHistory)
-    await flushPromises()
-    expect(wrapper.text()).toContain('导出')
   })
 
   it('shows filter form with status filter', async () => {
