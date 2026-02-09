@@ -2,10 +2,6 @@
   <div class="order-history">
     <div class="page-header">
       <h1 class="page-title">历史订单</h1>
-      <el-button @click="exportOrders">
-        <el-icon><Download /></el-icon>
-        导出
-      </el-button>
     </div>
 
     <div class="filter-bar card">
@@ -164,12 +160,10 @@ import {
   formatDateTime,
 } from '@/utils/format'
 import { ORDER_STATUS_OPTIONS } from '@/utils/constants'
-import { getOrderHistory, exportOrders as apiExportOrders } from '@/api/order'
-import { useNotification } from '@/composables/useNotification'
+import { getOrderHistory } from '@/api/order'
 import type { Order } from '@/types'
 
 const marketStore = useMarketStore()
-const { toastSuccess, toastError } = useNotification()
 
 const loading = ref(false)
 const orders = ref<Order[]>([])
@@ -213,37 +207,6 @@ async function loadOrders() {
     console.error('Failed to load orders:', error)
   } finally {
     loading.value = false
-  }
-}
-
-async function exportOrders() {
-  try {
-    const params: Record<string, unknown> = {}
-    if (filter.exchange) params.exchange = filter.exchange
-    if (filter.symbol) params.symbol = filter.symbol
-    if (filter.side) params.side = filter.side
-    if (filter.status) params.status = filter.status
-    if (filter.dateRange.length === 2) {
-      params.start_date = filter.dateRange[0]
-      params.end_date = filter.dateRange[1]
-    }
-
-    const response = await apiExportOrders(params as any, 'csv')
-    // 验证下载 URL 是否来自可信域名
-    const downloadUrl = response.data.download_url
-    try {
-      const url = new URL(downloadUrl, window.location.origin)
-      const allowedHosts = [window.location.host, 'localhost']
-      if (!allowedHosts.some(host => url.host === host || url.host.endsWith('.' + host))) {
-        throw new Error('Invalid download URL')
-      }
-      window.open(url.href, '_blank')
-      toastSuccess('导出成功')
-    } catch {
-      toastError('下载链接无效')
-    }
-  } catch (error) {
-    toastError('导出失败')
   }
 }
 

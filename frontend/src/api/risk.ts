@@ -76,9 +76,9 @@ export const getRiskTriggers = (params?: {
   page?: number
   page_size?: number
   rule_id?: string
-  rule_type?: string
-  start_date?: string
-  end_date?: string
+  run_id?: string
+  start_time?: string
+  end_time?: string
 }) =>
   get<PaginatedData<RiskTrigger>>('/risk-triggers', params)
 

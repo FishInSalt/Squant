@@ -9,7 +9,6 @@ vi.mock('@/api/paper', () => ({
   startPaperTrading: vi.fn(),
   getPaperSessions: vi.fn(),
   stopPaperTrading: vi.fn(),
-  deletePaperSession: vi.fn(),
 }))
 
 vi.mock('@/api/market', () => ({
@@ -59,12 +58,6 @@ describe('PaperTrading', () => {
     const wrapper = mountView(PaperTrading)
     await flushPromises()
     expect(wrapper.text()).toContain('停止')
-  })
-
-  it('shows delete button for non-running sessions', async () => {
-    const wrapper = mountView(PaperTrading)
-    await flushPromises()
-    expect(wrapper.text()).toContain('删除')
   })
 
   it('shows empty state when no sessions', async () => {

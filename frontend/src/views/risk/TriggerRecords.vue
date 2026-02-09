@@ -136,15 +136,21 @@ async function loadRecords() {
       page: pagination.page,
       page_size: pagination.pageSize,
     }
-    if (filter.rule_type) params.rule_type = filter.rule_type
     if (filter.dateRange.length === 2) {
-      params.start_date = filter.dateRange[0]
-      params.end_date = filter.dateRange[1]
+      params.start_time = filter.dateRange[0]
+      params.end_time = filter.dateRange[1]
     }
 
     const response = await getRiskTriggers(params as any)
-    records.value = response.data.items
-    pagination.total = response.data.total
+    let items = response.data.items
+    let total = response.data.total
+    // 后端不支持按规则类型过滤，前端本地过滤（仅限当前页）
+    if (filter.rule_type) {
+      items = items.filter((r: RiskTrigger) => r.rule_type === filter.rule_type)
+      total = items.length
+    }
+    records.value = items
+    pagination.total = total
   } catch (error) {
     console.error('Failed to load records:', error)
   } finally {

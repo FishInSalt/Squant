@@ -116,6 +116,18 @@
                     v-else-if="param.type === 'boolean'"
                     v-model="form.params[key]"
                   />
+                  <el-select
+                    v-else-if="param.enum"
+                    v-model="form.params[key]"
+                    style="width: 100%"
+                  >
+                    <el-option
+                      v-for="opt in param.enum"
+                      :key="opt"
+                      :label="opt"
+                      :value="opt"
+                    />
+                  </el-select>
                   <el-input
                     v-else
                     v-model="form.params[key]"
@@ -174,14 +186,6 @@
               >
                 停止
               </el-button>
-              <el-button
-                v-else
-                type="danger"
-                size="small"
-                @click="handleDelete(session.id)"
-              >
-                删除
-              </el-button>
             </div>
           </div>
 
@@ -204,7 +208,7 @@ import StatusBadge from '@/components/common/StatusBadge.vue'
 import { formatExchangeName, formatNumber } from '@/utils/format'
 import { TIMEFRAME_OPTIONS } from '@/utils/constants'
 import { getSymbols } from '@/api/market'
-import { startPaperTrading, getPaperSessions, stopPaperTrading, deletePaperSession } from '@/api/paper'
+import { startPaperTrading, getPaperSessions, stopPaperTrading } from '@/api/paper'
 import { useNotification } from '@/composables/useNotification'
 import type { PaperSession } from '@/types'
 
@@ -212,7 +216,7 @@ const router = useRouter()
 const route = useRoute()
 const marketStore = useMarketStore()
 const strategyStore = useStrategyStore()
-const { toastSuccess, toastError, confirmDanger, confirmDelete } = useNotification()
+const { toastSuccess, toastError, confirmDanger } = useNotification()
 
 const formRef = ref<FormInstance>()
 const submitting = ref(false)
@@ -321,19 +325,6 @@ async function handleStop(id: string) {
     loadSessions()
   } catch (error) {
     toastError('停止失败')
-  }
-}
-
-async function handleDelete(id: string) {
-  const confirmed = await confirmDelete('该会话')
-  if (!confirmed) return
-
-  try {
-    await deletePaperSession(id)
-    toastSuccess('已删除')
-    loadSessions()
-  } catch (error) {
-    toastError('删除失败')
   }
 }
 
