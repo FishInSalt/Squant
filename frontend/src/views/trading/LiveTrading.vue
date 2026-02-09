@@ -208,6 +208,18 @@
                     v-else-if="param.type === 'boolean'"
                     v-model="form.params[key]"
                   />
+                  <el-select
+                    v-else-if="param.enum"
+                    v-model="form.params[key]"
+                    style="width: 100%"
+                  >
+                    <el-option
+                      v-for="opt in param.enum"
+                      :key="opt"
+                      :label="opt"
+                      :value="opt"
+                    />
+                  </el-select>
                   <el-input
                     v-else
                     v-model="form.params[key]"

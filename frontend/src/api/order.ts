@@ -32,21 +32,3 @@ export const syncOrder = (id: string) =>
 export const syncOpenOrders = (symbol?: string) =>
   post<{ synced_count: number; orders: Order[] }>('/orders/sync', { symbol })
 
-// 批量取消订单
-export const cancelOrders = (ids: string[]) =>
-  post<{ success: string[]; failed: string[] }>('/orders/cancel-batch', { ids })
-
-// 取消所有挂单
-export const cancelAllOrders = (filter?: {
-  exchange?: string
-  symbol?: string
-  run_id?: string
-}) =>
-  post<{ cancelled_count: number }>('/orders/cancel-all', filter)
-
-// 导出订单记录
-export const exportOrders = (filter?: OrderFilter & {
-  start_date?: string
-  end_date?: string
-}, format: 'csv' | 'json' = 'csv') =>
-  get<{ download_url: string }>('/orders/export', { ...filter, format } as Record<string, unknown>)
