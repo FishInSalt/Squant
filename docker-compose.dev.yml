@@ -1,0 +1,101 @@
+# 开发环境 Docker Compose
+# 使用方式:
+#   仅数据库: docker compose -f docker-compose.dev.yml up -d postgres redis
+#   完整服务: docker compose -f docker-compose.dev.yml up -d
+
+services:
+  # PostgreSQL + TimescaleDB
+  postgres:
+    image: timescale/timescaledb:latest-pg16
+    container_name: squant-postgres-dev
+    environment:
+      POSTGRES_USER: squant
+      POSTGRES_PASSWORD: devpassword
+      POSTGRES_DB: squant
+    volumes:
+      - postgres_dev_data:/var/lib/postgresql/data
+      - ./scripts/init-db.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    ports:
+      - "5433:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U squant -d squant"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - squant-dev
+
+  # Redis
+  redis:
+    image: redis:7-alpine
+    container_name: squant-redis-dev
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_dev_data:/data
+    ports:
+      - "6380:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - squant-dev
+
+  # Backend (开发模式，支持热重载)
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: development
+    container_name: squant-backend-dev
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://squant:devpassword@postgres:5432/squant
+      - REDIS_URL=redis://redis:6379/0
+      - DEBUG=true
+      - LOG_LEVEL=DEBUG
+    volumes:
+      - ./src:/app/src:ro
+      - ./strategies:/app/strategies
+      - ./alembic:/app/alembic:ro
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - squant-dev
+    profiles:
+      - full
+
+  # Frontend (开发模式，支持热重载)
+  frontend:
+    image: node:20-alpine
+    container_name: squant-frontend-dev
+    working_dir: /app
+    command: sh -c "corepack enable && corepack prepare pnpm@latest --activate && pnpm install && pnpm dev --host 0.0.0.0"
+    environment:
+      - VITE_API_BASE_URL=http://localhost:8000/api
+      - VITE_WS_BASE_URL=ws://localhost:8000/ws
+    volumes:
+      - ./frontend:/app
+      - frontend_node_modules:/app/node_modules
+    ports:
+      - "5173:5173"
+    depends_on:
+      - backend
+    networks:
+      - squant-dev
+    profiles:
+      - full
+
+volumes:
+  postgres_dev_data:
+  redis_dev_data:
+  frontend_node_modules:
+
+networks:
+  squant-dev:
+    driver: bridge

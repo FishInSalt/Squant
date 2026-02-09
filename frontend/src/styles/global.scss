@@ -1,0 +1,298 @@
+@use './variables' as *;
+
+// Reset
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html {
+  font-size: $font-size-base;
+  line-height: $line-height-base;
+}
+
+body {
+  font-family: $font-family;
+  color: $text-primary;
+  background-color: $bg-secondary;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  min-width: $content-min-width;
+}
+
+// 滚动条样式
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: $bg-secondary;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: $border-base;
+  border-radius: 4px;
+
+  &:hover {
+    background: $text-secondary;
+  }
+}
+
+// 链接
+a {
+  color: $color-primary;
+  text-decoration: none;
+
+  &:hover {
+    color: darken($color-primary, 10%);
+  }
+}
+
+// 代码
+code {
+  font-family: $font-family-mono;
+  font-size: 0.9em;
+  padding: 2px 6px;
+  background-color: $bg-secondary;
+  border-radius: $border-radius-sm;
+}
+
+pre {
+  font-family: $font-family-mono;
+  font-size: $font-size-sm;
+  line-height: $line-height-loose;
+  padding: $spacing-md;
+  background-color: $bg-secondary;
+  border-radius: $border-radius-base;
+  overflow-x: auto;
+
+  code {
+    padding: 0;
+    background: transparent;
+  }
+}
+
+// 表格基础样式
+table {
+  border-collapse: collapse;
+  width: 100%;
+}
+
+// 涨跌颜色
+.price-up {
+  color: $color-up !important;
+}
+
+.price-down {
+  color: $color-down !important;
+}
+
+.price-neutral {
+  color: $text-secondary !important;
+}
+
+// 状态颜色
+.status-success {
+  color: $color-success;
+}
+
+.status-warning {
+  color: $color-warning;
+}
+
+.status-danger {
+  color: $color-danger;
+}
+
+.status-info {
+  color: $color-info;
+}
+
+// 通用工具类
+.text-center {
+  text-align: center;
+}
+
+.text-right {
+  text-align: right;
+}
+
+.text-left {
+  text-align: left;
+}
+
+.text-ellipsis {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.text-mono {
+  font-family: $font-family-mono;
+}
+
+.cursor-pointer {
+  cursor: pointer;
+}
+
+.flex {
+  display: flex;
+}
+
+.flex-center {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.flex-between {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.flex-1 {
+  flex: 1;
+}
+
+.gap-xs {
+  gap: $spacing-xs;
+}
+
+.gap-sm {
+  gap: $spacing-sm;
+}
+
+.gap-base {
+  gap: $spacing-base;
+}
+
+.gap-md {
+  gap: $spacing-md;
+}
+
+.gap-lg {
+  gap: $spacing-lg;
+}
+
+// 间距
+.mt-sm { margin-top: $spacing-sm; }
+.mt-base { margin-top: $spacing-base; }
+.mt-md { margin-top: $spacing-md; }
+.mt-lg { margin-top: $spacing-lg; }
+
+.mb-sm { margin-bottom: $spacing-sm; }
+.mb-base { margin-bottom: $spacing-base; }
+.mb-md { margin-bottom: $spacing-md; }
+.mb-lg { margin-bottom: $spacing-lg; }
+
+.ml-sm { margin-left: $spacing-sm; }
+.ml-base { margin-left: $spacing-base; }
+.ml-md { margin-left: $spacing-md; }
+
+.mr-sm { margin-right: $spacing-sm; }
+.mr-base { margin-right: $spacing-base; }
+.mr-md { margin-right: $spacing-md; }
+
+// 卡片
+.card {
+  background: $bg-primary;
+  border-radius: $border-radius-md;
+  box-shadow: $box-shadow-sm;
+  padding: $spacing-md;
+}
+
+.card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: $spacing-md;
+  padding-bottom: $spacing-base;
+  border-bottom: 1px solid $border-lighter;
+
+  .card-title {
+    font-size: $font-size-md;
+    font-weight: 500;
+    color: $text-primary;
+  }
+}
+
+// 页面标题
+.page-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: $spacing-lg;
+
+  .page-title {
+    font-size: $font-size-xl;
+    font-weight: 600;
+    color: $text-primary;
+  }
+}
+
+// 空状态
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: $spacing-xl * 2;
+  color: $text-secondary;
+
+  .empty-icon {
+    font-size: 48px;
+    margin-bottom: $spacing-md;
+    color: $border-base;
+  }
+
+  .empty-text {
+    font-size: $font-size-base;
+  }
+}
+
+// Element Plus 覆盖
+.el-table {
+  --el-table-border-color: #{$border-lighter};
+  --el-table-header-bg-color: #{$bg-secondary};
+}
+
+.el-button--primary {
+  --el-button-bg-color: #{$color-primary};
+  --el-button-border-color: #{$color-primary};
+}
+
+.el-button--danger {
+  --el-button-bg-color: #{$color-danger};
+  --el-button-border-color: #{$color-danger};
+}
+
+.el-button--success {
+  --el-button-bg-color: #{$color-success};
+  --el-button-border-color: #{$color-success};
+}
+
+.el-button--warning {
+  --el-button-bg-color: #{$color-warning};
+  --el-button-border-color: #{$color-warning};
+}
+
+// 应用布局
+#app {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.app-main {
+  flex: 1;
+  padding: $spacing-lg;
+  max-width: $content-max-width;
+  width: 100%;
+  margin: 0 auto;
+}

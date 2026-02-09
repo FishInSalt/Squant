@@ -1,0 +1,30 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+
+# Environment
+.env.local
+.env.*.local
+
+# Editor
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+
+# Git
+.git/
+.gitignore
+
+# Logs
+*.log
+
+# Test
+coverage/
+
+# Cache
+.cache/
+*.tsbuildinfo
