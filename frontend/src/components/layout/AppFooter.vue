@@ -24,13 +24,16 @@
     </div>
 
     <div class="footer-right">
-      <span class="version">v1.0.0</span>
+      <span class="version">v{{ appVersion }}</span>
     </div>
   </footer>
 </template>
 
 <script setup lang="ts">
+import { version } from '../../../package.json'
 import { ref, computed, onMounted } from 'vue'
+
+const appVersion = version
 import { useTradingStore } from '@/stores/trading'
 import { getAccounts } from '@/api/account'
 

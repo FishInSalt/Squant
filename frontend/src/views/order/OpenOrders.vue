@@ -163,6 +163,7 @@ async function loadOrders() {
     orders.value = response.data
   } catch (error) {
     console.error('Failed to load orders:', error)
+    toastError('加载挂单失败')
   } finally {
     loading.value = false
   }
@@ -176,8 +177,8 @@ async function cancelOrder(id: string) {
     await apiCancelOrder(id)
     toastSuccess('订单已取消')
     loadOrders()
-  } catch (error) {
-    toastError('取消失败')
+  } catch (error: any) {
+    toastError(error?.response?.data?.message || '取消失败')
   }
 }
 

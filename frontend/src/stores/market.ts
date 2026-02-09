@@ -113,12 +113,13 @@ export const useMarketStore = defineStore('market', () => {
     try {
       // 获取全部行情数据，由前端进行排序和分页
       const response = await marketApi.getAllTickers()
-      // 清空旧数据，重新填充
-      tickers.value.clear()
+      // 先获取数据成功后再替换，避免短暂空白闪烁
+      const newTickers = new Map<string, Ticker>()
       response.data.forEach((ticker) => {
         const key = `${ticker.exchange}:${ticker.symbol}`
-        tickers.value.set(key, ticker)
+        newTickers.set(key, ticker)
       })
+      tickers.value = newTickers
       return response.data
     } catch (error) {
       console.error('Failed to load tickers:', error)

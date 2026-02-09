@@ -23,9 +23,14 @@
               <span class="exchange-name">{{ formatExchangeName(account.exchange) }}</span>
             </div>
           </div>
-          <el-tag :type="account.is_active ? 'success' : 'info'" size="small">
-            {{ account.is_active ? '已启用' : '已禁用' }}
-          </el-tag>
+          <el-switch
+            :model-value="account.is_active"
+            @change="(val: string | number | boolean) => toggleActive(account, Boolean(val))"
+            active-text="已启用"
+            inactive-text="已禁用"
+            inline-prompt
+            size="small"
+          />
         </div>
 
         <div class="account-meta">
@@ -153,12 +158,15 @@ const form = reactive({
   testnet: false,
 })
 
-const formRules: FormRules = {
+const formRules = computed<FormRules>(() => ({
   name: [{ required: true, message: '请输入账户名称', trigger: 'blur' }],
   exchange: [{ required: true, message: '请选择交易所', trigger: 'change' }],
   api_key: [{ required: true, message: '请输入 API Key', trigger: 'blur' }],
   api_secret: [{ required: true, message: '请输入 API Secret', trigger: 'blur' }],
-}
+  passphrase: needsPassphrase.value
+    ? [{ required: true, message: '请输入 Passphrase', trigger: 'blur' }]
+    : [],
+}))
 
 const needsPassphrase = computed(() => {
   return ['okx', 'bybit'].includes(form.exchange)
@@ -181,6 +189,7 @@ async function loadAccounts() {
     accounts.value = response.data
   } catch (error) {
     console.error('Failed to load accounts:', error)
+    toastError('加载账户信息失败')
   } finally {
     loading.value = false
   }
@@ -256,6 +265,16 @@ async function testConnection(account: ExchangeAccount) {
     toastError('连接测试失败')
   } finally {
     testingId.value = null
+  }
+}
+
+async function toggleActive(account: ExchangeAccount, val: boolean) {
+  try {
+    await updateAccount(account.id, { is_active: val } as any)
+    toastSuccess(val ? '账户已启用' : '账户已禁用')
+    loadAccounts()
+  } catch (error) {
+    toastError('操作失败')
   }
 }
 

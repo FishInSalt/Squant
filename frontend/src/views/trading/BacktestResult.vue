@@ -236,6 +236,8 @@ async function loadBacktest() {
     }
   } catch (error) {
     console.error('Failed to load backtest:', error)
+    stopPolling()
+    toastError('加载回测数据失败')
   } finally {
     loading.value = false
   }
@@ -282,7 +284,7 @@ function runAgain() {
 async function exportResult() {
   try {
     const response = await exportBacktestResult(props.id, 'csv')
-    const blob = new Blob(['\uFEFF', response.data.content], { type: response.data.content_type || 'text/csv;charset=utf-8' })
+    const blob = new Blob(['\uFEFF' + response.data.content], { type: response.data.content_type || 'text/csv;charset=utf-8' })
     const url = window.URL.createObjectURL(blob)
     const link = document.createElement('a')
     link.href = url

@@ -263,7 +263,19 @@ const rules: FormRules = {
   exchange: [{ required: true, message: '请选择交易所', trigger: 'change' }],
   symbol: [{ required: true, message: '请选择交易对', trigger: 'change' }],
   timeframe: [{ required: true, message: '请选择时间周期', trigger: 'change' }],
-  dateRange: [{ required: true, message: '请选择时间范围', trigger: 'change' }],
+  dateRange: [
+    { required: true, message: '请选择时间范围', trigger: 'change' },
+    {
+      validator: (_rule: unknown, value: string[], callback: (error?: string | Error) => void) => {
+        if (value && value.length === 2 && value[0] >= value[1]) {
+          callback(new Error('开始日期必须早于结束日期'))
+        } else {
+          callback()
+        }
+      },
+      trigger: 'change',
+    },
+  ],
   initial_capital: [{ required: true, message: '请输入初始资金', trigger: 'change' }],
 }
 

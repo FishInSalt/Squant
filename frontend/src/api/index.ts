@@ -40,10 +40,11 @@ api.interceptors.response.use(
     if (error.response) {
       const status = error.response.status
       const data = error.response.data
+      const dataMsg = (data && typeof data === 'object' && 'message' in data) ? data.message : undefined
 
       switch (status) {
         case 400:
-          message = data?.message || '请求参数错误'
+          message = dataMsg || '请求参数错误'
           break
         case 401:
           message = '未授权，请重新登录'
@@ -52,7 +53,7 @@ api.interceptors.response.use(
           message = '拒绝访问'
           break
         case 404:
-          message = data?.message || '请求的资源不存在'
+          message = dataMsg || '请求的资源不存在'
           break
         case 500:
           message = '服务器内部错误'
@@ -64,7 +65,7 @@ api.interceptors.response.use(
           message = '服务不可用'
           break
         default:
-          message = data?.message || `请求失败 (${status})`
+          message = dataMsg || `请求失败 (${status})`
       }
     } else if (error.code === 'ECONNABORTED') {
       message = '请求超时，请稍后重试'

@@ -23,7 +23,7 @@ import ComingSoon from '@/components/common/ComingSoon.vue'
 const router = useRouter()
 
 function goToAccounts() {
-  router.push('/account/list')
+  router.push('/account/exchanges')
 }
 </script>
 
