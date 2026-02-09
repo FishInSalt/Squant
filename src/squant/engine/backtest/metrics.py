@@ -328,8 +328,8 @@ def _calculate_sortino_ratio(
 
     mean_return = sum(returns) / len(returns)
 
-    # Calculate downside deviation: sqrt(sum(min(0, r)^2) / N)
-    # Uses all returns, squaring only the shortfall below threshold (0)
+    # Calculate downside deviation: sqrt(sum(min(0, r)^2) / (N-1))
+    # Uses N-1 (Bessel correction) for consistency with Sharpe ratio
     downside_squares = [min(0, r) ** 2 for r in returns]
     downside_variance = sum(downside_squares) / (len(returns) - 1)
 
