@@ -188,17 +188,9 @@ import { ref, reactive, watch, onMounted, onUnmounted } from 'vue'
 import { formatDateTime } from '@/utils/format'
 import { getSystemLogs, exportSystemLogs } from '@/api/system'
 import { useNotification } from '@/composables/useNotification'
+import type { SystemLog } from '@/types'
 
-interface LogEntry {
-  id: string
-  timestamp: string
-  level: 'debug' | 'info' | 'warning' | 'error' | 'critical'
-  module: string
-  message: string
-  source?: string
-  extra?: Record<string, unknown>
-  traceback?: string
-}
+type LogEntry = SystemLog
 
 const { toastSuccess, toastError } = useNotification()
 

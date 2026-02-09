@@ -31,8 +31,8 @@ describe('getTheme / saveTheme', () => {
 })
 
 describe('getLastExchange / saveLastExchange', () => {
-  it('returns "binance" by default', () => {
-    expect(getLastExchange()).toBe('binance')
+  it('returns "okx" by default', () => {
+    expect(getLastExchange()).toBe('okx')
   })
 
   it('returns saved exchange', () => {

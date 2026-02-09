@@ -40,7 +40,10 @@ export interface SystemLog {
   level: 'debug' | 'info' | 'warning' | 'error' | 'critical'
   module: string
   message: string
+  source?: string
   data?: Record<string, unknown>
+  extra?: Record<string, unknown>
+  traceback?: string
 }
 
 export interface DataDownloadTask {

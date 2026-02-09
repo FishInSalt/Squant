@@ -345,6 +345,9 @@ onMounted(async () => {
   // 先加载当前交易所配置
   await marketStore.loadCurrentExchange()
 
+  // 加载自选列表（用于显示星标状态）
+  await marketStore.loadWatchlist()
+
   // 加载初始数据
   await loadData()
 
