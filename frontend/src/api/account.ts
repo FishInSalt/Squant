@@ -37,7 +37,3 @@ export const testConnection = (id: string) =>
 // 获取当前账户余额
 export const getAccountBalance = (exchange?: string) =>
   get<AccountBalance>('/account/balance', { exchange })
-
-// 获取资产概览 (P2: 后端暂未实现)
-// export const getAssetOverview = () =>
-//   get<AssetOverview>('/account/overview')

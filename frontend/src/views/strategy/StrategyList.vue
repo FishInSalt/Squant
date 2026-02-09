@@ -122,8 +122,14 @@ const strategyToDelete = ref<Strategy | null>(null)
 const deleteLoading = ref(false)
 
 const handleSearch = debounce(() => {
-  // Local filtering via computed, no need for API call
-  strategyStore.setSearchQuery(searchQuery.value)
+  if (searchQuery.value) {
+    // Load all strategies for complete local filtering
+    strategyStore.loadStrategies({ page: 1, pageSize: 100 })
+  } else {
+    // Reset to normal pagination
+    strategyStore.setPage(1)
+    strategyStore.loadStrategies()
+  }
 }, 300)
 
 function handlePageChange(page: number) {

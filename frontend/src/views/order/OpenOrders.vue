@@ -5,11 +5,6 @@
       <div class="header-actions">
         <el-tooltip content="批量取消功能开发中" placement="top">
           <el-button type="danger" disabled>
-            取消选中 ({{ selectedOrders.length }})
-          </el-button>
-        </el-tooltip>
-        <el-tooltip content="批量取消功能开发中" placement="top">
-          <el-button type="danger" disabled>
             取消全部
           </el-button>
         </el-tooltip>
@@ -48,10 +43,7 @@
         :data="orders"
         v-loading="loading"
         stripe
-        @selection-change="handleSelectionChange"
       >
-        <el-table-column type="selection" width="50" />
-
         <el-table-column prop="symbol" label="交易对" width="130">
           <template #default="{ row }">
             <div class="symbol-cell">
@@ -150,7 +142,6 @@ const { toastSuccess, toastError, confirmDanger } = useNotification()
 
 const loading = ref(false)
 const orders = ref<Order[]>([])
-const selectedOrders = ref<Order[]>([])
 
 const filter = reactive({
   exchange: '',
@@ -175,10 +166,6 @@ async function loadOrders() {
   } finally {
     loading.value = false
   }
-}
-
-function handleSelectionChange(selection: Order[]) {
-  selectedOrders.value = selection
 }
 
 async function cancelOrder(id: string) {
