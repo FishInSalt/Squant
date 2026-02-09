@@ -46,7 +46,7 @@ describe('TIMEFRAME_OPTIONS', () => {
 
 describe('EXCHANGE_OPTIONS', () => {
   it('has label/value pairs', () => {
-    expect(EXCHANGE_OPTIONS.length).toBeGreaterThanOrEqual(3)
+    expect(EXCHANGE_OPTIONS.length).toBeGreaterThanOrEqual(2)
     for (const option of EXCHANGE_OPTIONS) {
       expect(option.label).toBeTruthy()
       expect(option.value).toBeTruthy()
@@ -74,14 +74,14 @@ describe('ORDER_SIDE_OPTIONS', () => {
 })
 
 describe('ORDER_TYPE_OPTIONS', () => {
-  it('has 4 order types', () => {
-    expect(ORDER_TYPE_OPTIONS).toHaveLength(4)
+  it('has 2 order types', () => {
+    expect(ORDER_TYPE_OPTIONS).toHaveLength(2)
   })
 })
 
 describe('ORDER_STATUS_OPTIONS', () => {
-  it('has 7 statuses', () => {
-    expect(ORDER_STATUS_OPTIONS).toHaveLength(7)
+  it('has 6 statuses', () => {
+    expect(ORDER_STATUS_OPTIONS).toHaveLength(6)
   })
 })
 

@@ -107,7 +107,13 @@ const strategyStore = useStrategyStore()
 const { toastSuccess, toastError } = useNotification()
 
 const loading = computed(() => strategyStore.loading)
-const strategies = computed(() => strategyStore.strategies)
+const strategies = computed(() => {
+  if (!searchQuery.value) return strategyStore.strategies
+  const q = searchQuery.value.toLowerCase()
+  return strategyStore.strategies.filter(
+    (s) => s.name.toLowerCase().includes(q) || s.description?.toLowerCase().includes(q)
+  )
+})
 const pagination = computed(() => strategyStore.pagination)
 
 const searchQuery = ref('')
@@ -116,9 +122,8 @@ const strategyToDelete = ref<Strategy | null>(null)
 const deleteLoading = ref(false)
 
 const handleSearch = debounce(() => {
+  // Local filtering via computed, no need for API call
   strategyStore.setSearchQuery(searchQuery.value)
-  strategyStore.setPage(1)
-  strategyStore.loadStrategies()
 }, 300)
 
 function handlePageChange(page: number) {

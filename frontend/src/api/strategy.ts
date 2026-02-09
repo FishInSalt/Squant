@@ -5,7 +5,6 @@ import type { Strategy, ValidationResult, PaginatedData } from '@/types'
 export const getStrategies = (params?: {
   page?: number
   page_size?: number
-  search?: string
   status?: string
 }) =>
   get<PaginatedData<Strategy>>('/strategies', params)

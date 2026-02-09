@@ -87,33 +87,42 @@
 
         <el-divider>规则参数</el-divider>
 
-        <template v-if="form.type === 'max_position_size'">
+        <template v-if="form.type === 'order_limit'">
+          <el-form-item label="最大单笔订单金额 (USDT)">
+            <el-input-number v-model="form.params.max_amount" :min="1" style="width: 100%" />
+          </el-form-item>
+        </template>
+
+        <template v-else-if="form.type === 'position_limit'">
           <el-form-item label="最大持仓比例 (%)">
             <el-input-number v-model="form.params.max_percent" :min="1" :max="100" style="width: 100%" />
           </el-form-item>
         </template>
 
-        <template v-else-if="form.type === 'max_daily_loss'">
-          <el-form-item label="最大日亏损比例 (%)">
+        <template v-else-if="form.type === 'daily_loss_limit'">
+          <el-form-item label="日最大亏损比例 (%)">
             <el-input-number v-model="form.params.max_percent" :min="1" :max="100" style="width: 100%" />
           </el-form-item>
         </template>
 
-        <template v-else-if="form.type === 'max_drawdown'">
-          <el-form-item label="最大回撤比例 (%)">
+        <template v-else-if="form.type === 'total_loss_limit'">
+          <el-form-item label="总最大亏损比例 (%)">
             <el-input-number v-model="form.params.max_percent" :min="1" :max="100" style="width: 100%" />
           </el-form-item>
         </template>
 
-        <template v-else-if="form.type === 'max_order_size'">
-          <el-form-item label="最大单笔订单金额">
-            <el-input-number v-model="form.params.max_amount" :min="0" style="width: 100%" />
-          </el-form-item>
-        </template>
-
-        <template v-else-if="form.type === 'max_open_orders'">
-          <el-form-item label="最大挂单数量">
+        <template v-else-if="form.type === 'frequency_limit'">
+          <el-form-item label="最大交易频率 (次/小时)">
             <el-input-number v-model="form.params.max_count" :min="1" style="width: 100%" />
+          </el-form-item>
+        </template>
+
+        <template v-else-if="form.type === 'volatility_break'">
+          <el-form-item label="波动阈值 (%)">
+            <el-input-number v-model="form.params.threshold_percent" :min="1" :max="100" style="width: 100%" />
+          </el-form-item>
+          <el-form-item label="检测时间窗口 (分钟)">
+            <el-input-number v-model="form.params.window_minutes" :min="1" style="width: 100%" />
           </el-form-item>
         </template>
       </el-form>
@@ -156,11 +165,13 @@ interface RuleParams {
   max_percent?: number
   max_amount?: number
   max_count?: number
+  threshold_percent?: number
+  window_minutes?: number
 }
 
 const form = reactive({
   name: '',
-  type: 'max_position_size' as RiskRuleType,
+  type: 'order_limit' as RiskRuleType,
   description: '',
   params: {} as RuleParams,
 })
@@ -191,9 +202,9 @@ async function loadRules() {
 function showCreateDialog() {
   editingRule.value = null
   form.name = ''
-  form.type = 'max_position_size'
+  form.type = 'order_limit'
   form.description = ''
-  form.params = { max_percent: 50 } as RuleParams
+  form.params = { max_amount: 10000 } as RuleParams
   dialogVisible.value = true
 }
 
@@ -209,16 +220,19 @@ function showEditDialog(rule: RiskRule) {
 function handleTypeChange() {
   // 重置参数为默认值
   switch (form.type) {
-    case 'max_position_size':
-    case 'max_daily_loss':
-    case 'max_drawdown':
-      form.params = { max_percent: 50 } as RuleParams
-      break
-    case 'max_order_size':
+    case 'order_limit':
       form.params = { max_amount: 10000 } as RuleParams
       break
-    case 'max_open_orders':
+    case 'position_limit':
+    case 'daily_loss_limit':
+    case 'total_loss_limit':
+      form.params = { max_percent: 50 } as RuleParams
+      break
+    case 'frequency_limit':
       form.params = { max_count: 10 } as RuleParams
+      break
+    case 'volatility_break':
+      form.params = { threshold_percent: 10, window_minutes: 5 } as RuleParams
       break
     default:
       form.params = {} as RuleParams

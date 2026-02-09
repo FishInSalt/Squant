@@ -4,7 +4,6 @@ import type {
   ExchangeAccountCreate,
   ExchangeAccountUpdate,
   AccountBalance,
-  AssetOverview
 } from '@/types'
 
 // ================== 交易所账户配置 (/exchange-accounts) ==================
@@ -39,6 +38,6 @@ export const testConnection = (id: string) =>
 export const getAccountBalance = (exchange?: string) =>
   get<AccountBalance>('/account/balance', { exchange })
 
-// 获取资产概览
-export const getAssetOverview = () =>
-  get<AssetOverview>('/account/overview')
+// 获取资产概览 (P2: 后端暂未实现)
+// export const getAssetOverview = () =>
+//   get<AssetOverview>('/account/overview')

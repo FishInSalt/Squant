@@ -30,20 +30,16 @@ export const TIMEFRAME_OPTIONS = [
   { label: '1周', value: '1w' },
 ] as const
 
-// 交易所选项
+// 交易所选项（匹配后端支持的交易所）
 export const EXCHANGE_OPTIONS = [
-  { label: 'Binance', value: 'binance' },
   { label: 'OKX', value: 'okx' },
-  { label: 'Bybit', value: 'bybit' },
-  { label: 'Huobi', value: 'huobi' },
-  { label: 'Gate.io', value: 'gate' },
+  { label: 'Binance', value: 'binance' },
 ] as const
 
 // 支持的交易所（用于账户配置）
 export const SUPPORTED_EXCHANGES = [
   { id: 'okx', name: 'OKX', has_testnet: true },
   { id: 'binance', name: 'Binance', has_testnet: true },
-  { id: 'bybit', name: 'Bybit', has_testnet: true },
 ] as const
 
 // 订单方向选项
@@ -52,19 +48,16 @@ export const ORDER_SIDE_OPTIONS = [
   { label: '卖出', value: 'sell' },
 ] as const
 
-// 订单类型选项
+// 订单类型选项（匹配后端 OrderType 枚举）
 export const ORDER_TYPE_OPTIONS = [
   { label: '市价', value: 'market' },
   { label: '限价', value: 'limit' },
-  { label: '止损', value: 'stop' },
-  { label: '止损限价', value: 'stop_limit' },
 ] as const
 
-// 订单状态选项
+// 订单状态选项（匹配后端 OrderStatus 枚举）
 export const ORDER_STATUS_OPTIONS = [
   { label: '待处理', value: 'pending' },
   { label: '已提交', value: 'submitted' },
-  { label: '挂单中', value: 'open' },
   { label: '部分成交', value: 'partial' },
   { label: '已成交', value: 'filled' },
   { label: '已取消', value: 'cancelled' },
@@ -81,16 +74,14 @@ export const SESSION_STATUS_OPTIONS = [
   { label: '已取消', value: 'cancelled' },
 ] as const
 
-// 风控规则类型选项
+// 风控规则类型选项（匹配后端 RiskRuleType 枚举）
 export const RISK_RULE_TYPE_OPTIONS = [
-  { label: '最大持仓', value: 'max_position_size' },
-  { label: '日最大亏损', value: 'max_daily_loss' },
-  { label: '最大回撤', value: 'max_drawdown' },
-  { label: '最大订单金额', value: 'max_order_size' },
-  { label: '最大挂单数', value: 'max_open_orders' },
-  { label: '交易时段', value: 'trading_hours' },
-  { label: '价格偏离', value: 'price_deviation' },
-  { label: '自定义', value: 'custom' },
+  { label: '单笔订单限制', value: 'order_limit' },
+  { label: '持仓比例限制', value: 'position_limit' },
+  { label: '日亏损限制', value: 'daily_loss_limit' },
+  { label: '总亏损限制', value: 'total_loss_limit' },
+  { label: '交易频率限制', value: 'frequency_limit' },
+  { label: '波动熔断', value: 'volatility_break' },
 ] as const
 
 // 日志级别选项

@@ -1,30 +1,31 @@
-// 订单相关类型
+// 订单相关类型（匹配后端 models/enums.py + schemas/order.py）
 export type OrderSide = 'buy' | 'sell'
-export type OrderType = 'market' | 'limit' | 'stop' | 'stop_limit'
-export type OrderStatus = 'pending' | 'submitted' | 'open' | 'partial' | 'filled' | 'cancelled' | 'rejected'
+export type OrderType = 'market' | 'limit'
+export type OrderStatus = 'pending' | 'submitted' | 'partial' | 'filled' | 'cancelled' | 'rejected'
 
+// 匹配后端 OrderDetail
 export interface Order {
   id: string
-  client_order_id?: string
+  account_id: string
+  run_id?: string
   exchange: string
+  exchange_oid?: string
   symbol: string
   side: OrderSide
   type: OrderType
   status: OrderStatus
+  status_display?: string
   price?: number
-  stop_price?: number
   amount: number
   filled: number
   remaining_amount: number
   avg_price?: number
+  reject_reason?: string
   commission?: number
   commission_asset?: string
-  session_id?: string
-  strategy_id?: string
   strategy_name?: string
   created_at: string
   updated_at: string
-  filled_at?: string
 }
 
 export interface OrderFilter {
@@ -33,7 +34,7 @@ export interface OrderFilter {
   side?: OrderSide
   status?: OrderStatus | OrderStatus[]
   strategy_id?: string
-  session_id?: string
+  run_id?: string
   start_date?: string
   end_date?: string
 }

@@ -56,11 +56,11 @@ export function usePolling<T>(
       if (retryCount < retries) {
         retryCount++
         await new Promise((resolve) => setTimeout(resolve, retryDelay))
-        return fetch()
+        await fetch()
+        return
       }
-    } finally {
-      loading.value = false
     }
+    loading.value = false
   }
 
   function scheduleNext() {

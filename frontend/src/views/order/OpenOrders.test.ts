@@ -7,13 +7,12 @@ import { wrapApiResponse } from '@/__tests__/fixtures'
 vi.mock('@/api/order', () => ({
   getOpenOrders: vi.fn(),
   cancelOrder: vi.fn(),
-  cancelOrders: vi.fn(),
-  cancelAllOrders: vi.fn(),
 }))
 
 const mockOrders = [
   {
     id: 'order-1',
+    account_id: 'acc-1',
     exchange: 'okx',
     symbol: 'BTC/USDT',
     side: 'buy' as const,
@@ -22,13 +21,14 @@ const mockOrders = [
     amount: 0.1,
     filled: 0,
     remaining_amount: 0.1,
-    status: 'open' as const,
+    status: 'submitted' as const,
     strategy_name: 'TestStrategy',
     created_at: '2024-06-15T10:00:00Z',
     updated_at: '2024-06-15T10:00:00Z',
   },
   {
     id: 'order-2',
+    account_id: 'acc-1',
     exchange: 'okx',
     symbol: 'ETH/USDT',
     side: 'sell' as const,
@@ -37,7 +37,7 @@ const mockOrders = [
     amount: 1.0,
     filled: 0.5,
     remaining_amount: 0.5,
-    status: 'open' as const,
+    status: 'partial' as const,
     created_at: '2024-06-15T11:00:00Z',
     updated_at: '2024-06-15T11:00:00Z',
   },
@@ -62,7 +62,7 @@ describe('OpenOrders', () => {
     expect(wrapper.text()).toContain('ETH/USDT')
   })
 
-  it('shows cancel all button', async () => {
+  it('shows cancel all button (disabled)', async () => {
     const wrapper = mountView(OpenOrders)
     await flushPromises()
     expect(wrapper.text()).toContain('取消全部')

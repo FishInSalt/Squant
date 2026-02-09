@@ -40,7 +40,7 @@ export const cancelOrders = (ids: string[]) =>
 export const cancelAllOrders = (filter?: {
   exchange?: string
   symbol?: string
-  session_id?: string
+  run_id?: string
 }) =>
   post<{ cancelled_count: number }>('/orders/cancel-all', filter)
 
