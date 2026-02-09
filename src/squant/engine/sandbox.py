@@ -350,11 +350,15 @@ def _inplacevar_(op: str, x: Any, y: Any) -> Any:
 def _guarded_write(obj: Any) -> Any:
     """Guard for attribute/item writes in RestrictedPython.
 
-    Allows writes to safe mutable types (list, dict, set) but blocks
-    writes to arbitrary objects to prevent strategy code from mutating
-    engine internals (e.g., ctx._cash).
+    Allows writes to:
+    - Strategy subclass instances (self.xxx = yyy in strategy code)
+    - Safe mutable types (list, dict, set)
+
+    Blocks writes to engine internals (e.g., ctx._cash, Position objects).
     """
-    if isinstance(obj, (list, dict, set)):
+    from squant.engine.backtest.strategy_base import Strategy
+
+    if isinstance(obj, (list, dict, set, Strategy)):
         return obj
     raise AttributeError(
         f"Write access to {type(obj).__name__} objects is not allowed in strategy code"
