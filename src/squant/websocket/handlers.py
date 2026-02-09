@@ -241,6 +241,11 @@ class WebSocketGateway:
             )
             return
 
+        # Validate that prefixed channels have a non-empty value after the colon
+        if ":" in channel and not channel.split(":", 1)[1]:
+            await self._send_error("Invalid channel: missing value after prefix")
+            return
+
         if len(self._subscribed_channels) >= self.MAX_SUBSCRIPTIONS:
             await self._send_error(f"Max subscriptions reached ({self.MAX_SUBSCRIPTIONS})")
             return
