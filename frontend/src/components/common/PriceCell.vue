@@ -9,7 +9,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, ref, watch, onUnmounted } from 'vue'
 import { formatPrice, formatPercent } from '@/utils/format'
 
 interface Props {
@@ -62,6 +62,10 @@ watch(() => props.value, (newVal, oldVal) => {
   flashTimer = setTimeout(() => {
     flashClass.value = ''
   }, 600)
+})
+
+onUnmounted(() => {
+  if (flashTimer) clearTimeout(flashTimer)
 })
 </script>
 
