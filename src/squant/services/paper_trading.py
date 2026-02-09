@@ -492,16 +492,25 @@ class PaperTradingService:
     async def _check_unsubscribe(self, symbol: str, timeframe: str) -> None:
         """Check if we should unsubscribe from candles.
 
-        Only unsubscribes if no other sessions need this symbol/timeframe.
+        Only unsubscribes if no other sessions (paper or live) need this
+        symbol/timeframe (R3-006: cross-manager check).
 
         Args:
             symbol: Trading symbol.
             timeframe: Candle timeframe.
         """
-        session_manager = get_session_manager()
-        subscribed_symbols = session_manager.get_subscribed_symbols()
+        from squant.engine.live.manager import get_live_session_manager
 
-        if (symbol, timeframe) not in subscribed_symbols:
+        paper_manager = get_session_manager()
+        live_manager = get_live_session_manager()
+
+        paper_subscribed = paper_manager.get_subscribed_symbols()
+        live_subscribed = live_manager.get_subscribed_symbols()
+
+        if (symbol, timeframe) not in paper_subscribed and (
+            symbol,
+            timeframe,
+        ) not in live_subscribed:
             stream_manager = get_stream_manager()
             await stream_manager.unsubscribe_candles(symbol, timeframe)
             logger.info(f"Unsubscribed from candles: {symbol}:{timeframe}")

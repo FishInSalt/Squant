@@ -167,7 +167,9 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             Response from handler or 429 Too Many Requests.
         """
         # Skip rate limiting for health check endpoints
-        if request.url.path in ["/health", "/api/v1/health"]:
+        if request.url.path in ("/health", "/api/v1/health") or request.url.path.startswith(
+            "/api/v1/health/"
+        ):
             return await call_next(request)
 
         client_ip = self._get_client_ip(request)

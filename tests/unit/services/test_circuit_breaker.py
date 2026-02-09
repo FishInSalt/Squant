@@ -270,9 +270,11 @@ class TestCircuitBreakerService:
 
     @pytest.mark.asyncio
     async def test_reset_not_active(self, service: CircuitBreakerService) -> None:
-        """Test reset when not active."""
-        result = await service.reset()
-        assert result["status"] == "not_active"
+        """Test reset when not active raises CircuitBreakerNotActiveError."""
+        from squant.services.circuit_breaker import CircuitBreakerNotActiveError
+
+        with pytest.raises(CircuitBreakerNotActiveError):
+            await service.reset()
 
     @pytest.mark.asyncio
     async def test_reset_success(self, service: CircuitBreakerService) -> None:

@@ -244,12 +244,9 @@ class RiskTriggerRepository(BaseRepository[RiskTrigger]):
         Returns:
             List of risk triggers.
         """
-        stmt = (
-            select(RiskTrigger)
-            .options(
-                selectinload(RiskTrigger.rule),
-                selectinload(RiskTrigger.run).selectinload(StrategyRun.strategy),
-            )
+        stmt = select(RiskTrigger).options(
+            selectinload(RiskTrigger.rule),
+            selectinload(RiskTrigger.run).selectinload(StrategyRun.strategy),
         )
 
         if start_time is not None:

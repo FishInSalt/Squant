@@ -183,6 +183,9 @@ class LiveTradingEngine:
         # Emergency close in progress flag (TRD-038#6)
         self._emergency_close_in_progress: bool = False
 
+        # Processing lock to prevent stop()/process_candle() race conditions (R3-002)
+        self._processing_lock = asyncio.Lock()
+
         # Buffered WebSocket order updates (ISSUE-203 fix)
         # Updates are queued here and drained synchronously within process_candle
         # to prevent concurrent state mutation between WS callbacks and polling.
@@ -194,7 +197,9 @@ class LiveTradingEngine:
         self._order_poll_min_interval = 30.0  # Minimum seconds between polls for same order
 
         # Exchange connection failure tracking (LV-3)
-        self._sync_consecutive_failures: int = 0
+        # Separate counters for balance and order sync (R3-011)
+        self._balance_consecutive_failures: int = 0
+        self._order_sync_consecutive_failures: int = 0
         self._sync_failure_threshold: int = 5
 
     @property
@@ -341,6 +346,11 @@ class LiveTradingEngine:
     async def stop(self, error: str | None = None, cancel_orders: bool = True) -> None:
         """Stop the live trading engine.
 
+        Does NOT acquire _processing_lock because stop() may be called from
+        within process_candle's error handler (which already holds the lock).
+        Setting _is_running=False early prevents process_candle from proceeding
+        if it's awaiting re-entry. (R3-002)
+
         Args:
             error: Optional error message if stopping due to error.
             cancel_orders: Whether to cancel open orders on stop.
@@ -350,6 +360,9 @@ class LiveTradingEngine:
             return
 
         logger.info(f"Stopping live trading engine {self._run_id}")
+
+        # Set flag early to prevent further candle processing
+        self._is_running = False
 
         if error:
             self._error_message = error
@@ -367,7 +380,6 @@ class LiveTradingEngine:
             if not self._error_message:
                 self._error_message = f"Strategy stop failed: {e}"
 
-        self._is_running = False
         self._stopped_at = datetime.now(UTC)
 
     async def emergency_close(self) -> dict[str, Any]:
@@ -541,68 +553,73 @@ class LiveTradingEngine:
             logger.warning(f"Symbol mismatch: expected {self._symbol}, got {candle.symbol}")
             return
 
-        try:
-            # Update last activity timestamp
-            self._last_active_at = datetime.now(UTC)
+        # Acquire processing lock to prevent race with stop() (R3-002)
+        async with self._processing_lock:
+            if not self._is_running:
+                return
 
-            # Update current price
-            self._current_price = candle.close
-
-            # Convert WSCandle to Bar
-            bar = self._candle_to_bar(candle)
-
-            # Update context prices first so position valuations use fresh data
-            self._context._set_current_bar(bar)
-            self._context._add_bar_to_history(bar)
-
-            # Drain buffered WebSocket order updates before polling to ensure
-            # consistent state (ISSUE-203 fix: no concurrent mutation)
-            self._drain_ws_updates()
-
-            # Sync balance as baseline, then sync orders so fills adjust
-            # cash incrementally on top of exchange truth (C-DEFER-8)
-            await self._sync_balance()
-            await self._sync_pending_orders()
-
-            # Update risk manager with equity computed from consistent state
-            self._risk_manager.update_equity(self._context.equity)
-
-            # Record equity snapshot BEFORE strategy execution to capture
-            # the portfolio state at bar close (C-DEFER-8)
-            self._context._record_equity_snapshot(bar.time)
-
-            # Track pending snapshot for persistence
-            if self._context.equity_curve:
-                self._pending_snapshots.append(self._context.equity_curve[-1])
-
-            # Call strategy on_bar with resource limits (STR-013)
-            from squant.config import get_settings
-
-            settings = get_settings()
             try:
-                with resource_limiter(
-                    cpu_seconds=settings.strategy.cpu_limit_seconds,
-                    memory_mb=settings.strategy.memory_limit_mb,
-                ):
-                    self._strategy.on_bar(bar)
-            except ResourceLimitExceededError as e:
-                logger.error(f"Strategy resource limit exceeded: {e}")
-                await self.stop(error=f"Strategy resource limit exceeded: {e}")
+                # Update last activity timestamp
+                self._last_active_at = datetime.now(UTC)
+
+                # Update current price
+                self._current_price = candle.close
+
+                # Convert WSCandle to Bar
+                bar = self._candle_to_bar(candle)
+
+                # Update context prices first so position valuations use fresh data
+                self._context._set_current_bar(bar)
+                self._context._add_bar_to_history(bar)
+
+                # Drain buffered WebSocket order updates before polling to ensure
+                # consistent state (ISSUE-203 fix: no concurrent mutation)
+                self._drain_ws_updates()
+
+                # Sync balance as baseline, then sync orders so fills adjust
+                # cash incrementally on top of exchange truth (C-DEFER-8)
+                await self._sync_balance()
+                await self._sync_pending_orders()
+
+                # Update risk manager with equity computed from consistent state
+                self._risk_manager.update_equity(self._context.equity)
+
+                # Record equity snapshot BEFORE strategy execution to capture
+                # the portfolio state at bar close (C-DEFER-8)
+                self._context._record_equity_snapshot(bar.time)
+
+                # Track pending snapshot for persistence
+                if self._context.equity_curve:
+                    self._pending_snapshots.append(self._context.equity_curve[-1])
+
+                # Call strategy on_bar with resource limits (STR-013)
+                from squant.config import get_settings
+
+                settings = get_settings()
+                try:
+                    with resource_limiter(
+                        cpu_seconds=settings.strategy.cpu_limit_seconds,
+                        memory_mb=settings.strategy.memory_limit_mb,
+                    ):
+                        self._strategy.on_bar(bar)
+                except ResourceLimitExceededError as e:
+                    logger.error(f"Strategy resource limit exceeded: {e}")
+                    await self.stop(error=f"Strategy resource limit exceeded: {e}")
+                    raise
+
+                # Process pending order requests from strategy
+                await self._process_order_requests()
+
+                self._bar_count += 1
+
+                logger.debug(
+                    f"Processed bar {self._bar_count} at {bar.time}, equity={self._context.equity}"
+                )
+
+            except Exception as e:
+                logger.exception(f"Error processing candle in live engine {self._run_id}: {e}")
+                await self.stop(error=f"Error processing candle: {e}")
                 raise
-
-            # Process pending order requests from strategy
-            await self._process_order_requests()
-
-            self._bar_count += 1
-
-            logger.debug(
-                f"Processed bar {self._bar_count} at {bar.time}, equity={self._context.equity}"
-            )
-
-        except Exception as e:
-            logger.exception(f"Error processing candle in live engine {self._run_id}: {e}")
-            await self.stop(error=f"Error processing candle: {e}")
-            raise
 
     def on_order_update(self, update: WSOrderUpdate) -> None:
         """Handle WebSocket order update by buffering it for later processing.
@@ -738,17 +755,17 @@ class LiveTradingEngine:
             quote_balance = balance.get_balance(quote_currency)
             if quote_balance:
                 self._context._cash = quote_balance.available
-            self._sync_consecutive_failures = 0
+            self._balance_consecutive_failures = 0
         except Exception as e:
-            self._sync_consecutive_failures += 1
+            self._balance_consecutive_failures += 1
             logger.warning(
                 f"Failed to sync balance: {e} "
-                f"(consecutive failures: {self._sync_consecutive_failures})"
+                f"(consecutive failures: {self._balance_consecutive_failures})"
             )
-            if self._sync_consecutive_failures >= self._sync_failure_threshold:
+            if self._balance_consecutive_failures >= self._sync_failure_threshold:
                 msg = (
-                    f"Exchange connection lost: {self._sync_consecutive_failures} "
-                    f"consecutive sync failures"
+                    f"Exchange connection lost: {self._balance_consecutive_failures} "
+                    f"consecutive balance sync failures"
                 )
                 logger.error(f"Engine {self._run_id} stopping: {msg}")
                 # Raise instead of setting _is_running=False directly so that
@@ -793,24 +810,24 @@ class LiveTradingEngine:
                 self._update_order_from_response(live_order, response)
                 self._order_last_poll[exchange_oid] = now
                 polled_count += 1
-                self._sync_consecutive_failures = 0
+                self._order_sync_consecutive_failures = 0
 
                 # Clean up tracking for completed orders
                 if live_order.is_complete and exchange_oid in self._order_last_poll:
                     del self._order_last_poll[exchange_oid]
 
             except Exception as e:
-                self._sync_consecutive_failures += 1
+                self._order_sync_consecutive_failures += 1
                 logger.warning(
                     f"Failed to sync order {internal_id}: {e} "
-                    f"(consecutive failures: {self._sync_consecutive_failures})"
+                    f"(consecutive failures: {self._order_sync_consecutive_failures})"
                 )
                 # Still record the poll time to avoid hammering on errors
                 self._order_last_poll[exchange_oid] = now
-                if self._sync_consecutive_failures >= self._sync_failure_threshold:
+                if self._order_sync_consecutive_failures >= self._sync_failure_threshold:
                     msg = (
-                        f"Exchange connection lost: {self._sync_consecutive_failures} "
-                        f"consecutive sync failures"
+                        f"Exchange connection lost: {self._order_sync_consecutive_failures} "
+                        f"consecutive order sync failures"
                     )
                     logger.error(f"Engine {self._run_id} stopping: {msg}")
                     # Raise instead of setting _is_running=False so process_candle

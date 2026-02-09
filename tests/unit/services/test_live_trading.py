@@ -570,6 +570,10 @@ class TestStartSession:
         """Create mock database session."""
         session = MagicMock()
         session.commit = AsyncMock()
+        # Mock execute for has_running_session query (R3-003)
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = None  # No duplicate session
+        session.execute = AsyncMock(return_value=mock_result)
         return session
 
     @pytest.fixture

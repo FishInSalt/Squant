@@ -184,7 +184,7 @@ class LiveSessionManager:
         async with self._lock:
             run_ids = list(self._sessions.keys())
 
-        # Stop each session
+        # Stop each session and unregister
         for run_id in run_ids:
             engine = self._sessions.get(run_id)
             if engine and engine.is_running:
@@ -192,6 +192,7 @@ class LiveSessionManager:
                     await engine.stop(error=f"Session stopped: {reason}")
                 except Exception as e:
                     logger.exception(f"Error stopping live engine {run_id}: {e}")
+            await self.unregister(run_id)
 
         logger.info(f"Stopped {len(run_ids)} live trading sessions")
 

@@ -30,7 +30,7 @@ class MyStrategy(Strategy):
 
     def on_bar(self, bar):
         # Simple buy and hold
-        if not self.ctx.get_position(bar.symbol).is_open:
+        if not self.ctx.has_position(bar.symbol):
             self.ctx.buy(bar.symbol, Decimal("0.1"))
 
     def on_stop(self):

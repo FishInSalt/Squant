@@ -9,8 +9,8 @@ from pydantic import BaseModel, Field
 class AddToWatchlistRequest(BaseModel):
     """Request to add a symbol to the watchlist."""
 
-    symbol: str = Field(..., description="Trading pair symbol")
-    exchange: str = Field(..., description="Exchange identifier")
+    symbol: str = Field(..., min_length=1, max_length=32, description="Trading pair symbol")
+    exchange: str = Field(..., min_length=1, max_length=32, description="Exchange identifier")
 
 
 class ReorderWatchlistItem(BaseModel):
