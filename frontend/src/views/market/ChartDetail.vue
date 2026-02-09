@@ -76,6 +76,7 @@
           <el-checkbox value="MA">MA</el-checkbox>
           <el-checkbox value="EMA">EMA</el-checkbox>
           <el-checkbox value="BOLL">BOLL</el-checkbox>
+          <el-checkbox value="VOL">VOL</el-checkbox>
           <el-checkbox value="MACD">MACD</el-checkbox>
           <el-checkbox value="RSI">RSI</el-checkbox>
           <el-checkbox value="KDJ">KDJ</el-checkbox>

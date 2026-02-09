@@ -153,8 +153,15 @@ async function readFileAsText(file: File): Promise<string> {
   })
 }
 
+const MAX_FILE_SIZE = 1 * 1024 * 1024 // 1MB
+
 async function handleUpload() {
   if (!selectedFile.value) return
+
+  if (selectedFile.value.size > MAX_FILE_SIZE) {
+    toastError(`文件大小不能超过 ${formatFileSize(MAX_FILE_SIZE)}`)
+    return
+  }
 
   uploading.value = true
   uploadProgress.value = 0

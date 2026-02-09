@@ -26,10 +26,10 @@ export function saveTheme(theme: 'light' | 'dark'): void {
 // 上次选择的交易所
 export function getLastExchange(): string {
   try {
-    return localStorage.getItem(STORAGE_KEYS.LAST_EXCHANGE) || 'binance'
+    return localStorage.getItem(STORAGE_KEYS.LAST_EXCHANGE) || 'okx'
   } catch (error) {
     console.error('Failed to load last exchange:', error)
-    return 'binance'
+    return 'okx'
   }
 }
 

@@ -164,12 +164,13 @@ const needsPassphrase = computed(() => {
   return ['okx', 'bybit'].includes(form.exchange)
 })
 
-// 对话框关闭时清理敏感凭证
+// 对话框关闭时清理敏感凭证和验证状态
 watch(dialogVisible, (visible) => {
   if (!visible) {
     form.api_key = ''
     form.api_secret = ''
     form.passphrase = ''
+    formRef.value?.clearValidate()
   }
 })
 

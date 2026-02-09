@@ -163,6 +163,31 @@
             </el-col>
           </el-row>
 
+          <el-row :gutter="16">
+            <el-col :span="12">
+              <el-form-item label="价格偏离限制">
+                <el-input-number
+                  v-model="form.risk_config.price_deviation_limit"
+                  :min="0.001"
+                  :max="0.5"
+                  :step="0.01"
+                  :precision="3"
+                  style="width: 100%"
+                />
+              </el-form-item>
+            </el-col>
+            <el-col :span="12">
+              <el-form-item label="熔断触发次数">
+                <el-input-number
+                  v-model="form.risk_config.circuit_breaker_threshold"
+                  :min="1"
+                  :max="20"
+                  style="width: 100%"
+                />
+              </el-form-item>
+            </el-col>
+          </el-row>
+
           <div v-if="selectedStrategy?.params_schema?.properties" class="params-section">
             <el-divider>策略参数</el-divider>
             <el-row :gutter="16">

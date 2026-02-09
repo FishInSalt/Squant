@@ -32,7 +32,7 @@
 
       <div class="status-stats">
         <div class="stat">
-          <span class="value">{{ (status?.active_live_sessions || 0) + (status?.active_paper_sessions || 0) }}</span>
+          <span class="value">{{ runningSessionsCount }}</span>
           <span class="label">运行中策略</span>
         </div>
       </div>
@@ -73,7 +73,7 @@
             type="warning"
             size="large"
             @click="handleCloseAll"
-            :disabled="(status?.active_live_sessions || 0) + (status?.active_paper_sessions || 0) === 0"
+            :disabled="runningSessionsCount === 0"
           >
             <el-icon><Position /></el-icon>
             一键平仓
@@ -88,7 +88,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { formatDateTime } from '@/utils/format'
 import {
   getCircuitBreakerStatus,
@@ -100,6 +100,10 @@ import type { CircuitBreakerStatus } from '@/types'
 const { toastSuccess, toastError, confirmDanger } = useNotification()
 
 const status = ref<CircuitBreakerStatus | null>(null)
+
+const runningSessionsCount = computed(() =>
+  (status.value?.active_live_sessions || 0) + (status.value?.active_paper_sessions || 0)
+)
 
 async function loadStatus() {
   try {
