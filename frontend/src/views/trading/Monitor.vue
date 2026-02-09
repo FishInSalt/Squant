@@ -8,12 +8,12 @@
       <el-tab-pane label="全部" name="all">
         <div class="sessions-grid">
           <SessionCard
-            v-for="session in allSessions"
-            :key="`${session.type}-${session.id}`"
-            :session="session"
-            @click="goToSession(session)"
-            @stop="handleStop(session)"
-            @emergency-close="handleEmergencyClose(session)"
+            v-for="item in allSessions"
+            :key="`${item.type}-${item.id}`"
+            :session="item"
+            @click="goToSession(item)"
+            @stop="handleStop(item)"
+            @emergency-close="handleEmergencyClose(item)"
           />
         </div>
         <div v-if="allSessions.length === 0" class="empty-state card">
@@ -25,10 +25,10 @@
       <el-tab-pane label="回测" name="backtest">
         <div class="sessions-grid">
           <SessionCard
-            v-for="session in backtestSessions"
-            :key="session.id"
-            :session="{ ...session, type: 'backtest' }"
-            @click="goToBacktest(session.id)"
+            v-for="item in backtestSessions"
+            :key="item.id"
+            :session="{ ...item, type: 'backtest' }"
+            @click="goToBacktest(item.id)"
           />
         </div>
         <div v-if="backtestSessions.length === 0" class="empty-state card">
@@ -39,11 +39,11 @@
       <el-tab-pane label="模拟交易" name="paper">
         <div class="sessions-grid">
           <SessionCard
-            v-for="session in paperSessions"
-            :key="session.id"
-            :session="{ ...session, type: 'paper' }"
-            @click="goToPaper(session.id)"
-            @stop="handleStopPaper(session.id)"
+            v-for="item in paperSessions"
+            :key="item.id"
+            :session="{ ...item, type: 'paper' }"
+            @click="goToPaper(item.id)"
+            @stop="handleStopPaper(item.id)"
           />
         </div>
         <div v-if="paperSessions.length === 0" class="empty-state card">
@@ -54,12 +54,12 @@
       <el-tab-pane label="实盘交易" name="live">
         <div class="sessions-grid">
           <SessionCard
-            v-for="session in liveSessions"
-            :key="session.id"
-            :session="{ ...session, type: 'live' }"
-            @click="goToLive(session.id)"
-            @stop="handleStopLive(session.id)"
-            @emergency-close="handleEmergencyCloseLive(session.id)"
+            v-for="item in liveSessions"
+            :key="item.id"
+            :session="{ ...item, type: 'live' }"
+            @click="goToLive(item.id)"
+            @stop="handleStopLive(item.id)"
+            @emergency-close="handleEmergencyCloseLive(item.id)"
           />
         </div>
         <div v-if="liveSessions.length === 0" class="empty-state card">
@@ -77,8 +77,9 @@ import { useTradingStore } from '@/stores/trading'
 import StatusBadge from '@/components/common/StatusBadge.vue'
 import { formatExchangeName, formatNumber, formatRelativeTime } from '@/utils/format'
 import { stopPaperTrading } from '@/api/paper'
-import { stopLiveTrading, emergencyClosePositions } from '@/api/live'
+import { stopLiveTrading, emergencyClosePositions, getLiveSessionStatus } from '@/api/live'
 import { useNotification } from '@/composables/useNotification'
+import { confirmStopLive, confirmEmergencyClose, toPositionRows, type PositionRow } from '@/composables/useTradingConfirm'
 import type { BacktestRun, PaperSession, LiveSession } from '@/types'
 
 // SessionCard component
@@ -232,12 +233,12 @@ async function handleStopPaper(id: string) {
 }
 
 async function handleStopLive(id: string) {
-  const confirmed = await confirmDanger('确定要停止该实盘交易吗？当前持仓将被保留。')
+  const { confirmed, cancelOrders } = await confirmStopLive()
   if (!confirmed) return
 
   try {
-    await stopLiveTrading(id)
-    toastSuccess('已停止')
+    await stopLiveTrading(id, cancelOrders)
+    toastSuccess(cancelOrders ? '已停止，挂单已取消' : '已停止，挂单已保留')
     tradingStore.loadRunningLiveSessions()
   } catch (error) {
     toastError('停止失败')
@@ -245,7 +246,15 @@ async function handleStopLive(id: string) {
 }
 
 async function handleEmergencyCloseLive(id: string) {
-  const confirmed = await confirmDanger('确定要执行紧急平仓吗？这将立即平掉所有持仓！')
+  let rows: PositionRow[] = []
+  try {
+    const statusResp = await getLiveSessionStatus(id)
+    rows = toPositionRows(statusResp.data.positions)
+  } catch {
+    // proceed with empty list — confirmEmergencyClose handles empty state
+  }
+
+  const confirmed = await confirmEmergencyClose(rows)
   if (!confirmed) return
 
   try {

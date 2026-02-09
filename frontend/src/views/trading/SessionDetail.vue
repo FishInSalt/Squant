@@ -267,6 +267,7 @@ import {
   emergencyClosePositions,
 } from '@/api/live'
 import { useNotification } from '@/composables/useNotification'
+import { confirmStopLive, confirmEmergencyClose, type PositionRow } from '@/composables/useTradingConfirm'
 import type {
   PaperSession,
   LiveSession,
@@ -379,25 +380,40 @@ function goBack() {
 }
 
 async function handleStop() {
-  const label = isPaper.value ? '模拟交易' : '实盘交易'
-  const confirmed = await confirmDanger(`确定要停止该${label}吗？`)
-  if (!confirmed) return
-
-  try {
-    if (isPaper.value) {
+  if (isPaper.value) {
+    const confirmed = await confirmDanger('确定要停止该模拟交易吗？')
+    if (!confirmed) return
+    try {
       await stopPaperTrading(props.id)
-    } else {
-      await stopLiveTrading(props.id)
+      toastSuccess('已停止')
+      await loadSession()
+    } catch (error) {
+      toastError('停止失败')
     }
-    toastSuccess('已停止')
-    await loadSession()
-  } catch (error) {
-    toastError('停止失败')
+  } else {
+    const { confirmed, cancelOrders } = await confirmStopLive()
+    if (!confirmed) return
+    try {
+      await stopLiveTrading(props.id, cancelOrders)
+      toastSuccess(cancelOrders ? '已停止，挂单已取消' : '已停止，挂单已保留')
+      await loadSession()
+    } catch (error) {
+      toastError('停止失败')
+    }
   }
 }
 
 async function handleEmergencyClose() {
-  const confirmed = await confirmDanger('确定要执行紧急平仓吗？这将立即平掉所有持仓！')
+  const rows: PositionRow[] = positionRows.value
+    .filter((p) => p.amount !== 0)
+    .map((p) => ({
+      symbol: p.symbol,
+      side: p.side,
+      amount: p.amount,
+      avg_entry_price: p.avg_entry_price,
+    }))
+
+  const confirmed = await confirmEmergencyClose(rows, true)
   if (!confirmed) return
 
   try {

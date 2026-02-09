@@ -1,5 +1,5 @@
 import { mount, flushPromises } from '@vue/test-utils'
-import { defineComponent, nextTick } from 'vue'
+import { defineComponent } from 'vue'
 import { usePolling, useConditionalPolling } from './usePolling'
 
 // Helper to mount a composable within a real component

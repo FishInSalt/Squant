@@ -308,8 +308,9 @@ import { formatExchangeName, formatNumber } from '@/utils/format'
 import { TIMEFRAME_OPTIONS } from '@/utils/constants'
 import { getSymbols } from '@/api/market'
 import { getAccounts } from '@/api/account'
-import { startLiveTrading, getLiveSessions, stopLiveTrading, emergencyClosePositions } from '@/api/live'
+import { startLiveTrading, getLiveSessions, getLiveSessionStatus, stopLiveTrading, emergencyClosePositions } from '@/api/live'
 import { useNotification } from '@/composables/useNotification'
+import { confirmStopLive, confirmEmergencyClose, toPositionRows, type PositionRow } from '@/composables/useTradingConfirm'
 import type { LiveSession, ExchangeAccount } from '@/types'
 
 const router = useRouter()
@@ -452,12 +453,12 @@ function goToMonitor(id: string) {
 }
 
 async function handleStop(id: string) {
-  const confirmed = await confirmDanger('确定要停止该实盘交易吗？当前持仓将被保留。')
+  const { confirmed, cancelOrders } = await confirmStopLive()
   if (!confirmed) return
 
   try {
-    await stopLiveTrading(id)
-    toastSuccess('已停止')
+    await stopLiveTrading(id, cancelOrders)
+    toastSuccess(cancelOrders ? '已停止，挂单已取消' : '已停止，挂单已保留')
     loadSessions()
   } catch (error) {
     toastError('停止失败')
@@ -465,7 +466,15 @@ async function handleStop(id: string) {
 }
 
 async function handleEmergencyClose(id: string) {
-  const confirmed = await confirmDanger('确定要执行紧急平仓吗？这将立即平掉所有持仓！')
+  let positions: PositionRow[] = []
+  try {
+    const statusResp = await getLiveSessionStatus(id)
+    positions = toPositionRows(statusResp.data.positions)
+  } catch {
+    // 获取失败时仍允许确认（空列表展示"当前无持仓"）
+  }
+
+  const confirmed = await confirmEmergencyClose(positions)
   if (!confirmed) return
 
   try {
