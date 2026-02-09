@@ -267,8 +267,6 @@ Tests mirror the source layout: `tests/unit/{api/v1, services, engine/{backtest,
 4. Don't start background async tasks in unit tests
 5. Don't call `self.close()` from within `_receive_loop()` in WebSocket clients (cancels own task)
 
-See `dev-docs/technical/testing/TROUBLESHOOTING.md` for detailed examples and solutions.
-
 **Test Environment Configuration**:
 - `.env.test.ci` — CI environment (localhost:5433/6380)
 - `.env.test.local` — DevContainer (container service names: postgres:5432, redis:6379)
@@ -281,4 +279,4 @@ CI runs on pushes to `main`, `develop`, `cc/*` and PRs to `main`/`develop`. Pipe
 
 ## Documentation
 
-Detailed docs in `dev-docs/`: requirements (PRD, user stories, acceptance criteria) and technical docs (architecture, strategy engine, API specs, testing guides, deployment). See `dev-docs/technical/testing/TROUBLESHOOTING.md` for common test failure patterns.
+Detailed docs in `dev-docs/`: requirements (PRD, user stories, acceptance criteria) and technical docs (architecture, strategy engine, API specs, testing guides, deployment).

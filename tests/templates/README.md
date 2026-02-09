@@ -358,9 +358,7 @@ assert mock_obj.method.call_count == 2
 
 ## 相关文档
 
-- [TESTING_GUIDE.md](../../dev-docs/technical/testing/TESTING_GUIDE.md) - 完整测试指南
-- [TROUBLESHOOTING.md](../../dev-docs/technical/testing/TROUBLESHOOTING.md) - 问题排查
-- [TEST_COVERAGE_REPORT.md](../../dev-docs/technical/testing/TEST_COVERAGE_REPORT.md) - 覆盖率报告
+- 项目根目录 `CLAUDE.md` - 测试规范和危险操作清单
 
 ---
 

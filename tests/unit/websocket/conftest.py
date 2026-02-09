@@ -30,7 +30,7 @@ Important Testing Warnings:
     - Never mock asyncio.sleep() in code with infinite while loops
     - Never test methods with `while running:` loops directly
     - Never call WebSocket run() methods in unit tests
-    - See dev-docs/technical/testing/TROUBLESHOOTING.md for details
+    - See CLAUDE.md "Dangerous Operations" section for details
 """
 
 from __future__ import annotations
