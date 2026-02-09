@@ -1721,6 +1721,118 @@
         }
       }
     },
+    "/api/v1/backtest/data/check": {
+      "post": {
+        "tags": [
+          "Backtest"
+        ],
+        "summary": "Check Data Availability",
+        "description": "Check historical data availability for backtesting.\n\nArgs:\n    request: Data availability check request.\n    session: Database session.\n\nReturns:\n    Data availability information.",
+        "operationId": "check_data_availability_api_v1_backtest_data_check_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CheckDataRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_DataAvailabilityResponse_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/backtest/data/symbols": {
+      "get": {
+        "tags": [
+          "Backtest"
+        ],
+        "summary": "List Available Symbols",
+        "description": "List symbols with available historical data.\n\nArgs:\n    exchange: Optional exchange filter.\n    timeframe: Optional timeframe filter.\n    session: Database session.\n\nReturns:\n    List of available symbols with data info.",
+        "operationId": "list_available_symbols_api_v1_backtest_data_symbols_get",
+        "parameters": [
+          {
+            "name": "exchange",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by exchange",
+              "title": "Exchange"
+            },
+            "description": "Filter by exchange"
+          },
+          {
+            "name": "timeframe",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by timeframe",
+              "title": "Timeframe"
+            },
+            "description": "Filter by timeframe"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_list_AvailableSymbolResponse__"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/backtest/{run_id}": {
       "get": {
         "tags": [
@@ -1878,118 +1990,6 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ApiResponse_list_EquityCurvePoint__"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/backtest/data/check": {
-      "post": {
-        "tags": [
-          "Backtest"
-        ],
-        "summary": "Check Data Availability",
-        "description": "Check historical data availability for backtesting.\n\nArgs:\n    request: Data availability check request.\n    session: Database session.\n\nReturns:\n    Data availability information.",
-        "operationId": "check_data_availability_api_v1_backtest_data_check_post",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/CheckDataRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiResponse_DataAvailabilityResponse_"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/backtest/data/symbols": {
-      "get": {
-        "tags": [
-          "Backtest"
-        ],
-        "summary": "List Available Symbols",
-        "description": "List symbols with available historical data.\n\nArgs:\n    exchange: Optional exchange filter.\n    timeframe: Optional timeframe filter.\n    session: Database session.\n\nReturns:\n    List of available symbols with data info.",
-        "operationId": "list_available_symbols_api_v1_backtest_data_symbols_get",
-        "parameters": [
-          {
-            "name": "exchange",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "description": "Filter by exchange",
-              "title": "Exchange"
-            },
-            "description": "Filter by exchange"
-          },
-          {
-            "name": "timeframe",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "description": "Filter by timeframe",
-              "title": "Timeframe"
-            },
-            "description": "Filter by timeframe"
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiResponse_list_AvailableSymbolResponse__"
                 }
               }
             }
@@ -3661,11 +3661,15 @@
         "properties": {
           "symbol": {
             "type": "string",
+            "maxLength": 32,
+            "minLength": 1,
             "title": "Symbol",
             "description": "Trading pair symbol"
           },
           "exchange": {
             "type": "string",
+            "maxLength": 32,
+            "minLength": 1,
             "title": "Exchange",
             "description": "Exchange identifier"
           }
@@ -5726,10 +5730,11 @@
             "type": "string",
             "enum": [
               "okx",
-              "binance"
+              "binance",
+              "bybit"
             ],
             "title": "Exchange",
-            "description": "Exchange identifier (okx or binance)"
+            "description": "Exchange identifier (okx, binance, or bybit)"
           },
           "name": {
             "type": "string",

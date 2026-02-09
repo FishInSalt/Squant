@@ -822,6 +822,61 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/backtest/data/check": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Check Data Availability
+         * @description Check historical data availability for backtesting.
+         *
+         *     Args:
+         *         request: Data availability check request.
+         *         session: Database session.
+         *
+         *     Returns:
+         *         Data availability information.
+         */
+        post: operations["check_data_availability_api_v1_backtest_data_check_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/backtest/data/symbols": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Available Symbols
+         * @description List symbols with available historical data.
+         *
+         *     Args:
+         *         exchange: Optional exchange filter.
+         *         timeframe: Optional timeframe filter.
+         *         session: Database session.
+         *
+         *     Returns:
+         *         List of available symbols with data info.
+         */
+        get: operations["list_available_symbols_api_v1_backtest_data_symbols_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/backtest/{run_id}": {
         parameters: {
             query?: never;
@@ -918,61 +973,6 @@ export interface paths {
          *         HTTPException: 404 if not found.
          */
         get: operations["get_equity_curve_api_v1_backtest__run_id__equity_curve_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/backtest/data/check": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Check Data Availability
-         * @description Check historical data availability for backtesting.
-         *
-         *     Args:
-         *         request: Data availability check request.
-         *         session: Database session.
-         *
-         *     Returns:
-         *         Data availability information.
-         */
-        post: operations["check_data_availability_api_v1_backtest_data_check_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/backtest/data/symbols": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * List Available Symbols
-         * @description List symbols with available historical data.
-         *
-         *     Args:
-         *         exchange: Optional exchange filter.
-         *         timeframe: Optional timeframe filter.
-         *         session: Database session.
-         *
-         *     Returns:
-         *         List of available symbols with data info.
-         */
-        get: operations["list_available_symbols_api_v1_backtest_data_symbols_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -3176,10 +3176,10 @@ export interface components {
         CreateExchangeAccountRequest: {
             /**
              * Exchange
-             * @description Exchange identifier (okx or binance)
+             * @description Exchange identifier (okx, binance, or bybit)
              * @enum {string}
              */
-            exchange: "okx" | "binance";
+            exchange: "okx" | "binance" | "bybit";
             /**
              * Name
              * @description Unique account name
@@ -6233,6 +6233,73 @@ export interface operations {
             };
         };
     };
+    check_data_availability_api_v1_backtest_data_check_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CheckDataRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_DataAvailabilityResponse_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_available_symbols_api_v1_backtest_data_symbols_get: {
+        parameters: {
+            query?: {
+                /** @description Filter by exchange */
+                exchange?: string | null;
+                /** @description Filter by timeframe */
+                timeframe?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_list_AvailableSymbolResponse__"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_backtest_api_v1_backtest__run_id__get: {
         parameters: {
             query?: never;
@@ -6344,73 +6411,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ApiResponse_list_EquityCurvePoint__"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    check_data_availability_api_v1_backtest_data_check_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["CheckDataRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ApiResponse_DataAvailabilityResponse_"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    list_available_symbols_api_v1_backtest_data_symbols_get: {
-        parameters: {
-            query?: {
-                /** @description Filter by exchange */
-                exchange?: string | null;
-                /** @description Filter by timeframe */
-                timeframe?: string | null;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ApiResponse_list_AvailableSymbolResponse__"];
                 };
             };
             /** @description Validation Error */
