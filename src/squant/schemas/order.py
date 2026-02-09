@@ -4,7 +4,7 @@ from datetime import datetime
 from decimal import Decimal
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from squant.models.enums import OrderSide, OrderStatus, OrderType
 from squant.schemas.types import NumberDecimal
@@ -20,6 +20,15 @@ class CreateOrderRequest(BaseModel):
     price: Decimal | None = Field(None, description="Limit price (required for LIMIT orders)")
     client_order_id: str | None = Field(None, max_length=32, description="Optional client order ID")
     run_id: UUID | None = Field(None, description="Strategy run ID (if from strategy)")
+
+    @model_validator(mode="after")
+    def validate_limit_price(self) -> "CreateOrderRequest":
+        """Validate that LIMIT orders have a price specified (R3-008)."""
+        if self.type == OrderType.LIMIT and self.price is None:
+            raise ValueError("price is required for LIMIT orders")
+        if self.price is not None and self.price <= 0:
+            raise ValueError("price must be positive")
+        return self
 
 
 class OrderDetail(BaseModel):

@@ -158,7 +158,7 @@ def calculate_metrics(
     # Annualized return - only calculate for backtests >= 7 days
     # For shorter periods, annualization produces meaningless extreme values
     if duration_days >= Decimal("7") and initial_capital > 0:
-        years = duration_days / Decimal("365")
+        years = duration_days / Decimal("365.25")
         total_return_factor = final_equity / initial_capital
         if total_return_factor > 0 and years > 0:
             try:
@@ -186,10 +186,11 @@ def calculate_metrics(
     if timeframe:
         periods_per_year = _get_periods_per_year(timeframe)
     else:
-        # Fallback: infer from equity curve spacing
-        duration_days_f = max(1, (equity_curve[-1].time - equity_curve[0].time).days)
+        # Fallback: infer from equity curve spacing (R3-027: use total_seconds for accuracy)
+        duration_secs = (equity_curve[-1].time - equity_curve[0].time).total_seconds()
+        duration_days_f = max(1.0, duration_secs / 86400)
         periods_per_day = len(equity_curve) / duration_days_f
-        periods_per_year = periods_per_day * 365
+        periods_per_year = periods_per_day * 365.25
 
     # Sharpe and Sortino ratios
     metrics.sharpe_ratio = _calculate_sharpe_ratio(equity_curve, risk_free_rate, periods_per_year)
@@ -330,7 +331,7 @@ def _calculate_sortino_ratio(
     # Calculate downside deviation: sqrt(sum(min(0, r)^2) / N)
     # Uses all returns, squaring only the shortfall below threshold (0)
     downside_squares = [min(0, r) ** 2 for r in returns]
-    downside_variance = sum(downside_squares) / len(returns)
+    downside_variance = sum(downside_squares) / (len(returns) - 1)
 
     if downside_variance == 0:
         # No negative returns means infinite Sortino (cap at high value)

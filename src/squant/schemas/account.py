@@ -10,8 +10,8 @@ from pydantic import BaseModel, Field, SecretStr
 class CreateExchangeAccountRequest(BaseModel):
     """Request to create a new exchange account configuration."""
 
-    exchange: Literal["okx", "binance"] = Field(
-        ..., description="Exchange identifier (okx or binance)"
+    exchange: Literal["okx", "binance", "bybit"] = Field(
+        ..., description="Exchange identifier (okx, binance, or bybit)"
     )
     name: str = Field(..., min_length=1, max_length=64, description="Unique account name")
     api_key: SecretStr = Field(..., description="Exchange API key")

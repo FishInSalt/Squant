@@ -1140,9 +1140,7 @@ class StreamManager:
                             consecutive_unhealthy = 0
                         else:
                             # Keep counting so next check triggers another attempt immediately
-                            logger.warning(
-                                "Recovery failed, will retry on next health check"
-                            )
+                            logger.warning("Recovery failed, will retry on next health check")
 
             except asyncio.CancelledError:
                 break

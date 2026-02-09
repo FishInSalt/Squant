@@ -40,9 +40,6 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-# Default account ID from settings (must be created via /api/v1/exchange-accounts)
-_default_account_id: UUID | None = None
-
 
 class NoActiveAccountError(Exception):
     """No active exchange account available."""
@@ -163,9 +160,7 @@ def _to_order_detail(order) -> OrderDetail:
     commission_asset = None
     if order.trades:
         # Use fee_currency from the first trade (typically consistent across trades)
-        commission_asset = next(
-            (t.fee_currency for t in order.trades if t.fee_currency), None
-        )
+        commission_asset = next((t.fee_currency for t in order.trades if t.fee_currency), None)
     strategy_name = None
     if order.run and order.run.strategy:
         strategy_name = order.run.strategy.name
@@ -212,9 +207,7 @@ def _to_order_with_trades(order) -> OrderWithTrades:
     commission = sum((t.fee for t in order.trades), Decimal("0")) if order.trades else Decimal("0")
     commission_asset = None
     if order.trades:
-        commission_asset = next(
-            (t.fee_currency for t in order.trades if t.fee_currency), None
-        )
+        commission_asset = next((t.fee_currency for t in order.trades if t.fee_currency), None)
     strategy_name = None
     if order.run and order.run.strategy:
         strategy_name = order.run.strategy.name

@@ -91,28 +91,44 @@ class BackgroundTaskManager:
                 logger.exception(f"Error in periodic task {func.__name__}: {e}")
 
     async def _persist_snapshots(self) -> None:
-        """Persist pending snapshots for all active sessions."""
+        """Persist pending snapshots for all active sessions (paper + live)."""
+        from squant.engine.live.manager import get_live_session_manager
         from squant.engine.paper.manager import get_session_manager
         from squant.infra.database import get_session_context
+        from squant.services.live_trading import LiveTradingService
         from squant.services.paper_trading import PaperTradingService
 
-        session_manager = get_session_manager()
+        # Paper trading snapshots
+        paper_manager = get_session_manager()
+        paper_run_ids = paper_manager.get_sessions_needing_persistence()
 
-        # Get list of run_ids with pending snapshots via public API
-        run_ids_to_persist = session_manager.get_sessions_needing_persistence()
+        # Live trading snapshots (R3-005)
+        live_manager = get_live_session_manager()
+        live_run_ids = live_manager.get_sessions_needing_persistence()
 
-        if not run_ids_to_persist:
+        if not paper_run_ids and not live_run_ids:
             return
 
         async with get_session_context() as db_session:
-            service = PaperTradingService(db_session)
-            for run_id in run_ids_to_persist:
-                try:
-                    count = await service.persist_snapshots(run_id)
-                    if count > 0:
-                        logger.debug(f"Persisted {count} snapshots for run {run_id}")
-                except Exception as e:
-                    logger.error(f"Failed to persist snapshots for run {run_id}: {e}")
+            if paper_run_ids:
+                service = PaperTradingService(db_session)
+                for run_id in paper_run_ids:
+                    try:
+                        count = await service.persist_snapshots(run_id)
+                        if count > 0:
+                            logger.debug(f"Persisted {count} paper snapshots for run {run_id}")
+                    except Exception as e:
+                        logger.error(f"Failed to persist paper snapshots for run {run_id}: {e}")
+
+            if live_run_ids:
+                live_service = LiveTradingService(db_session)
+                for run_id in live_run_ids:
+                    try:
+                        count = await live_service.persist_snapshots(run_id)
+                        if count > 0:
+                            logger.debug(f"Persisted {count} live snapshots for run {run_id}")
+                    except Exception as e:
+                        logger.error(f"Failed to persist live snapshots for run {run_id}: {e}")
 
     async def _health_check(self) -> None:
         """Check and cleanup stale sessions.

@@ -215,12 +215,36 @@ class WebSocketGateway:
             logger.exception(f"Unexpected error in client message handler: {e}")
             self._running = False
 
+    # Valid channel prefixes for subscription (R3-017)
+    VALID_CHANNEL_PREFIXES = ("ticker:", "candle:", "orderbook:", "trade:")
+    VALID_EXACT_CHANNELS = ("orders", "account")
+    MAX_CHANNEL_LENGTH = 64
+    MAX_SUBSCRIPTIONS = 50
+
     async def _subscribe(self, channel: str) -> None:
         """Subscribe to a channel.
 
         Args:
             channel: Channel name (e.g., "ticker:BTC/USDT").
         """
+        # Validate channel format (R3-017)
+        if not isinstance(channel, str) or len(channel) > self.MAX_CHANNEL_LENGTH:
+            await self._send_error(f"Invalid channel: too long (max {self.MAX_CHANNEL_LENGTH})")
+            return
+
+        if not channel.startswith(self.VALID_CHANNEL_PREFIXES) and (
+            channel not in self.VALID_EXACT_CHANNELS
+        ):
+            await self._send_error(
+                f"Invalid channel. Valid prefixes: {', '.join(self.VALID_CHANNEL_PREFIXES)}; "
+                f"or exact: {', '.join(self.VALID_EXACT_CHANNELS)}"
+            )
+            return
+
+        if len(self._subscribed_channels) >= self.MAX_SUBSCRIPTIONS:
+            await self._send_error(f"Max subscriptions reached ({self.MAX_SUBSCRIPTIONS})")
+            return
+
         if channel in self._subscribed_channels:
             await self.websocket.send_json(
                 {

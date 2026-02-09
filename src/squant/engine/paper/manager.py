@@ -198,9 +198,7 @@ class SessionManager:
                                 error=f"Auto-stopped: {error_count} consecutive dispatch errors"
                             )
                         except Exception as stop_error:
-                            logger.exception(
-                                f"Error auto-stopping engine {run_id}: {stop_error}"
-                            )
+                            logger.exception(f"Error auto-stopping engine {run_id}: {stop_error}")
                         self._consecutive_errors.pop(run_id, None)
 
     async def stop_all(self, reason: str = "shutdown") -> None:
@@ -215,7 +213,7 @@ class SessionManager:
         async with self._lock:
             run_ids = list(self._sessions.keys())
 
-        # Stop each session
+        # Stop each session and unregister
         for run_id in run_ids:
             engine = self._sessions.get(run_id)
             if engine and engine.is_running:
@@ -223,6 +221,7 @@ class SessionManager:
                     await engine.stop(error=f"Session stopped: {reason}")
                 except Exception as e:
                     logger.exception(f"Error stopping engine {run_id}: {e}")
+            await self.unregister(run_id)
 
         logger.info(f"Stopped {len(run_ids)} paper trading sessions")
 

@@ -122,6 +122,35 @@ class LiveStrategyRunRepository(BaseRepository[StrategyRun]):
         result = await self.session.execute(stmt)
         return list(result.scalars().all())
 
+    async def has_running_session(
+        self,
+        strategy_id: str,
+        symbol: str,
+        mode: RunMode,
+    ) -> bool:
+        """Check if a running session exists for the given strategy/symbol/mode.
+
+        Args:
+            strategy_id: Strategy ID.
+            symbol: Trading symbol.
+            mode: Run mode (PAPER, LIVE).
+
+        Returns:
+            True if a running session exists.
+        """
+        stmt = (
+            select(StrategyRun)
+            .where(
+                StrategyRun.strategy_id == strategy_id,
+                StrategyRun.symbol == symbol,
+                StrategyRun.mode == mode,
+                StrategyRun.status == RunStatus.RUNNING,
+            )
+            .limit(1)
+        )
+        result = await self.session.execute(stmt)
+        return result.scalar_one_or_none() is not None
+
     async def count_by_mode(
         self,
         mode: RunMode,
@@ -238,6 +267,17 @@ class LiveTradingService:
 
         # Validate risk configuration
         self._validate_risk_config(risk_config)
+
+        # Check for duplicate running session (R3-003, mirrors PP-C03)
+        has_running = await self.run_repo.has_running_session(
+            strategy_id=str(strategy_id),
+            symbol=symbol,
+            mode=RunMode.LIVE,
+        )
+        if has_running:
+            raise SessionAlreadyRunningError(
+                f"A live trading session for strategy {strategy_id} on {symbol} is already running"
+            )
 
         # Verify strategy exists
         strategy_repo = StrategyRepository(self.session)
@@ -608,16 +648,25 @@ class LiveTradingService:
     async def _check_unsubscribe(self, symbol: str, timeframe: str) -> None:
         """Check if we should unsubscribe from candles.
 
-        Only unsubscribes if no other sessions need this symbol/timeframe.
+        Only unsubscribes if no other sessions (live or paper) need this
+        symbol/timeframe (R3-006: cross-manager check).
 
         Args:
             symbol: Trading symbol.
             timeframe: Candle timeframe.
         """
-        session_manager = get_live_session_manager()
-        subscribed_symbols = session_manager.get_subscribed_symbols()
+        from squant.engine.paper.manager import get_session_manager
 
-        if (symbol, timeframe) not in subscribed_symbols:
+        live_manager = get_live_session_manager()
+        paper_manager = get_session_manager()
+
+        live_subscribed = live_manager.get_subscribed_symbols()
+        paper_subscribed = paper_manager.get_subscribed_symbols()
+
+        if (symbol, timeframe) not in live_subscribed and (
+            symbol,
+            timeframe,
+        ) not in paper_subscribed:
             from squant.websocket.manager import get_stream_manager
 
             stream_manager = get_stream_manager()

@@ -249,6 +249,55 @@ async def list_backtests(
     )
 
 
+@router.post("/data/check", response_model=ApiResponse[DataAvailabilityResponse])
+async def check_data_availability(
+    request: CheckDataRequest,
+    session: AsyncSession = Depends(get_session),
+) -> ApiResponse[DataAvailabilityResponse]:
+    """Check historical data availability for backtesting.
+
+    Args:
+        request: Data availability check request.
+        session: Database session.
+
+    Returns:
+        Data availability information.
+    """
+    service = BacktestService(session)
+
+    result = await service.check_data_availability(
+        exchange=request.exchange,
+        symbol=request.symbol,
+        timeframe=request.timeframe,
+        start=request.start_date,
+        end=request.end_date,
+    )
+
+    return ApiResponse(data=DataAvailabilityResponse(**result))
+
+
+@router.get("/data/symbols", response_model=ApiResponse[list[AvailableSymbolResponse]])
+async def list_available_symbols(
+    exchange: str | None = Query(None, description="Filter by exchange"),
+    timeframe: str | None = Query(None, description="Filter by timeframe"),
+    session: AsyncSession = Depends(get_session),
+) -> ApiResponse[list[AvailableSymbolResponse]]:
+    """List symbols with available historical data.
+
+    Args:
+        exchange: Optional exchange filter.
+        timeframe: Optional timeframe filter.
+        session: Database session.
+
+    Returns:
+        List of available symbols with data info.
+    """
+    loader = DataLoader(session)
+    symbols = await loader.get_available_symbols(exchange=exchange, timeframe=timeframe)
+
+    return ApiResponse(data=[AvailableSymbolResponse(**s) for s in symbols])
+
+
 @router.get("/{run_id}", response_model=ApiResponse[BacktestRunResponse])
 async def get_backtest(
     run_id: UUID,
@@ -375,55 +424,6 @@ async def delete_backtest(
         return ApiResponse(data=None, message="Backtest deleted")
     except BacktestNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
-
-
-@router.post("/data/check", response_model=ApiResponse[DataAvailabilityResponse])
-async def check_data_availability(
-    request: CheckDataRequest,
-    session: AsyncSession = Depends(get_session),
-) -> ApiResponse[DataAvailabilityResponse]:
-    """Check historical data availability for backtesting.
-
-    Args:
-        request: Data availability check request.
-        session: Database session.
-
-    Returns:
-        Data availability information.
-    """
-    service = BacktestService(session)
-
-    result = await service.check_data_availability(
-        exchange=request.exchange,
-        symbol=request.symbol,
-        timeframe=request.timeframe,
-        start=request.start_date,
-        end=request.end_date,
-    )
-
-    return ApiResponse(data=DataAvailabilityResponse(**result))
-
-
-@router.get("/data/symbols", response_model=ApiResponse[list[AvailableSymbolResponse]])
-async def list_available_symbols(
-    exchange: str | None = Query(None, description="Filter by exchange"),
-    timeframe: str | None = Query(None, description="Filter by timeframe"),
-    session: AsyncSession = Depends(get_session),
-) -> ApiResponse[list[AvailableSymbolResponse]]:
-    """List symbols with available historical data.
-
-    Args:
-        exchange: Optional exchange filter.
-        timeframe: Optional timeframe filter.
-        session: Database session.
-
-    Returns:
-        List of available symbols with data info.
-    """
-    loader = DataLoader(session)
-    symbols = await loader.get_available_symbols(exchange=exchange, timeframe=timeframe)
-
-    return ApiResponse(data=[AvailableSymbolResponse(**s) for s in symbols])
 
 
 @router.get("/{run_id}/export", response_model=ApiResponse[dict])

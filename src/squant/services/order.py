@@ -290,9 +290,7 @@ class OrderService:
                             order_id=response.order_id,
                         )
                     )
-                    logger.info(
-                        f"Compensating cancel sent for zombie order {response.order_id}"
-                    )
+                    logger.info(f"Compensating cancel sent for zombie order {response.order_id}")
                 except Exception as cancel_err:
                     logger.critical(
                         f"ZOMBIE ORDER: exchange_oid={response.order_id}, "

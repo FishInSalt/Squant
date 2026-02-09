@@ -399,7 +399,7 @@ class CircuitBreakerService:
             state = await self.get_state()
 
             if not state.is_active:
-                return {"status": "not_active", "cooldown_remaining_minutes": None}
+                raise CircuitBreakerNotActiveError()
 
             # Check cooldown unless forced
             if not force and state.cooldown_until:

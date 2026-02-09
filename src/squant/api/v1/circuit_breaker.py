@@ -23,6 +23,7 @@ from squant.schemas.circuit_breaker import (
 from squant.services.circuit_breaker import (
     CircuitBreakerAlreadyActiveError,
     CircuitBreakerCooldownError,
+    CircuitBreakerNotActiveError,
     CircuitBreakerOperationInProgressError,
     CircuitBreakerService,
     get_circuit_breaker_status,
@@ -147,6 +148,15 @@ async def reset_circuit_breaker(
     try:
         result = await service.reset(force=force)
         return ApiResponse(data=ResetCircuitBreakerResponse(**result))
+    except CircuitBreakerNotActiveError:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": 409,
+                "message": "Circuit breaker is not active",
+                "data": None,
+            },
+        ) from None
     except CircuitBreakerCooldownError as e:
         raise HTTPException(
             status_code=409,

@@ -20,6 +20,17 @@ from squant.schemas.backtest import (
     RunBacktestRequest,
     TradeRecordResponse,
 )
+from squant.schemas.circuit_breaker import (
+    CircuitBreakerEventResponse,
+    CircuitBreakerStatusResponse,
+    CloseAllPositionsRequest,
+    CloseAllPositionsResponse,
+    ResetCircuitBreakerResponse,
+    RiskTriggerListItem,
+    RiskTriggerResponse,
+    TriggerCircuitBreakerRequest,
+    TriggerCircuitBreakerResponse,
+)
 from squant.schemas.exchange import (
     BalanceItem,
     BalanceResponse,
@@ -31,6 +42,18 @@ from squant.schemas.exchange import (
     PlaceOrderRequest,
     TickerResponse,
 )
+from squant.schemas.live_trading import (
+    EmergencyCloseResponse,
+    LiveOrderInfo,
+    LivePositionInfo,
+    LiveTradingListItem,
+    LiveTradingRunResponse,
+    LiveTradingStatusResponse,
+    RiskConfigRequest,
+    RiskStateResponse,
+    StartLiveTradingRequest,
+    StopLiveTradingRequest,
+)
 from squant.schemas.order import (
     CreateOrderRequest,
     ListOrdersRequest,
@@ -40,6 +63,14 @@ from squant.schemas.order import (
     OrderWithTrades,
     SyncOrdersResponse,
     TradeDetail,
+)
+from squant.schemas.paper_trading import (
+    PaperTradingListItem,
+    PaperTradingRunResponse,
+    PaperTradingStatusResponse,
+    PendingOrderInfo,
+    PositionInfo,
+    StartPaperTradingRequest,
 )
 from squant.schemas.risk import (
     CreateRiskRuleRequest,
@@ -55,6 +86,13 @@ from squant.schemas.strategy import (
     UpdateStrategyRequest,
     ValidateCodeRequest,
     ValidationResultResponse,
+)
+from squant.schemas.watchlist import (
+    AddToWatchlistRequest,
+    ReorderWatchlistItem,
+    ReorderWatchlistRequest,
+    WatchlistCheckResponse,
+    WatchlistItemResponse,
 )
 
 __all__ = [
@@ -108,4 +146,38 @@ __all__ = [
     "TradeRecordResponse",
     "DataAvailabilityResponse",
     "AvailableSymbolResponse",
+    # Watchlist schemas
+    "AddToWatchlistRequest",
+    "ReorderWatchlistItem",
+    "ReorderWatchlistRequest",
+    "WatchlistItemResponse",
+    "WatchlistCheckResponse",
+    # Paper trading schemas
+    "StartPaperTradingRequest",
+    "PaperTradingRunResponse",
+    "PositionInfo",
+    "PendingOrderInfo",
+    "PaperTradingStatusResponse",
+    "PaperTradingListItem",
+    # Live trading schemas
+    "RiskConfigRequest",
+    "StartLiveTradingRequest",
+    "LiveTradingRunResponse",
+    "LivePositionInfo",
+    "LiveOrderInfo",
+    "RiskStateResponse",
+    "LiveTradingStatusResponse",
+    "LiveTradingListItem",
+    "StopLiveTradingRequest",
+    "EmergencyCloseResponse",
+    # Circuit breaker schemas
+    "TriggerCircuitBreakerRequest",
+    "TriggerCircuitBreakerResponse",
+    "CloseAllPositionsRequest",
+    "CloseAllPositionsResponse",
+    "CircuitBreakerStatusResponse",
+    "ResetCircuitBreakerResponse",
+    "RiskTriggerResponse",
+    "RiskTriggerListItem",
+    "CircuitBreakerEventResponse",
 ]

@@ -274,22 +274,17 @@ class TestResetCircuitBreaker:
 
     @pytest.mark.asyncio
     async def test_reset_not_active(self, client: AsyncClient) -> None:
-        """Test reset when not active."""
-        mock_result = {
-            "status": "not_active",
-            "cooldown_remaining_minutes": None,
-        }
+        """Test reset when not active returns 409."""
+        from squant.services.circuit_breaker import CircuitBreakerNotActiveError
 
         with patch("squant.api.v1.circuit_breaker.CircuitBreakerService") as mock_service_class:
             mock_service = MagicMock()
-            mock_service.reset = AsyncMock(return_value=mock_result)
+            mock_service.reset = AsyncMock(side_effect=CircuitBreakerNotActiveError())
             mock_service_class.return_value = mock_service
 
             response = await client.post("/api/v1/circuit-breaker/reset")
 
-            assert response.status_code == 200
-            data = response.json()
-            assert data["data"]["status"] == "not_active"
+            assert response.status_code == 409
 
     @pytest.mark.asyncio
     async def test_reset_in_cooldown(self, client: AsyncClient) -> None:

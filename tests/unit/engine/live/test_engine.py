@@ -2356,7 +2356,7 @@ class TestSyncConsecutiveFailures:
         # First 4 calls just increment the counter
         for _ in range(4):
             await engine._sync_balance()
-        assert engine._sync_consecutive_failures == 4
+        assert engine._balance_consecutive_failures == 4
         assert engine.is_running is True
 
         # 5th call should raise RuntimeError (ISSUE-202 fix)
@@ -2377,7 +2377,7 @@ class TestSyncConsecutiveFailures:
         assert engine.is_running is True
 
         # Pre-fail to reach threshold on next sync
-        engine._sync_consecutive_failures = 4
+        engine._balance_consecutive_failures = 4
         mock_adapter.get_balance.side_effect = Exception("Network error")
 
         candle = WSCandle(
@@ -2412,13 +2412,13 @@ class TestSyncConsecutiveFailures:
             await engine._sync_balance()
 
         assert engine.is_running is True
-        assert engine._sync_consecutive_failures == 4
+        assert engine._balance_consecutive_failures == 4
 
         # Succeed once (resets counter)
         mock_adapter.get_balance.side_effect = None
         await engine._sync_balance()
 
-        assert engine._sync_consecutive_failures == 0
+        assert engine._balance_consecutive_failures == 0
         assert engine.is_running is True
 
     @pytest.mark.asyncio
@@ -2447,7 +2447,7 @@ class TestSyncConsecutiveFailures:
         # First 4 calls just increment the counter
         for _ in range(4):
             await engine._sync_pending_orders()
-        assert engine._sync_consecutive_failures == 4
+        assert engine._order_sync_consecutive_failures == 4
 
         # 5th call should raise RuntimeError (ISSUE-202 fix)
         with pytest.raises(RuntimeError, match="Exchange connection lost"):

@@ -347,6 +347,31 @@ def _inplacevar_(op: str, x: Any, y: Any) -> Any:
     return ops[op](x, y)
 
 
+def _guarded_write(obj: Any) -> Any:
+    """Guard for attribute/item writes in RestrictedPython.
+
+    Allows writes to safe mutable types (list, dict, set) but blocks
+    writes to arbitrary objects to prevent strategy code from mutating
+    engine internals (e.g., ctx._cash).
+    """
+    if isinstance(obj, (list, dict, set)):
+        return obj
+    raise AttributeError(
+        f"Write access to {type(obj).__name__} objects is not allowed in strategy code"
+    )
+
+
+def _guarded_getitem(obj: Any, key: Any) -> Any:
+    """Guard for subscript access in RestrictedPython.
+
+    Blocks access to dunder keys via computed strings at runtime,
+    complementing the AST-level check for literal dunder strings.
+    """
+    if isinstance(key, str) and key.startswith("__") and key.endswith("__"):
+        raise AttributeError(f"Access to '{key}' via subscript is not allowed")
+    return obj[key]
+
+
 def _build_restricted_globals() -> dict[str, Any]:
     """Build the restricted globals dictionary for code execution."""
     # Start with safe_builtins from RestrictedPython
@@ -440,8 +465,8 @@ def _build_restricted_globals() -> dict[str, Any]:
         "_iter_unpack_sequence_": guarded_iter_unpack_sequence,
         # PrintCollector: collects print() output safely instead of writing to stdout
         "_print_": PrintCollector,
-        "_getitem_": lambda obj, key: obj[key],
-        "_write_": lambda x: x,
+        "_getitem_": _guarded_getitem,
+        "_write_": _guarded_write,
         # Required for class definitions in RestrictedPython
         "__metaclass__": type,
         "__name__": "__strategy__",

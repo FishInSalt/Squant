@@ -55,8 +55,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             logger.info("Stream manager initialized")
         except Exception as e:
             logger.warning(
-                f"Failed to initialize stream manager: {e}. "
-                f"Real-time data will be unavailable."
+                f"Failed to initialize stream manager: {e}. Real-time data will be unavailable."
             )
             logger.warning("The application will continue without WebSocket connectivity.")
             # Start retry loop to attempt reconnection in the background
@@ -75,17 +74,13 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             repo = StrategyRunRepository(session)
             paper_count = await repo.mark_orphaned_sessions()
             if paper_count > 0:
-                logger.warning(
-                    f"Marked {paper_count} orphaned paper trading sessions as ERROR"
-                )
+                logger.warning(f"Marked {paper_count} orphaned paper trading sessions as ERROR")
 
             # Live trading sessions
             live_service = LiveTradingService(session)
             live_count = await live_service.mark_orphaned_sessions()
             if live_count > 0:
-                logger.warning(
-                    f"Marked {live_count} orphaned live trading sessions as ERROR"
-                )
+                logger.warning(f"Marked {live_count} orphaned live trading sessions as ERROR")
 
         # Start background tasks for paper trading
         from squant.services.background import get_task_manager

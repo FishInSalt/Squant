@@ -52,6 +52,8 @@ class Order(Base, UUIDMixin, TimestampMixin):
         Index("idx_orders_account", "account_id"),
         Index("idx_orders_status", "status"),
         Index("idx_orders_created", "created_at"),
+        Index("idx_orders_exchange_oid", "exchange_oid"),
+        Index("idx_orders_symbol", "symbol"),
     )
 
     def __repr__(self) -> str:

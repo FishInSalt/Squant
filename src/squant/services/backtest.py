@@ -268,21 +268,9 @@ class BacktestService:
         )
 
         # Execute the backtest
-        try:
-            run = await self.run(UUID(run.id), allow_partial_data=allow_partial_data)
-        except BacktestCancelledError:
-            # Status already set to CANCELLED in run(), don't overwrite with ERROR
-            raise
-        except Exception as e:
-            # Update run status to error
-            await self.run_repo.update(
-                run.id,
-                status=RunStatus.ERROR,
-                error_message=str(e),
-                stopped_at=datetime.now(UTC),
-            )
-            await self.session.commit()
-            raise
+        # Note: run() handles status transitions (RUNNING→COMPLETED/CANCELLED/ERROR)
+        # internally, so we don't set ERROR status here to avoid double-writes.
+        run = await self.run(UUID(run.id), allow_partial_data=allow_partial_data)
 
         return run
 
