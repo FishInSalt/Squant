@@ -85,10 +85,10 @@
           <el-table-column prop="side" label="方向" width="80">
             <template #default="{ row }">
               <el-tag
-                :type="row.side === 'long' ? 'success' : 'danger'"
+                :type="row.side === 'long' ? 'success' : row.side === 'short' ? 'danger' : 'info'"
                 size="small"
               >
-                {{ row.side === 'long' ? '多' : '空' }}
+                {{ row.side === 'long' ? '多' : row.side === 'short' ? '空' : '空仓' }}
               </el-tag>
             </template>
           </el-table-column>
@@ -305,7 +305,7 @@ const positionRows = computed(() => {
   return positions.value.map(([symbol, pos]) => ({
     ...pos,
     symbol,
-    side: pos.amount >= 0 ? 'long' : 'short',
+    side: pos.amount > 0 ? 'long' : pos.amount < 0 ? 'short' : 'flat',
   }))
 })
 

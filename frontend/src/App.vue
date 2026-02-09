@@ -27,16 +27,20 @@ const tradingStore = useTradingStore()
 const wsStore = useWebSocketStore()
 
 onMounted(async () => {
-  // 加载交易所列表
-  await marketStore.loadExchanges()
+  try {
+    // 加载交易所列表
+    await marketStore.loadExchanges()
 
-  // 加载自选列表
-  await marketStore.loadWatchlist()
+    // 加载自选列表
+    await marketStore.loadWatchlist()
 
-  // 加载运行中的会话
-  await tradingStore.loadAllRunningSessions()
+    // 加载运行中的会话
+    await tradingStore.loadAllRunningSessions()
+  } catch (error) {
+    console.error('App initialization error:', error)
+  }
 
-  // 连接 WebSocket
+  // WebSocket 连接独立于上述初始化，即使加载失败也尝试连接
   wsStore.connect()
 })
 

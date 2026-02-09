@@ -161,9 +161,11 @@ import {
 } from '@/utils/format'
 import { ORDER_STATUS_OPTIONS } from '@/utils/constants'
 import { getOrderHistory } from '@/api/order'
+import { useNotification } from '@/composables/useNotification'
 import type { Order } from '@/types'
 
 const marketStore = useMarketStore()
+const { toastError } = useNotification()
 
 const loading = ref(false)
 const orders = ref<Order[]>([])
@@ -205,6 +207,7 @@ async function loadOrders() {
     pagination.total = response.data.total
   } catch (error) {
     console.error('Failed to load orders:', error)
+    toastError('加载历史订单失败')
   } finally {
     loading.value = false
   }

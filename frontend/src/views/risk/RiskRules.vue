@@ -179,6 +179,7 @@ const form = reactive({
 const formRules: FormRules = {
   name: [{ required: true, message: '请输入规则名称', trigger: 'blur' }],
   type: [{ required: true, message: '请选择规则类型', trigger: 'change' }],
+  description: [{ required: true, message: '请输入规则描述', trigger: 'blur' }],
 }
 
 const ruleTypeOptions = RISK_RULE_TYPE_OPTIONS
@@ -194,6 +195,7 @@ async function loadRules() {
     rules.value = response.data.items
   } catch (error) {
     console.error('Failed to load rules:', error)
+    toastError('加载风控规则失败')
   } finally {
     loading.value = false
   }

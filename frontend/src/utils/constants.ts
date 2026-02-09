@@ -34,12 +34,14 @@ export const TIMEFRAME_OPTIONS = [
 export const EXCHANGE_OPTIONS = [
   { label: 'OKX', value: 'okx' },
   { label: 'Binance', value: 'binance' },
+  { label: 'Bybit', value: 'bybit' },
 ] as const
 
 // 支持的交易所（用于账户配置）
 export const SUPPORTED_EXCHANGES = [
   { id: 'okx', name: 'OKX', has_testnet: true },
   { id: 'binance', name: 'Binance', has_testnet: true },
+  { id: 'bybit', name: 'Bybit', has_testnet: true },
 ] as const
 
 // 订单方向选项

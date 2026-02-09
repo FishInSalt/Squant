@@ -34,7 +34,7 @@
           <template #default="{ row }">
             <PriceCell
               :value="row.change_percent_24h"
-              :change="row.change_24h"
+              :change="row.change_percent_24h"
               :decimals="2"
               show-sign
               suffix="%"
@@ -84,7 +84,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useMarketStore } from '@/stores/market'
 import { useWebSocketStore } from '@/stores/websocket'
@@ -136,6 +136,22 @@ function goToHotMarket() {
 // 订阅行情更新
 let unsubscribe: (() => void) | null = null
 
+function resubscribe() {
+  if (unsubscribe) {
+    unsubscribe()
+    unsubscribe = null
+  }
+  const symbols = watchlist.value.map((item) => item.symbol)
+  if (symbols.length > 0) {
+    unsubscribe = wsStore.subscribeToTickers(symbols)
+  }
+}
+
+watch(watchlist, () => {
+  loadWatchlistData()
+  resubscribe()
+}, { deep: true })
+
 onMounted(async () => {
   // 先加载当前交易所配置
   await marketStore.loadCurrentExchange()
@@ -144,10 +160,7 @@ onMounted(async () => {
 
   // 订阅 WebSocket 更新
   wsStore.connect()
-  const symbols = watchlist.value.map((item) => item.symbol)
-  if (symbols.length > 0) {
-    unsubscribe = wsStore.subscribeToTickers(symbols)
-  }
+  resubscribe()
 })
 
 onUnmounted(() => {

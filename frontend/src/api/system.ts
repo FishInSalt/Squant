@@ -1,3 +1,10 @@
+/**
+ * System API Module — 待后端实现
+ *
+ * 以下 API 函数对应的后端路由（/system/*）尚未实现。
+ * 对应的前端页面（DataManagement、SystemLogs、AssetOverview）当前使用 ComingSoon 占位符。
+ * 待后端就绪后启用。
+ */
 import api, { get, post, del } from './index'
 import type { SystemLog, DataDownloadTask, HistoricalData, PaginatedData } from '@/types'
 
