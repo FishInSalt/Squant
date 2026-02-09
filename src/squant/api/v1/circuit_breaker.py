@@ -151,4 +151,10 @@ async def reset_circuit_breaker(
     except CircuitBreakerNotActiveError as e:
         raise HTTPException(status_code=409, detail=str(e)) from None
     except CircuitBreakerCooldownError as e:
-        raise HTTPException(status_code=409, detail=str(e)) from None
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": str(e),
+                "data": {"cooldown_remaining_minutes": e.remaining_minutes},
+            },
+        ) from None

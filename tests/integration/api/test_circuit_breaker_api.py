@@ -437,24 +437,20 @@ class TestResetCircuitBreaker:
         assert body["data"]["cooldown_remaining_minutes"] == 15.5
 
     async def test_reset_not_active(self, client):
-        """Test reset when circuit breaker is not active."""
-        mock_result = {
-            "status": "not_active",
-            "cooldown_remaining_minutes": None,
-        }
+        """Test reset when circuit breaker is not active returns 409."""
+        from squant.services.circuit_breaker import CircuitBreakerNotActiveError
 
         with patch(
             "squant.services.circuit_breaker.CircuitBreakerService.reset",
             new_callable=AsyncMock,
-            return_value=mock_result,
+            side_effect=CircuitBreakerNotActiveError(),
         ):
             response = await client.post("/api/v1/circuit-breaker/reset")
 
-        assert response.status_code == 200
-        data = response.json()
-
-        result = data["data"]
-        assert result["status"] == "not_active"
+        assert response.status_code == 409
+        body = response.json()
+        assert body["code"] == 409
+        assert "not active" in body["message"].lower()
 
     async def test_reset_force_bypass_cooldown(self, client):
         """Test force reset bypasses cooldown validation."""
