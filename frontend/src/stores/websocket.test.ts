@@ -1,6 +1,5 @@
 import { setActivePinia, createPinia } from 'pinia'
 import { useWebSocketStore } from './websocket'
-import { useMarketStore } from './market'
 
 // Mock WebSocket globally
 const mockSend = vi.fn()

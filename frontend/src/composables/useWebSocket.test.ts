@@ -20,7 +20,7 @@ function withSetup<T>(composableFn: () => T): { result: T; wrapper: ReturnType<t
 
 describe('useWebSocket', () => {
   it('calls wsStore.connect on mount', () => {
-    const { result } = withSetup(() => useWebSocket())
+    withSetup(() => useWebSocket())
     // After mount, store.connect should have been called
     const store = useWebSocketStore()
     expect(store.connect).toHaveBeenCalledOnce()

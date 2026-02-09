@@ -308,14 +308,14 @@ import { formatExchangeName, formatNumber } from '@/utils/format'
 import { TIMEFRAME_OPTIONS } from '@/utils/constants'
 import { getSymbols } from '@/api/market'
 import { getAccounts } from '@/api/account'
-import { startLiveTrading, getLiveSessions, stopLiveTrading, emergencyClosePositions } from '@/api/live'
+import { startLiveTrading, getLiveSessions, getLiveSessionStatus, stopLiveTrading, emergencyClosePositions } from '@/api/live'
 import { useNotification } from '@/composables/useNotification'
 import type { LiveSession, ExchangeAccount } from '@/types'
 
 const router = useRouter()
 const route = useRoute()
 const strategyStore = useStrategyStore()
-const { toastSuccess, toastError, confirmDanger } = useNotification()
+const { toastSuccess, toastError, confirm, confirmDanger } = useNotification()
 
 const formRef = ref<FormInstance>()
 const submitting = ref(false)
@@ -452,12 +452,24 @@ function goToMonitor(id: string) {
 }
 
 async function handleStop(id: string) {
-  const confirmed = await confirmDanger('确定要停止该实盘交易吗？当前持仓将被保留。')
+  const confirmed = await confirm({
+    title: '停止实盘交易',
+    message: '<p>确定要停止该实盘交易吗？当前持仓将被保留。</p>'
+      + '<label style="display:flex;align-items:center;gap:8px;margin-top:12px;cursor:pointer">'
+      + '<input type="checkbox" id="stop-cancel-orders" />'
+      + '<span>同时取消所有挂单</span></label>'
+      + '<p style="color:#909399;font-size:12px;margin-top:8px">不勾选则保留挂单，仅停止策略运行</p>',
+    type: 'warning',
+    confirmText: '确认停止',
+    dangerouslyUseHTMLString: true,
+  })
   if (!confirmed) return
 
   try {
-    await stopLiveTrading(id)
-    toastSuccess('已停止')
+    const checkbox = document.getElementById('stop-cancel-orders') as HTMLInputElement
+    const cancelOrders = checkbox?.checked ?? false
+    await stopLiveTrading(id, cancelOrders)
+    toastSuccess(cancelOrders ? '已停止，挂单已取消' : '已停止，挂单已保留')
     loadSessions()
   } catch (error) {
     toastError('停止失败')
@@ -465,7 +477,42 @@ async function handleStop(id: string) {
 }
 
 async function handleEmergencyClose(id: string) {
-  const confirmed = await confirmDanger('确定要执行紧急平仓吗？这将立即平掉所有持仓！')
+  let positionHtml = ''
+  try {
+    const statusResp = await getLiveSessionStatus(id)
+    const positions = Object.entries(statusResp.data.positions)
+      .filter(([, p]) => (p as any).amount !== 0)
+    if (positions.length > 0) {
+      positionHtml = '<table style="width:100%;border-collapse:collapse;margin-top:12px;font-size:13px">'
+      positionHtml += '<tr style="border-bottom:1px solid #ebeef5;color:#909399">'
+      positionHtml += '<td style="padding:6px 8px">币对</td><td style="padding:6px 8px">方向</td>'
+      positionHtml += '<td style="padding:6px 8px;text-align:right">数量</td></tr>'
+      for (const [symbol, pos] of positions) {
+        const p = pos as any
+        const sideLabel = p.amount > 0 ? '多' : '空'
+        const sideColor = p.amount > 0 ? '#00C853' : '#FF1744'
+        positionHtml += `<tr style="border-bottom:1px solid #f5f7fa">`
+        positionHtml += `<td style="padding:6px 8px">${symbol}</td>`
+        positionHtml += `<td style="padding:6px 8px;color:${sideColor}">${sideLabel}</td>`
+        positionHtml += `<td style="padding:6px 8px;text-align:right">${formatNumber(Math.abs(p.amount), 4)}</td>`
+        positionHtml += `</tr>`
+      }
+      positionHtml += '</table>'
+    } else {
+      positionHtml = '<p style="color:#909399;margin-top:8px">当前无持仓</p>'
+    }
+  } catch {
+    positionHtml = '<p style="color:#909399;margin-top:8px">无法获取持仓信息</p>'
+  }
+
+  const confirmed = await confirm({
+    title: '紧急平仓',
+    message: '<p style="color:#FF1744;font-weight:500">确定要执行紧急平仓吗？这将立即市价平掉以下所有持仓！</p>'
+      + positionHtml,
+    type: 'error',
+    confirmText: '确认平仓',
+    dangerouslyUseHTMLString: true,
+  })
   if (!confirmed) return
 
   try {

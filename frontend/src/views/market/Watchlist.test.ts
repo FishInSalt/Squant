@@ -1,7 +1,6 @@
 import { flushPromises } from '@vue/test-utils'
 import { mountView } from '@/__tests__/test-utils'
 import Watchlist from './Watchlist.vue'
-import { useMarketStore } from '@/stores/market'
 import { useWebSocketStore } from '@/stores/websocket'
 
 const mockWatchlist = [

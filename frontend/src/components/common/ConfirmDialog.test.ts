@@ -1,5 +1,4 @@
 import { mount } from '@vue/test-utils'
-import { nextTick } from 'vue'
 import ConfirmDialog from './ConfirmDialog.vue'
 
 // Stub el-dialog to render content inline (avoids Teleport issues in tests)

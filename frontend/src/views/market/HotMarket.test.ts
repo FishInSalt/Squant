@@ -1,5 +1,4 @@
 import { flushPromises } from '@vue/test-utils'
-import { nextTick } from 'vue'
 import { mountView } from '@/__tests__/test-utils'
 import HotMarket from './HotMarket.vue'
 import { useMarketStore } from '@/stores/market'

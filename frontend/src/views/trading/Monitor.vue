@@ -8,12 +8,12 @@
       <el-tab-pane label="全部" name="all">
         <div class="sessions-grid">
           <SessionCard
-            v-for="session in allSessions"
-            :key="`${session.type}-${session.id}`"
-            :session="session"
-            @click="goToSession(session)"
-            @stop="handleStop(session)"
-            @emergency-close="handleEmergencyClose(session)"
+            v-for="item in allSessions"
+            :key="`${item.type}-${item.id}`"
+            :session="item"
+            @click="goToSession(item)"
+            @stop="handleStop(item)"
+            @emergency-close="handleEmergencyClose(item)"
           />
         </div>
         <div v-if="allSessions.length === 0" class="empty-state card">
@@ -25,10 +25,10 @@
       <el-tab-pane label="回测" name="backtest">
         <div class="sessions-grid">
           <SessionCard
-            v-for="session in backtestSessions"
-            :key="session.id"
-            :session="{ ...session, type: 'backtest' }"
-            @click="goToBacktest(session.id)"
+            v-for="item in backtestSessions"
+            :key="item.id"
+            :session="{ ...item, type: 'backtest' }"
+            @click="goToBacktest(item.id)"
           />
         </div>
         <div v-if="backtestSessions.length === 0" class="empty-state card">
@@ -39,11 +39,11 @@
       <el-tab-pane label="模拟交易" name="paper">
         <div class="sessions-grid">
           <SessionCard
-            v-for="session in paperSessions"
-            :key="session.id"
-            :session="{ ...session, type: 'paper' }"
-            @click="goToPaper(session.id)"
-            @stop="handleStopPaper(session.id)"
+            v-for="item in paperSessions"
+            :key="item.id"
+            :session="{ ...item, type: 'paper' }"
+            @click="goToPaper(item.id)"
+            @stop="handleStopPaper(item.id)"
           />
         </div>
         <div v-if="paperSessions.length === 0" class="empty-state card">
@@ -54,12 +54,12 @@
       <el-tab-pane label="实盘交易" name="live">
         <div class="sessions-grid">
           <SessionCard
-            v-for="session in liveSessions"
-            :key="session.id"
-            :session="{ ...session, type: 'live' }"
-            @click="goToLive(session.id)"
-            @stop="handleStopLive(session.id)"
-            @emergency-close="handleEmergencyCloseLive(session.id)"
+            v-for="item in liveSessions"
+            :key="item.id"
+            :session="{ ...item, type: 'live' }"
+            @click="goToLive(item.id)"
+            @stop="handleStopLive(item.id)"
+            @emergency-close="handleEmergencyCloseLive(item.id)"
           />
         </div>
         <div v-if="liveSessions.length === 0" class="empty-state card">
@@ -77,7 +77,7 @@ import { useTradingStore } from '@/stores/trading'
 import StatusBadge from '@/components/common/StatusBadge.vue'
 import { formatExchangeName, formatNumber, formatRelativeTime } from '@/utils/format'
 import { stopPaperTrading } from '@/api/paper'
-import { stopLiveTrading, emergencyClosePositions } from '@/api/live'
+import { stopLiveTrading, getLiveSessionStatus, emergencyClosePositions } from '@/api/live'
 import { useNotification } from '@/composables/useNotification'
 import type { BacktestRun, PaperSession, LiveSession } from '@/types'
 
@@ -156,7 +156,7 @@ const SessionCard = defineComponent({
 
 const router = useRouter()
 const tradingStore = useTradingStore()
-const { toastSuccess, toastError, confirmDanger } = useNotification()
+const { toastSuccess, toastError, confirm, confirmDanger } = useNotification()
 
 const activeTab = ref('all')
 
@@ -232,12 +232,24 @@ async function handleStopPaper(id: string) {
 }
 
 async function handleStopLive(id: string) {
-  const confirmed = await confirmDanger('确定要停止该实盘交易吗？当前持仓将被保留。')
+  const confirmed = await confirm({
+    title: '停止实盘交易',
+    message: '<p>确定要停止该实盘交易吗？当前持仓将被保留。</p>'
+      + '<label style="display:flex;align-items:center;gap:8px;margin-top:12px;cursor:pointer">'
+      + '<input type="checkbox" id="stop-cancel-orders" />'
+      + '<span>同时取消所有挂单</span></label>'
+      + '<p style="color:#909399;font-size:12px;margin-top:8px">不勾选则保留挂单，仅停止策略运行</p>',
+    type: 'warning',
+    confirmText: '确认停止',
+    dangerouslyUseHTMLString: true,
+  })
   if (!confirmed) return
 
   try {
-    await stopLiveTrading(id)
-    toastSuccess('已停止')
+    const checkbox = document.getElementById('stop-cancel-orders') as HTMLInputElement
+    const cancelOrders = checkbox?.checked ?? false
+    await stopLiveTrading(id, cancelOrders)
+    toastSuccess(cancelOrders ? '已停止，挂单已取消' : '已停止，挂单已保留')
     tradingStore.loadRunningLiveSessions()
   } catch (error) {
     toastError('停止失败')
@@ -245,7 +257,42 @@ async function handleStopLive(id: string) {
 }
 
 async function handleEmergencyCloseLive(id: string) {
-  const confirmed = await confirmDanger('确定要执行紧急平仓吗？这将立即平掉所有持仓！')
+  let positionHtml = ''
+  try {
+    const statusResp = await getLiveSessionStatus(id)
+    const positions = Object.entries(statusResp.data.positions)
+      .filter(([, p]) => (p as any).amount !== 0)
+    if (positions.length > 0) {
+      positionHtml = '<table style="width:100%;border-collapse:collapse;margin-top:12px;font-size:13px">'
+      positionHtml += '<tr style="border-bottom:1px solid #ebeef5;color:#909399">'
+      positionHtml += '<td style="padding:6px 8px">币对</td><td style="padding:6px 8px">方向</td>'
+      positionHtml += '<td style="padding:6px 8px;text-align:right">数量</td></tr>'
+      for (const [symbol, pos] of positions) {
+        const p = pos as any
+        const sideLabel = p.amount > 0 ? '多' : '空'
+        const sideColor = p.amount > 0 ? '#00C853' : '#FF1744'
+        positionHtml += `<tr style="border-bottom:1px solid #f5f7fa">`
+        positionHtml += `<td style="padding:6px 8px">${symbol}</td>`
+        positionHtml += `<td style="padding:6px 8px;color:${sideColor}">${sideLabel}</td>`
+        positionHtml += `<td style="padding:6px 8px;text-align:right">${formatNumber(Math.abs(p.amount), 4)}</td>`
+        positionHtml += `</tr>`
+      }
+      positionHtml += '</table>'
+    } else {
+      positionHtml = '<p style="color:#909399;margin-top:8px">当前无持仓</p>'
+    }
+  } catch {
+    positionHtml = '<p style="color:#909399;margin-top:8px">无法获取持仓信息</p>'
+  }
+
+  const confirmed = await confirm({
+    title: '紧急平仓',
+    message: '<p style="color:#FF1744;font-weight:500">确定要执行紧急平仓吗？这将立即市价平掉以下所有持仓！</p>'
+      + positionHtml,
+    type: 'error',
+    confirmText: '确认平仓',
+    dangerouslyUseHTMLString: true,
+  })
   if (!confirmed) return
 
   try {

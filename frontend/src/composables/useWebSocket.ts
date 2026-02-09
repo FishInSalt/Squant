@@ -1,4 +1,4 @@
-import { onMounted, onUnmounted } from 'vue'
+import { computed, onMounted, onUnmounted } from 'vue'
 import { useWebSocketStore } from '@/stores/websocket'
 
 /**
@@ -12,7 +12,7 @@ export function useWebSocket() {
   })
 
   return {
-    connected: wsStore.isConnected,
+    connected: computed(() => wsStore.isConnected),
     subscribe: wsStore.subscribe,
     unsubscribe: wsStore.unsubscribe,
   }
@@ -43,7 +43,7 @@ export function useTickerSubscription(
   })
 
   return {
-    connected: wsStore.isConnected,
+    connected: computed(() => wsStore.isConnected),
   }
 }
 
@@ -72,6 +72,6 @@ export function useCandleSubscription(
   })
 
   return {
-    connected: wsStore.isConnected,
+    connected: computed(() => wsStore.isConnected),
   }
 }
