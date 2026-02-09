@@ -30,29 +30,16 @@ export interface ParamField {
   items?: ParamField
 }
 
+// 匹配后端 ValidationResultResponse — errors/warnings 为 string[]
 export interface ValidationResult {
   valid: boolean
-  errors: ValidationError[]
-  warnings: ValidationWarning[]
+  errors: string[]
+  warnings: string[]
   // 匹配后端 StrategyInfo
   strategy_info?: {
     class_name?: string
     has_on_bar: boolean
     has_init: boolean
   }
-}
-
-export interface ValidationError {
-  line?: number
-  column?: number
-  message: string
-  code: string
-}
-
-export interface ValidationWarning {
-  line?: number
-  column?: number
-  message: string
-  code: string
 }
 

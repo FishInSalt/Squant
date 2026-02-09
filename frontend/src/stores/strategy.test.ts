@@ -23,7 +23,6 @@ describe('useStrategyStore', () => {
       expect(store.pagination.page).toBe(1)
       expect(store.pagination.pageSize).toBe(20)
       expect(store.loading).toBe(false)
-      expect(store.searchQuery).toBe('')
     })
   })
 
@@ -141,12 +140,6 @@ describe('useStrategyStore', () => {
   })
 
   describe('setters', () => {
-    it('setSearchQuery updates searchQuery', () => {
-      const store = useStrategyStore()
-      store.setSearchQuery('test')
-      expect(store.searchQuery).toBe('test')
-    })
-
     it('setPage updates pagination.page', () => {
       const store = useStrategyStore()
       store.setPage(3)

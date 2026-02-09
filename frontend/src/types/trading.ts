@@ -175,14 +175,13 @@ export interface RunLog {
 }
 
 // 持仓（匹配后端 PositionInfo）
+// symbol 是 status.positions dict 的 key，由前端在展示时注入
+// side 由 amount 正负推断: amount > 0 为多头, amount < 0 为空头
 export interface Position {
-  symbol: string
-  side: 'long' | 'short'
   amount: number
   avg_entry_price: number
   current_price?: number
   unrealized_pnl?: number
-  unrealized_pnl_percent?: number
 }
 
 // 待处理订单信息（匹配后端 PendingOrderInfo）

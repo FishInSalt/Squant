@@ -3,12 +3,11 @@
     <div class="page-header">
       <h1 class="page-title">当前挂单</h1>
       <div class="header-actions">
-        <el-button type="danger" :disabled="selectedOrders.length === 0" @click="cancelSelected">
-          取消选中 ({{ selectedOrders.length }})
-        </el-button>
-        <el-button type="danger" @click="cancelAll">
-          取消全部
-        </el-button>
+        <el-tooltip content="批量取消功能开发中" placement="top">
+          <el-button type="danger" disabled>
+            取消全部
+          </el-button>
+        </el-tooltip>
       </div>
     </div>
 
@@ -44,10 +43,7 @@
         :data="orders"
         v-loading="loading"
         stripe
-        @selection-change="handleSelectionChange"
       >
-        <el-table-column type="selection" width="50" />
-
         <el-table-column prop="symbol" label="交易对" width="130">
           <template #default="{ row }">
             <div class="symbol-cell">
@@ -137,7 +133,7 @@ import {
   formatNumber,
   formatDateTime,
 } from '@/utils/format'
-import { getOpenOrders, cancelOrder as apiCancelOrder, cancelOrders, cancelAllOrders } from '@/api/order'
+import { getOpenOrders, cancelOrder as apiCancelOrder } from '@/api/order'
 import { useNotification } from '@/composables/useNotification'
 import type { Order } from '@/types'
 
@@ -146,7 +142,6 @@ const { toastSuccess, toastError, confirmDanger } = useNotification()
 
 const loading = ref(false)
 const orders = ref<Order[]>([])
-const selectedOrders = ref<Order[]>([])
 
 const filter = reactive({
   exchange: '',
@@ -173,10 +168,6 @@ async function loadOrders() {
   }
 }
 
-function handleSelectionChange(selection: Order[]) {
-  selectedOrders.value = selection
-}
-
 async function cancelOrder(id: string) {
   const confirmed = await confirmDanger('确定要取消该订单吗？')
   if (!confirmed) return
@@ -184,41 +175,6 @@ async function cancelOrder(id: string) {
   try {
     await apiCancelOrder(id)
     toastSuccess('订单已取消')
-    loadOrders()
-  } catch (error) {
-    toastError('取消失败')
-  }
-}
-
-async function cancelSelected() {
-  if (selectedOrders.value.length === 0) return
-
-  const confirmed = await confirmDanger(`确定要取消选中的 ${selectedOrders.value.length} 个订单吗？`)
-  if (!confirmed) return
-
-  try {
-    const ids = selectedOrders.value.map((o) => o.id)
-    await cancelOrders(ids)
-    toastSuccess('订单已取消')
-    loadOrders()
-  } catch (error) {
-    toastError('取消失败')
-  }
-}
-
-async function cancelAll() {
-  if (orders.value.length === 0) return
-
-  const confirmed = await confirmDanger(`确定要取消全部 ${orders.value.length} 个挂单吗？`)
-  if (!confirmed) return
-
-  try {
-    const params: Record<string, unknown> = {}
-    if (filter.exchange) params.exchange = filter.exchange
-    if (filter.symbol) params.symbol = filter.symbol
-
-    await cancelAllOrders(params as any)
-    toastSuccess('已取消全部挂单')
     loadOrders()
   } catch (error) {
     toastError('取消失败')

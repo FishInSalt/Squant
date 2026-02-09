@@ -301,10 +301,11 @@ const positions = computed<[string, Position][]>(() => {
   return Object.entries(status.value.positions)
 })
 
-const positionRows = computed<Position[]>(() => {
+const positionRows = computed(() => {
   return positions.value.map(([symbol, pos]) => ({
     ...pos,
     symbol,
+    side: pos.amount >= 0 ? 'long' : 'short',
   }))
 })
 

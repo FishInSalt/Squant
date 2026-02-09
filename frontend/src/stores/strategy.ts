@@ -13,7 +13,6 @@ export const useStrategyStore = defineStore('strategy', () => {
     total: 0,
   })
   const loading = ref(false)
-  const searchQuery = ref('')
 
   // Getters
   const validStrategies = computed(() =>
@@ -28,7 +27,6 @@ export const useStrategyStore = defineStore('strategy', () => {
   async function loadStrategies(params?: {
     page?: number
     pageSize?: number
-    search?: string
     status?: string
   }) {
     loading.value = true
@@ -36,7 +34,6 @@ export const useStrategyStore = defineStore('strategy', () => {
       const response = await strategyApi.getStrategies({
         page: params?.page || pagination.value.page,
         page_size: params?.pageSize || pagination.value.pageSize,
-        search: params?.search || searchQuery.value || undefined,
         status: params?.status,
       })
       const data = response.data as PaginatedData<Strategy>
@@ -81,10 +78,6 @@ export const useStrategyStore = defineStore('strategy', () => {
     }
   }
 
-  function setSearchQuery(query: string) {
-    searchQuery.value = query
-  }
-
   function setPage(page: number) {
     pagination.value.page = page
   }
@@ -99,7 +92,6 @@ export const useStrategyStore = defineStore('strategy', () => {
     currentStrategy,
     pagination,
     loading,
-    searchQuery,
     // Getters
     validStrategies,
     strategyById,
@@ -107,7 +99,6 @@ export const useStrategyStore = defineStore('strategy', () => {
     loadStrategies,
     loadStrategy,
     deleteStrategy,
-    setSearchQuery,
     setPage,
     clearCurrentStrategy,
   }

@@ -12,6 +12,7 @@ vi.mock('@/api/order', () => ({
 const mockOrders = [
   {
     id: 'order-1',
+    account_id: 'acc-1',
     exchange: 'okx',
     symbol: 'BTC/USDT',
     side: 'buy' as const,
@@ -26,10 +27,10 @@ const mockOrders = [
     strategy_name: 'TestStrategy',
     created_at: '2024-06-15T10:00:00Z',
     updated_at: '2024-06-15T10:01:00Z',
-    filled_at: '2024-06-15T10:01:00Z',
   },
   {
     id: 'order-2',
+    account_id: 'acc-1',
     exchange: 'okx',
     symbol: 'ETH/USDT',
     side: 'sell' as const,
@@ -42,7 +43,6 @@ const mockOrders = [
     status: 'filled' as const,
     created_at: '2024-06-15T11:00:00Z',
     updated_at: '2024-06-15T11:00:01Z',
-    filled_at: '2024-06-15T11:00:01Z',
   },
 ]
 

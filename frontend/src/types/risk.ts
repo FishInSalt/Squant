@@ -1,13 +1,11 @@
-// 风控相关类型
+// 风控相关类型（匹配后端 models/enums.py RiskRuleType）
 export type RiskRuleType =
-  | 'max_position_size'
-  | 'max_daily_loss'
-  | 'max_drawdown'
-  | 'max_order_size'
-  | 'max_open_orders'
-  | 'trading_hours'
-  | 'price_deviation'
-  | 'custom'
+  | 'order_limit'
+  | 'position_limit'
+  | 'daily_loss_limit'
+  | 'total_loss_limit'
+  | 'frequency_limit'
+  | 'volatility_break'
 
 // 匹配后端 RiskRuleResponse
 export interface RiskRule {

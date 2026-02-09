@@ -129,9 +129,9 @@
           </template>
         </el-table-column>
 
-        <el-table-column prop="filled_at" label="成交时间" width="160">
+        <el-table-column prop="updated_at" label="更新时间" width="160">
           <template #default="{ row }">
-            {{ row.filled_at ? formatDateTime(row.filled_at) : '-' }}
+            {{ formatDateTime(row.updated_at) }}
           </template>
         </el-table-column>
       </el-table>

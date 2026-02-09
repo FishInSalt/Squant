@@ -1,5 +1,5 @@
-// 账户相关类型
-export type ExchangeType = 'binance' | 'okx' | 'bybit' | 'huobi' | 'gate'
+// 账户相关类型（匹配后端支持的交易所）
+export type ExchangeType = 'okx' | 'binance'
 
 export interface ExchangeAccount {
   id: string

@@ -76,8 +76,7 @@
           class="error-item"
         >
           <el-icon class="error"><CircleCloseFilled /></el-icon>
-          <span v-if="error.line">第 {{ error.line }} 行: </span>
-          {{ error.message }}
+          {{ error }}
         </div>
       </div>
 
@@ -89,8 +88,7 @@
           class="warning-item"
         >
           <el-icon class="warning"><WarningFilled /></el-icon>
-          <span v-if="warning.line">第 {{ warning.line }} 行: </span>
-          {{ warning.message }}
+          {{ warning }}
         </div>
       </div>
 
