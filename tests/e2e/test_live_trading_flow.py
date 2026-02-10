@@ -97,7 +97,7 @@ class TestLiveTradingAPIEndpoints:
         """
         # 创建策略
         response = await api_client.post("/api/v1/strategies", json=test_strategy_data)
-        assert response.status_code == 200
+        assert response.status_code == 201
         strategy_id = response.json()["data"]["id"]
         cleanup_strategies(strategy_id)
 
@@ -278,7 +278,7 @@ class TestExchangeAccountManagement:
         }
 
         response = await api_client.post("/api/v1/exchange-accounts", json=account_request)
-        assert response.status_code == 200, f"Failed to create account: {response.text}"
+        assert response.status_code == 201, f"Failed to create account: {response.text}"
 
         account = response.json()["data"]
         account_id = account["id"]
@@ -356,7 +356,7 @@ class TestLiveTradingWithCredentials:
             account_request["passphrase"] = os.environ.get("OKX_PASSPHRASE")
 
         response = await api_client.post("/api/v1/exchange-accounts", json=account_request)
-        assert response.status_code == 200
+        assert response.status_code == 201
         account = response.json()["data"]
 
         yield account
@@ -409,7 +409,7 @@ class TestLiveTradingWithCredentials:
         """
         # ==================== 步骤1: 创建策略 ====================
         response = await api_client.post("/api/v1/strategies", json=test_strategy_data)
-        assert response.status_code == 200
+        assert response.status_code == 201
         strategy_id = response.json()["data"]["id"]
         cleanup_strategies(strategy_id)
 
@@ -431,7 +431,7 @@ class TestLiveTradingWithCredentials:
         }
 
         response = await api_client.post("/api/v1/live", json=live_request)
-        if response.status_code != 200:
+        if response.status_code != 201:
             # 连接失败可能是测试网问题，跳过
             pytest.skip(f"Failed to start live trading: {response.text}")
 
@@ -493,7 +493,7 @@ class TestLiveTradingWithCredentials:
         """
         # 创建策略
         response = await api_client.post("/api/v1/strategies", json=test_strategy_data)
-        assert response.status_code == 200
+        assert response.status_code == 201
         strategy_id = response.json()["data"]["id"]
         cleanup_strategies(strategy_id)
 
@@ -514,7 +514,7 @@ class TestLiveTradingWithCredentials:
         }
 
         response = await api_client.post("/api/v1/live", json=live_request)
-        if response.status_code != 200:
+        if response.status_code != 201:
             pytest.skip(f"Failed to start: {response.text}")
 
         run_id = response.json()["data"]["id"]
@@ -566,7 +566,7 @@ class TestMultipleStrategies:
             strategy_data["name"] = f"E2E Multi Strategy {i} {uuid.uuid4().hex[:8]}"
 
             response = await api_client.post("/api/v1/strategies", json=strategy_data)
-            assert response.status_code == 200
+            assert response.status_code == 201
             strategy_id = response.json()["data"]["id"]
             strategy_ids.append(strategy_id)
             cleanup_strategies(strategy_id)
@@ -583,7 +583,7 @@ class TestMultipleStrategies:
             }
 
             response = await api_client.post("/api/v1/paper", json=paper_request)
-            assert response.status_code == 200, f"Failed to start session {i}: {response.text}"
+            assert response.status_code == 201, f"Failed to start session {i}: {response.text}"
             run_ids.append(response.json()["data"]["id"])
 
         # 等待会话启动
@@ -651,12 +651,12 @@ class ErrorStrategy(Strategy):
 
         # 创建策略
         response = await api_client.post("/api/v1/strategies", json=normal_strategy)
-        assert response.status_code == 200
+        assert response.status_code == 201
         normal_id = response.json()["data"]["id"]
         cleanup_strategies(normal_id)
 
         response = await api_client.post("/api/v1/strategies", json=error_strategy)
-        assert response.status_code == 200
+        assert response.status_code == 201
         error_id = response.json()["data"]["id"]
         cleanup_strategies(error_id)
 
@@ -671,7 +671,7 @@ class ErrorStrategy(Strategy):
                 "initial_capital": 10000.0,
             }
             response = await api_client.post("/api/v1/paper", json=paper_request)
-            assert response.status_code == 200
+            assert response.status_code == 201
             run_ids.append(response.json()["data"]["id"])
 
         normal_run_id, error_run_id = run_ids

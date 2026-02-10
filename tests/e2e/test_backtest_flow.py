@@ -35,7 +35,7 @@ class TestBacktestCompleteFlow:
         """
         # ==================== 步骤1: 创建策略 ====================
         response = await api_client.post("/api/v1/strategies", json=test_strategy_data)
-        assert response.status_code == 200, f"Failed to create strategy: {response.text}"
+        assert response.status_code == 201, f"Failed to create strategy: {response.text}"
 
         response_data = response.json()
         assert "data" in response_data, f"Response missing 'data' field: {response_data}"
@@ -54,7 +54,7 @@ class TestBacktestCompleteFlow:
         }
 
         response = await api_client.post("/api/v1/backtest/async", json=backtest_request)
-        assert response.status_code == 200, f"Failed to create backtest run: {response.text}"
+        assert response.status_code == 201, f"Failed to create backtest run: {response.text}"
 
         response_data = response.json()
         assert "data" in response_data, f"Response missing 'data' field: {response_data}"
@@ -156,7 +156,7 @@ class TestBacktestCompleteFlow:
         """
         # 先创建策略
         response = await api_client.post("/api/v1/strategies", json=test_strategy_data)
-        assert response.status_code == 200
+        assert response.status_code == 201
 
         response_data = response.json()
         assert "data" in response_data, f"Response missing 'data' field: {response_data}"
@@ -196,7 +196,7 @@ class TestBacktestCompleteFlow:
         """
         # 创建策略
         response = await api_client.post("/api/v1/strategies", json=test_strategy_data)
-        assert response.status_code == 200
+        assert response.status_code == 201
 
         response_data = response.json()
         assert "data" in response_data, f"Response missing 'data' field: {response_data}"
@@ -212,7 +212,7 @@ class TestBacktestCompleteFlow:
             }
 
             response = await api_client.post("/api/v1/backtest/async", json=backtest_request)
-            assert response.status_code == 200
+            assert response.status_code == 201
 
             response_data = response.json()
             assert "data" in response_data, f"Response missing 'data' field: {response_data}"
@@ -257,7 +257,7 @@ class TestBacktestCompleteFlow:
         """
         # 创建策略
         response = await api_client.post("/api/v1/strategies", json=test_strategy_data)
-        assert response.status_code == 200
+        assert response.status_code == 201
 
         response_data = response.json()
         assert "data" in response_data, f"Response missing 'data' field: {response_data}"
@@ -271,7 +271,7 @@ class TestBacktestCompleteFlow:
         }
 
         response = await api_client.post("/api/v1/backtest/async", json=backtest_request)
-        assert response.status_code == 200
+        assert response.status_code == 201
 
         response_data = response.json()
         assert "data" in response_data, f"Response missing 'data' field: {response_data}"
@@ -306,7 +306,7 @@ class TestBacktestCancellation:
         """
         # 创建策略
         response = await api_client.post("/api/v1/strategies", json=test_strategy_data)
-        assert response.status_code == 200
+        assert response.status_code == 201
 
         response_data = response.json()
         assert "data" in response_data, f"Response missing 'data' field: {response_data}"
@@ -319,7 +319,7 @@ class TestBacktestCancellation:
         }
 
         response = await api_client.post("/api/v1/backtest/async", json=backtest_request)
-        assert response.status_code == 200
+        assert response.status_code == 201
 
         response_data = response.json()
         assert "data" in response_data, f"Response missing 'data' field: {response_data}"
