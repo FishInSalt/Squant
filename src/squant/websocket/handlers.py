@@ -219,7 +219,7 @@ class WebSocketGateway:
     VALID_CHANNEL_PREFIXES = ("ticker:", "candle:", "orderbook:", "trade:")
     VALID_EXACT_CHANNELS = ("orders", "account")
     MAX_CHANNEL_LENGTH = 64
-    MAX_SUBSCRIPTIONS = 50
+    MAX_SUBSCRIPTIONS = 200
 
     async def _subscribe(self, channel: str) -> None:
         """Subscribe to a channel.
@@ -275,7 +275,6 @@ class WebSocketGateway:
                     "channel": channel,
                 }
             )
-            logger.debug(f"Client subscribed to {channel}")
         except Exception as e:
             logger.warning(f"Failed to subscribe to {channel}: {e}")
             await self._send_error(f"Failed to subscribe to {channel}")
@@ -310,7 +309,6 @@ class WebSocketGateway:
                 "channel": channel,
             }
         )
-        logger.debug(f"Client unsubscribed from {channel}")
 
     async def _unsubscribe_redis(self, channel: str) -> None:
         """Unsubscribe from Redis channel."""
@@ -326,9 +324,6 @@ class WebSocketGateway:
         """
         parts = channel.split(":")
         channel_type = parts[0]
-        logger.debug(
-            f"_subscribe_okx called: channel={channel}, parts={parts}, channel_type={channel_type}"
-        )
 
         try:
             if channel_type == "ticker" and len(parts) >= 2:

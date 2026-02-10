@@ -72,6 +72,12 @@ class StreamManager:
         self._flush_task: asyncio.Task | None = None
         self._buffer_lock = asyncio.Lock()
 
+        # Throughput stats (for periodic logging)
+        self._stats_messages_published = 0
+        self._stats_flushes = 0
+        self._stats_task: asyncio.Task | None = None
+        self._stats_interval = 60.0  # Log throughput every 60 seconds
+
         # Health check task
         self._health_check_task: asyncio.Task | None = None
         self._health_check_interval = 30.0  # Check every 30 seconds
@@ -133,6 +139,9 @@ class StreamManager:
 
         # Start the batch publishing flush task
         self._flush_task = asyncio.create_task(self._flush_loop())
+
+        # Start throughput stats logging task
+        self._stats_task = asyncio.create_task(self._stats_loop())
 
         # Start the health check task
         self._health_check_task = asyncio.create_task(self._health_check_loop())
@@ -436,6 +445,13 @@ class StreamManager:
                 await self._health_check_task
             self._health_check_task = None
 
+        # Stop stats task
+        if self._stats_task:
+            self._stats_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._stats_task
+            self._stats_task = None
+
         # Stop flush task
         if self._flush_task:
             self._flush_task.cancel()
@@ -479,7 +495,6 @@ class StreamManager:
         normalized_symbol = self._normalize_symbol(symbol)
 
         if normalized_symbol in self._ticker_subscriptions:
-            logger.debug(f"Already subscribed to ticker: {normalized_symbol}")
             return
 
         if self._settings.use_ccxt_provider:
@@ -523,12 +538,10 @@ class StreamManager:
             symbol: Trading pair.
             timeframe: Candle timeframe (1m, 5m, 15m, 30m, 1h, 4h, 1d, 1w).
         """
-        logger.debug(f"subscribe_candles called: symbol={symbol}, timeframe={timeframe}")
         normalized_symbol = self._normalize_symbol(symbol)
         key = (normalized_symbol, timeframe)
 
         if key in self._candle_subscriptions:
-            logger.debug(f"Already subscribed to candles: {normalized_symbol} {timeframe}")
             return
 
         if self._settings.use_ccxt_provider:
@@ -761,8 +774,6 @@ class StreamManager:
             data_type = msg.get("type", "")
             data = msg.get("data")
 
-            logger.debug(f"_handle_ccxt_message called: type={data_type}, data={data}")
-
             if not data:
                 logger.warning(f"_handle_ccxt_message: no data for type={data_type}")
                 return
@@ -777,12 +788,8 @@ class StreamManager:
 
             elif data_type == "candle":
                 candle: WSCandle = data
-                logger.debug(
-                    f"Processing candle from CCXT: symbol={candle.symbol}, timeframe={candle.timeframe}, close={candle.close}"
-                )
                 # Publish to Redis for WebSocket clients
                 channel = f"candle:{candle.symbol}:{candle.timeframe}"
-                logger.debug(f"Publishing candle to Redis channel: {channel}")
                 await self._publish(
                     WSMessageType.CANDLE,
                     channel,
@@ -1047,8 +1054,6 @@ class StreamManager:
         redis_channel = f"{self.REDIS_CHANNEL_PREFIX}{channel}"
         message_json = message.model_dump_json()
 
-        logger.debug(f"Queueing message to Redis: channel={redis_channel}, type={msg_type}")
-
         # Add to buffer
         async with self._buffer_lock:
             self._publish_buffer.append((redis_channel, message_json))
@@ -1067,6 +1072,27 @@ class StreamManager:
                 break
             except Exception as e:
                 logger.exception(f"Error in flush loop: {e}")
+
+    async def _stats_loop(self) -> None:
+        """Background task that periodically logs throughput statistics."""
+        while self._running:
+            try:
+                await asyncio.sleep(self._stats_interval)
+                msgs = self._stats_messages_published
+                flushes = self._stats_flushes
+                self._stats_messages_published = 0
+                self._stats_flushes = 0
+                if msgs > 0:
+                    logger.info(
+                        f"Stream throughput: {msgs} msgs in {flushes} flushes "
+                        f"({msgs / self._stats_interval:.1f} msgs/s), "
+                        f"subscriptions: {len(self._ticker_subscriptions)} tickers, "
+                        f"{len(self._candle_subscriptions)} candles"
+                    )
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.exception(f"Error in stats loop: {e}")
 
     async def _flush_buffer(self) -> None:
         """Flush the message buffer using Redis pipeline."""
@@ -1098,8 +1124,9 @@ class StreamManager:
             async with self._redis.pipeline(transaction=False) as pipe:
                 for channel, message_json in messages:
                     pipe.publish(channel, message_json)
-                results = await pipe.execute()
-                logger.debug(f"Published {len(messages)} messages to Redis, results: {results}")
+                await pipe.execute()
+            self._stats_messages_published += len(messages)
+            self._stats_flushes += 1
         except Exception as e:
             # Log dropped messages for monitoring, but don't retry
             # (stale market data is worse than no data)

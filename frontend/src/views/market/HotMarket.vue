@@ -344,10 +344,13 @@ function updateWsSubscriptions() {
   }
 }
 
-// 监听当前页数据变化，更新订阅
-// Note: deep option is not needed here since subscribedSymbols is a computed
-// property that returns a new array reference when values change
-watch(subscribedSymbols, () => {
+// 监听当前页 symbol 列表变化，更新订阅
+// 仅在 symbol 集合真正变化时才重订阅（避免 ticker 数据更新触发无意义的全量重订阅）
+let lastSubscribedKey = ''
+watch(subscribedSymbols, (symbols) => {
+  const key = symbols.join(',')
+  if (key === lastSubscribedKey) return
+  lastSubscribedKey = key
   updateWsSubscriptions()
 })
 

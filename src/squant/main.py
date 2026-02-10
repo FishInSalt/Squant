@@ -30,8 +30,11 @@ def _configure_logging() -> None:
         level=log_level,
         format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
+        force=True,
     )
     logging.getLogger("squant").setLevel(log_level)
+    # Suppress verbose third-party library logs (ccxt dumps full HTTP responses at DEBUG)
+    logging.getLogger("ccxt").setLevel(logging.WARNING)
 
 
 @asynccontextmanager
