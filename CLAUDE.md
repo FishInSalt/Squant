@@ -275,7 +275,7 @@ Tests mirror the source layout: `tests/unit/{api/v1, services, engine/{backtest,
 
 ### CI Pipeline
 
-CI runs on pushes to `main`, `develop`, `cc/*` and PRs to `main`/`develop`. Pipeline: lint → unit tests → integration tests → e2e tests → docker build check → **API contract check** (fails if generated TypeScript types drift from committed types). Note: mypy and ruff format checks are `continue-on-error` in CI (non-blocking).
+CI runs on pushes to `main`, `develop`, `cc/*` and PRs to `main`/`develop`. Pipeline: lint → [unit tests, integration tests, frontend tests, API contract check, docker build check] (parallel) → e2e tests (after unit+integration pass). **API contract check** fails if generated TypeScript types drift from committed types. Note: mypy and ruff format checks are `continue-on-error` in CI (non-blocking).
 
 ## Documentation
 
