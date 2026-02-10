@@ -2,6 +2,9 @@
   <div class="order-history">
     <div class="page-header">
       <h1 class="page-title">历史订单</h1>
+      <div class="header-actions">
+        <el-button :icon="Download" @click="exportCSV">导出</el-button>
+      </div>
     </div>
 
     <div class="filter-bar card">
@@ -53,7 +56,7 @@
     </div>
 
     <div class="orders-table card">
-      <el-table :data="orders" v-loading="loading" stripe>
+      <el-table :data="orders" v-loading="loading" stripe @row-click="handleRowClick">
         <el-table-column prop="symbol" label="交易对" width="130">
           <template #default="{ row }">
             <div class="symbol-cell">
@@ -144,17 +147,48 @@
         />
       </div>
     </div>
+
+    <el-dialog v-model="detailVisible" title="订单详情" width="560px">
+      <el-descriptions v-if="selectedOrder" :column="2" border>
+        <el-descriptions-item label="交易对">{{ selectedOrder.symbol }}</el-descriptions-item>
+        <el-descriptions-item label="交易所">{{ formatExchangeName(selectedOrder.exchange) }}</el-descriptions-item>
+        <el-descriptions-item label="方向">
+          <el-tag :type="selectedOrder.side === 'buy' ? 'success' : 'danger'" size="small">
+            {{ formatOrderSide(selectedOrder.side) }}
+          </el-tag>
+        </el-descriptions-item>
+        <el-descriptions-item label="类型">{{ formatOrderType(selectedOrder.type) }}</el-descriptions-item>
+        <el-descriptions-item label="委托价">{{ selectedOrder.price ? formatPrice(selectedOrder.price) : '市价' }}</el-descriptions-item>
+        <el-descriptions-item label="成交均价">{{ selectedOrder.avg_price ? formatPrice(selectedOrder.avg_price) : '-' }}</el-descriptions-item>
+        <el-descriptions-item label="委托数量">{{ formatNumber(selectedOrder.amount, 4) }}</el-descriptions-item>
+        <el-descriptions-item label="成交数量">{{ formatNumber(selectedOrder.filled, 4) }}</el-descriptions-item>
+        <el-descriptions-item label="剩余数量">{{ formatNumber(selectedOrder.remaining_amount, 4) }}</el-descriptions-item>
+        <el-descriptions-item label="手续费">
+          {{ selectedOrder.commission ? `${formatNumber(selectedOrder.commission, 6)} ${selectedOrder.commission_asset || ''}` : '-' }}
+        </el-descriptions-item>
+        <el-descriptions-item label="状态">
+          <StatusBadge :status="selectedOrder.status" />
+        </el-descriptions-item>
+        <el-descriptions-item label="策略">{{ selectedOrder.strategy_name || '-' }}</el-descriptions-item>
+        <el-descriptions-item label="创建时间" :span="2">{{ formatDateTime(selectedOrder.created_at) }}</el-descriptions-item>
+        <el-descriptions-item label="更新时间" :span="2">{{ formatDateTime(selectedOrder.updated_at) }}</el-descriptions-item>
+        <el-descriptions-item v-if="selectedOrder.reject_reason" label="拒绝原因" :span="2">{{ selectedOrder.reject_reason }}</el-descriptions-item>
+        <el-descriptions-item v-if="selectedOrder.exchange_oid" label="交易所订单ID" :span="2">{{ selectedOrder.exchange_oid }}</el-descriptions-item>
+      </el-descriptions>
+    </el-dialog>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, reactive, computed, onMounted } from 'vue'
+import { Download } from '@element-plus/icons-vue'
 import { useMarketStore } from '@/stores/market'
 import StatusBadge from '@/components/common/StatusBadge.vue'
 import {
   formatExchangeName,
   formatOrderSide,
   formatOrderType,
+  formatOrderStatus,
   formatPrice,
   formatNumber,
   formatDateTime,
@@ -211,6 +245,47 @@ async function loadOrders() {
   } finally {
     loading.value = false
   }
+}
+
+const selectedOrder = ref<Order | null>(null)
+const detailVisible = ref(false)
+
+function handleRowClick(row: Order) {
+  selectedOrder.value = row
+  detailVisible.value = true
+}
+
+function exportCSV() {
+  if (!orders.value.length) {
+    toastError('没有可导出的数据')
+    return
+  }
+
+  const headers = ['时间', '交易对', '方向', '价格', '数量', '状态']
+  const rows = orders.value.map((o) => [
+    formatDateTime(o.created_at),
+    o.symbol,
+    formatOrderSide(o.side),
+    o.price ? String(o.price) : '市价',
+    String(o.amount),
+    formatOrderStatus(o.status),
+  ])
+
+  const csvContent = [headers, ...rows]
+    .map((row) => row.map((cell) => `"${cell.replace(/"/g, '""')}"`).join(','))
+    .join('\n')
+
+  const BOM = '\uFEFF'
+  const blob = new Blob([BOM + csvContent], { type: 'text/csv;charset=utf-8;' })
+  const url = URL.createObjectURL(blob)
+  const date = new Date().toISOString().slice(0, 10)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = `order-history-${date}.csv`
+  document.body.appendChild(link)
+  link.click()
+  document.body.removeChild(link)
+  URL.revokeObjectURL(url)
 }
 
 onMounted(() => {

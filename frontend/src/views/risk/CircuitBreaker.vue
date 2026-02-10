@@ -84,11 +84,79 @@
         </div>
       </div>
     </div>
+
+    <div class="auto-conditions-panel card">
+      <div class="card-header">
+        <h3 class="card-title">自动熔断条件 <el-tag size="small" type="info">即将推出</el-tag></h3>
+        <el-tooltip content="后端暂未支持自动熔断条件持久化" placement="top">
+          <el-button type="primary" size="small" disabled>保存</el-button>
+        </el-tooltip>
+      </div>
+
+      <div class="conditions-list">
+        <div class="condition-item">
+          <div class="condition-header">
+            <el-switch v-model="autoConditions.totalLoss.enabled" />
+            <span class="condition-label">账户总亏损触发</span>
+          </div>
+          <p class="condition-desc">
+            当所有策略累计亏损达到
+            <el-input-number
+              v-model="autoConditions.totalLoss.threshold"
+              :min="1"
+              :max="100"
+              size="small"
+              :disabled="!autoConditions.totalLoss.enabled"
+              style="width: 100px; margin: 0 4px"
+            />
+            % 时自动熔断
+          </p>
+        </div>
+
+        <div class="condition-item">
+          <div class="condition-header">
+            <el-switch v-model="autoConditions.priceVolatility.enabled" />
+            <span class="condition-label">价格异常波动触发</span>
+          </div>
+          <p class="condition-desc">
+            当任一交易对 5 分钟内波动超过
+            <el-input-number
+              v-model="autoConditions.priceVolatility.threshold"
+              :min="1"
+              :max="100"
+              size="small"
+              :disabled="!autoConditions.priceVolatility.enabled"
+              style="width: 100px; margin: 0 4px"
+            />
+            % 时自动熔断
+          </p>
+        </div>
+
+        <div class="condition-item">
+          <div class="condition-header">
+            <el-switch v-model="autoConditions.consecutiveLoss.enabled" />
+            <span class="condition-label">连续亏损触发</span>
+          </div>
+          <p class="condition-desc">
+            当连续亏损
+            <el-input-number
+              v-model="autoConditions.consecutiveLoss.threshold"
+              :min="1"
+              :max="100"
+              size="small"
+              :disabled="!autoConditions.consecutiveLoss.enabled"
+              style="width: 100px; margin: 0 4px"
+            />
+            笔时自动熔断
+          </p>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, reactive, computed, onMounted, onUnmounted } from 'vue'
 import { formatDateTime } from '@/utils/format'
 import {
   getCircuitBreakerStatus,
@@ -156,6 +224,23 @@ async function handleCloseAll() {
     toastError('操作失败')
   }
 }
+
+const autoConditions = reactive({
+  totalLoss: {
+    enabled: false,
+    threshold: 30,
+  },
+  priceVolatility: {
+    enabled: false,
+    threshold: 10,
+  },
+  consecutiveLoss: {
+    enabled: false,
+    threshold: 5,
+  },
+})
+
+// handleSaveConditions: 后端暂未实现自动熔断条件持久化，保存按钮已禁用
 
 let refreshTimer: ReturnType<typeof setInterval> | null = null
 
@@ -241,6 +326,55 @@ onUnmounted(() => {
           font-size: 12px;
           color: #909399;
         }
+      }
+    }
+  }
+
+  .auto-conditions-panel {
+    .card-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 16px;
+    }
+
+    .card-title {
+      font-size: 16px;
+      font-weight: 600;
+      margin: 0;
+    }
+
+    .conditions-list {
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    .condition-item {
+      padding: 16px;
+      background: $bg-secondary;
+      border-radius: 8px;
+
+      .condition-header {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        margin-bottom: 8px;
+      }
+
+      .condition-label {
+        font-weight: 500;
+        font-size: 14px;
+      }
+
+      .condition-desc {
+        color: #606266;
+        font-size: 14px;
+        margin: 0;
+        padding-left: 52px;
+        display: flex;
+        align-items: center;
+        flex-wrap: wrap;
       }
     }
   }

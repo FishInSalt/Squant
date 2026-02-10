@@ -27,6 +27,7 @@
         </div>
 
         <p class="rule-description">{{ rule.description }}</p>
+        <p class="rule-trigger-action">触发动作: {{ getTriggerActionText(rule.type) }}</p>
 
         <div class="rule-params">
           <div v-for="(value, key) in rule.params" :key="key" class="param-item">
@@ -141,7 +142,7 @@
 import { ref, reactive, onMounted } from 'vue'
 import type { FormInstance, FormRules } from 'element-plus'
 import { formatRelativeTime } from '@/utils/format'
-import { RISK_RULE_TYPE_OPTIONS } from '@/utils/constants'
+import { RISK_RULE_TYPE_OPTIONS, RISK_RULE_ACTION_MAP } from '@/utils/constants'
 import {
   getRiskRules,
   createRiskRule,
@@ -186,6 +187,10 @@ const ruleTypeOptions = RISK_RULE_TYPE_OPTIONS
 
 function getRuleTypeLabel(type: string) {
   return ruleTypeOptions.find((t) => t.value === type)?.label || type
+}
+
+function getTriggerActionText(type: string): string {
+  return RISK_RULE_ACTION_MAP[type] || '未知动作'
 }
 
 async function loadRules() {
@@ -349,6 +354,13 @@ onMounted(() => {
     .rule-description {
       color: #606266;
       font-size: 14px;
+      margin: 0 0 4px;
+    }
+
+    .rule-trigger-action {
+      color: #e6a23c;
+      font-size: 13px;
+      font-weight: 500;
       margin: 0 0 12px;
     }
 

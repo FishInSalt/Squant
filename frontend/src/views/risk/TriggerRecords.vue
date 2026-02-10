@@ -72,6 +72,19 @@
           </template>
         </el-table-column>
 
+        <el-table-column label="采取动作" width="120">
+          <template #default="{ row }">
+            <el-tag
+              v-if="row.rule_type"
+              size="small"
+              :type="getActionTakenText(row.rule_type) === '触发熔断' ? 'danger' : 'warning'"
+            >
+              {{ getActionTakenText(row.rule_type) }}
+            </el-tag>
+            <span v-else>-</span>
+          </template>
+        </el-table-column>
+
         <el-table-column prop="message" label="详情" min-width="200">
           <template #default="{ row }">
             {{ row.message || '-' }}
@@ -97,7 +110,7 @@
 <script setup lang="ts">
 import { ref, reactive, onMounted } from 'vue'
 import { formatDateTime } from '@/utils/format'
-import { RISK_RULE_TYPE_OPTIONS } from '@/utils/constants'
+import { RISK_RULE_TYPE_OPTIONS, RISK_RULE_ACTION_MAP } from '@/utils/constants'
 import { getRiskTriggers } from '@/api/risk'
 import { useNotification } from '@/composables/useNotification'
 import type { RiskTrigger } from '@/types'
@@ -121,6 +134,10 @@ const ruleTypeOptions = RISK_RULE_TYPE_OPTIONS
 
 function getRuleTypeLabel(type: string) {
   return ruleTypeOptions.find((t) => t.value === type)?.label || type
+}
+
+function getActionTakenText(ruleType: string): string {
+  return RISK_RULE_ACTION_MAP[ruleType] || '-'
 }
 
 function formatTriggerValue(row: RiskTrigger) {

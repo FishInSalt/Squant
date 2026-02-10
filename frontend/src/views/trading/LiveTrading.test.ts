@@ -4,11 +4,13 @@ import LiveTrading from './LiveTrading.vue'
 import * as liveApi from '@/api/live'
 import * as marketApi from '@/api/market'
 import * as accountApi from '@/api/account'
+import * as riskApi from '@/api/risk'
 import { createMockLiveSession, wrapApiResponse, wrapPaginatedResponse } from '@/__tests__/fixtures'
 
 vi.mock('@/api/live', () => ({
   startLiveTrading: vi.fn(),
   getLiveSessions: vi.fn(),
+  getLiveSessionStatus: vi.fn(),
   stopLiveTrading: vi.fn(),
   emergencyClosePositions: vi.fn(),
 }))
@@ -21,6 +23,10 @@ vi.mock('@/api/market', () => ({
 
 vi.mock('@/api/account', () => ({
   getAccounts: vi.fn(),
+}))
+
+vi.mock('@/api/risk', () => ({
+  getRiskRules: vi.fn(),
 }))
 
 const mockSessions = [
@@ -37,6 +43,7 @@ beforeEach(() => {
   vi.mocked(liveApi.getLiveSessions).mockResolvedValue(wrapPaginatedResponse(mockSessions, 2))
   vi.mocked(marketApi.getSymbols).mockResolvedValue(wrapApiResponse(['BTC/USDT']))
   vi.mocked(accountApi.getAccounts).mockResolvedValue(wrapApiResponse(mockAccounts))
+  vi.mocked(riskApi.getRiskRules).mockResolvedValue(wrapPaginatedResponse([], 0))
 })
 
 describe('LiveTrading', () => {

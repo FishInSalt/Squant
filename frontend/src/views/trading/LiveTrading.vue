@@ -16,6 +16,20 @@
       实盘交易涉及真实资金，请确保您已充分了解策略风险并做好风控设置。
     </el-alert>
 
+    <el-alert
+      v-if="!hasRiskRules"
+      type="error"
+      show-icon
+      :closable="false"
+      class="warning-alert"
+    >
+      <template #title>
+        <strong>请先配置风控规则</strong>
+      </template>
+      未检测到已启用的风控规则。建议在启动实盘交易前
+      <el-button type="primary" link @click="$router.push('/risk/rules')">前往配置风控规则</el-button>
+    </el-alert>
+
     <div class="live-grid">
       <div class="config-panel card">
         <div class="card-header">
@@ -309,6 +323,7 @@ import { TIMEFRAME_OPTIONS } from '@/utils/constants'
 import { getSymbols } from '@/api/market'
 import { getAccounts } from '@/api/account'
 import { startLiveTrading, getLiveSessions, getLiveSessionStatus, stopLiveTrading, emergencyClosePositions } from '@/api/live'
+import { getRiskRules } from '@/api/risk'
 import { useNotification } from '@/composables/useNotification'
 import { confirmStopLive, confirmEmergencyClose, toPositionRows, type PositionRow } from '@/composables/useTradingConfirm'
 import type { LiveSession, ExchangeAccount } from '@/types'
@@ -324,6 +339,7 @@ const sessionsLoading = ref(false)
 const symbols = ref<string[]>([])
 const accounts = ref<ExchangeAccount[]>([])
 const sessions = ref<LiveSession[]>([])
+const hasRiskRules = ref(true) // 是否已配置风控规则
 
 const form = reactive({
   strategy_id: (route.query.strategy_id as string) || '',
@@ -363,6 +379,15 @@ const selectedAccount = computed(() => {
   if (!form.account_id) return null
   return accounts.value.find((a) => a.id === form.account_id)
 })
+
+async function checkRiskRules() {
+  try {
+    const response = await getRiskRules({ enabled: true, page: 1, page_size: 1 })
+    hasRiskRules.value = response.data.total > 0
+  } catch {
+    // 检查失败时不阻止操作
+  }
+}
 
 async function loadAccounts() {
   try {
@@ -490,6 +515,7 @@ onMounted(async () => {
   await Promise.all([
     strategyStore.loadStrategies(),
     loadAccounts(),
+    checkRiskRules(),
   ])
   loadSessions()
 
