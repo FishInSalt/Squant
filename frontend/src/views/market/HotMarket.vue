@@ -41,6 +41,17 @@
       </div>
     </div>
 
+    <el-alert
+      v-if="loadError"
+      title="无法获取行情数据"
+      type="error"
+      show-icon
+      :closable="false"
+      style="margin-bottom: 16px"
+    >
+      <el-button type="primary" link @click="loadData">重试</el-button>
+    </el-alert>
+
     <div class="card">
       <el-table
         ref="tableRef"
@@ -148,6 +159,7 @@ const wsStore = useWebSocketStore()
 const tableRef = ref()
 const searchQuery = ref('')
 const loading = ref(false)
+const loadError = ref(false)
 const sortProp = ref('quote_volume_24h')
 const sortOrder = ref<'ascending' | 'descending'>('descending')
 const currentPage = ref(1)
@@ -247,8 +259,11 @@ const subscribedSymbols = computed(() => {
 
 async function loadData() {
   loading.value = true
+  loadError.value = false
   try {
     await marketStore.loadAllTickers()
+  } catch {
+    loadError.value = true
   } finally {
     loading.value = false
   }

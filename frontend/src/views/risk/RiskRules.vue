@@ -27,6 +27,7 @@
         </div>
 
         <p class="rule-description">{{ rule.description }}</p>
+        <p class="rule-trigger-action">触发动作: {{ getTriggerActionText(rule.type) }}</p>
 
         <div class="rule-params">
           <div v-for="(value, key) in rule.params" :key="key" class="param-item">
@@ -186,6 +187,18 @@ const ruleTypeOptions = RISK_RULE_TYPE_OPTIONS
 
 function getRuleTypeLabel(type: string) {
   return ruleTypeOptions.find((t) => t.value === type)?.label || type
+}
+
+function getTriggerActionText(type: string): string {
+  const actionMap: Record<string, string> = {
+    order_limit: '拒绝下单',
+    position_limit: '拒绝下单',
+    daily_loss_limit: '暂停策略',
+    total_loss_limit: '停止策略',
+    frequency_limit: '拒绝下单',
+    volatility_break: '暂停策略',
+  }
+  return actionMap[type] || '未知动作'
 }
 
 async function loadRules() {
@@ -349,6 +362,13 @@ onMounted(() => {
     .rule-description {
       color: #606266;
       font-size: 14px;
+      margin: 0 0 4px;
+    }
+
+    .rule-trigger-action {
+      color: #e6a23c;
+      font-size: 13px;
+      font-weight: 500;
       margin: 0 0 12px;
     }
 

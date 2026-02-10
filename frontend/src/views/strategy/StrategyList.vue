@@ -99,6 +99,8 @@ import StatusBadge from '@/components/common/StatusBadge.vue'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import { formatRelativeTime } from '@/utils/format'
 import { useNotification } from '@/composables/useNotification'
+import { getLiveSessions } from '@/api/live'
+import { getPaperSessions } from '@/api/paper'
 import type { Strategy } from '@/types'
 import { debounce } from 'lodash-es'
 
@@ -157,7 +159,22 @@ function goToLive(id: string) {
   router.push({ path: '/trading/live', query: { strategy_id: id } })
 }
 
-function handleDelete(strategy: Strategy) {
+async function handleDelete(strategy: Strategy) {
+  // 检查是否有运行中的会话使用该策略
+  try {
+    const [liveRes, paperRes] = await Promise.all([
+      getLiveSessions({ strategy_id: strategy.id, status: 'running', page: 1, page_size: 1 }),
+      getPaperSessions({ strategy_id: strategy.id, status: 'running', page: 1, page_size: 1 }),
+    ])
+    const runningCount = (liveRes.data.total || 0) + (paperRes.data.total || 0)
+    if (runningCount > 0) {
+      toastError(`策略「${strategy.name}」有 ${runningCount} 个运行中的会话，请先停止后再删除`)
+      return
+    }
+  } catch {
+    // 检查失败时仍允许尝试删除（后端会做最终校验）
+  }
+
   strategyToDelete.value = strategy
   showDeleteDialog.value = true
 }

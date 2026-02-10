@@ -37,6 +37,11 @@
           <el-tag v-if="account.testnet" type="warning" size="small">测试网</el-tag>
         </div>
 
+        <div class="account-details">
+          <span class="detail-item">API Key: ••••••••</span>
+          <span class="detail-item">创建于: {{ formatDate(account.created_at) }}</span>
+        </div>
+
         <div class="account-actions">
           <el-button size="small" @click="testConnection(account)" :loading="testingId === account.id">
             测试连接
@@ -59,6 +64,14 @@
       :title="editingAccount ? '编辑账户' : '添加账户'"
       width="500px"
     >
+      <el-alert
+        type="warning"
+        title="安全提示"
+        description="API Key 将加密存储。请确保只授予必要的权限（交易、查询），不要授予提现权限。"
+        :closable="false"
+        show-icon
+        style="margin-bottom: 16px"
+      />
       <el-form
         ref="formRef"
         :model="form"
@@ -138,7 +151,7 @@ import { SUPPORTED_EXCHANGES } from '@/utils/constants'
 import { useNotification } from '@/composables/useNotification'
 import type { ExchangeAccount, ExchangeAccountUpdate } from '@/types'
 
-const { toastSuccess, toastError, confirmDelete } = useNotification()
+const { toastSuccess, toastError, confirm } = useNotification()
 
 const loading = ref(false)
 const submitting = ref(false)
@@ -181,6 +194,11 @@ watch(dialogVisible, (visible) => {
     formRef.value?.clearValidate()
   }
 })
+
+function formatDate(dateStr: string): string {
+  const date = new Date(dateStr)
+  return date.toLocaleDateString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit' })
+}
 
 async function loadAccounts() {
   loading.value = true
@@ -279,7 +297,12 @@ async function toggleActive(account: ExchangeAccount, val: boolean) {
 }
 
 async function handleDelete(account: ExchangeAccount) {
-  const confirmed = await confirmDelete('该账户')
+  const confirmed = await confirm({
+    title: '删除确认',
+    message: `确定删除账户「${account.name}」吗？如果有策略正在使用此账户，将无法删除。`,
+    type: 'warning',
+    confirmText: '删除',
+  })
   if (!confirmed) return
 
   try {
@@ -363,6 +386,18 @@ onMounted(() => {
       display: flex;
       gap: 8px;
       margin-bottom: 12px;
+    }
+
+    .account-details {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      margin-bottom: 12px;
+
+      .detail-item {
+        font-size: 12px;
+        color: #909399;
+      }
     }
 
     .account-permissions {

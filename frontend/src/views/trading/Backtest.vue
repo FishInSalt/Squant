@@ -174,15 +174,24 @@
           </div>
 
           <el-form-item>
-            <el-button
-              type="primary"
-              size="large"
-              :loading="submitting"
-              @click="handleSubmit"
-              style="width: 100%"
-            >
-              开始回测
-            </el-button>
+            <div style="display: flex; gap: 12px; width: 100%">
+              <el-button
+                size="large"
+                @click="handleReset"
+                style="flex: 0 0 auto"
+              >
+                重置
+              </el-button>
+              <el-button
+                type="primary"
+                size="large"
+                :loading="submitting"
+                @click="handleSubmit"
+                style="flex: 1"
+              >
+                开始回测
+              </el-button>
+            </div>
           </el-form-item>
         </el-form>
       </div>
@@ -306,6 +315,19 @@ async function loadHistory() {
   } finally {
     historyLoading.value = false
   }
+}
+
+function handleReset() {
+  form.strategy_id = ''
+  form.exchange = 'binance'
+  form.symbol = ''
+  form.timeframe = '1h'
+  form.dateRange = []
+  form.initial_capital = 10000
+  form.commission_rate = 0.001
+  form.slippage = 0.001
+  form.params = {}
+  formRef.value?.resetFields()
 }
 
 function handleStrategyChange() {

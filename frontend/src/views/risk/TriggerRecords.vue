@@ -72,6 +72,19 @@
           </template>
         </el-table-column>
 
+        <el-table-column label="采取动作" width="120">
+          <template #default="{ row }">
+            <el-tag
+              v-if="row.rule_type"
+              size="small"
+              :type="getActionTakenText(row.rule_type) === '触发熔断' ? 'danger' : 'warning'"
+            >
+              {{ getActionTakenText(row.rule_type) }}
+            </el-tag>
+            <span v-else>-</span>
+          </template>
+        </el-table-column>
+
         <el-table-column prop="message" label="详情" min-width="200">
           <template #default="{ row }">
             {{ row.message || '-' }}
@@ -121,6 +134,19 @@ const ruleTypeOptions = RISK_RULE_TYPE_OPTIONS
 
 function getRuleTypeLabel(type: string) {
   return ruleTypeOptions.find((t) => t.value === type)?.label || type
+}
+
+function getActionTakenText(ruleType: string): string {
+  const actionMap: Record<string, string> = {
+    order_limit: '拒绝下单',
+    position_limit: '拒绝下单',
+    daily_loss_limit: '暂停策略',
+    total_loss_limit: '停止策略',
+    frequency_limit: '拒绝下单',
+    volatility_break: '暂停策略',
+    circuit_breaker: '触发熔断',
+  }
+  return actionMap[ruleType] || '-'
 }
 
 function formatTriggerValue(row: RiskTrigger) {
