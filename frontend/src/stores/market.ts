@@ -3,6 +3,7 @@ import { ref, computed } from 'vue'
 import type { Ticker, Timeframe } from '@/types'
 import type { WatchlistItemResponse } from '@/types/generated'
 import * as marketApi from '@/api/market'
+import { useWebSocketStore } from './websocket'
 
 export const useMarketStore = defineStore('market', () => {
   // State
@@ -258,17 +259,22 @@ export const useMarketStore = defineStore('market', () => {
     console.debug('Starting REST API polling fallback')
     pollingTimer = setInterval(async () => {
       try {
-        // Only refresh if we have tickers loaded
-        if (tickers.value.size > 0) {
-          const response = await marketApi.getAllTickers()
-          response.data.forEach((ticker) => {
-            const key = `${ticker.exchange}:${ticker.symbol}`
-            const existing = tickers.value.get(key)
-            // Only update if the REST data is newer
-            if (!existing || ticker.timestamp > existing.timestamp) {
-              tickers.value.set(key, ticker)
-            }
-          })
+        const response = await marketApi.getAllTickers()
+        response.data.forEach((ticker) => {
+          const key = `${ticker.exchange}:${ticker.symbol}`
+          const existing = tickers.value.get(key)
+          // Only update if the REST data is newer
+          if (!existing || ticker.timestamp > existing.timestamp) {
+            tickers.value.set(key, ticker)
+          }
+        })
+
+        // REST poll succeeded → backend is available.
+        // If WebSocket is disconnected, trigger immediate reconnect
+        // (also aborts any hanging TCP handshake attempt).
+        const wsStore = useWebSocketStore()
+        if (!wsStore.connected) {
+          wsStore.reconnectNow()
         }
       } catch (error) {
         // Silent fail - WebSocket is primary, this is just fallback

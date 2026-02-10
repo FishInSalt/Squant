@@ -1,5 +1,7 @@
 """FastAPI application entry point."""
 
+import asyncio
+import contextlib
 import logging
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
@@ -52,20 +54,26 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         redis_initialized = True
         logger.info("Redis connection initialized")
 
-        # WebSocket stream manager - optional, continues if connection fails
-        try:
-            await init_stream_manager()
-            logger.info("Stream manager initialized")
-        except Exception as e:
-            logger.warning(
-                f"Failed to initialize stream manager: {e}. Real-time data will be unavailable."
-            )
-            logger.warning("The application will continue without WebSocket connectivity.")
-            # Start retry loop to attempt reconnection in the background
-            from squant.websocket.manager import get_stream_manager
+        # WebSocket stream manager — initialize in background so it doesn't block
+        # the HTTP server from accepting connections. The server starts immediately;
+        # when the stream manager connects to the exchange, it publishes a
+        # service_ready event so WebSocket gateways can re-subscribe OKX channels.
+        async def _start_stream_manager_background() -> None:
+            try:
+                await init_stream_manager()
+                logger.info("Stream manager initialized (background)")
+            except Exception as e:
+                logger.warning(
+                    f"Failed to initialize stream manager: {e}. "
+                    "Real-time data will be unavailable."
+                )
+                from squant.websocket.manager import get_stream_manager
 
-            stream_manager = get_stream_manager()
-            stream_manager.start_retry_loop()
+                get_stream_manager().start_retry_loop()
+
+        stream_manager_task = asyncio.create_task(
+            _start_stream_manager_background(), name="stream_manager_init"
+        )
 
         # Recover orphaned trading sessions (NFR-013)
         from squant.infra.database import get_session_context
@@ -107,6 +115,13 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     # Shutdown
     logger.info("Shutting down application...")
+
+    # Cancel stream manager init if still in progress
+    if not stream_manager_task.done():
+        stream_manager_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await stream_manager_task
+        logger.info("Stream manager init task cancelled")
 
     # Stop background tasks first
     await task_manager.stop()

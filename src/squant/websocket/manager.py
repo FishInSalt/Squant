@@ -148,6 +148,9 @@ class StreamManager:
 
         logger.info("Stream manager started")
 
+        # Notify connected WebSocket clients that the service is ready
+        await self._publish_service_ready()
+
     async def try_start(self) -> bool:
         """Attempt to start the stream manager without raising exceptions.
 
@@ -1013,6 +1016,18 @@ class StreamManager:
 
     # ==================== Helper Methods ====================
 
+    async def _publish_service_ready(self) -> None:
+        """Publish service_ready event to notify clients that the stream manager is ready.
+
+        Clients receiving this can re-subscribe to OKX channels that may have
+        failed during stream manager downtime.
+        """
+        await self._publish(
+            WSMessageType.SERVICE_READY,
+            "system",
+            {"status": "ready"},
+        )
+
     async def _publish_exchange_switching(
         self, from_exchange: str, to_exchange: str, status: str
     ) -> None:
@@ -1078,6 +1093,8 @@ class StreamManager:
         while self._running:
             try:
                 await asyncio.sleep(self._stats_interval)
+                # Safe without lock: asyncio single-threaded event loop,
+                # no await between read and reset so no interleaving possible.
                 msgs = self._stats_messages_published
                 flushes = self._stats_flushes
                 self._stats_messages_published = 0
@@ -1189,6 +1206,7 @@ class StreamManager:
                 success = await self._ccxt_provider.reconnect()
                 if success:
                     logger.info("CCXT provider reconnection successful")
+                    await self._publish_service_ready()
                     return True
                 else:
                     logger.error("CCXT provider reconnection failed")
@@ -1203,6 +1221,7 @@ class StreamManager:
                 if self._business_client and not self._business_client.is_connected:
                     await self._business_client.connect()
                 logger.info("Native OKX clients reconnection attempted")
+                await self._publish_service_ready()
                 return True
             except Exception as e:
                 logger.exception(f"Failed to reconnect native OKX clients: {e}")

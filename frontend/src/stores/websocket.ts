@@ -74,7 +74,6 @@ export const useWebSocketStore = defineStore('websocket', () => {
   const connected = ref(false)
   const connecting = ref(false)  // 正在连接中标志
   const reconnectAttempts = ref(0)
-  const maxReconnectAttempts = 5
   const baseReconnectDelay = 1000
   const maxReconnectDelay = 30000
   const subscribedChannels = ref<Set<string>>(new Set())
@@ -180,13 +179,6 @@ export const useWebSocketStore = defineStore('websocket', () => {
       connecting.value = false
       stopHeartbeat()
 
-      // 4503 是后端返回的服务不可用代码，不需要重连
-      if (event.code === 4503) {
-        serviceUnavailable.value = true
-        console.info('Service unavailable (code 4503), not reconnecting')
-        return
-      }
-
       // 1000 是正常关闭，1001 是页面离开
       if (event.code === 1000 || event.code === 1001) {
         console.info(`WebSocket closed normally (code ${event.code})`)
@@ -237,24 +229,52 @@ export const useWebSocketStore = defineStore('websocket', () => {
   }
 
   /**
-   * 安排重连
+   * 立即重连（跳过退避延迟）
+   * 当外部信号（如 REST 轮询成功）表明后端已可用时调用
+   */
+  function reconnectNow() {
+    if (connected.value) {
+      return
+    }
+    // 如果正在连接中（浏览器 TCP 握手可能挂起数分钟），强制中断
+    if (connecting.value && socket.value) {
+      console.info('Aborting hanging WebSocket connection attempt')
+      socket.value.onopen = null
+      socket.value.onclose = null
+      socket.value.onerror = null
+      socket.value.onmessage = null
+      socket.value.close()
+      socket.value = null
+      connecting.value = false
+    }
+    // 清除待执行的退避定时器
+    if (reconnectTimer) {
+      clearTimeout(reconnectTimer)
+      reconnectTimer = null
+    }
+    // 重置退避计数，下次失败时从短延迟开始
+    reconnectAttempts.value = 0
+    console.info('Immediate reconnect triggered (backend detected as available)')
+    connect()
+  }
+
+  /**
+   * 安排重连（永不放弃，指数退避到 maxReconnectDelay 后持续慢速重试）
    */
   function scheduleReconnect() {
-    // 如果服务不可用，不重连
-    if (serviceUnavailable.value) {
-      console.info('Service unavailable, not reconnecting')
-      return
+    if (reconnectTimer) {
+      return  // 已有重连计划
     }
 
-    if (reconnectAttempts.value >= maxReconnectAttempts) {
-      console.warn('Max reconnect attempts reached')
-      return
-    }
+    // 服务不可用时使用较长延迟（后端可能正在重启）
+    const delay = serviceUnavailable.value
+      ? maxReconnectDelay
+      : getReconnectDelay()
 
-    const delay = getReconnectDelay()
-    console.info(`Reconnecting in ${delay}ms (attempt ${reconnectAttempts.value + 1}/${maxReconnectAttempts})`)
+    console.info(`Reconnecting in ${delay}ms (attempt ${reconnectAttempts.value + 1})`)
 
     reconnectTimer = setTimeout(() => {
+      reconnectTimer = null
       reconnectAttempts.value++
       connect()
     }, delay)
@@ -364,7 +384,7 @@ export const useWebSocketStore = defineStore('websocket', () => {
         if ((message as { code?: string }).code === 'STREAM_UNAVAILABLE') {
           serviceUnavailable.value = true
           serviceUnavailableMessage.value = message.message || '实时数据服务不可用'
-          console.warn('Real-time data service unavailable, will not reconnect')
+          console.warn('Real-time data service unavailable, will retry with longer delay')
         }
         break
 
@@ -403,6 +423,13 @@ export const useWebSocketStore = defineStore('websocket', () => {
 
       case 'account_update':
         // TODO: 处理账户更新
+        break
+
+      case 'service_ready':
+        // 后端 stream manager 就绪，清除服务不可用状态
+        serviceUnavailable.value = false
+        serviceUnavailableMessage.value = ''
+        console.info('Stream manager service ready')
         break
 
       case 'exchange_switching':
@@ -528,6 +555,7 @@ export const useWebSocketStore = defineStore('websocket', () => {
   return {
     // State
     connected,
+    connecting,
     reconnectAttempts,
     subscribedChannels,
     serviceUnavailable,
@@ -540,6 +568,7 @@ export const useWebSocketStore = defineStore('websocket', () => {
     // Actions
     connect,
     disconnect,
+    reconnectNow,
     subscribe,
     unsubscribe,
     subscribeToTickers,

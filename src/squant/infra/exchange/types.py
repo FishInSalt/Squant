@@ -36,6 +36,7 @@ class WSMessageType(str, Enum):
     ORDER_UPDATE = "order_update"
     ACCOUNT_UPDATE = "account_update"
     EXCHANGE_SWITCHING = "exchange_switching"  # Notify clients of exchange switch
+    SERVICE_READY = "service_ready"  # Notify clients that stream manager is ready
 
 
 class Balance(BaseModel):

@@ -13,8 +13,8 @@
         <el-tag v-else-if="wsExchangeSwitching" type="warning" size="small">
           切换中...
         </el-tag>
-        <el-tag v-else :type="wsConnected ? 'success' : 'danger'" size="small">
-          {{ wsConnected ? '实时' : '离线' }}
+        <el-tag v-else :type="wsConnected ? 'success' : 'warning'" size="small">
+          {{ wsConnected ? '实时' : '重连中...' }}
         </el-tag>
         <el-select
           :model-value="selectedExchange"
@@ -348,7 +348,7 @@ function updateWsSubscriptions() {
 // 仅在 symbol 集合真正变化时才重订阅（避免 ticker 数据更新触发无意义的全量重订阅）
 let lastSubscribedKey = ''
 watch(subscribedSymbols, (symbols) => {
-  const key = symbols.join(',')
+  const key = [...symbols].sort().join(',')
   if (key === lastSubscribedKey) return
   lastSubscribedKey = key
   updateWsSubscriptions()
