@@ -86,6 +86,17 @@ export const RISK_RULE_TYPE_OPTIONS = [
   { label: '波动熔断', value: 'volatility_break' },
 ] as const
 
+// 风控规则触发动作映射
+export const RISK_RULE_ACTION_MAP: Record<string, string> = {
+  order_limit: '拒绝下单',
+  position_limit: '拒绝下单',
+  daily_loss_limit: '暂停策略',
+  total_loss_limit: '停止策略',
+  frequency_limit: '拒绝下单',
+  volatility_break: '暂停策略',
+  circuit_breaker: '触发熔断',
+}
+
 // 日志级别选项
 export const LOG_LEVEL_OPTIONS = [
   { label: 'DEBUG', value: 'debug' },

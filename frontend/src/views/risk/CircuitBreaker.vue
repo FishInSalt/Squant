@@ -87,8 +87,10 @@
 
     <div class="auto-conditions-panel card">
       <div class="card-header">
-        <h3 class="card-title">自动熔断条件</h3>
-        <el-button type="primary" size="small" @click="handleSaveConditions">保存</el-button>
+        <h3 class="card-title">自动熔断条件 <el-tag size="small" type="info">即将推出</el-tag></h3>
+        <el-tooltip content="后端暂未支持自动熔断条件持久化" placement="top">
+          <el-button type="primary" size="small" disabled>保存</el-button>
+        </el-tooltip>
       </div>
 
       <div class="conditions-list">
@@ -155,7 +157,6 @@
 
 <script setup lang="ts">
 import { ref, reactive, computed, onMounted, onUnmounted } from 'vue'
-import { ElMessage } from 'element-plus'
 import { formatDateTime } from '@/utils/format'
 import {
   getCircuitBreakerStatus,
@@ -239,9 +240,7 @@ const autoConditions = reactive({
   },
 })
 
-function handleSaveConditions() {
-  ElMessage.success('自动熔断条件已保存')
-}
+// handleSaveConditions: 后端暂未实现自动熔断条件持久化，保存按钮已禁用
 
 let refreshTimer: ReturnType<typeof setInterval> | null = null
 
@@ -353,7 +352,7 @@ onUnmounted(() => {
 
     .condition-item {
       padding: 16px;
-      background: #f5f7fa;
+      background: $bg-secondary;
       border-radius: 8px;
 
       .condition-header {

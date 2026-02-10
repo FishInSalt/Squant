@@ -272,7 +272,7 @@ function exportCSV() {
   ])
 
   const csvContent = [headers, ...rows]
-    .map((row) => row.map((cell) => `"${cell}"`).join(','))
+    .map((row) => row.map((cell) => `"${cell.replace(/"/g, '""')}"`).join(','))
     .join('\n')
 
   const BOM = '\uFEFF'

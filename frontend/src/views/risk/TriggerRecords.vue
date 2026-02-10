@@ -110,7 +110,7 @@
 <script setup lang="ts">
 import { ref, reactive, onMounted } from 'vue'
 import { formatDateTime } from '@/utils/format'
-import { RISK_RULE_TYPE_OPTIONS } from '@/utils/constants'
+import { RISK_RULE_TYPE_OPTIONS, RISK_RULE_ACTION_MAP } from '@/utils/constants'
 import { getRiskTriggers } from '@/api/risk'
 import { useNotification } from '@/composables/useNotification'
 import type { RiskTrigger } from '@/types'
@@ -137,16 +137,7 @@ function getRuleTypeLabel(type: string) {
 }
 
 function getActionTakenText(ruleType: string): string {
-  const actionMap: Record<string, string> = {
-    order_limit: '拒绝下单',
-    position_limit: '拒绝下单',
-    daily_loss_limit: '暂停策略',
-    total_loss_limit: '停止策略',
-    frequency_limit: '拒绝下单',
-    volatility_break: '暂停策略',
-    circuit_breaker: '触发熔断',
-  }
-  return actionMap[ruleType] || '-'
+  return RISK_RULE_ACTION_MAP[ruleType] || '-'
 }
 
 function formatTriggerValue(row: RiskTrigger) {

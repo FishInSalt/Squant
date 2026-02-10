@@ -171,8 +171,9 @@ async function handleDelete(strategy: Strategy) {
       toastError(`策略「${strategy.name}」有 ${runningCount} 个运行中的会话，请先停止后再删除`)
       return
     }
-  } catch {
+  } catch (e) {
     // 检查失败时仍允许尝试删除（后端会做最终校验）
+    console.warn('Failed to check running sessions:', e)
   }
 
   strategyToDelete.value = strategy

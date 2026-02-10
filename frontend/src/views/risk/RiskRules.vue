@@ -142,7 +142,7 @@
 import { ref, reactive, onMounted } from 'vue'
 import type { FormInstance, FormRules } from 'element-plus'
 import { formatRelativeTime } from '@/utils/format'
-import { RISK_RULE_TYPE_OPTIONS } from '@/utils/constants'
+import { RISK_RULE_TYPE_OPTIONS, RISK_RULE_ACTION_MAP } from '@/utils/constants'
 import {
   getRiskRules,
   createRiskRule,
@@ -190,15 +190,7 @@ function getRuleTypeLabel(type: string) {
 }
 
 function getTriggerActionText(type: string): string {
-  const actionMap: Record<string, string> = {
-    order_limit: '拒绝下单',
-    position_limit: '拒绝下单',
-    daily_loss_limit: '暂停策略',
-    total_loss_limit: '停止策略',
-    frequency_limit: '拒绝下单',
-    volatility_break: '暂停策略',
-  }
-  return actionMap[type] || '未知动作'
+  return RISK_RULE_ACTION_MAP[type] || '未知动作'
 }
 
 async function loadRules() {
