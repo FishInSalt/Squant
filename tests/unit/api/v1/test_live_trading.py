@@ -90,7 +90,7 @@ class TestStartLiveTrading:
 
             response = await client.post("/api/v1/live", json=valid_start_request)
 
-            assert response.status_code == 200
+            assert response.status_code == 201
             data = response.json()
             assert data["code"] == 0
             assert data["data"]["symbol"] == "BTC/USDT"

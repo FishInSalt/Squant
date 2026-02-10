@@ -302,7 +302,7 @@ class TestSetInitialCapital:
         ):
             response = await client.post("/api/v1/backtest", json=sample_backtest_config)
 
-        assert response.status_code == 200
+        assert response.status_code == 201
         data = response.json()
 
         result = data["data"]
@@ -356,7 +356,7 @@ class TestSetCommissionRate:
         ):
             response = await client.post("/api/v1/backtest", json=config)
 
-        assert response.status_code == 200
+        assert response.status_code == 201
         data = response.json()
 
         result = data["data"]
@@ -425,7 +425,7 @@ class TestConfigureStrategyParameters:
         ):
             response = await client.post("/api/v1/backtest", json=config)
 
-        assert response.status_code == 200
+        assert response.status_code == 201
         data = response.json()
 
         result = data["data"]
@@ -477,7 +477,7 @@ class TestStartBacktestTask:
         ):
             response = await client.post("/api/v1/backtest", json=sample_backtest_config)
 
-        assert response.status_code == 200
+        assert response.status_code == 201
         data = response.json()
 
         result = data["data"]
@@ -863,7 +863,7 @@ class TestAsyncBacktestCreation:
         ):
             response = await client.post("/api/v1/backtest/async", json=sample_backtest_config)
 
-        assert response.status_code == 200
+        assert response.status_code == 201
         data = response.json()
 
         result = data["data"]

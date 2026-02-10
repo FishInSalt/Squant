@@ -56,6 +56,13 @@ class TestLiveTradingErrors:
         assert error.run_id == str(run_id)
         assert str(run_id) in str(error)
 
+    def test_session_already_running_error_with_message(self) -> None:
+        """Test SessionAlreadyRunningError with custom message."""
+        msg = "A live trading session for strategy X on BTC/USDT is already running"
+        error = SessionAlreadyRunningError(message=msg)
+        assert error.run_id is None
+        assert str(error) == msg
+
     def test_risk_configuration_error(self) -> None:
         """Test RiskConfigurationError."""
         error = RiskConfigurationError("max_position_size must be positive")

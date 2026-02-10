@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
-@router.post("", response_model=ApiResponse[ExchangeAccountResponse])
+@router.post("", response_model=ApiResponse[ExchangeAccountResponse], status_code=201)
 async def create_exchange_account(
     request: CreateExchangeAccountRequest,
     session: AsyncSession = Depends(get_session),

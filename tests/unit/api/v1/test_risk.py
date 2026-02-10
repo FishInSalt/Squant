@@ -66,7 +66,7 @@ class TestCreateRiskRule:
 
             response = await client.post("/api/v1/risk-rules", json=valid_create_request)
 
-            assert response.status_code == 200
+            assert response.status_code == 201
             data = response.json()
             assert data["code"] == 0
             assert data["data"]["name"] == "Max Position Size"

@@ -78,7 +78,7 @@ class TestStartPaperTrading:
         ):
             response = await client.post("/api/v1/paper", json=sample_paper_config)
 
-        assert response.status_code == 200
+        assert response.status_code == 201
         data = response.json()
 
         result = data["data"]
@@ -117,7 +117,7 @@ class TestStartPaperTrading:
         ):
             response = await client.post("/api/v1/paper", json=sample_paper_config)
 
-        assert response.status_code == 200
+        assert response.status_code == 201
         data = response.json()
 
         result = data["data"]
@@ -208,7 +208,7 @@ class TestStartPaperTrading:
         ):
             response = await client.post("/api/v1/paper", json=config_with_params)
 
-        assert response.status_code == 200
+        assert response.status_code == 201
         data = response.json()
 
         result = data["data"]

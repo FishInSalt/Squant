@@ -43,7 +43,7 @@ class TestCreateRiskRule:
         ):
             response = await client.post("/api/v1/risk-rules", json=request_data)
 
-        assert response.status_code == 200
+        assert response.status_code == 201
         data = response.json()
 
         result = data["data"]
@@ -80,7 +80,7 @@ class TestCreateRiskRule:
         ):
             response = await client.post("/api/v1/risk-rules", json=request_data)
 
-        assert response.status_code == 200
+        assert response.status_code == 201
         data = response.json()
 
         result = data["data"]
@@ -115,7 +115,7 @@ class TestCreateRiskRule:
         ):
             response = await client.post("/api/v1/risk-rules", json=request_data)
 
-        assert response.status_code == 200
+        assert response.status_code == 201
         data = response.json()
 
         result = data["data"]
@@ -149,7 +149,7 @@ class TestCreateRiskRule:
         ):
             response = await client.post("/api/v1/risk-rules", json=request_data)
 
-        assert response.status_code == 200
+        assert response.status_code == 201
         data = response.json()
 
         result = data["data"]
@@ -537,7 +537,7 @@ class TestAllRiskRuleTypes:
         ):
             response = await client.post("/api/v1/risk-rules", json=request_data)
 
-        assert response.status_code == 200
+        assert response.status_code == 201
         data = response.json()
         assert data["data"]["type"] == "total_loss_limit"
 
@@ -569,7 +569,7 @@ class TestAllRiskRuleTypes:
         ):
             response = await client.post("/api/v1/risk-rules", json=request_data)
 
-        assert response.status_code == 200
+        assert response.status_code == 201
         data = response.json()
         assert data["data"]["type"] == "frequency_limit"
 
@@ -601,6 +601,6 @@ class TestAllRiskRuleTypes:
         ):
             response = await client.post("/api/v1/risk-rules", json=request_data)
 
-        assert response.status_code == 200
+        assert response.status_code == 201
         data = response.json()
         assert data["data"]["type"] == "volatility_break"

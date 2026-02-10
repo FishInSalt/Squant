@@ -39,7 +39,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
-@router.post("", response_model=ApiResponse[BacktestRunResponse])
+@router.post("", response_model=ApiResponse[BacktestRunResponse], status_code=201)
 async def run_backtest(
     request: RunBacktestRequest,
     session: AsyncSession = Depends(get_session),
@@ -85,7 +85,7 @@ async def run_backtest(
         raise HTTPException(status_code=400, detail=str(e))
 
 
-@router.post("/async", response_model=ApiResponse[BacktestRunResponse])
+@router.post("/async", response_model=ApiResponse[BacktestRunResponse], status_code=201)
 async def create_backtest(
     request: CreateBacktestRequest,
     session: AsyncSession = Depends(get_session),
