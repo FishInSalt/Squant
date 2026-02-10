@@ -73,7 +73,7 @@ class TestCreateExchangeAccount:
                     },
                 )
 
-                assert response.status_code == 200
+                assert response.status_code == 201
                 data = response.json()
                 assert data["code"] == 0
                 assert data["data"]["name"] == "test-account"
@@ -118,7 +118,7 @@ class TestCreateExchangeAccount:
                     },
                 )
 
-                assert response.status_code == 200
+                assert response.status_code == 201
 
     @pytest.mark.asyncio
     async def test_create_duplicate_name_returns_409(self, client: AsyncClient) -> None:

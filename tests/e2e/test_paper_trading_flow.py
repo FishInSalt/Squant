@@ -35,7 +35,7 @@ class TestPaperTradingBasicFlow:
         """
         # ==================== 步骤1: 创建策略 ====================
         response = await api_client.post("/api/v1/strategies", json=test_strategy_data)
-        assert response.status_code == 200, f"Failed to create strategy: {response.text}"
+        assert response.status_code == 201, f"Failed to create strategy: {response.text}"
 
         response_data = response.json()
         assert "data" in response_data
@@ -54,7 +54,7 @@ class TestPaperTradingBasicFlow:
         }
 
         response = await api_client.post("/api/v1/paper", json=paper_trading_request)
-        assert response.status_code == 200, f"Failed to start paper trading: {response.text}"
+        assert response.status_code == 201, f"Failed to start paper trading: {response.text}"
 
         response_data = response.json()
         assert "data" in response_data
@@ -103,7 +103,7 @@ class TestPaperTradingBasicFlow:
         """
         # 创建策略
         response = await api_client.post("/api/v1/strategies", json=test_strategy_data)
-        assert response.status_code == 200
+        assert response.status_code == 201
         strategy_id = response.json()["data"]["id"]
         cleanup_strategies(strategy_id)
 
@@ -118,7 +118,7 @@ class TestPaperTradingBasicFlow:
                 "initial_capital": 10000.0,
             },
         )
-        assert response.status_code == 200
+        assert response.status_code == 201
         run_id = response.json()["data"]["id"]
 
         # 等待会话启动
@@ -169,7 +169,7 @@ class TestPaperTradingBasicFlow:
         """
         # 创建策略并启动会话
         response = await api_client.post("/api/v1/strategies", json=test_strategy_data)
-        assert response.status_code == 200
+        assert response.status_code == 201
         strategy_id = response.json()["data"]["id"]
         cleanup_strategies(strategy_id)
 
@@ -183,7 +183,7 @@ class TestPaperTradingBasicFlow:
                 "initial_capital": 10000.0,
             },
         )
-        assert response.status_code == 200
+        assert response.status_code == 201
         run_id = response.json()["data"]["id"]
 
         # 等待会话启动
@@ -226,7 +226,7 @@ class TestPaperTradingBasicFlow:
         """
         # 创建策略
         response = await api_client.post("/api/v1/strategies", json=test_strategy_data)
-        assert response.status_code == 200
+        assert response.status_code == 201
         strategy_id = response.json()["data"]["id"]
         cleanup_strategies(strategy_id)
 
@@ -244,7 +244,7 @@ class TestPaperTradingBasicFlow:
                     "initial_capital": 10000.0,
                 },
             )
-            assert response.status_code == 200
+            assert response.status_code == 201
             run_ids.append(response.json()["data"]["id"])
 
         # 等待会话启动
@@ -288,7 +288,7 @@ class TestPaperTradingBasicFlow:
         """
         # 创建策略
         response = await api_client.post("/api/v1/strategies", json=test_strategy_data)
-        assert response.status_code == 200
+        assert response.status_code == 201
         strategy_id = response.json()["data"]["id"]
         cleanup_strategies(strategy_id)
 
@@ -306,7 +306,7 @@ class TestPaperTradingBasicFlow:
                     "initial_capital": 10000.0,
                 },
             )
-            assert response.status_code == 200
+            assert response.status_code == 201
             run_ids.append(response.json()["data"]["id"])
 
         # ==================== 列出所有运行 ====================
@@ -356,7 +356,7 @@ class TestPaperTradingBasicFlow:
         """
         # 创建策略并启动会话
         response = await api_client.post("/api/v1/strategies", json=test_strategy_data)
-        assert response.status_code == 200
+        assert response.status_code == 201
         strategy_id = response.json()["data"]["id"]
         cleanup_strategies(strategy_id)
 
@@ -370,7 +370,7 @@ class TestPaperTradingBasicFlow:
                 "initial_capital": 10000.0,
             },
         )
-        assert response.status_code == 200
+        assert response.status_code == 201
         run_id = response.json()["data"]["id"]
 
         # 等待会话运行一段时间
@@ -481,7 +481,7 @@ class TestPaperTradingRunManagement:
         """
         # 创建策略并启动会话
         response = await api_client.post("/api/v1/strategies", json=test_strategy_data)
-        assert response.status_code == 200
+        assert response.status_code == 201
         strategy_id = response.json()["data"]["id"]
         cleanup_strategies(strategy_id)
 
@@ -495,7 +495,7 @@ class TestPaperTradingRunManagement:
                 "initial_capital": 10000.0,
             },
         )
-        assert response.status_code == 200
+        assert response.status_code == 201
         run_id = response.json()["data"]["id"]
 
         # ==================== 获取运行详情 ====================
@@ -534,7 +534,7 @@ class TestPaperTradingRunManagement:
         """
         # 创建策略
         response = await api_client.post("/api/v1/strategies", json=test_strategy_data)
-        assert response.status_code == 200
+        assert response.status_code == 201
         strategy_id = response.json()["data"]["id"]
         cleanup_strategies(strategy_id)
 
@@ -552,7 +552,7 @@ class TestPaperTradingRunManagement:
                     "initial_capital": 10000.0,
                 },
             )
-            assert response.status_code == 200
+            assert response.status_code == 201
             run_ids.append(response.json()["data"]["id"])
 
         # 等待启动

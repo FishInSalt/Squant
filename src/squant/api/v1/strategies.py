@@ -67,7 +67,7 @@ async def validate_strategy_code(
     )
 
 
-@router.post("", response_model=ApiResponse[StrategyResponse])
+@router.post("", response_model=ApiResponse[StrategyResponse], status_code=201)
 async def create_strategy(
     request: CreateStrategyRequest,
     session: AsyncSession = Depends(get_session),

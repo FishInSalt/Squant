@@ -33,7 +33,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
-@router.post("", response_model=ApiResponse[PaperTradingRunResponse])
+@router.post("", response_model=ApiResponse[PaperTradingRunResponse], status_code=201)
 async def start_paper_trading(
     request: StartPaperTradingRequest,
     redis: RedisClient,

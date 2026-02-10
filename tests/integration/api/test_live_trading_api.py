@@ -85,7 +85,7 @@ class TestConfigureRiskRules:
         ):
             response = await client.post("/api/v1/live", json=sample_live_config)
 
-        assert response.status_code == 200
+        assert response.status_code == 201
         data = response.json()
 
         result = data["data"]
@@ -157,7 +157,7 @@ class TestDoubleConfirmation:
             # before making this POST request
             response = await client.post("/api/v1/live", json=sample_live_config)
 
-        assert response.status_code == 200
+        assert response.status_code == 201
         data = response.json()
 
         result = data["data"]

@@ -285,7 +285,7 @@ class TestAutoSaveToLibrary:
 
         response = await client.post("/api/v1/strategies", json=strategy_data)
 
-        assert response.status_code == 200
+        assert response.status_code == 201
         data = response.json()
 
         result = data["data"]

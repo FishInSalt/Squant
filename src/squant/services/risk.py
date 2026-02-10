@@ -118,7 +118,10 @@ class RiskRuleService:
             update_data["enabled"] = request.enabled
 
         if update_data:
-            rule = await self.repository.update(rule_id, **update_data)
+            updated = await self.repository.update(rule_id, **update_data)
+            if not updated:
+                raise RiskRuleNotFoundError(rule_id)
+            rule = updated
 
         await self.session.commit()
         return rule
@@ -199,9 +202,11 @@ class RiskRuleService:
         if not rule:
             raise RiskRuleNotFoundError(rule_id)
 
-        rule = await self.repository.update(rule_id, enabled=enabled)
+        updated = await self.repository.update(rule_id, enabled=enabled)
+        if not updated:
+            raise RiskRuleNotFoundError(rule_id)
         await self.session.commit()
-        return rule
+        return updated
 
     async def list_enabled(self) -> list[RiskRule]:
         """List all enabled risk rules.

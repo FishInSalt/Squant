@@ -194,7 +194,10 @@ class StrategyService:
             update_data["status"] = request.status
 
         if update_data:
-            strategy = await self.repository.update(strategy_id, **update_data)
+            updated = await self.repository.update(strategy_id, **update_data)
+            if not updated:
+                raise StrategyNotFoundError(strategy_id)
+            strategy = updated
 
         await self.session.commit()
         return strategy

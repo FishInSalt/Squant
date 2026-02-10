@@ -191,7 +191,7 @@ class TestCircuitBreakerWithTrading:
         """
         # ==================== 步骤1: 创建策略 ====================
         response = await api_client.post("/api/v1/strategies", json=test_strategy_data)
-        assert response.status_code == 200
+        assert response.status_code == 201
         strategy_id = response.json()["data"]["id"]
         cleanup_strategies(strategy_id)
 
@@ -205,7 +205,7 @@ class TestCircuitBreakerWithTrading:
         }
 
         response = await api_client.post("/api/v1/paper", json=paper_request)
-        assert response.status_code == 200
+        assert response.status_code == 201
         run_id = response.json()["data"]["id"]
 
         # 等待会话启动
@@ -277,7 +277,7 @@ class TestCircuitBreakerWithTrading:
 
         # ==================== 步骤2: 创建策略并尝试启动 ====================
         response = await api_client.post("/api/v1/strategies", json=test_strategy_data)
-        assert response.status_code == 200
+        assert response.status_code == 201
         strategy_id = response.json()["data"]["id"]
         cleanup_strategies(strategy_id)
 
@@ -292,7 +292,7 @@ class TestCircuitBreakerWithTrading:
         response = await api_client.post("/api/v1/paper", json=paper_request)
         # 熔断激活时应该拒绝新的交易会话
         # 注意：实际行为取决于实现，可能是 403 或 409
-        if response.status_code == 200:
+        if response.status_code == 201:
             # 如果允许启动，立即停止
             run_id = response.json()["data"]["id"]
             await api_client.post(f"/api/v1/paper/{run_id}/stop")
@@ -304,7 +304,7 @@ class TestCircuitBreakerWithTrading:
         await api_client.post("/api/v1/circuit-breaker/reset?force=true")
 
         response = await api_client.post("/api/v1/paper", json=paper_request)
-        assert response.status_code == 200, f"Should allow after reset: {response.text}"
+        assert response.status_code == 201, f"Should allow after reset: {response.text}"
         run_id = response.json()["data"]["id"]
 
         # 清理
@@ -367,7 +367,7 @@ class TestCloseAllPositions:
         """
         # 创建策略并启动会话
         response = await api_client.post("/api/v1/strategies", json=test_strategy_data)
-        assert response.status_code == 200
+        assert response.status_code == 201
         strategy_id = response.json()["data"]["id"]
         cleanup_strategies(strategy_id)
 
@@ -380,7 +380,7 @@ class TestCloseAllPositions:
         }
 
         response = await api_client.post("/api/v1/paper", json=paper_request)
-        assert response.status_code == 200
+        assert response.status_code == 201
         run_id = response.json()["data"]["id"]
 
         await asyncio.sleep(1.0)

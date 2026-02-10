@@ -56,9 +56,12 @@ class SessionNotFoundError(LiveTradingError):
 class SessionAlreadyRunningError(LiveTradingError):
     """Live trading session already running."""
 
-    def __init__(self, run_id: str | UUID):
-        self.run_id = str(run_id)
-        super().__init__(f"Live trading session already running: {run_id}")
+    def __init__(self, run_id: str | UUID | None = None, *, message: str | None = None):
+        self.run_id = str(run_id) if run_id else None
+        if message:
+            super().__init__(message)
+        else:
+            super().__init__(f"Live trading session already running: {run_id}")
 
 
 class RiskConfigurationError(LiveTradingError):
@@ -276,7 +279,7 @@ class LiveTradingService:
         )
         if has_running:
             raise SessionAlreadyRunningError(
-                f"A live trading session for strategy {strategy_id} on {symbol} is already running"
+                message=f"A live trading session for strategy {strategy_id} on {symbol} is already running"
             )
 
         # Verify strategy exists

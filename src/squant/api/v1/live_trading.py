@@ -39,7 +39,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
-@router.post("", response_model=ApiResponse[LiveTradingRunResponse])
+@router.post("", response_model=ApiResponse[LiveTradingRunResponse], status_code=201)
 async def start_live_trading(
     request: StartLiveTradingRequest,
     session: AsyncSession = Depends(get_session),

@@ -43,7 +43,7 @@ class TestAddExchangeAPIConfiguration:
 
         response = await client.post("/api/v1/exchange-accounts", json=account_data)
 
-        assert response.status_code == 200
+        assert response.status_code == 201
         data = response.json()
 
         # Response is wrapped in ApiResponse
@@ -109,7 +109,7 @@ class TestBinanceExchangeSupport:
 
         response = await client.post("/api/v1/exchange-accounts", json=binance_data)
 
-        assert response.status_code == 200
+        assert response.status_code == 201
         data = response.json()
 
         account = data["data"]
@@ -206,7 +206,7 @@ class TestOKXExchangeSupport:
 
         response = await client.post("/api/v1/exchange-accounts", json=okx_data)
 
-        assert response.status_code == 200
+        assert response.status_code == 201
         data = response.json()
 
         account = data["data"]
