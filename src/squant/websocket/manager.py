@@ -213,11 +213,13 @@ class StreamManager:
         exchange_id = self._settings.default_exchange.lower()
         logger.info(f"Starting CCXT provider for {exchange_id}...")
 
-        # Build credentials based on exchange
-        credentials = self._get_exchange_credentials(exchange_id)
+        # Don't pass credentials for public market data streams — use production
+        # servers to get accurate real-time data, consistent with REST API
+        # (see api/deps.py get_exchange()). Sandbox/testnet credentials would
+        # route to demo environments with inaccurate or stale data.
 
         # Create and connect CCXT provider
-        self._ccxt_provider = CCXTStreamProvider(exchange_id, credentials)
+        self._ccxt_provider = CCXTStreamProvider(exchange_id, credentials=None)
         self._ccxt_provider.add_handler(self._handle_ccxt_message)
         await self._ccxt_provider.connect()
 
@@ -297,8 +299,8 @@ class StreamManager:
         self._orderbook_subscriptions.clear()
 
         # Create new CCXT provider for the new exchange
-        credentials = self._get_exchange_credentials(exchange_id)
-        self._ccxt_provider = CCXTStreamProvider(exchange_id, credentials)
+        # No credentials for public market data — always use production servers
+        self._ccxt_provider = CCXTStreamProvider(exchange_id, credentials=None)
         self._ccxt_provider.add_handler(self._handle_ccxt_message)
         await self._ccxt_provider.connect()
 
