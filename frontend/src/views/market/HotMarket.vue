@@ -63,17 +63,9 @@
         @row-click="handleRowClick"
         @sort-change="handleSortChange"
       >
-        <el-table-column prop="symbol" label="交易对" width="150" fixed sortable="custom">
+        <el-table-column prop="symbol" label="交易对" width="120" fixed sortable="custom">
           <template #default="{ row }">
-            <div class="symbol-cell">
-              <span class="symbol-name">{{ row.symbol }}</span>
-              <el-button
-                :icon="isInWatchlist(row.exchange, row.symbol) ? 'StarFilled' : 'Star'"
-                link
-                :type="isInWatchlist(row.exchange, row.symbol) ? 'warning' : 'default'"
-                @click.stop="toggleWatchlist(row)"
-              />
-            </div>
+            <span class="symbol-name">{{ row.symbol }}</span>
           </template>
         </el-table-column>
 
@@ -118,8 +110,15 @@
           </template>
         </el-table-column>
 
-        <el-table-column label="操作" width="100" fixed="right">
+        <el-table-column label="操作" width="120" fixed="right">
           <template #default="{ row }">
+            <el-button
+              :icon="isInWatchlist(row.exchange, row.symbol) ? 'StarFilled' : 'Star'"
+              link
+              class="watchlist-btn"
+              :type="isInWatchlist(row.exchange, row.symbol) ? 'warning' : 'default'"
+              @click.stop="toggleWatchlist(row)"
+            />
             <el-button type="primary" link @click.stop="goToChart(row)">
               K线
             </el-button>
@@ -418,14 +417,13 @@ onUnmounted(() => {
     flex-wrap: wrap;
   }
 
-  .symbol-cell {
-    display: flex;
-    align-items: center;
-    gap: 8px;
+  .symbol-name {
+    font-weight: 500;
+  }
 
-    .symbol-name {
-      font-weight: 500;
-    }
+  .watchlist-btn {
+    font-size: 18px;
+    padding: 4px 8px;
   }
 
   .pagination-wrapper {
