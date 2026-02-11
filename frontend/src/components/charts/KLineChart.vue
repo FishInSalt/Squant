@@ -26,10 +26,13 @@ const chartContainer = ref<HTMLDivElement | null>(null)
 let chart: Chart | null = null
 let indicatorsCreated = false  // 跟踪指标是否已创建
 
-const indicatorMapping: Record<string, { name: string; paneId?: string }> = {
-  MA: { name: 'MA' },
-  EMA: { name: 'EMA' },
-  BOLL: { name: 'BOLL' },
+const indicatorMapping: Record<string, { name: string; paneId?: string; colors?: string[] }> = {
+  // MA: 4 条线 (MA5/MA10/MA30/MA60)
+  MA: { name: 'MA', colors: ['#FF9600', '#935EBD', '#2196F3', '#E040FB'] },
+  // EMA: 3 条线 (EMA6/EMA12/EMA20)
+  EMA: { name: 'EMA', colors: ['#E11D74', '#01C5C4', '#4CAF50'] },
+  // BOLL: 3 条线 (MID/UPPER/LOWER)
+  BOLL: { name: 'BOLL', colors: ['#FF6D00', '#0D47A1', '#00897B'] },
   VOL: { name: 'VOL', paneId: 'volume' },
   MACD: { name: 'MACD', paneId: 'macd' },
   RSI: { name: 'RSI', paneId: 'rsi' },
@@ -218,12 +221,23 @@ function updateCandle(candle: { timestamp: number; open: number; high: number; l
 function addIndicator(name: string) {
   const config = indicatorMapping[name]
   if (chart && config) {
-    if (config.paneId) {
-      // 副图指标：创建新的 pane
-      chart.createIndicator(config.name, false, { id: config.paneId })
-    } else {
-      // 主图指标：明确指定添加到 candle_pane（主图）
-      chart.createIndicator(config.name, false, { id: 'candle_pane' })
+    const paneId = config.paneId ?? 'candle_pane'
+    const isStack = !config.paneId
+    chart.createIndicator(config.name, isStack, { id: paneId })
+    // 用 overrideIndicator 设置自定义颜色，避免同类指标颜色重复
+    if (config.colors) {
+      chart.overrideIndicator({
+        name: config.name,
+        styles: {
+          lines: config.colors.map((color) => ({
+            style: 'solid' as const,
+            smooth: false,
+            size: 1,
+            dashedValue: [2, 2],
+            color,
+          })),
+        },
+      }, paneId)
     }
   }
 }
