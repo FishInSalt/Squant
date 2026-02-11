@@ -69,10 +69,10 @@
       </div>
     </div>
 
-    <div class="chart-container card">
+    <div class="chart-container card" v-loading="loading" element-loading-text="加载K线数据...">
       <div class="chart-toolbar">
         <span class="toolbar-label">指标:</span>
-        <el-checkbox-group v-model="selectedIndicators" @change="handleIndicatorChange">
+        <el-checkbox-group v-model="selectedIndicators">
           <el-checkbox value="MA">MA</el-checkbox>
           <el-checkbox value="EMA">EMA</el-checkbox>
           <el-checkbox value="BOLL">BOLL</el-checkbox>
@@ -82,11 +82,12 @@
           <el-checkbox value="KDJ">KDJ</el-checkbox>
         </el-checkbox-group>
         <span class="toolbar-spacer"></span>
-        <span class="realtime-status" :class="{ active: lastCandleUpdate }">
+        <span class="realtime-status" :class="{ active: wsStore.isConnected }">
           <el-icon v-if="wsStore.isConnected" color="#67C23A"><CircleCheckFilled /></el-icon>
           <el-icon v-else color="#909399"><CircleCloseFilled /></el-icon>
-          <span v-if="lastCandleUpdate">最后更新: {{ lastCandleUpdate }}</span>
-          <span v-else>等待实时数据...</span>
+          <span v-if="lastCandleUpdate">{{ lastCandleUpdate }}</span>
+          <span v-else-if="wsStore.isConnected">等待实时数据...</span>
+          <span v-else>实时数据未连接</span>
         </span>
       </div>
       <KLineChart
@@ -169,10 +170,7 @@ async function loadCandles() {
       300  // Backend limit is 300 max
     )
     candles.value = response.data.candles
-    // Mark data as loaded - real-time updates may be slow for less active pairs
-    if (candles.value.length > 0) {
-      lastCandleUpdate.value = '数据已加载'
-    }
+    // Don't set lastCandleUpdate here — it's reserved for real-time WS updates
   } catch (error) {
     console.error('Failed to load candles:', error)
   } finally {
@@ -187,10 +185,6 @@ async function loadTicker() {
   } catch (error) {
     console.error('Failed to load ticker:', error)
   }
-}
-
-function handleIndicatorChange() {
-  // 指标变化由 KLineChart 组件处理
 }
 
 function toggleWatchlist() {
@@ -248,7 +242,22 @@ watch(selectedTimeframe, (newTf, oldTf) => {
 })
 
 let unsubscribeTicker: (() => void) | null = null
-let tickerRefreshTimer: ReturnType<typeof setInterval> | null = null
+let tickerRefreshTimer: ReturnType<typeof setTimeout> | null = null
+const TICKER_POLL_FAST = 10000   // 10s — WS 断开时
+const TICKER_POLL_SLOW = 60000   // 60s — WS 已连接时（刷新成交量）
+
+function scheduleTickerPoll() {
+  const interval = wsStore.isConnected ? TICKER_POLL_SLOW : TICKER_POLL_FAST
+  tickerRefreshTimer = setTimeout(async () => {
+    tickerRefreshTimer = null
+    try {
+      await loadTicker()
+    } catch {
+      // Silent fail - WS is primary, this is fallback
+    }
+    scheduleTickerPoll()
+  }, interval)
+}
 
 // 处理 K 线实时更新
 function handleCandleUpdate(candle: CandleUpdate) {
@@ -295,15 +304,8 @@ onMounted(async () => {
   // 订阅 K 线实时更新
   subscribeToCandles()
 
-  // Start REST API polling as fallback for infrequent WebSocket updates
-  // OKX doesn't send frequent updates for less active pairs
-  tickerRefreshTimer = setInterval(async () => {
-    try {
-      await loadTicker()
-    } catch (error) {
-      // Silent fail - this is just a fallback
-    }
-  }, 10000)  // Refresh every 10 seconds
+  // REST ticker polling: fast when WS disconnected, slow when connected (volume refresh)
+  scheduleTickerPoll()
 })
 
 onUnmounted(() => {
@@ -314,7 +316,7 @@ onUnmounted(() => {
 
   // Stop ticker refresh timer
   if (tickerRefreshTimer) {
-    clearInterval(tickerRefreshTimer)
+    clearTimeout(tickerRefreshTimer)
     tickerRefreshTimer = null
   }
 

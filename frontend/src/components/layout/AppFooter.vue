@@ -48,9 +48,11 @@ const runningBacktest = computed(() => tradingStore.runningBacktests.length)
 onMounted(async () => {
   try {
     const response = await getAccounts()
-    connectedExchanges.value = response.data
-      .filter(a => a.is_active)
-      .map(a => a.exchange.toUpperCase())
+    connectedExchanges.value = [...new Set(
+      response.data
+        .filter(a => a.is_active)
+        .map(a => a.exchange.toUpperCase())
+    )]
   } catch (error) {
     console.error('Failed to load accounts:', error)
   }
