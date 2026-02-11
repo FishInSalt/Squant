@@ -117,10 +117,12 @@ class WebSocketGateway:
             logger.exception(f"WebSocket gateway error: {e}")
         finally:
             self._running = False
-            # Cleanup subscriptions
-            if self._pubsub and self._subscribed_channels:
+            # Cleanup subscriptions (both Redis and exchange)
+            if self._subscribed_channels:
                 for channel in list(self._subscribed_channels):
-                    await self._unsubscribe_redis(channel)
+                    if self._pubsub:
+                        await self._unsubscribe_redis(channel)
+                    await self._unsubscribe_okx(channel)
             logger.info("WebSocket gateway connection closed")
 
     async def _redis_heartbeat(self) -> None:
@@ -285,12 +287,6 @@ class WebSocketGateway:
 
         Args:
             channel: Channel name.
-
-        TODO: Implement reference counting for OKX subscriptions.
-        Currently, OKX subscriptions are not cancelled when clients unsubscribe.
-        This causes minimal resource waste (data flows to Redis but no consumer).
-        A proper solution would track subscriber count per channel and call
-        stream_manager.unsubscribe_* when count reaches zero.
         """
         if channel not in self._subscribed_channels:
             await self.websocket.send_json(
@@ -303,6 +299,7 @@ class WebSocketGateway:
             return
 
         await self._unsubscribe_redis(channel)
+        await self._unsubscribe_okx(channel)
 
         await self.websocket.send_json(
             {
@@ -457,6 +454,36 @@ class WebSocketGateway:
             pass
         except Exception as e:
             logger.exception(f"Fatal error in Redis receive loop: {e}")
+
+    async def _unsubscribe_okx(self, channel: str) -> None:
+        """Unsubscribe from OKX/exchange stream when client no longer needs the channel.
+
+        Args:
+            channel: Channel name (e.g., "ticker:BTC/USDT", "candle:BTC/USDT:1h").
+        """
+        parts = channel.split(":")
+        channel_type = parts[0]
+
+        try:
+            if channel_type == "ticker" and len(parts) >= 2:
+                symbol = parts[1]
+                await self.stream_manager.unsubscribe_ticker(symbol)
+
+            elif channel_type == "candle" and len(parts) >= 3:
+                symbol = parts[1]
+                timeframe = parts[2]
+                await self.stream_manager.unsubscribe_candles(symbol, timeframe)
+
+            elif channel_type == "trade" and len(parts) >= 2:
+                symbol = parts[1]
+                await self.stream_manager.unsubscribe_trades(symbol)
+
+            elif channel_type == "orderbook" and len(parts) >= 2:
+                symbol = parts[1]
+                await self.stream_manager.unsubscribe_orderbook(symbol)
+
+        except Exception as e:
+            logger.warning(f"Failed to unsubscribe OKX stream for {channel}: {e}")
 
     async def _resubscribe_okx_channels(self) -> None:
         """Re-subscribe all current channels to OKX after stream manager recovery."""
