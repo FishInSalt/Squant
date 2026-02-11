@@ -17,9 +17,10 @@ export const useMarketStore = defineStore('market', () => {
   const loading = ref(false)
   const exchangeSwitching = ref(false)
 
-  // REST API polling fallback for infrequent WebSocket updates
-  let pollingTimer: ReturnType<typeof setInterval> | null = null
-  const POLLING_INTERVAL = 10000  // 10 seconds - fallback refresh rate
+  // REST API polling: fast when WS disconnected, slow when connected (volume refresh only)
+  let pollingTimer: ReturnType<typeof setTimeout> | null = null
+  const POLLING_INTERVAL_FAST = 10000   // 10s — WS disconnected, need fresh data + reconnect detection
+  const POLLING_INTERVAL_SLOW = 60000   // 60s — WS connected, only refresh volume data
 
   // Getters
   const tickerList = computed(() => Array.from(tickers.value.values()))
@@ -249,21 +250,28 @@ export const useMarketStore = defineStore('market', () => {
   }
 
   /**
-   * Start REST API polling as fallback for infrequent WebSocket updates.
-   * This ensures tickers are refreshed even when OKX doesn't send WebSocket updates.
+   * Start REST API polling with adaptive interval.
+   * - WS connected: slow poll (60s) for volume data only (WS doesn't provide reliable volume)
+   * - WS disconnected: fast poll (10s) for data freshness + backend availability detection
    */
   function startPolling() {
     if (pollingTimer) {
       return  // Already polling
     }
-    console.debug('Starting REST API polling fallback')
-    pollingTimer = setInterval(async () => {
+    console.debug('Starting REST API polling')
+    schedulePoll()
+  }
+
+  function schedulePoll() {
+    const wsStore = useWebSocketStore()
+    const interval = wsStore.connected ? POLLING_INTERVAL_SLOW : POLLING_INTERVAL_FAST
+    pollingTimer = setTimeout(async () => {
+      pollingTimer = null
       try {
         const response = await marketApi.getAllTickers()
         response.data.forEach((ticker) => {
           const key = `${ticker.exchange}:${ticker.symbol}`
           const existing = tickers.value.get(key)
-          // Only update if the REST data is newer
           if (!existing || ticker.timestamp > existing.timestamp) {
             tickers.value.set(key, ticker)
           }
@@ -272,15 +280,15 @@ export const useMarketStore = defineStore('market', () => {
         // REST poll succeeded → backend is available.
         // If WebSocket is disconnected, trigger immediate reconnect
         // (also aborts any hanging TCP handshake attempt).
-        const wsStore = useWebSocketStore()
         if (!wsStore.connected) {
           wsStore.reconnectNow()
         }
       } catch (error) {
-        // Silent fail - WebSocket is primary, this is just fallback
-        console.debug('REST API polling refresh failed:', error)
+        console.debug('REST API polling failed:', error)
       }
-    }, POLLING_INTERVAL)
+      // Schedule next poll (interval adapts to current WS state)
+      schedulePoll()
+    }, interval)
   }
 
   /**
@@ -288,8 +296,8 @@ export const useMarketStore = defineStore('market', () => {
    */
   function stopPolling() {
     if (pollingTimer) {
-      console.debug('Stopping REST API polling fallback')
-      clearInterval(pollingTimer)
+      console.debug('Stopping REST API polling')
+      clearTimeout(pollingTimer)
       pollingTimer = null
     }
   }
