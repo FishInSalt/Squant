@@ -145,6 +145,18 @@ const selectedIndicators = ref(['MA', 'VOL'])
 const loading = ref(false)
 const lastCandleUpdate = ref<string>('')  // 调试：最近的 K 线更新时间
 
+// 合并 Ticker 和 Candle 更新的当前蜡烛状态
+// 避免两种数据源独立更新图表导致价格回跳
+interface MergedCandle {
+  timestamp: number
+  open: number
+  high: number
+  low: number
+  close: number
+  volume: number
+}
+let currentCandle: MergedCandle | null = null
+
 const timeframeOptions = [
   { label: '1分', value: '1m' as Timeframe },
   { label: '5分', value: '5m' as Timeframe },
@@ -182,6 +194,10 @@ async function loadTicker() {
   try {
     const response = await getTicker(props.symbol)
     ticker.value = response.data
+    // REST 轮询的 ticker 也补充更新 K 线图
+    if (response.data?.last_price) {
+      handleTickerUpdateForChart(response.data.last_price)
+    }
   } catch (error) {
     console.error('Failed to load ticker:', error)
   }
@@ -225,11 +241,14 @@ const storeTicker = computed(() => marketStore.getTicker(props.exchange, toStand
 watch(storeTicker, (newTicker) => {
   if (newTicker) {
     ticker.value = newTicker
+    // 用 ticker 最新价实时补充 K 线图（填补 candle WS 推送间隙）
+    handleTickerUpdateForChart(newTicker.last_price)
   }
 }, { immediate: true })
 
 // 切换时间周期时重新加载数据并更新订阅
 watch(selectedTimeframe, (newTf, oldTf) => {
+  currentCandle = null  // 重置合并状态
   loadCandles()
   // 更新 K 线订阅
   if (oldTf) {
@@ -259,19 +278,48 @@ function scheduleTickerPoll() {
   }, interval)
 }
 
-// 处理 K 线实时更新
+// 将合并后的蜡烛数据推送到图表
+function pushCandleToChart() {
+  if (!chartRef.value || !currentCandle) return
+  chartRef.value.updateCandle({ ...currentCandle })
+}
+
+// 处理 K 线实时更新（来自 exchange candle WS）
 function handleCandleUpdate(candle: CandleUpdate) {
   lastCandleUpdate.value = new Date().toLocaleTimeString()
-  if (chartRef.value) {
-    chartRef.value.updateCandle({
+
+  if (!currentCandle || currentCandle.timestamp !== candle.timestamp) {
+    // 新周期：整体重置为交易所数据
+    currentCandle = {
       timestamp: candle.timestamp,
       open: candle.open,
       high: candle.high,
       low: candle.low,
       close: candle.close,
       volume: candle.volume,
-    })
+    }
+  } else {
+    // 同一周期：合并，交易所是 open/volume 的权威源
+    currentCandle.open = candle.open
+    currentCandle.volume = candle.volume
+    currentCandle.high = Math.max(currentCandle.high, candle.high)
+    currentCandle.low = Math.min(currentCandle.low, candle.low)
+    currentCandle.close = candle.close
   }
+
+  pushCandleToChart()
+}
+
+// 用 ticker 最新价补充更新当前蜡烛（填补 candle 推送间隙）
+function handleTickerUpdateForChart(lastPrice: number) {
+  if (!currentCandle || !chartRef.value) return
+  if (currentCandle.close === lastPrice) return  // 价格未变，跳过
+
+  currentCandle.close = lastPrice
+  currentCandle.high = Math.max(currentCandle.high, lastPrice)
+  currentCandle.low = Math.min(currentCandle.low, lastPrice)
+
+  pushCandleToChart()
 }
 
 // 将 symbol 从 URL 格式 (BTC-USDT) 转换为标准格式 (BTC/USDT)
