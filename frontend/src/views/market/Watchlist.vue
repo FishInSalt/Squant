@@ -106,9 +106,13 @@ async function loadWatchlistData() {
 
   loading.value = true
   try {
-    // 收集所有自选的交易对
-    const symbols = watchlist.value.map((item) => item.symbol)
-    await marketStore.loadTickers(symbols)
+    // 只获取当前交易所的自选交易对（其他交易所的 symbol 可能不存在于当前交易所）
+    const symbols = watchlist.value
+      .filter((item) => item.exchange === marketStore.currentExchange)
+      .map((item) => item.symbol)
+    if (symbols.length > 0) {
+      await marketStore.loadTickers(symbols)
+    }
   } finally {
     loading.value = false
   }

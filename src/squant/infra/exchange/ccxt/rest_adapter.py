@@ -202,12 +202,25 @@ class CCXTRestAdapter(ExchangeAdapter):
             if symbols is None:
                 tickers = await self._exchange.fetch_tickers()
             else:
+                # Filter out symbols not available on this exchange
+                markets = self._exchange.markets or {}
+                valid_symbols = [s for s in symbols if s in markets]
+                skipped = set(symbols) - set(valid_symbols)
+                if skipped:
+                    logger.warning(
+                        f"Skipping symbols not found on {self._exchange_id}: "
+                        f"{', '.join(sorted(skipped))}"
+                    )
+
+                if not valid_symbols:
+                    return []
+
                 # Some exchanges support batch fetch, others need individual calls
                 if self._exchange.has.get("fetchTickers"):
-                    tickers = await self._exchange.fetch_tickers(list(symbols))
+                    tickers = await self._exchange.fetch_tickers(valid_symbols)
                 else:
                     tickers = {}
-                    for symbol in symbols:
+                    for symbol in valid_symbols:
                         try:
                             ticker = await self._exchange.fetch_ticker(symbol)
                             tickers[symbol] = ticker

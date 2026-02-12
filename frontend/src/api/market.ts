@@ -103,8 +103,9 @@ export const getTicker = async (symbol: string) => {
 
 // 获取多个行情
 export const getTickers = async (symbols?: string[]) => {
+  const uniqueSymbols = symbols ? [...new Set(symbols)] : undefined
   const response = await get<TickerResponse[]>('/market/tickers', {
-    symbols: symbols?.join(','),
+    symbols: uniqueSymbols?.join(','),
   })
   return {
     ...response,
