@@ -5,7 +5,7 @@
         <el-button icon="ArrowLeft" @click="goBack">返回</el-button>
         <div class="strategy-info">
           <h1 class="strategy-name">{{ strategy.name }}</h1>
-          <StatusBadge :status="strategy.status === 'active' ? 'active' : 'error'" />
+          <StatusBadge :status="strategy.status === 'active' ? 'active' : 'archived'" />
         </div>
       </div>
       <div class="header-right">

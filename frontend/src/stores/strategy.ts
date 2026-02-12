@@ -34,7 +34,7 @@ export const useStrategyStore = defineStore('strategy', () => {
       const response = await strategyApi.getStrategies({
         page: params?.page || pagination.value.page,
         page_size: params?.pageSize || pagination.value.pageSize,
-        status: params?.status,
+        status: params?.status ?? 'active',
       })
       const data = response.data as PaginatedData<Strategy>
       strategies.value = data.items

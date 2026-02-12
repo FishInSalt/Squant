@@ -9,7 +9,7 @@ import { computed } from 'vue'
 
 type Status = 'pending' | 'running' | 'completed' | 'failed' | 'stopped' |
               'submitted' | 'open' | 'partial' | 'filled' | 'cancelled' | 'rejected' |
-              'active' | 'inactive' | 'triggered' | 'connected' | 'disconnected' | 'error'
+              'active' | 'inactive' | 'archived' | 'triggered' | 'connected' | 'disconnected' | 'error'
 
 interface Props {
   status: Status
@@ -41,6 +41,7 @@ const statusConfig: Record<Status, { type: 'success' | 'warning' | 'info' | 'dan
   // 规则状态
   active: { type: 'success', text: '启用' },
   inactive: { type: 'info', text: '禁用' },
+  archived: { type: 'info', text: '已归档' },
   triggered: { type: 'danger', text: '已触发' },
   // 连接状态
   connected: { type: 'success', text: '已连接' },

@@ -85,6 +85,26 @@ describe('useStrategyStore', () => {
       )
     })
 
+    it('defaults to status active when no status provided', async () => {
+      const store = useStrategyStore()
+      const data: PaginatedData<Strategy> = { items: [], total: 0, page: 1, page_size: 20 }
+      mockedApi.getStrategies.mockResolvedValue(wrapApiResponse(data))
+      await store.loadStrategies()
+      expect(mockedApi.getStrategies).toHaveBeenCalledWith(
+        expect.objectContaining({ status: 'active' })
+      )
+    })
+
+    it('passes explicit status to API', async () => {
+      const store = useStrategyStore()
+      const data: PaginatedData<Strategy> = { items: [], total: 0, page: 1, page_size: 20 }
+      mockedApi.getStrategies.mockResolvedValue(wrapApiResponse(data))
+      await store.loadStrategies({ status: 'archived' })
+      expect(mockedApi.getStrategies).toHaveBeenCalledWith(
+        expect.objectContaining({ status: 'archived' })
+      )
+    })
+
     it('handles error gracefully', async () => {
       const store = useStrategyStore()
       mockedApi.getStrategies.mockRejectedValue(new Error('fail'))
