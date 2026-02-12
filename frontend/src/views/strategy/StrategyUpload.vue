@@ -4,7 +4,29 @@
       <h1 class="page-title">上传策略</h1>
     </div>
 
+    <!-- Template section -->
+    <div class="templates-section card">
+      <div class="card-header">
+        <h3 class="card-title">从模板创建</h3>
+      </div>
+      <div class="template-grid">
+        <div
+          v-for="template in templates"
+          :key="template.id"
+          class="template-card"
+          @click="useTemplate(template)"
+        >
+          <h4 class="template-name">{{ template.displayName }}</h4>
+          <p class="template-desc">{{ template.description }}</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- File upload section -->
     <div class="upload-container card">
+      <div class="card-header">
+        <h3 class="card-title">上传文件</h3>
+      </div>
       <el-upload
         ref="uploadRef"
         class="upload-dragger"
@@ -112,16 +134,55 @@ import { createStrategy, validateStrategy } from '@/api/strategy'
 import { formatFileSize } from '@/utils/format'
 import { useNotification } from '@/composables/useNotification'
 import type { ValidationResult } from '@/types'
+import { strategyTemplates, type StrategyTemplate } from './templates'
 
 const router = useRouter()
 const { toastSuccess, toastError } = useNotification()
 
+const templates = strategyTemplates
 const uploadRef = ref<UploadInstance>()
 const selectedFile = ref<File | null>(null)
 const uploading = ref(false)
 const uploadProgress = ref(0)
 const validationResult = ref<ValidationResult | null>(null)
 const uploadedStrategyId = ref<string | null>(null)
+
+async function useTemplate(template: StrategyTemplate) {
+  uploading.value = true
+  uploadProgress.value = 0
+  validationResult.value = null
+  uploadedStrategyId.value = null
+
+  try {
+    // Validate template code
+    uploadProgress.value = 30
+    const validateResponse = await validateStrategy(template.code)
+    uploadProgress.value = 60
+    validationResult.value = validateResponse.data
+
+    if (!validationResult.value.valid) {
+      toastError('模板验证失败')
+      return
+    }
+
+    // Create strategy from template
+    const createResponse = await createStrategy({
+      name: template.name,
+      code: template.code,
+      description: template.description,
+      params_schema: template.params_schema,
+      default_params: template.default_params,
+    })
+    uploadProgress.value = 100
+    uploadedStrategyId.value = createResponse.data.id
+
+    toastSuccess(`策略「${template.displayName}」创建成功`)
+  } catch {
+    // Error already shown by API interceptor
+  } finally {
+    uploading.value = false
+  }
+}
 
 function handleFileChange(uploadFile: UploadFile) {
   if (uploadFile.raw) {
@@ -186,8 +247,8 @@ async function handleUpload() {
     uploadedStrategyId.value = createResponse.data.id
 
     toastSuccess('策略上传成功')
-  } catch (error) {
-    toastError('上传失败，请重试')
+  } catch {
+    // Error already shown by API interceptor
   } finally {
     uploading.value = false
   }
@@ -221,6 +282,53 @@ function goToBacktest() {
   .page-title {
     font-size: 20px;
     font-weight: 600;
+  }
+
+  .card-header {
+    margin-bottom: 16px;
+
+    .card-title {
+      font-size: 16px;
+      font-weight: 600;
+      margin: 0;
+    }
+  }
+
+  .templates-section {
+    margin-bottom: 24px;
+    padding: 24px;
+  }
+
+  .template-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 12px;
+  }
+
+  .template-card {
+    padding: 16px;
+    border: 1px solid #ebeef5;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: all 0.2s;
+
+    &:hover {
+      border-color: #409eff;
+      box-shadow: 0 2px 8px rgba(64, 158, 255, 0.15);
+    }
+
+    .template-name {
+      font-size: 14px;
+      font-weight: 600;
+      margin: 0 0 8px;
+    }
+
+    .template-desc {
+      font-size: 12px;
+      color: #909399;
+      margin: 0;
+      line-height: 1.5;
+    }
   }
 
   .upload-container {
