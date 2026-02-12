@@ -6,25 +6,41 @@
         <div class="strategy-info">
           <h1 class="strategy-name">{{ strategy.name }}</h1>
           <StatusBadge :status="strategy.status === 'active' ? 'active' : 'archived'" />
+          <el-tag size="small" type="info">v{{ strategy.version }}</el-tag>
         </div>
       </div>
       <div class="header-right">
-        <el-button type="primary" @click="goToBacktest">
-          <el-icon><Histogram /></el-icon>
-          回测
-        </el-button>
-        <el-button @click="goToPaper">
-          <el-icon><Monitor /></el-icon>
-          模拟交易
-        </el-button>
-        <el-button @click="goToLive">
-          <el-icon><Connection /></el-icon>
-          实盘交易
-        </el-button>
-        <el-button type="danger" @click="handleDelete">
-          <el-icon><Delete /></el-icon>
-          删除
-        </el-button>
+        <template v-if="!isEditing">
+          <el-button v-if="strategy.status === 'active'" @click="enterEditMode">
+            <el-icon><Edit /></el-icon>
+            编辑
+          </el-button>
+          <el-button type="primary" @click="goToBacktest">
+            <el-icon><Histogram /></el-icon>
+            回测
+          </el-button>
+          <el-button @click="goToPaper">
+            <el-icon><Monitor /></el-icon>
+            模拟交易
+          </el-button>
+          <el-button @click="goToLive">
+            <el-icon><Connection /></el-icon>
+            实盘交易
+          </el-button>
+          <el-button type="danger" @click="handleDelete">
+            <el-icon><Delete /></el-icon>
+            删除
+          </el-button>
+        </template>
+        <template v-else>
+          <el-button type="primary" :loading="saving" @click="saveChanges">
+            <el-icon><Check /></el-icon>
+            保存
+          </el-button>
+          <el-button @click="cancelEdit">
+            取消
+          </el-button>
+        </template>
       </div>
     </div>
 
@@ -52,17 +68,31 @@
               <span class="value">{{ formatDateTime(strategy.updated_at) }}</span>
             </div>
           </div>
-          <div class="description" v-if="strategy.description">
+          <div class="description">
             <h4>描述</h4>
-            <p>{{ strategy.description }}</p>
+            <template v-if="isEditing">
+              <el-input
+                v-model="editDescription"
+                type="textarea"
+                :rows="3"
+                placeholder="添加策略描述..."
+                maxlength="1000"
+                show-word-limit
+              />
+            </template>
+            <template v-else>
+              <p v-if="strategy.description">{{ strategy.description }}</p>
+              <p v-else class="empty-description">暂无描述</p>
+            </template>
           </div>
         </div>
 
         <div class="card code-card">
           <div class="card-header">
             <h3 class="card-title">策略代码</h3>
+            <span v-if="isEditing && codeChanged" class="unsaved-hint">未保存的更改</span>
           </div>
-          <pre class="code-preview"><code>{{ strategyCode }}</code></pre>
+          <div class="editor-container" ref="editorContainerRef"></div>
         </div>
       </div>
 
@@ -71,7 +101,7 @@
           <div class="card-header">
             <h3 class="card-title">参数配置</h3>
           </div>
-          <div v-if="strategy.params_schema?.properties" class="params-list">
+          <div v-if="hasParams" class="params-list">
             <div
               v-for="(param, key) in strategy.params_schema.properties"
               :key="key"
@@ -139,7 +169,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import { useStrategyStore } from '@/stores/strategy'
 import StatusBadge from '@/components/common/StatusBadge.vue'
@@ -148,6 +178,8 @@ import { formatDateTime, formatRelativeTime } from '@/utils/format'
 import { getBacktests } from '@/api/backtest'
 import { useNotification } from '@/composables/useNotification'
 import type { Strategy } from '@/types'
+import loader from '@monaco-editor/loader'
+import type * as Monaco from 'monaco-editor'
 
 const props = defineProps<{
   id: string
@@ -157,23 +189,183 @@ const router = useRouter()
 const strategyStore = useStrategyStore()
 const { toastSuccess, toastError } = useNotification()
 
+// State
 const loading = ref(false)
 const strategy = ref<Strategy | null>(null)
-const strategyCode = ref('')
 const backtestHistory = ref<{ id: string; created_at: string; status: string }[]>([])
 const showDeleteDialog = ref(false)
 const deleteLoading = ref(false)
 
+// Edit state
+const isEditing = ref(false)
+const saving = ref(false)
+const editDescription = ref('')
+const editCode = ref('')
+
+// Monaco Editor
+const editorContainerRef = ref<HTMLElement | null>(null)
+let editorInstance: Monaco.editor.IStandaloneCodeEditor | null = null
+let monacoModule: typeof Monaco | null = null
+
+const hasParams = computed(() => {
+  const schema = strategy.value?.params_schema
+  return schema?.properties && Object.keys(schema.properties).length > 0
+})
+
+const codeChanged = computed(() => {
+  return strategy.value ? editCode.value !== strategy.value.code : false
+})
+
+// Monaco Editor setup
+async function initEditor() {
+  if (!editorContainerRef.value) return
+
+  monacoModule = await loader.init()
+  const code = strategy.value?.code || ''
+  editCode.value = code
+
+  editorInstance = monacoModule.editor.create(editorContainerRef.value, {
+    value: code,
+    language: 'python',
+    theme: 'vs',
+    readOnly: !isEditing.value,
+    minimap: { enabled: false },
+    fontSize: 13,
+    lineHeight: 20,
+    scrollBeyondLastLine: false,
+    automaticLayout: true,
+    tabSize: 4,
+    wordWrap: 'on',
+    renderLineHighlight: isEditing.value ? 'line' : 'none',
+    lineNumbers: 'on',
+    folding: true,
+    scrollbar: {
+      verticalScrollbarSize: 8,
+      horizontalScrollbarSize: 8,
+    },
+  })
+
+  editorInstance.onDidChangeModelContent(() => {
+    editCode.value = editorInstance?.getValue() || ''
+  })
+
+  // Ctrl+S to save
+  if (monacoModule) {
+    editorInstance.addCommand(monacoModule.KeyMod.CtrlCmd | monacoModule.KeyCode.KeyS, () => {
+      if (isEditing.value) {
+        saveChanges()
+      }
+    })
+  }
+
+  updateEditorHeight()
+}
+
+function updateEditorHeight() {
+  if (!editorInstance || !editorContainerRef.value) return
+  const lineCount = editorInstance.getModel()?.getLineCount() || 10
+  const lineHeight = 20
+  const minHeight = 200
+  const maxHeight = 600
+  const height = Math.min(maxHeight, Math.max(minHeight, lineCount * lineHeight + 20))
+  editorContainerRef.value.style.height = `${height}px`
+  editorInstance.layout()
+}
+
+function disposeEditor() {
+  if (editorInstance) {
+    editorInstance.dispose()
+    editorInstance = null
+  }
+}
+
+// Edit mode
+function enterEditMode() {
+  isEditing.value = true
+  editDescription.value = strategy.value?.description || ''
+  editCode.value = strategy.value?.code || ''
+
+  if (editorInstance) {
+    editorInstance.updateOptions({
+      readOnly: false,
+      renderLineHighlight: 'line',
+    })
+  }
+}
+
+function cancelEdit() {
+  isEditing.value = false
+
+  // Restore original code in editor
+  if (editorInstance && strategy.value) {
+    editorInstance.setValue(strategy.value.code || '')
+    editorInstance.updateOptions({
+      readOnly: true,
+      renderLineHighlight: 'none',
+    })
+  }
+
+  editDescription.value = ''
+  editCode.value = strategy.value?.code || ''
+}
+
+async function saveChanges() {
+  if (!strategy.value) return
+
+  const updateData: Partial<Strategy> = {}
+  let hasChanges = false
+
+  // Check code changes
+  if (editCode.value !== strategy.value.code) {
+    updateData.code = editCode.value
+    hasChanges = true
+  }
+
+  // Check description changes
+  const newDesc = editDescription.value.trim()
+  const oldDesc = strategy.value.description || ''
+  if (newDesc !== oldDesc) {
+    updateData.description = newDesc
+    hasChanges = true
+  }
+
+  if (!hasChanges) {
+    toastSuccess('没有需要保存的更改')
+    cancelEdit()
+    return
+  }
+
+  saving.value = true
+  try {
+    const updated = await strategyStore.updateStrategy(props.id, updateData)
+    if (updated) {
+      strategy.value = updated
+      isEditing.value = false
+      if (editorInstance) {
+        editorInstance.updateOptions({
+          readOnly: true,
+          renderLineHighlight: 'none',
+        })
+      }
+      toastSuccess(updateData.code ? `保存成功，版本更新至 v${updated.version}` : '保存成功')
+    } else {
+      toastError('保存失败')
+    }
+  } finally {
+    saving.value = false
+  }
+}
+
+// Data loading
 async function loadStrategy() {
   loading.value = true
   try {
     strategy.value = await strategyStore.loadStrategy(props.id)
 
     if (strategy.value) {
-      // 代码已包含在策略详情中
-      strategyCode.value = strategy.value.code || ''
+      editCode.value = strategy.value.code || ''
 
-      // 加载回测历史（复用分页接口，取最近 10 条）
+      // Load backtest history
       try {
         const historyResponse = await getBacktests({ strategy_id: props.id, page_size: 10 })
         backtestHistory.value = historyResponse.data.items
@@ -186,6 +378,7 @@ async function loadStrategy() {
   }
 }
 
+// Navigation
 function goBack() {
   router.back()
 }
@@ -206,6 +399,7 @@ function goToBacktestResult(backtestId: string) {
   router.push(`/trading/backtest/${backtestId}/result`)
 }
 
+// Delete
 function handleDelete() {
   showDeleteDialog.value = true
 }
@@ -226,9 +420,27 @@ async function confirmDelete() {
   }
 }
 
-onMounted(() => {
-  loadStrategy()
+// Lifecycle
+onMounted(async () => {
+  await loadStrategy()
+  await nextTick()
+  initEditor()
 })
+
+onBeforeUnmount(() => {
+  disposeEditor()
+})
+
+// Re-init editor if strategy data loads after mount
+watch(
+  () => strategy.value?.code,
+  (newCode) => {
+    if (newCode && editorInstance && !isEditing.value) {
+      editorInstance.setValue(newCode)
+      updateEditorHeight()
+    }
+  }
+)
 </script>
 
 <style lang="scss" scoped>
@@ -307,20 +519,33 @@ onMounted(() => {
         color: #606266;
         line-height: 1.6;
       }
+
+      .empty-description {
+        color: #c0c4cc;
+        font-style: italic;
+      }
     }
   }
 
   .code-card {
     margin-top: 24px;
 
-    .code-preview {
-      max-height: 500px;
-      overflow: auto;
-      background: #f5f7fa;
-      padding: 16px;
+    .card-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .unsaved-hint {
+      font-size: 12px;
+      color: #e6a23c;
+    }
+
+    .editor-container {
+      height: 400px;
+      border: 1px solid #ebeef5;
       border-radius: 4px;
-      font-size: 13px;
-      line-height: 1.6;
+      overflow: hidden;
     }
   }
 

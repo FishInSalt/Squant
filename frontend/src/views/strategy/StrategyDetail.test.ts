@@ -11,6 +11,32 @@ vi.mock('@/api/backtest', () => ({
   getBacktests: vi.fn(),
 }))
 
+// Mock Monaco Editor loader — happy-dom cannot load scripts
+const mockEditorInstance = {
+  dispose: vi.fn(),
+  getValue: vi.fn(() => ''),
+  setValue: vi.fn(),
+  updateOptions: vi.fn(),
+  getModel: vi.fn(() => ({ getLineCount: () => 10 })),
+  onDidChangeModelContent: vi.fn(),
+  addCommand: vi.fn(),
+  layout: vi.fn(),
+}
+
+vi.mock('@monaco-editor/loader', () => ({
+  default: {
+    init: vi.fn(() =>
+      Promise.resolve({
+        editor: {
+          create: vi.fn(() => mockEditorInstance),
+        },
+        KeyMod: { CtrlCmd: 2048 },
+        KeyCode: { KeyS: 49 },
+      })
+    ),
+  },
+}))
+
 const mockStrategy = createMockStrategy({
   id: 's-1',
   name: 'MA Cross',
@@ -61,6 +87,7 @@ function mountDetail(strategy: ReturnType<typeof createMockStrategy> | null = mo
 describe('StrategyDetail', () => {
   beforeEach(() => {
     vi.mocked(backtestApi.getBacktests).mockResolvedValue(wrapPaginatedResponse(mockBacktests, 1))
+    vi.clearAllMocks()
   })
 
   it('shows back button', async () => {
@@ -87,7 +114,6 @@ describe('StrategyDetail', () => {
     const wrapper = mountDetail()
     await flushPromises()
     expect(wrapper.text()).toContain('策略代码')
-    expect(wrapper.text()).toContain('class MACross')
   })
 
   it('shows params section with schema properties', async () => {
@@ -108,10 +134,18 @@ describe('StrategyDetail', () => {
   it('shows action buttons', async () => {
     const wrapper = mountDetail()
     await flushPromises()
+    expect(wrapper.text()).toContain('编辑')
     expect(wrapper.text()).toContain('回测')
     expect(wrapper.text()).toContain('模拟交易')
     expect(wrapper.text()).toContain('实盘交易')
     expect(wrapper.text()).toContain('删除')
+  })
+
+  it('hides edit button for archived strategies', async () => {
+    const archivedStrategy = createMockStrategy({ id: 's-3', status: 'archived' })
+    const wrapper = mountDetail(archivedStrategy)
+    await flushPromises()
+    expect(wrapper.text()).not.toContain('编辑')
   })
 
   it('shows backtest history section', async () => {
@@ -125,5 +159,73 @@ describe('StrategyDetail', () => {
     const wrapper = mountDetail()
     await flushPromises()
     expect(wrapper.text()).toContain('暂无回测记录')
+  })
+
+  it('shows description or empty placeholder', async () => {
+    const wrapper = mountDetail()
+    await flushPromises()
+    expect(wrapper.text()).toContain('均线交叉策略')
+  })
+
+  it('shows empty description placeholder when no description', async () => {
+    const noDescStrategy = createMockStrategy({ id: 's-4', description: '' })
+    const wrapper = mountDetail(noDescStrategy)
+    await flushPromises()
+    expect(wrapper.text()).toContain('暂无描述')
+  })
+
+  it('shows version tag in header', async () => {
+    const wrapper = mountDetail()
+    await flushPromises()
+    expect(wrapper.text()).toContain('v2.0.0')
+  })
+
+  describe('edit mode', () => {
+    it('enters edit mode when edit button clicked', async () => {
+      const wrapper = mountDetail()
+      await flushPromises()
+      // Before edit: should see action buttons
+      expect(wrapper.text()).toContain('回测')
+
+      // Click edit
+      const editBtn = wrapper.findAll('button').find((b) => b.text().includes('编辑'))
+      expect(editBtn).toBeTruthy()
+      await editBtn!.trigger('click')
+      await flushPromises()
+
+      // After edit: should see save and cancel
+      expect(wrapper.text()).toContain('保存')
+      expect(wrapper.text()).toContain('取消')
+      // Edit/delete buttons hidden in edit mode
+      expect(wrapper.text()).not.toContain('删除')
+    })
+
+    it('shows textarea for description in edit mode', async () => {
+      const wrapper = mountDetail()
+      await flushPromises()
+
+      const editBtn = wrapper.findAll('button').find((b) => b.text().includes('编辑'))
+      await editBtn!.trigger('click')
+      await flushPromises()
+
+      expect(wrapper.find('textarea').exists()).toBe(true)
+    })
+
+    it('cancels edit mode and restores view', async () => {
+      const wrapper = mountDetail()
+      await flushPromises()
+
+      const editBtn = wrapper.findAll('button').find((b) => b.text().includes('编辑'))
+      await editBtn!.trigger('click')
+      await flushPromises()
+
+      const cancelBtn = wrapper.findAll('button').find((b) => b.text().includes('取消'))
+      await cancelBtn!.trigger('click')
+      await flushPromises()
+
+      // Back to view mode
+      expect(wrapper.text()).toContain('编辑')
+      expect(wrapper.text()).toContain('回测')
+    })
   })
 })

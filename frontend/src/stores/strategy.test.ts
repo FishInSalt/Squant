@@ -131,6 +131,45 @@ describe('useStrategyStore', () => {
     })
   })
 
+  describe('updateStrategy', () => {
+    it('updates currentStrategy and list item on success', async () => {
+      const store = useStrategyStore()
+      const original = createMockStrategy({ id: 's-1', name: 'Old', version: '1.0.0' })
+      const updated = createMockStrategy({ id: 's-1', name: 'Old', version: '1.0.1', code: 'new code' })
+      store.strategies = [original]
+      store.currentStrategy = original
+      mockedApi.updateStrategy.mockResolvedValue(wrapApiResponse(updated))
+
+      const result = await store.updateStrategy('s-1', { code: 'new code' })
+
+      expect(result).toEqual(updated)
+      expect(store.strategies[0].version).toBe('1.0.1')
+      expect(store.currentStrategy?.version).toBe('1.0.1')
+    })
+
+    it('returns null on error', async () => {
+      const store = useStrategyStore()
+      mockedApi.updateStrategy.mockRejectedValue(new Error('Validation failed'))
+      const result = await store.updateStrategy('s-1', { code: 'bad' })
+      expect(result).toBeNull()
+    })
+
+    it('updates list item without affecting currentStrategy if different', async () => {
+      const store = useStrategyStore()
+      const s1 = createMockStrategy({ id: 's-1', description: 'old' })
+      const s2 = createMockStrategy({ id: 's-2' })
+      const s1Updated = createMockStrategy({ id: 's-1', description: 'new' })
+      store.strategies = [s1, s2]
+      store.currentStrategy = s2
+      mockedApi.updateStrategy.mockResolvedValue(wrapApiResponse(s1Updated))
+
+      await store.updateStrategy('s-1', { description: 'new' })
+
+      expect(store.strategies[0].description).toBe('new')
+      expect(store.currentStrategy?.id).toBe('s-2') // unchanged
+    })
+  })
+
   describe('deleteStrategy', () => {
     it('removes from list and returns true', async () => {
       const store = useStrategyStore()
