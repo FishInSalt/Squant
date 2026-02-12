@@ -113,7 +113,7 @@
               v-model="editParamsSchemaJson"
               type="textarea"
               :rows="8"
-              placeholder='{"type":"object","properties":{}}'
+              placeholder="留空则保留当前配置"
               :class="{ 'json-error': paramsJsonError }"
             />
             <p v-if="paramsJsonError" class="json-error-text">JSON 格式错误</p>

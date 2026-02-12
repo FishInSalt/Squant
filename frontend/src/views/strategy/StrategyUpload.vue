@@ -165,20 +165,36 @@ async function useTemplate(template: StrategyTemplate) {
       return
     }
 
-    // Create strategy from template
-    const createResponse = await createStrategy({
-      name: template.name,
-      code: template.code,
-      description: template.description,
-      params_schema: template.params_schema,
-      default_params: template.default_params,
-    })
-    uploadProgress.value = 100
-    uploadedStrategyId.value = createResponse.data.id
-
-    toastSuccess(`策略「${template.displayName}」创建成功`)
+    // Create strategy from template, auto-suffix on name conflict
+    let name = template.name
+    let created = false
+    for (let attempt = 0; attempt < 10 && !created; attempt++) {
+      try {
+        const createResponse = await createStrategy({
+          name,
+          code: template.code,
+          description: template.description,
+          params_schema: template.params_schema,
+          default_params: template.default_params,
+        })
+        uploadProgress.value = 100
+        uploadedStrategyId.value = createResponse.data.id
+        created = true
+        toastSuccess(`策略「${template.displayName}」创建成功`)
+      } catch (error: unknown) {
+        const status = (error as { response?: { status?: number } })?.response?.status
+        if (status === 409) {
+          name = `${template.name}_${attempt + 2}`
+          continue
+        }
+        throw error
+      }
+    }
+    if (!created) {
+      toastError('创建失败：名称冲突过多，请手动修改策略名称')
+    }
   } catch {
-    // Error already shown by API interceptor
+    // Other errors already shown by API interceptor
   } finally {
     uploading.value = false
   }

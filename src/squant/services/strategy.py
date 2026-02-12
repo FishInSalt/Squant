@@ -162,6 +162,8 @@ class StrategyService:
         if not strategy:
             raise StrategyNotFoundError(strategy_id)
 
+        original_name = strategy.name
+
         # Check name uniqueness if name is being changed
         if request.name and request.name != strategy.name:
             existing = await self.repository.get_by_name(request.name)
@@ -203,7 +205,7 @@ class StrategyService:
             await self.session.commit()
         except IntegrityError:
             await self.session.rollback()
-            if request.name and request.name != strategy.name:
+            if request.name and request.name != original_name:
                 raise StrategyNameExistsError(request.name)
             raise
         return strategy

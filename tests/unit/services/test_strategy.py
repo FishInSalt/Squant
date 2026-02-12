@@ -390,10 +390,18 @@ class TestStrategyService:
     async def test_update_name_integrity_error_raises_name_exists(
         self, service, sample_strategy
     ):
-        """Test that IntegrityError on commit (race condition) raises StrategyNameExistsError."""
+        """Test that IntegrityError on commit (race condition) raises StrategyNameExistsError.
+
+        repository.update() returns an object with the NEW name already set,
+        so the condition must compare against the original name captured before update.
+        """
+        # Simulate repository.update returning object with name already changed
+        updated_strategy = MagicMock()
+        updated_strategy.name = "Conflicting Name"  # name already set to new value
+
         service.repository.get = AsyncMock(return_value=sample_strategy)
-        service.repository.get_by_name = AsyncMock(return_value=None)  # passes check
-        service.repository.update = AsyncMock(return_value=sample_strategy)
+        service.repository.get_by_name = AsyncMock(return_value=None)  # passes TOCTOU check
+        service.repository.update = AsyncMock(return_value=updated_strategy)
         service.session.commit = AsyncMock(
             side_effect=IntegrityError("duplicate", {}, None)
         )
