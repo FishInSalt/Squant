@@ -196,8 +196,9 @@ describe('StrategyDetail', () => {
       // After edit: should see save and cancel
       expect(wrapper.text()).toContain('保存')
       expect(wrapper.text()).toContain('取消')
-      // Edit/delete buttons hidden in edit mode
-      expect(wrapper.text()).not.toContain('删除')
+      // Header edit/delete buttons hidden in edit mode
+      const headerLeft = wrapper.find('.header-left')
+      expect(headerLeft.text()).not.toContain('删除')
     })
 
     it('shows name input with current name in edit mode', async () => {

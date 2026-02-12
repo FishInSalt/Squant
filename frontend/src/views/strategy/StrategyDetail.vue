@@ -109,14 +109,67 @@
             <h3 class="card-title">参数配置</h3>
           </div>
           <template v-if="isEditing">
-            <el-input
-              v-model="editParamsSchemaJson"
-              type="textarea"
-              :rows="8"
-              placeholder="留空则保留当前配置"
-              :class="{ 'json-error': paramsJsonError }"
-            />
-            <p v-if="paramsJsonError" class="json-error-text">JSON 格式错误</p>
+            <div class="param-edit-list">
+              <div
+                v-for="(param, index) in editParams"
+                :key="index"
+                class="param-edit-row"
+              >
+                <div class="param-edit-header">
+                  <span class="param-index">#{{ index + 1 }}</span>
+                  <el-button
+                    type="danger"
+                    text
+                    size="small"
+                    @click="editParams.splice(index, 1)"
+                  >
+                    <el-icon><Delete /></el-icon>
+                    删除
+                  </el-button>
+                </div>
+                <div class="param-edit-grid">
+                  <div class="param-form-item">
+                    <label>参数名</label>
+                    <el-input v-model="param.key" placeholder="如 fast_period" />
+                  </div>
+                  <div class="param-form-item">
+                    <label>类型</label>
+                    <el-select v-model="param.type" style="width: 100%">
+                      <el-option label="整数" value="integer" />
+                      <el-option label="小数" value="number" />
+                      <el-option label="文本" value="string" />
+                      <el-option label="布尔" value="boolean" />
+                    </el-select>
+                  </div>
+                  <div class="param-form-item">
+                    <label>显示名称</label>
+                    <el-input v-model="param.title" placeholder="如 快线周期" />
+                  </div>
+                  <div class="param-form-item">
+                    <label>默认值</label>
+                    <el-input v-model="param.default_value" placeholder="可选" />
+                  </div>
+                  <template v-if="param.type === 'integer' || param.type === 'number'">
+                    <div class="param-form-item">
+                      <label>最小值</label>
+                      <el-input v-model="param.minimum" placeholder="可选" />
+                    </div>
+                    <div class="param-form-item">
+                      <label>最大值</label>
+                      <el-input v-model="param.maximum" placeholder="可选" />
+                    </div>
+                  </template>
+                </div>
+                <div class="param-form-item param-form-desc">
+                  <label>描述</label>
+                  <el-input v-model="param.description" placeholder="参数用途说明（可选）" />
+                </div>
+              </div>
+            </div>
+            <el-button class="add-param-btn" @click="addParam">
+              <el-icon><Plus /></el-icon>
+              添加参数
+            </el-button>
           </template>
           <template v-else>
             <div v-if="hasParams" class="params-list">
@@ -221,7 +274,50 @@ const saving = ref(false)
 const editName = ref('')
 const editDescription = ref('')
 const editCode = ref('')
-const editParamsSchemaJson = ref('')
+interface EditableParam {
+  key: string
+  type: 'string' | 'number' | 'integer' | 'boolean'
+  title: string
+  description: string
+  default_value: string
+  minimum: string
+  maximum: string
+}
+
+const editParams = ref<EditableParam[]>([])
+
+function addParam() {
+  editParams.value.push({
+    key: '', type: 'integer', title: '', description: '',
+    default_value: '', minimum: '', maximum: '',
+  })
+}
+
+function convertParamValue(value: string, type: string): unknown {
+  if (!value) return undefined
+  if (type === 'integer') return parseInt(value, 10)
+  if (type === 'number') return parseFloat(value)
+  if (type === 'boolean') return value === 'true'
+  return value
+}
+
+function buildParamsSchema(params: EditableParam[]): Record<string, unknown> {
+  const properties: Record<string, Record<string, unknown>> = {}
+  for (const p of params) {
+    if (!p.key.trim()) continue
+    const field: Record<string, unknown> = { type: p.type }
+    if (p.title) field.title = p.title
+    if (p.description) field.description = p.description
+    const defaultVal = convertParamValue(p.default_value, p.type)
+    if (defaultVal !== undefined) field.default = defaultVal
+    if (p.minimum && (p.type === 'integer' || p.type === 'number')) field.minimum = Number(p.minimum)
+    if (p.maximum && (p.type === 'integer' || p.type === 'number')) field.maximum = Number(p.maximum)
+    properties[p.key.trim()] = field
+  }
+  return Object.keys(properties).length > 0
+    ? { type: 'object', properties }
+    : {}
+}
 
 // Monaco Editor
 const editorContainerRef = ref<HTMLElement | null>(null)
@@ -237,15 +333,6 @@ const codeChanged = computed(() => {
   return strategy.value ? editCode.value !== strategy.value.code : false
 })
 
-const paramsJsonError = computed(() => {
-  if (!editParamsSchemaJson.value.trim()) return false
-  try {
-    JSON.parse(editParamsSchemaJson.value)
-    return false
-  } catch {
-    return true
-  }
-})
 
 // Monaco Editor setup
 async function initEditor() {
@@ -317,9 +404,15 @@ function enterEditMode() {
   editDescription.value = strategy.value?.description || ''
   editCode.value = strategy.value?.code || ''
   const schema = strategy.value?.params_schema
-  editParamsSchemaJson.value = schema && Object.keys(schema).length > 0
-    ? JSON.stringify(schema, null, 2)
-    : ''
+  editParams.value = Object.entries(schema?.properties || {}).map(([key, field]: [string, any]) => ({
+    key,
+    type: field.type || 'string',
+    title: field.title || '',
+    description: field.description || '',
+    default_value: field.default != null ? String(field.default) : '',
+    minimum: field.minimum != null ? String(field.minimum) : '',
+    maximum: field.maximum != null ? String(field.maximum) : '',
+  }))
 
   if (editorInstance) {
     editorInstance.updateOptions({
@@ -344,7 +437,7 @@ function cancelEdit() {
   editName.value = ''
   editDescription.value = ''
   editCode.value = strategy.value?.code || ''
-  editParamsSchemaJson.value = ''
+  editParams.value = []
 }
 
 async function saveChanges() {
@@ -379,16 +472,10 @@ async function saveChanges() {
   }
 
   // Check params_schema changes
-  if (editParamsSchemaJson.value.trim()) {
-    if (paramsJsonError.value) {
-      toastError('参数配置 JSON 格式错误')
-      return
-    }
-    const newSchema = JSON.parse(editParamsSchemaJson.value)
-    if (JSON.stringify(newSchema) !== JSON.stringify(strategy.value.params_schema)) {
-      updateData.params_schema = newSchema
-      hasChanges = true
-    }
+  const newSchema = buildParamsSchema(editParams.value)
+  if (JSON.stringify(newSchema) !== JSON.stringify(strategy.value.params_schema || {})) {
+    updateData.params_schema = newSchema as any
+    hasChanges = true
   }
 
   if (!hasChanges) {
@@ -661,14 +748,56 @@ watch(
       padding: 24px 0;
     }
 
-    .json-error :deep(.el-textarea__inner) {
-      border-color: #f56c6c;
+    .param-edit-list {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      max-height: 400px;
+      overflow-y: auto;
     }
 
-    .json-error-text {
-      font-size: 12px;
-      color: #f56c6c;
-      margin: 4px 0 0;
+    .param-edit-row {
+      padding: 12px;
+      border: 1px solid #ebeef5;
+      border-radius: 6px;
+      background: #fafafa;
+    }
+
+    .param-edit-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 8px;
+
+      .param-index {
+        font-size: 12px;
+        font-weight: 600;
+        color: #909399;
+      }
+    }
+
+    .param-edit-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+    }
+
+    .param-form-item {
+      label {
+        display: block;
+        font-size: 12px;
+        color: #909399;
+        margin-bottom: 4px;
+      }
+    }
+
+    .param-form-desc {
+      margin-top: 8px;
+    }
+
+    .add-param-btn {
+      margin-top: 8px;
+      width: 100%;
     }
   }
 
