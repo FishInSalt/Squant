@@ -6,6 +6,8 @@ from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
+from sqlalchemy.exc import IntegrityError
+
 import pytest
 
 from squant.models.enums import RunStatus, StrategyStatus
@@ -383,6 +385,26 @@ class TestStrategyService:
         assert call_args[1]["params_schema"] == params_schema
         assert call_args[1]["default_params"] == default_params
         assert call_args[1]["status"] == StrategyStatus.ARCHIVED
+
+    @pytest.mark.asyncio
+    async def test_update_name_integrity_error_raises_name_exists(
+        self, service, sample_strategy
+    ):
+        """Test that IntegrityError on commit (race condition) raises StrategyNameExistsError."""
+        service.repository.get = AsyncMock(return_value=sample_strategy)
+        service.repository.get_by_name = AsyncMock(return_value=None)  # passes check
+        service.repository.update = AsyncMock(return_value=sample_strategy)
+        service.session.commit = AsyncMock(
+            side_effect=IntegrityError("duplicate", {}, None)
+        )
+        service.session.rollback = AsyncMock()
+
+        request = UpdateStrategyRequest(name="Conflicting Name")
+
+        with pytest.raises(StrategyNameExistsError):
+            await service.update(sample_strategy.id, request)
+
+        service.session.rollback.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_delete_success(self, service, mock_session, sample_strategy):

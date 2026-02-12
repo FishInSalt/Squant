@@ -200,6 +200,21 @@ describe('StrategyDetail', () => {
       expect(wrapper.text()).not.toContain('删除')
     })
 
+    it('shows name input with current name in edit mode', async () => {
+      const wrapper = mountDetail()
+      await flushPromises()
+
+      const editBtn = wrapper.findAll('button').find((b) => b.text().includes('编辑'))
+      await editBtn!.trigger('click')
+      await flushPromises()
+
+      // Name input should appear in the info card (replacing the static text)
+      const infoInputs = wrapper.findAll('.info-item input')
+      const nameInput = infoInputs[0]
+      expect(nameInput).toBeTruthy()
+      expect((nameInput.element as HTMLInputElement).value).toBe('MA Cross')
+    })
+
     it('shows textarea for description in edit mode', async () => {
       const wrapper = mountDetail()
       await flushPromises()
@@ -219,13 +234,18 @@ describe('StrategyDetail', () => {
       await editBtn!.trigger('click')
       await flushPromises()
 
+      // Modify name in edit mode
+      const nameInput = wrapper.find('.info-item input')
+      await nameInput.setValue('Changed Name')
+
       const cancelBtn = wrapper.findAll('button').find((b) => b.text().includes('取消'))
       await cancelBtn!.trigger('click')
       await flushPromises()
 
-      // Back to view mode
+      // Back to view mode with original name
       expect(wrapper.text()).toContain('编辑')
       expect(wrapper.text()).toContain('回测')
+      expect(wrapper.text()).toContain('MA Cross')
     })
   })
 })

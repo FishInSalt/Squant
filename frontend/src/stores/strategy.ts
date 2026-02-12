@@ -65,23 +65,18 @@ export const useStrategyStore = defineStore('strategy', () => {
   }
 
   async function updateStrategy(id: string, data: Partial<Strategy>) {
-    try {
-      const response = await strategyApi.updateStrategy(id, data)
-      const updated = response.data
-      // Update in list
-      const idx = strategies.value.findIndex((s) => s.id === id)
-      if (idx !== -1) {
-        strategies.value[idx] = updated
-      }
-      // Update current if viewing
-      if (currentStrategy.value?.id === id) {
-        currentStrategy.value = updated
-      }
-      return updated
-    } catch (error) {
-      console.error('Failed to update strategy:', error)
-      return null
+    const response = await strategyApi.updateStrategy(id, data)
+    const updated = response.data
+    // Update in list
+    const idx = strategies.value.findIndex((s) => s.id === id)
+    if (idx !== -1) {
+      strategies.value[idx] = updated
     }
+    // Update current if viewing
+    if (currentStrategy.value?.id === id) {
+      currentStrategy.value = updated
+    }
+    return updated
   }
 
   async function deleteStrategy(id: string) {

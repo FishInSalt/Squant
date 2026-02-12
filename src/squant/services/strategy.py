@@ -199,7 +199,13 @@ class StrategyService:
                 raise StrategyNotFoundError(strategy_id)
             strategy = updated
 
-        await self.session.commit()
+        try:
+            await self.session.commit()
+        except IntegrityError:
+            await self.session.rollback()
+            if request.name and request.name != strategy.name:
+                raise StrategyNameExistsError(request.name)
+            raise
         return strategy
 
     async def delete(self, strategy_id: UUID) -> None:

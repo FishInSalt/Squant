@@ -147,11 +147,10 @@ describe('useStrategyStore', () => {
       expect(store.currentStrategy?.version).toBe('1.0.1')
     })
 
-    it('returns null on error', async () => {
+    it('throws on error', async () => {
       const store = useStrategyStore()
       mockedApi.updateStrategy.mockRejectedValue(new Error('Validation failed'))
-      const result = await store.updateStrategy('s-1', { code: 'bad' })
-      expect(result).toBeNull()
+      await expect(store.updateStrategy('s-1', { code: 'bad' })).rejects.toThrow('Validation failed')
     })
 
     it('updates list item without affecting currentStrategy if different', async () => {

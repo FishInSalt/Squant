@@ -53,7 +53,14 @@
           <div class="info-grid">
             <div class="info-item">
               <span class="label">策略名称</span>
-              <span class="value">{{ strategy.name }}</span>
+              <el-input
+                v-if="isEditing"
+                v-model="editName"
+                maxlength="128"
+                show-word-limit
+                placeholder="策略名称"
+              />
+              <span v-else class="value">{{ strategy.name }}</span>
             </div>
             <div class="info-item">
               <span class="label">版本</span>
@@ -211,6 +218,7 @@ const deleteLoading = ref(false)
 // Edit state
 const isEditing = ref(false)
 const saving = ref(false)
+const editName = ref('')
 const editDescription = ref('')
 const editCode = ref('')
 const editParamsSchemaJson = ref('')
@@ -305,6 +313,7 @@ function disposeEditor() {
 // Edit mode
 function enterEditMode() {
   isEditing.value = true
+  editName.value = strategy.value?.name || ''
   editDescription.value = strategy.value?.description || ''
   editCode.value = strategy.value?.code || ''
   const schema = strategy.value?.params_schema
@@ -332,6 +341,7 @@ function cancelEdit() {
     })
   }
 
+  editName.value = ''
   editDescription.value = ''
   editCode.value = strategy.value?.code || ''
   editParamsSchemaJson.value = ''
@@ -342,6 +352,17 @@ async function saveChanges() {
 
   const updateData: Partial<Strategy> = {}
   let hasChanges = false
+
+  // Check name changes
+  const newName = editName.value.trim()
+  if (!newName) {
+    toastError('策略名称不能为空')
+    return
+  }
+  if (newName !== strategy.value.name) {
+    updateData.name = newName
+    hasChanges = true
+  }
 
   // Check code changes
   if (editCode.value !== strategy.value.code) {
@@ -379,19 +400,21 @@ async function saveChanges() {
   saving.value = true
   try {
     const updated = await strategyStore.updateStrategy(props.id, updateData)
-    if (updated) {
-      strategy.value = updated
-      isEditing.value = false
-      if (editorInstance) {
-        editorInstance.updateOptions({
-          readOnly: true,
-          renderLineHighlight: 'none',
-        })
-      }
-      toastSuccess(updateData.code ? `保存成功，版本更新至 v${updated.version}` : '保存成功')
-    } else {
-      toastError('保存失败')
+    strategy.value = updated
+    isEditing.value = false
+    if (editorInstance) {
+      editorInstance.updateOptions({
+        readOnly: true,
+        renderLineHighlight: 'none',
+      })
     }
+    toastSuccess(updateData.code ? `保存成功，版本更新至 v${updated.version}` : '保存成功')
+  } catch (error: unknown) {
+    const status = (error as { response?: { status?: number } })?.response?.status
+    if (status === 409) {
+      toastError(`策略名称「${newName}」已存在，请使用其他名称`)
+    }
+    // Other errors already shown by API interceptor
   } finally {
     saving.value = false
   }
@@ -509,6 +532,8 @@ watch(
       font-weight: 600;
       margin: 0;
     }
+
+
 
     .header-right {
       display: flex;
