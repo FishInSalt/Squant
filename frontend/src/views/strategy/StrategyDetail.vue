@@ -101,38 +101,50 @@
           <div class="card-header">
             <h3 class="card-title">参数配置</h3>
           </div>
-          <div v-if="hasParams" class="params-list">
-            <div
-              v-for="(param, key) in strategy.params_schema.properties"
-              :key="key"
-              class="param-item"
-            >
-              <div class="param-header">
-                <span class="param-name">{{ param.title || key }}</span>
-                <el-tag size="small" type="info">{{ param.type }}</el-tag>
-              </div>
-              <p class="param-description" v-if="param.description">
-                {{ param.description }}
-              </p>
-              <div class="param-meta">
-                <span v-if="param.default !== undefined">
-                  默认值: {{ param.default }}
-                </span>
-                <span v-if="param.minimum !== undefined">
-                  最小值: {{ param.minimum }}
-                </span>
-                <span v-if="param.maximum !== undefined">
-                  最大值: {{ param.maximum }}
-                </span>
-                <span v-if="param.enum">
-                  可选值: {{ param.enum.join(', ') }}
-                </span>
+          <template v-if="isEditing">
+            <el-input
+              v-model="editParamsSchemaJson"
+              type="textarea"
+              :rows="8"
+              placeholder='{"type":"object","properties":{}}'
+              :class="{ 'json-error': paramsJsonError }"
+            />
+            <p v-if="paramsJsonError" class="json-error-text">JSON 格式错误</p>
+          </template>
+          <template v-else>
+            <div v-if="hasParams" class="params-list">
+              <div
+                v-for="(param, key) in strategy.params_schema.properties"
+                :key="key"
+                class="param-item"
+              >
+                <div class="param-header">
+                  <span class="param-name">{{ param.title || key }}</span>
+                  <el-tag size="small" type="info">{{ param.type }}</el-tag>
+                </div>
+                <p class="param-description" v-if="param.description">
+                  {{ param.description }}
+                </p>
+                <div class="param-meta">
+                  <span v-if="param.default !== undefined">
+                    默认值: {{ param.default }}
+                  </span>
+                  <span v-if="param.minimum !== undefined">
+                    最小值: {{ param.minimum }}
+                  </span>
+                  <span v-if="param.maximum !== undefined">
+                    最大值: {{ param.maximum }}
+                  </span>
+                  <span v-if="param.enum">
+                    可选值: {{ param.enum.join(', ') }}
+                  </span>
+                </div>
               </div>
             </div>
-          </div>
-          <div v-else class="empty-params">
-            <p>该策略没有可配置的参数</p>
-          </div>
+            <div v-else class="empty-params">
+              <p>该策略没有可配置的参数</p>
+            </div>
+          </template>
         </div>
 
         <div class="card history-card">
@@ -201,6 +213,7 @@ const isEditing = ref(false)
 const saving = ref(false)
 const editDescription = ref('')
 const editCode = ref('')
+const editParamsSchemaJson = ref('')
 
 // Monaco Editor
 const editorContainerRef = ref<HTMLElement | null>(null)
@@ -214,6 +227,16 @@ const hasParams = computed(() => {
 
 const codeChanged = computed(() => {
   return strategy.value ? editCode.value !== strategy.value.code : false
+})
+
+const paramsJsonError = computed(() => {
+  if (!editParamsSchemaJson.value.trim()) return false
+  try {
+    JSON.parse(editParamsSchemaJson.value)
+    return false
+  } catch {
+    return true
+  }
 })
 
 // Monaco Editor setup
@@ -284,6 +307,10 @@ function enterEditMode() {
   isEditing.value = true
   editDescription.value = strategy.value?.description || ''
   editCode.value = strategy.value?.code || ''
+  const schema = strategy.value?.params_schema
+  editParamsSchemaJson.value = schema && Object.keys(schema).length > 0
+    ? JSON.stringify(schema, null, 2)
+    : ''
 
   if (editorInstance) {
     editorInstance.updateOptions({
@@ -307,6 +334,7 @@ function cancelEdit() {
 
   editDescription.value = ''
   editCode.value = strategy.value?.code || ''
+  editParamsSchemaJson.value = ''
 }
 
 async function saveChanges() {
@@ -327,6 +355,19 @@ async function saveChanges() {
   if (newDesc !== oldDesc) {
     updateData.description = newDesc
     hasChanges = true
+  }
+
+  // Check params_schema changes
+  if (editParamsSchemaJson.value.trim()) {
+    if (paramsJsonError.value) {
+      toastError('参数配置 JSON 格式错误')
+      return
+    }
+    const newSchema = JSON.parse(editParamsSchemaJson.value)
+    if (JSON.stringify(newSchema) !== JSON.stringify(strategy.value.params_schema)) {
+      updateData.params_schema = newSchema
+      hasChanges = true
+    }
   }
 
   if (!hasChanges) {
@@ -593,6 +634,16 @@ watch(
       color: #909399;
       text-align: center;
       padding: 24px 0;
+    }
+
+    .json-error :deep(.el-textarea__inner) {
+      border-color: #f56c6c;
+    }
+
+    .json-error-text {
+      font-size: 12px;
+      color: #f56c6c;
+      margin: 4px 0 0;
     }
   }
 
