@@ -293,10 +293,16 @@ function addParam() {
   })
 }
 
+function toNumber(value: string): number | undefined {
+  if (!value) return undefined
+  const n = Number(value)
+  return Number.isNaN(n) ? undefined : n
+}
+
 function convertParamValue(value: string, type: string): unknown {
   if (!value) return undefined
-  if (type === 'integer') return parseInt(value, 10)
-  if (type === 'number') return parseFloat(value)
+  if (type === 'integer') { const n = parseInt(value, 10); return Number.isNaN(n) ? undefined : n }
+  if (type === 'number') { const n = parseFloat(value); return Number.isNaN(n) ? undefined : n }
   if (type === 'boolean') return value === 'true'
   return value
 }
@@ -310,13 +316,22 @@ function buildParamsSchema(params: EditableParam[]): Record<string, unknown> {
     if (p.description) field.description = p.description
     const defaultVal = convertParamValue(p.default_value, p.type)
     if (defaultVal !== undefined) field.default = defaultVal
-    if (p.minimum && (p.type === 'integer' || p.type === 'number')) field.minimum = Number(p.minimum)
-    if (p.maximum && (p.type === 'integer' || p.type === 'number')) field.maximum = Number(p.maximum)
+    const min = toNumber(p.minimum)
+    const max = toNumber(p.maximum)
+    if (min !== undefined && (p.type === 'integer' || p.type === 'number')) field.minimum = min
+    if (max !== undefined && (p.type === 'integer' || p.type === 'number')) field.maximum = max
     properties[p.key.trim()] = field
   }
   return Object.keys(properties).length > 0
     ? { type: 'object', properties }
     : {}
+}
+
+function validateParams(): string | null {
+  const keys = editParams.value.map((p) => p.key.trim()).filter(Boolean)
+  const dupes = keys.filter((k, i) => keys.indexOf(k) !== i)
+  if (dupes.length > 0) return `参数名重复：${[...new Set(dupes)].join('、')}`
+  return null
 }
 
 // Monaco Editor
@@ -471,7 +486,12 @@ async function saveChanges() {
     hasChanges = true
   }
 
-  // Check params_schema changes
+  // Validate and check params_schema changes
+  const paramsError = validateParams()
+  if (paramsError) {
+    toastError(paramsError)
+    return
+  }
   const newSchema = buildParamsSchema(editParams.value)
   if (JSON.stringify(newSchema) !== JSON.stringify(strategy.value.params_schema || {})) {
     updateData.params_schema = newSchema as any
