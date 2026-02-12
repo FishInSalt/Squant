@@ -8,26 +8,12 @@
           <StatusBadge :status="strategy.status === 'active' ? 'active' : 'archived'" />
           <el-tag size="small" type="info">v{{ strategy.version }}</el-tag>
         </div>
-      </div>
-      <div class="header-right">
         <template v-if="!isEditing">
           <el-button v-if="strategy.status === 'active'" @click="enterEditMode">
             <el-icon><Edit /></el-icon>
             编辑
           </el-button>
-          <el-button type="primary" @click="goToBacktest">
-            <el-icon><Histogram /></el-icon>
-            回测
-          </el-button>
-          <el-button @click="goToPaper">
-            <el-icon><Monitor /></el-icon>
-            模拟交易
-          </el-button>
-          <el-button @click="goToLive">
-            <el-icon><Connection /></el-icon>
-            实盘交易
-          </el-button>
-          <el-button type="danger" @click="handleDelete">
+          <el-button type="danger" plain @click="handleDelete">
             <el-icon><Delete /></el-icon>
             删除
           </el-button>
@@ -41,6 +27,20 @@
             取消
           </el-button>
         </template>
+      </div>
+      <div class="header-right" v-if="!isEditing">
+        <el-button type="primary" @click="goToBacktest">
+          <el-icon><Histogram /></el-icon>
+          回测
+        </el-button>
+        <el-button @click="goToPaper">
+          <el-icon><Monitor /></el-icon>
+          模拟交易
+        </el-button>
+        <el-button @click="goToLive">
+          <el-icon><Connection /></el-icon>
+          实盘交易
+        </el-button>
       </div>
     </div>
 
