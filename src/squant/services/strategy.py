@@ -220,6 +220,10 @@ class StrategyService:
         if not strategy:
             raise StrategyNotFoundError(strategy_id)
 
+        # Guard against re-archiving an already archived strategy
+        if strategy.status == StrategyStatus.ARCHIVED:
+            return
+
         # Check for running sessions (STR-024: cannot delete running strategy)
         running_stmt = (
             select(StrategyRun)
@@ -233,8 +237,11 @@ class StrategyService:
             raise StrategyInUseError(strategy_id, len(running_sessions))
 
         # Soft delete: archive and rename to free up the name for reuse.
-        # Format: "original_name_archived_<id_prefix>" to stay within 128-char limit.
-        archived_name = f"{strategy.name}_archived_{str(strategy_id)[:8]}"
+        # Suffix is "_archived_<id[:8]>" (18 chars). Truncate name to fit 128-char DB limit.
+        suffix = f"_archived_{str(strategy_id)[:8]}"
+        max_name_len = 128 - len(suffix)
+        truncated_name = strategy.name[:max_name_len]
+        archived_name = f"{truncated_name}{suffix}"
         await self.repository.update(
             strategy_id,
             name=archived_name,

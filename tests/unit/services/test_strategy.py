@@ -518,6 +518,38 @@ class TestStrategyService:
         assert result.name == sample_strategy.name
 
     @pytest.mark.asyncio
+    async def test_delete_already_archived_is_noop(self, service, mock_session, sample_strategy):
+        """Test deleting an already-archived strategy is a no-op (F2)."""
+        sample_strategy.status = StrategyStatus.ARCHIVED
+        service.repository.get = AsyncMock(return_value=sample_strategy)
+        service.repository.update = AsyncMock()
+
+        await service.delete(sample_strategy.id)
+
+        service.repository.update.assert_not_called()
+        service.session.commit.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_delete_truncates_long_name(self, service, mock_session, sample_strategy):
+        """Test archived name is truncated to fit 128-char DB limit (F1)."""
+        sample_strategy.name = "A" * 128  # Max length name
+        service.repository.get = AsyncMock(return_value=sample_strategy)
+        service.repository.update = AsyncMock(return_value=sample_strategy)
+
+        mock_scalars = MagicMock()
+        mock_scalars.all.return_value = []
+        mock_result = MagicMock()
+        mock_result.scalars.return_value = mock_scalars
+        mock_session.execute.return_value = mock_result
+
+        await service.delete(sample_strategy.id)
+
+        call_args = service.repository.update.call_args
+        archived_name = call_args[1]["name"]
+        assert len(archived_name) <= 128
+        assert "_archived_" in archived_name
+
+    @pytest.mark.asyncio
     async def test_get_success(self, service, sample_strategy):
         """Test successful strategy retrieval."""
         service.repository.get = AsyncMock(return_value=sample_strategy)
