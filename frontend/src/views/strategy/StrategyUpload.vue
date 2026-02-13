@@ -165,33 +165,30 @@ async function useTemplate(template: StrategyTemplate) {
       return
     }
 
-    // Create strategy from template, auto-suffix on name conflict
-    let name = template.name
-    let created = false
-    for (let attempt = 0; attempt < 10 && !created; attempt++) {
-      try {
-        const createResponse = await createStrategy({
-          name,
-          code: template.code,
-          description: template.description,
-          params_schema: template.params_schema,
-          default_params: template.default_params,
-        })
-        uploadProgress.value = 100
-        uploadedStrategyId.value = createResponse.data.id
-        created = true
-        toastSuccess(`策略「${template.displayName}」创建成功`)
-      } catch (error: unknown) {
-        const status = (error as { response?: { status?: number } })?.response?.status
-        if (status === 409) {
-          name = `${template.name}_${attempt + 2}`
-          continue
+    // Create strategy from template
+    try {
+      const createResponse = await createStrategy({
+        name: template.name,
+        code: template.code,
+        description: template.description,
+        params_schema: template.params_schema,
+        default_params: template.default_params,
+      })
+      uploadProgress.value = 100
+      uploadedStrategyId.value = createResponse.data.id
+      toastSuccess(`策略「${template.displayName}」创建成功`)
+    } catch (error: unknown) {
+      const status = (error as { response?: { status?: number } })?.response?.status
+      if (status === 409) {
+        validationResult.value = {
+          ...validationResult.value!,
+          valid: false,
+          errors: [`策略「${template.displayName}」已存在，请在策略库中查看`],
         }
+        toastError(`策略「${template.displayName}」已存在`)
+      } else {
         throw error
       }
-    }
-    if (!created) {
-      toastError('创建失败：名称冲突过多，请手动修改策略名称')
     }
   } catch {
     // Other errors already shown by API interceptor
@@ -258,13 +255,26 @@ async function handleUpload() {
 
     // 验证通过，创建策略
     const name = selectedFile.value.name.replace(/\.py$/, '')
-    const createResponse = await createStrategy({ name, code })
-    uploadProgress.value = 100
-    uploadedStrategyId.value = createResponse.data.id
-
-    toastSuccess('策略上传成功')
+    try {
+      const createResponse = await createStrategy({ name, code })
+      uploadProgress.value = 100
+      uploadedStrategyId.value = createResponse.data.id
+      toastSuccess('策略上传成功')
+    } catch (error: unknown) {
+      const status = (error as { response?: { status?: number } })?.response?.status
+      if (status === 409) {
+        validationResult.value = {
+          ...validationResult.value!,
+          valid: false,
+          errors: [`策略名称「${name}」已存在，请重命名文件后重新上传`],
+        }
+        toastError(`策略名称「${name}」已存在`)
+      } else {
+        throw error
+      }
+    }
   } catch {
-    // Error already shown by API interceptor
+    // Other errors already shown by API interceptor
   } finally {
     uploading.value = false
   }
