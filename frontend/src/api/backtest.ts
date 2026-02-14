@@ -37,3 +37,19 @@ export const getRunningBacktests = () =>
 // 取消回测
 export const cancelBacktest = (id: string) =>
   post<void>(`/backtest/${id}/cancel`)
+
+// 检查历史数据可用性
+export const checkDataAvailability = (data: {
+  exchange: string
+  symbol: string
+  timeframe: string
+  start_date: string
+  end_date: string
+}) =>
+  post<{
+    has_data: boolean
+    is_complete: boolean
+    total_bars: number
+    first_bar: string | null
+    last_bar: string | null
+  }>('/backtest/data/check', data)

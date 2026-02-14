@@ -238,7 +238,7 @@ import StatusBadge from '@/components/common/StatusBadge.vue'
 import { formatExchangeName, formatDateTime } from '@/utils/format'
 import { TIMEFRAME_OPTIONS } from '@/utils/constants'
 import { getSymbols } from '@/api/market'
-import { startBacktest, getBacktests } from '@/api/backtest'
+import { startBacktest, getBacktests, checkDataAvailability } from '@/api/backtest'
 import { useNotification } from '@/composables/useNotification'
 import type { BacktestRun } from '@/types'
 
@@ -352,6 +352,28 @@ async function handleSubmit() {
 
   submitting.value = true
   try {
+    // 提交前检查历史数据可用性
+    const checkResponse = await checkDataAvailability({
+      exchange: form.exchange,
+      symbol: form.symbol,
+      timeframe: form.timeframe,
+      start_date: form.dateRange[0],
+      end_date: form.dateRange[1],
+    })
+    const availability = checkResponse.data
+    if (!availability.has_data) {
+      toastError('所选时间范围内无可用历史数据，请调整时间范围或交易对')
+      return
+    }
+    if (!availability.is_complete) {
+      toastError(
+        `历史数据不完整（仅有 ${availability.total_bars} 根K线，` +
+        `覆盖 ${availability.first_bar?.slice(0, 10) || '?'} 至 ${availability.last_bar?.slice(0, 10) || '?'}），` +
+        '请调整时间范围'
+      )
+      return
+    }
+
     const config = {
       strategy_id: form.strategy_id,
       exchange: form.exchange,

@@ -27,6 +27,14 @@
         striped-flow
       />
       <p class="status-text">正在回测中...</p>
+      <el-button
+        type="danger"
+        plain
+        :loading="cancelling"
+        @click="handleCancel"
+      >
+        取消回测
+      </el-button>
     </div>
 
     <div v-if="backtest?.status === 'error'" class="error-status card">
@@ -207,7 +215,7 @@ import StatusBadge from '@/components/common/StatusBadge.vue'
 import PriceCell from '@/components/common/PriceCell.vue'
 import EquityCurve from '@/components/charts/EquityCurve.vue'
 import { formatDateTime, formatPrice, formatNumber, formatPercent } from '@/utils/format'
-import { getBacktestStatus, getBacktestResult, exportBacktestResult } from '@/api/backtest'
+import { getBacktestStatus, getBacktestResult, exportBacktestResult, cancelBacktest } from '@/api/backtest'
 import { useNotification } from '@/composables/useNotification'
 import type { BacktestRun, BacktestResult } from '@/types'
 
@@ -219,6 +227,7 @@ const router = useRouter()
 const { toastSuccess, toastError } = useNotification()
 
 const loading = ref(true)
+const cancelling = ref(false)
 const backtest = ref<BacktestRun | null>(null)
 const result = ref<BacktestResult | null>(null)
 
@@ -300,6 +309,18 @@ async function exportResult() {
   }
 }
 
+async function handleCancel() {
+  cancelling.value = true
+  try {
+    await cancelBacktest(props.id)
+    toastSuccess('已请求取消回测')
+  } catch {
+    toastError('取消回测失败')
+  } finally {
+    cancelling.value = false
+  }
+}
+
 onMounted(() => {
   loadBacktest()
 })
@@ -354,6 +375,7 @@ onUnmounted(() => {
 
     .status-text {
       margin-top: 16px;
+      margin-bottom: 16px;
       color: #909399;
     }
   }
