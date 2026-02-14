@@ -439,9 +439,7 @@ class TestListExchangeSymbols:
     async def test_success(self, client: AsyncClient) -> None:
         """Test listing symbols for a supported exchange."""
         mock_adapter = MagicMock()
-        mock_exchange = MagicMock()
-        mock_exchange.markets = {"BTC/USDT": {}, "ETH/USDT": {}, "SOL/USDT": {}}
-        mock_adapter._exchange = mock_exchange
+        mock_adapter.get_symbols.return_value = ["BTC/USDT", "ETH/USDT", "SOL/USDT"]
 
         with patch(
             "squant.api.deps._get_or_create_exchange_adapter",

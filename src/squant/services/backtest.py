@@ -8,6 +8,7 @@ Provides high-level operations for:
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -204,6 +205,10 @@ class BacktestService:
 
     # Class-level tracking of running backtests (TRD-008#3)
     _running_backtests: dict[str, BacktestRunner] = {}
+    # Background task references for async execution
+    _backtest_tasks: dict[str, asyncio.Task] = {}  # type: ignore[type-arg]
+    # Real-time progress tracking (0.0 - 100.0)
+    _backtest_progress: dict[str, float] = {}
 
     def __init__(self, session: AsyncSession):
         self.session = session
@@ -463,7 +468,18 @@ class BacktestService:
                 end=run.backtest_end,
             )
 
-            result = await runner.run(bars, total_bars=availability.total_bars)
+            # Progress callback updates class-level tracking
+            def on_progress(current: int, total: int) -> None:
+                if total > 0:
+                    BacktestService._backtest_progress[run.id] = min(
+                        99.0, (current / total) * 100
+                    )
+
+            result = await runner.run(
+                bars,
+                progress_callback=on_progress,
+                total_bars=availability.total_bars,
+            )
 
             # Save results
             await self._save_results(run.id, result)
@@ -574,6 +590,48 @@ class BacktestService:
             True if backtest is running.
         """
         return run_id in cls._running_backtests
+
+    @classmethod
+    def run_in_background(cls, run_id: str) -> None:
+        """Start a backtest execution as a background asyncio.Task.
+
+        The task creates its own DB session via get_session_context()
+        so it is independent of the HTTP request lifecycle.
+
+        Args:
+            run_id: StrategyRun ID to execute.
+        """
+        task = asyncio.create_task(cls._background_worker(run_id))
+        cls._backtest_tasks[run_id] = task
+
+    @classmethod
+    async def _background_worker(cls, run_id: str) -> None:
+        """Background worker that executes a backtest with an independent DB session."""
+        from squant.infra.database import get_session_context
+
+        try:
+            async with get_session_context() as session:
+                service = BacktestService(session)
+                await service.run(UUID(run_id))
+        except BacktestCancelledError:
+            logger.info("Background backtest %s was cancelled", run_id)
+        except Exception:
+            logger.exception("Background backtest %s failed", run_id)
+        finally:
+            cls._backtest_tasks.pop(run_id, None)
+            cls._backtest_progress.pop(run_id, None)
+
+    @classmethod
+    def get_progress(cls, run_id: str) -> float:
+        """Get real-time progress for a running backtest.
+
+        Args:
+            run_id: StrategyRun ID.
+
+        Returns:
+            Progress percentage (0.0 - 100.0), 0.0 if not tracked.
+        """
+        return cls._backtest_progress.get(run_id, 0.0)
 
     async def get(self, run_id: UUID) -> StrategyRun:
         """Get a backtest run by ID.

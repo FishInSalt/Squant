@@ -44,25 +44,25 @@ async def run_backtest(
     request: RunBacktestRequest,
     session: AsyncSession = Depends(get_session),
 ) -> ApiResponse[BacktestRunResponse]:
-    """Create and run a backtest synchronously.
+    """Create a backtest and start execution in background.
 
-    This endpoint creates a backtest run and executes it immediately,
-    returning when the backtest completes.
+    Returns immediately with a PENDING run record. The backtest executes
+    asynchronously — poll GET /backtest/{run_id} for status updates.
 
     Args:
         request: Backtest configuration.
         session: Database session.
 
     Returns:
-        Backtest run with results.
+        Created backtest run (status: pending).
 
     Raises:
-        HTTPException: 400 if insufficient data, 404 if strategy not found.
+        HTTPException: 400 if invalid config, 404 if strategy not found.
     """
     service = BacktestService(session)
 
     try:
-        run = await service.create_and_run(
+        run = await service.create(
             strategy_id=request.strategy_id,
             symbol=request.symbol,
             exchange=request.exchange,
@@ -74,15 +74,15 @@ async def run_backtest(
             slippage=request.slippage,
             params=request.params,
         )
-        return ApiResponse(data=BacktestRunResponse.model_validate(run))
     except StrategyNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except InvalidInitialCapitalError as e:
         raise HTTPException(status_code=400, detail=str(e))
-    except InsufficientDataError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    except BacktestError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+
+    # Fire-and-forget: execution happens in background with independent DB session
+    BacktestService.run_in_background(str(run.id))
+
+    return ApiResponse(data=BacktestRunResponse.model_validate(run))
 
 
 @router.post("/async", response_model=ApiResponse[BacktestRunResponse], status_code=201)
@@ -132,33 +132,34 @@ async def execute_backtest(
     run_id: UUID,
     session: AsyncSession = Depends(get_session),
 ) -> ApiResponse[BacktestRunResponse]:
-    """Execute a pending backtest.
+    """Start execution of a pending backtest in background.
+
+    Returns immediately. Poll GET /backtest/{run_id} for status updates.
 
     Args:
         run_id: Backtest run ID.
         session: Database session.
 
     Returns:
-        Updated backtest run with results.
+        Current backtest run record.
 
     Raises:
-        HTTPException: 400 if execution fails or data incomplete, 404 if not found.
+        HTTPException: 404 if not found, 400 if not in pending state.
     """
     service = BacktestService(session)
 
-    try:
-        run = await service.run(run_id)
-        return ApiResponse(data=BacktestRunResponse.model_validate(run))
-    except BacktestNotFoundError as e:
-        raise HTTPException(status_code=404, detail=str(e))
-    except StrategyNotFoundError as e:
-        raise HTTPException(status_code=404, detail=str(e))
-    except InsufficientDataError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    except IncompleteDataError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    except BacktestError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+    run = await service.get(run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail=f"Backtest run not found: {run_id}")
+    if run.status != RunStatus.PENDING:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Backtest is not pending (status: {run.status.value})",
+        )
+
+    BacktestService.run_in_background(str(run_id))
+
+    return ApiResponse(data=BacktestRunResponse.model_validate(run))
 
 
 @router.post("/{run_id}/cancel", response_model=ApiResponse[BacktestRunResponse])
@@ -319,7 +320,11 @@ async def get_backtest(
 
     try:
         run = await service.get(run_id)
-        return ApiResponse(data=BacktestRunResponse.model_validate(run))
+        response = BacktestRunResponse.model_validate(run)
+        # Inject real-time progress for running backtests
+        if run.status == RunStatus.RUNNING:
+            response.progress = BacktestService.get_progress(str(run_id))
+        return ApiResponse(data=response)
     except BacktestNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
 

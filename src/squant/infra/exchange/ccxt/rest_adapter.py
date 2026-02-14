@@ -83,6 +83,15 @@ class CCXTRestAdapter(ExchangeAdapter):
         """Whether connected to testnet/sandbox."""
         return self._credentials.sandbox if self._credentials else False
 
+    def get_symbols(self) -> list[str]:
+        """Return sorted list of available trading symbols.
+
+        Must be called after connect() / load_markets().
+        """
+        if self._exchange and self._exchange.markets:
+            return sorted(self._exchange.markets.keys())
+        return []
+
     async def connect(self) -> None:
         """Establish connection to the exchange."""
         if self._connected:

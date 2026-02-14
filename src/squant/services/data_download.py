@@ -221,7 +221,12 @@ class DataDownloadService:
                     break
 
                 # Filter candles to requested range
+                raw_count = len(candles)
                 candles = [c for c in candles if c.timestamp <= task_info.end_date]
+
+                # All returned data is beyond end_date — download complete
+                if raw_count > 0 and not candles:
+                    break
 
                 if candles:
                     async with get_session_context() as session:

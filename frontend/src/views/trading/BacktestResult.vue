@@ -19,18 +19,21 @@
       </div>
     </div>
 
-    <div v-if="backtest?.status === 'running'" class="running-status card">
+    <div v-if="backtest?.status === 'pending' || backtest?.status === 'running'" class="running-status card">
       <el-progress
-        :percentage="backtest.progress"
+        :percentage="Math.round(backtest.progress || 0)"
         :stroke-width="20"
         striped
         striped-flow
       />
-      <p class="status-text">正在回测中...</p>
+      <p class="status-text">
+        {{ backtest.status === 'pending' ? '正在准备回测...' : '正在回测中...' }}
+      </p>
       <el-button
         type="danger"
         plain
         :loading="cancelling"
+        :disabled="backtest.status === 'pending'"
         @click="handleCancel"
       >
         取消回测
@@ -241,9 +244,10 @@ async function loadBacktest() {
     if (backtest.value.status === 'completed') {
       await loadResult()
       stopPolling()
-    } else if (backtest.value.status === 'running') {
+    } else if (backtest.value.status === 'running' || backtest.value.status === 'pending') {
       startPolling()
     } else {
+      // error / cancelled
       stopPolling()
     }
   } catch (error) {

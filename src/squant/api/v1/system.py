@@ -214,10 +214,8 @@ async def list_exchange_symbols(exchange_id: str) -> ApiResponse[list[str]]:
 
     try:
         adapter = await _get_or_create_exchange_adapter(exchange_id.lower())
-        if adapter._exchange and adapter._exchange.markets:
-            symbols = sorted(adapter._exchange.markets.keys())
-            return ApiResponse(data=symbols)
-        return ApiResponse(data=[])
+        symbols = adapter.get_symbols()
+        return ApiResponse(data=symbols)
     except Exception as e:
         logger.warning("Failed to load symbols for %s: %s", exchange_id, e)
         raise HTTPException(status_code=502, detail=f"Failed to load symbols: {e}")
