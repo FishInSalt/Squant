@@ -5,7 +5,7 @@ to Bar objects for the backtest engine.
 """
 
 from collections.abc import AsyncIterator
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from sqlalchemy import and_, func, select
@@ -49,8 +49,13 @@ class DataAvailability:
         self.first_bar = first_bar
         self.last_bar = last_bar
         self.total_bars = total_bars
-        self.requested_start = requested_start
-        self.requested_end = requested_end
+        # Ensure timezone-aware (naive datetimes treated as UTC)
+        self.requested_start = (
+            requested_start.replace(tzinfo=UTC) if requested_start.tzinfo is None else requested_start
+        )
+        self.requested_end = (
+            requested_end.replace(tzinfo=UTC) if requested_end.tzinfo is None else requested_end
+        )
 
     @property
     def has_data(self) -> bool:

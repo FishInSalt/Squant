@@ -226,7 +226,7 @@ const sessions = ref<PaperSession[]>([])
 
 const form = reactive({
   strategy_id: (route.query.strategy_id as string) || '',
-  exchange: (route.query.exchange as string) || 'binance',
+  exchange: (route.query.exchange as string) || 'okx',
   symbol: (route.query.symbol as string) || '',
   timeframe: '1h',
   initial_capital: 10000,

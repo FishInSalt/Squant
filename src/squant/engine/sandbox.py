@@ -561,6 +561,31 @@ def validate_strategy_code(code: str) -> ValidationResult:
     return result
 
 
+def _strip_sandbox_imports(code: str) -> str:
+    """Remove import statements for modules already provided by sandbox globals.
+
+    Strategy code should not contain imports for Strategy, Decimal, math, etc.
+    since these are injected by the sandbox. This function strips them
+    automatically so that user-uploaded strategies work without modification.
+    """
+    sandbox_imports = {
+        "from squant.engine.backtest.strategy_base import Strategy",
+        "from squant.engine.backtest.types import Bar, OrderSide, OrderType, Position",
+        "from squant.engine.backtest.types import Bar",
+        "from squant.engine.backtest.types import OrderSide",
+        "from squant.engine.backtest.types import OrderType",
+        "from squant.engine.backtest.types import Position",
+        "from decimal import Decimal",
+        "import math",
+    }
+    lines = code.split("\n")
+    cleaned = [line for line in lines if line.strip() not in sandbox_imports]
+    # Remove leading blank lines
+    while cleaned and cleaned[0].strip() == "":
+        cleaned.pop(0)
+    return "\n".join(cleaned)
+
+
 def compile_strategy(code: str) -> CompiledStrategy:
     """Compile strategy code for execution.
 
@@ -573,6 +598,9 @@ def compile_strategy(code: str) -> CompiledStrategy:
     Raises:
         ValueError: If the code fails validation or compilation.
     """
+    # Strip imports that are already provided by sandbox globals
+    code = _strip_sandbox_imports(code)
+
     # First validate
     validation = validate_strategy_code(code)
     if not validation.valid:

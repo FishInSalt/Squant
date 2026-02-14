@@ -100,6 +100,12 @@ const routes: RouteRecordRaw[] = [
         meta: { title: '会话监控' },
         props: true,
       },
+      {
+        path: 'data',
+        name: 'DataManagement',
+        component: () => import('@/views/system/DataManagement.vue'),
+        meta: { title: '数据管理' },
+      },
     ],
   },
   // 订单中心
@@ -168,14 +174,8 @@ const routes: RouteRecordRaw[] = [
   // 系统设置
   {
     path: '/system',
-    redirect: '/system/data',
+    redirect: '/system/logs',
     children: [
-      {
-        path: 'data',
-        name: 'DataManagement',
-        component: () => import('@/views/system/DataManagement.vue'),
-        meta: { title: '数据管理' },
-      },
       {
         path: 'logs',
         name: 'SystemLogs',

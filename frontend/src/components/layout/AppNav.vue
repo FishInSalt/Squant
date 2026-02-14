@@ -39,6 +39,7 @@
         <el-menu-item index="/trading/paper">模拟交易</el-menu-item>
         <el-menu-item index="/trading/live">实盘交易</el-menu-item>
         <el-menu-item index="/trading/monitor">运行监控</el-menu-item>
+        <el-menu-item index="/trading/data">数据管理</el-menu-item>
       </el-sub-menu>
 
       <el-sub-menu index="/order">
@@ -77,12 +78,11 @@
 
       <el-sub-menu index="/system">
         <template #title>
-          <span class="nav-title" @click="navigateTo('/system/data')">
+          <span class="nav-title" @click="navigateTo('/system/logs')">
             <el-icon><Setting /></el-icon>
             <span>系统设置</span>
           </span>
         </template>
-        <el-menu-item index="/system/data">数据管理</el-menu-item>
         <el-menu-item index="/system/logs">系统日志</el-menu-item>
       </el-sub-menu>
     </el-menu>

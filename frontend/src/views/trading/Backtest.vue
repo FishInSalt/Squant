@@ -256,7 +256,7 @@ const backtestHistory = ref<BacktestRun[]>([])
 
 const form = reactive({
   strategy_id: (route.query.strategy_id as string) || '',
-  exchange: (route.query.exchange as string) || 'binance',
+  exchange: (route.query.exchange as string) || 'okx',
   symbol: (route.query.symbol as string) || '',
   timeframe: '1h',
   dateRange: [] as string[],
@@ -319,7 +319,7 @@ async function loadHistory() {
 
 function handleReset() {
   form.strategy_id = ''
-  form.exchange = 'binance'
+  form.exchange = 'okx'
   form.symbol = ''
   form.timeframe = '1h'
   form.dateRange = []

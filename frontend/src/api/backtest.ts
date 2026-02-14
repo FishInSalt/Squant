@@ -1,9 +1,9 @@
-import { get, post, del } from './index'
-import type { BacktestConfig, BacktestRun, BacktestResult, PaginatedData } from '@/types'
+import api, { get, post, del } from './index'
+import type { ApiResponse, BacktestConfig, BacktestRun, BacktestResult, PaginatedData } from '@/types'
 
-// 启动回测 (异步)
+// 启动回测 (同步创建并执行，超时 5 分钟)
 export const startBacktest = (config: BacktestConfig) =>
-  post<BacktestRun>('/backtest/async', config)
+  api.post<unknown, ApiResponse<BacktestRun>>('/backtest', config, { timeout: 300000 })
 
 // 获取回测状态
 export const getBacktestStatus = (id: string) =>
