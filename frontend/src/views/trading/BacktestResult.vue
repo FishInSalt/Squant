@@ -109,22 +109,27 @@
       <div class="trades-section card">
         <div class="card-header">
           <h3 class="card-title">交易记录</h3>
-          <span class="trade-count">共 {{ result.trades.length }} 笔</span>
+          <div class="trade-summary">
+            <el-tag type="success" size="small" effect="plain">盈利 {{ tradeStats.wins }}</el-tag>
+            <el-tag type="danger" size="small" effect="plain">亏损 {{ tradeStats.losses }}</el-tag>
+            <el-tag size="small" effect="plain">胜率 {{ formatPercent(tradeStats.winRate) }}</el-tag>
+            <span class="trade-count">共 {{ result.trades.length }} 笔</span>
+          </div>
         </div>
-        <el-table :data="result.trades" stripe max-height="400">
-          <el-table-column prop="entry_time" label="入场时间" width="180">
+        <el-table :data="paginatedTrades" stripe max-height="500" :default-sort="{ prop: 'entry_time', order: 'ascending' }">
+          <el-table-column prop="entry_time" label="入场时间" width="170" sortable :sort-method="(a: any, b: any) => new Date(a.entry_time).getTime() - new Date(b.entry_time).getTime()">
             <template #default="{ row }">
               {{ formatDateTime(row.entry_time) }}
             </template>
           </el-table-column>
-          <el-table-column prop="side" label="方向" width="80">
+          <el-table-column prop="side" label="类型" width="70">
             <template #default="{ row }">
               <el-tag :type="row.side === 'buy' ? 'success' : 'danger'" size="small">
-                {{ row.side === 'buy' ? '买入' : '卖出' }}
+                {{ row.side === 'buy' ? '做多' : '做空' }}
               </el-tag>
             </template>
           </el-table-column>
-          <el-table-column prop="entry_price" label="入场价" width="120" align="right">
+          <el-table-column prop="entry_price" label="入场价" width="120" align="right" sortable>
             <template #default="{ row }">
               {{ formatPrice(row.entry_price) }}
             </template>
@@ -134,17 +139,22 @@
               {{ row.exit_price ? formatPrice(row.exit_price) : '-' }}
             </template>
           </el-table-column>
-          <el-table-column prop="amount" label="数量" width="120" align="right">
+          <el-table-column prop="exit_time" label="出场时间" width="170" sortable :sort-method="(a: any, b: any) => new Date(a.exit_time).getTime() - new Date(b.exit_time).getTime()">
+            <template #default="{ row }">
+              {{ row.exit_time ? formatDateTime(row.exit_time) : '-' }}
+            </template>
+          </el-table-column>
+          <el-table-column prop="amount" label="数量" width="100" align="right">
             <template #default="{ row }">
               {{ formatNumber(row.amount, 4) }}
             </template>
           </el-table-column>
-          <el-table-column prop="fees" label="手续费" width="100" align="right">
+          <el-table-column prop="fees" label="手续费" width="90" align="right">
             <template #default="{ row }">
               {{ formatNumber(row.fees, 4) }}
             </template>
           </el-table-column>
-          <el-table-column prop="pnl" label="盈亏" width="120" align="right">
+          <el-table-column prop="pnl" label="盈亏" width="120" align="right" sortable>
             <template #default="{ row }">
               <PriceCell
                 v-if="row.pnl !== undefined"
@@ -155,7 +165,7 @@
               <span v-else>-</span>
             </template>
           </el-table-column>
-          <el-table-column prop="pnl_pct" label="盈亏%" width="100" align="right">
+          <el-table-column prop="pnl_pct" label="盈亏%" width="100" align="right" sortable>
             <template #default="{ row }">
               <PriceCell
                 v-if="row.pnl_pct !== undefined"
@@ -163,11 +173,22 @@
                 :change="row.pnl_pct"
                 :decimals="2"
                 show-sign
+                suffix="%"
               />
               <span v-else>-</span>
             </template>
           </el-table-column>
         </el-table>
+        <div class="trade-pagination" v-if="result.trades.length > tradesPageSize">
+          <el-pagination
+            v-model:current-page="tradesPage"
+            :page-size="tradesPageSize"
+            :page-sizes="[20, 50, 100]"
+            :total="result.trades.length"
+            layout="total, sizes, prev, pager, next"
+            @size-change="handleTradesPageSizeChange"
+          />
+        </div>
       </div>
 
       <div class="details-section card">
@@ -246,7 +267,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import StatusBadge from '@/components/common/StatusBadge.vue'
 import PriceCell from '@/components/common/PriceCell.vue'
@@ -267,6 +288,29 @@ const loading = ref(true)
 const cancelling = ref(false)
 const backtest = ref<BacktestRun | null>(null)
 const result = ref<BacktestResult | null>(null)
+
+const tradesPage = ref(1)
+const tradesPageSize = ref(20)
+
+const paginatedTrades = computed(() => {
+  if (!result.value) return []
+  const start = (tradesPage.value - 1) * tradesPageSize.value
+  return result.value.trades.slice(start, start + tradesPageSize.value)
+})
+
+const tradeStats = computed(() => {
+  if (!result.value) return { wins: 0, losses: 0, winRate: 0 }
+  const trades = result.value.trades
+  const wins = trades.filter(t => t.pnl > 0).length
+  const losses = trades.filter(t => t.pnl < 0).length
+  const winRate = trades.length > 0 ? (wins / trades.length) * 100 : 0
+  return { wins, losses, winRate }
+})
+
+function handleTradesPageSizeChange(size: number) {
+  tradesPageSize.value = size
+  tradesPage.value = 1
+}
 
 let pollingTimer: ReturnType<typeof setInterval> | null = null
 
@@ -484,9 +528,21 @@ onUnmounted(() => {
   .trades-section {
     margin-bottom: 24px;
 
+    .trade-summary {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
     .trade-count {
       font-size: 12px;
       color: #909399;
+    }
+
+    .trade-pagination {
+      display: flex;
+      justify-content: flex-end;
+      margin-top: 16px;
     }
   }
 
