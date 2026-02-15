@@ -28,7 +28,7 @@ class DualMA(Strategy):
     def on_init(self):
         self.fast_period = self.ctx.params.get("fast_period", 5)
         self.slow_period = self.ctx.params.get("slow_period", 20)
-        self.position_size = Decimal(str(self.ctx.params.get("position_size", 0.01)))
+        self.position_ratio = Decimal(str(self.ctx.params.get("position_ratio", 0.9)))
 
     def on_bar(self, bar):
         closes = self.ctx.get_closes(self.slow_period)
@@ -40,7 +40,9 @@ class DualMA(Strategy):
         pos = self.ctx.get_position(bar.symbol)
 
         if fast_ma > slow_ma and not pos:
-            self.ctx.buy(bar.symbol, self.position_size)
+            amount = self.ctx.cash * self.position_ratio / bar.close
+            if amount > 0:
+                self.ctx.buy(bar.symbol, amount)
         elif fast_ma < slow_ma and pos:
             self.ctx.sell(bar.symbol, pos.amount)
 `,
@@ -63,19 +65,20 @@ class DualMA(Strategy):
           minimum: 5,
           maximum: 200,
         },
-        position_size: {
+        position_ratio: {
           type: 'number',
-          title: '下单数量',
-          description: '每次买入的数量',
-          default: 0.01,
-          minimum: 0.001,
+          title: '仓位比例',
+          description: '每次买入使用的资金比例（0.1 = 10%）',
+          default: 0.9,
+          minimum: 0.01,
+          maximum: 1.0,
         },
       },
     },
     default_params: {
       fast_period: 5,
       slow_period: 20,
-      position_size: 0.01,
+      position_ratio: 0.9,
     },
   },
   {
@@ -98,7 +101,7 @@ class RSIReversal(Strategy):
         self.period = self.ctx.params.get("period", 14)
         self.oversold = self.ctx.params.get("oversold", 30)
         self.overbought = self.ctx.params.get("overbought", 70)
-        self.position_size = Decimal(str(self.ctx.params.get("position_size", 0.01)))
+        self.position_ratio = Decimal(str(self.ctx.params.get("position_ratio", 0.9)))
 
     def on_bar(self, bar):
         closes = self.ctx.get_closes(self.period + 1)
@@ -129,7 +132,9 @@ class RSIReversal(Strategy):
         pos = self.ctx.get_position(bar.symbol)
 
         if rsi < self.oversold and not pos:
-            self.ctx.buy(bar.symbol, self.position_size)
+            amount = self.ctx.cash * self.position_ratio / bar.close
+            if amount > 0:
+                self.ctx.buy(bar.symbol, amount)
         elif rsi > self.overbought and pos:
             self.ctx.sell(bar.symbol, pos.amount)
 `,
@@ -160,12 +165,13 @@ class RSIReversal(Strategy):
           minimum: 50,
           maximum: 95,
         },
-        position_size: {
+        position_ratio: {
           type: 'number',
-          title: '下单数量',
-          description: '每次买入的数量',
-          default: 0.01,
-          minimum: 0.001,
+          title: '仓位比例',
+          description: '每次买入使用的资金比例（0.1 = 10%）',
+          default: 0.9,
+          minimum: 0.01,
+          maximum: 1.0,
         },
       },
     },
@@ -173,7 +179,7 @@ class RSIReversal(Strategy):
       period: 14,
       oversold: 30,
       overbought: 70,
-      position_size: 0.01,
+      position_ratio: 0.9,
     },
   },
   {
@@ -188,33 +194,36 @@ from decimal import Decimal
 class BuyAndHold(Strategy):
     """买入持有策略
 
-    在第一根K线买入指定数量后一直持有，
+    在第一根K线买入后一直持有，
     不做任何卖出操作。常用作策略回测的基准。
     """
 
     def on_init(self):
         self.bought = False
-        self.position_size = Decimal(str(self.ctx.params.get("position_size", 0.01)))
+        self.position_ratio = Decimal(str(self.ctx.params.get("position_ratio", 0.95)))
 
     def on_bar(self, bar):
         if not self.bought:
-            self.ctx.buy(bar.symbol, self.position_size)
-            self.bought = True
+            amount = self.ctx.cash * self.position_ratio / bar.close
+            if amount > 0:
+                self.ctx.buy(bar.symbol, amount)
+                self.bought = True
 `,
     params_schema: {
       type: 'object',
       properties: {
-        position_size: {
+        position_ratio: {
           type: 'number',
-          title: '买入数量',
-          description: '一次性买入的数量',
-          default: 0.01,
-          minimum: 0.001,
+          title: '仓位比例',
+          description: '买入使用的资金比例（0.1 = 10%）',
+          default: 0.95,
+          minimum: 0.01,
+          maximum: 1.0,
         },
       },
     },
     default_params: {
-      position_size: 0.01,
+      position_ratio: 0.95,
     },
   },
   {
@@ -237,7 +246,7 @@ class BollingerBands(Strategy):
     def on_init(self):
         self.period = self.ctx.params.get("period", 20)
         self.num_std = self.ctx.params.get("num_std", 2.0)
-        self.position_size = Decimal(str(self.ctx.params.get("position_size", 0.01)))
+        self.position_ratio = Decimal(str(self.ctx.params.get("position_ratio", 0.9)))
 
     def on_bar(self, bar):
         closes = self.ctx.get_closes(self.period)
@@ -257,7 +266,9 @@ class BollingerBands(Strategy):
         pos = self.ctx.get_position(bar.symbol)
 
         if price <= lower_band and not pos:
-            self.ctx.buy(bar.symbol, self.position_size)
+            amount = self.ctx.cash * self.position_ratio / bar.close
+            if amount > 0:
+                self.ctx.buy(bar.symbol, amount)
         elif price >= upper_band and pos:
             self.ctx.sell(bar.symbol, pos.amount)
 `,
@@ -280,19 +291,20 @@ class BollingerBands(Strategy):
           minimum: 0.5,
           maximum: 4.0,
         },
-        position_size: {
+        position_ratio: {
           type: 'number',
-          title: '下单数量',
-          description: '每次买入的数量',
-          default: 0.01,
-          minimum: 0.001,
+          title: '仓位比例',
+          description: '每次买入使用的资金比例（0.1 = 10%）',
+          default: 0.9,
+          minimum: 0.01,
+          maximum: 1.0,
         },
       },
     },
     default_params: {
       period: 20,
       num_std: 2.0,
-      position_size: 0.01,
+      position_ratio: 0.9,
     },
   },
 ]
