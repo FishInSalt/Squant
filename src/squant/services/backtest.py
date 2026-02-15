@@ -484,11 +484,28 @@ class BacktestService:
             # Save results
             await self._save_results(run.id, result)
 
-            # Update run status
+            # Update run status with metrics + trades
+            result_data = dict(result.metrics)
+            result_data["trades"] = [
+                {
+                    "symbol": t.symbol,
+                    "side": t.side.value,
+                    "entry_time": t.entry_time.isoformat(),
+                    "entry_price": str(t.entry_price),
+                    "exit_time": t.exit_time.isoformat() if t.exit_time else None,
+                    "exit_price": str(t.exit_price) if t.exit_price else None,
+                    "amount": str(t.amount),
+                    "pnl": str(t.pnl),
+                    "pnl_pct": str(t.pnl_pct),
+                    "fees": str(t.fees),
+                }
+                for t in result.trades
+                if t.is_closed
+            ]
             run = await self.run_repo.update(
                 run.id,
                 status=RunStatus.COMPLETED,
-                result=result.metrics,
+                result=result_data,
                 stopped_at=datetime.now(UTC),
             )
             await self.session.commit()

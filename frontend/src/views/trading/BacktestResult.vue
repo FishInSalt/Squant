@@ -49,12 +49,13 @@
     <div v-if="backtest?.status === 'completed' && result && result.metrics" class="result-content">
       <div class="metrics-grid">
         <div class="metric-card card">
-          <span class="label">总收益</span>
+          <span class="label">总收益率</span>
           <PriceCell
-            :value="result.metrics.total_return"
-            :change="result.metrics.total_return"
+            :value="result.metrics.total_return_pct"
+            :change="result.metrics.total_return_pct"
             :decimals="2"
             show-sign
+            suffix="%"
             class="value"
           />
         </div>
@@ -65,12 +66,13 @@
             :change="result.metrics.annualized_return"
             :decimals="2"
             show-sign
+            suffix="%"
             class="value"
           />
         </div>
         <div class="metric-card card">
           <span class="label">最大回撤</span>
-          <span class="value danger">{{ formatPercent(result.metrics.max_drawdown) }}</span>
+          <span class="value danger">{{ formatPercent(-result.metrics.max_drawdown_pct) }}</span>
         </div>
         <div class="metric-card card">
           <span class="label">夏普比率</span>
@@ -174,8 +176,28 @@
         </div>
         <div class="details-grid">
           <div class="detail-item">
+            <span class="label">总收益</span>
+            <span class="value">{{ formatNumber(result.metrics.total_return, 2) }} USDT</span>
+          </div>
+          <div class="detail-item">
+            <span class="label">年化波动率</span>
+            <span class="value">{{ formatPercent(result.metrics.volatility) }}</span>
+          </div>
+          <div class="detail-item">
             <span class="label">索提诺比率</span>
             <span class="value">{{ formatNumber(result.metrics.sortino_ratio, 2) }}</span>
+          </div>
+          <div class="detail-item">
+            <span class="label">卡尔玛比率</span>
+            <span class="value">{{ formatNumber(result.metrics.calmar_ratio, 2) }}</span>
+          </div>
+          <div class="detail-item">
+            <span class="label">回撤持续时间</span>
+            <span class="value">{{ formatHours(result.metrics.max_drawdown_duration_hours) }}</span>
+          </div>
+          <div class="detail-item">
+            <span class="label">回测天数</span>
+            <span class="value">{{ result.metrics.total_duration_days }}天</span>
           </div>
           <div class="detail-item">
             <span class="label">盈利交易数</span>
@@ -187,23 +209,35 @@
           </div>
           <div class="detail-item">
             <span class="label">平均收益</span>
-            <span class="value">{{ formatPercent(result.metrics.avg_trade_return) }}</span>
+            <span class="value">{{ formatNumber(result.metrics.avg_trade_return, 2) }} USDT</span>
           </div>
           <div class="detail-item">
             <span class="label">平均盈利</span>
-            <span class="value success">{{ formatPercent(result.metrics.avg_win) }}</span>
+            <span class="value success">{{ formatNumber(result.metrics.avg_win, 2) }} USDT</span>
           </div>
           <div class="detail-item">
             <span class="label">平均亏损</span>
-            <span class="value danger">{{ formatPercent(result.metrics.avg_loss) }}</span>
+            <span class="value danger">{{ formatNumber(result.metrics.avg_loss, 2) }} USDT</span>
           </div>
           <div class="detail-item">
             <span class="label">最大连亏</span>
             <span class="value">{{ result.metrics.max_consecutive_losses }}</span>
           </div>
           <div class="detail-item">
-            <span class="label">卡尔玛比率</span>
-            <span class="value">{{ formatNumber(result.metrics.calmar_ratio, 2) }}</span>
+            <span class="label">最大单笔盈利</span>
+            <span class="value success">{{ formatNumber(result.metrics.largest_win, 2) }} USDT</span>
+          </div>
+          <div class="detail-item">
+            <span class="label">最大单笔亏损</span>
+            <span class="value danger">{{ formatNumber(result.metrics.largest_loss, 2) }} USDT</span>
+          </div>
+          <div class="detail-item">
+            <span class="label">平均持仓时间</span>
+            <span class="value">{{ formatHours(result.metrics.avg_trade_duration_hours) }}</span>
+          </div>
+          <div class="detail-item">
+            <span class="label">总手续费</span>
+            <span class="value">{{ formatNumber(result.metrics.total_fees, 2) }} USDT</span>
           </div>
         </div>
       </div>
@@ -295,6 +329,15 @@ function runAgain() {
       },
     })
   }
+}
+
+function formatHours(hours: number): string {
+  if (hours === null || hours === undefined || isNaN(hours)) return '-'
+  if (hours >= 24) {
+    const days = hours / 24
+    return `${formatNumber(days, 1)}天`
+  }
+  return `${formatNumber(hours, 1)}小时`
 }
 
 async function exportResult() {
