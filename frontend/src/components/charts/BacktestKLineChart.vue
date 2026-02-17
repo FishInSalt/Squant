@@ -75,7 +75,7 @@
         加载中...
       </span>
     </div>
-    <div ref="chartContainer" class="kline-container" :style="{ height }"></div>
+    <div ref="chartContainer" class="kline-container" :style="{ height: computedHeight }"></div>
     <div class="navigation-bar" v-if="allCandles.length > 0">
       <span class="nav-label">{{ navDateLabel }}</span>
       <el-slider
@@ -101,6 +101,7 @@ import { INDICATOR_DEFS, getDefaultParams, getIndicatorDef, getDynamicParamLabel
 // --- Constants ---
 const LOAD_TRIGGER = 50     // Distance from edge (in bars) to trigger loading
 const MAX_LOADED = 5000     // Max candles kept in memory
+const SUB_PANE_HEIGHT = 120 // Fixed height for sub-pane indicators (px)
 
 interface Props {
   candles: Candle[]           // Initial data from parent
@@ -123,6 +124,15 @@ const navPosition = ref(0)
 // Indicators
 const activeIndicators = ref<string[]>(['MA', 'VOL'])
 const indicatorParams = ref<IndicatorParams>(getDefaultParams())
+
+const subPaneCount = computed(() =>
+  activeIndicators.value.filter((name) => getIndicatorDef(name)?.paneId != null).length
+)
+
+const computedHeight = computed(() => {
+  const base = parseInt(props.height) || 500
+  return `${base + subPaneCount.value * SUB_PANE_HEIGHT}px`
+})
 
 // --- Sliding window state ---
 const allCandles = ref<Candle[]>([])
@@ -458,7 +468,11 @@ function addIndicator(name: string) {
   const paneId = def.paneId ?? 'candle_pane'
   const isStack = !def.paneId
   const params = indicatorParams.value[name]
-  chart.createIndicator({ name: def.key, calcParams: params } as any, isStack, { id: paneId })
+  chart.createIndicator(
+    { name: def.key, calcParams: params } as any,
+    isStack,
+    { id: paneId, ...(def.paneId ? { height: SUB_PANE_HEIGHT } : {}) },
+  )
   if (def.colors) {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     chart.overrideIndicator({
@@ -626,6 +640,11 @@ function rebuildTradeMarkers() {
     chart.createOverlay(overlays)
   }
 }
+
+// Resize chart when sub-pane count changes container height
+watch(computedHeight, () => {
+  nextTick(() => chart?.resize())
+})
 
 // Watch for initial data from parent (reference change only, not deep)
 watch(() => props.candles, (newCandles) => {

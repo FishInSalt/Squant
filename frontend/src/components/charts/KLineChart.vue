@@ -1,9 +1,9 @@
 <template>
-  <div ref="chartContainer" class="kline-chart" :style="{ height: height }"></div>
+  <div ref="chartContainer" class="kline-chart" :style="{ height: computedHeight }"></div>
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, watch } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { init, dispose, type Chart } from 'klinecharts'
 import type { Candle } from '@/types'
 import { getIndicatorDef, type IndicatorParams } from './indicatorConfig'
@@ -24,9 +24,20 @@ const emit = defineEmits<{
   (e: 'crosshair', data: { timestamp: number; price: number } | null): void
 }>()
 
+const SUB_PANE_HEIGHT = 120
+
 const chartContainer = ref<HTMLDivElement | null>(null)
 let chart: Chart | null = null
 let indicatorsCreated = false
+
+const subPaneCount = computed(() =>
+  props.indicators.filter((name) => getIndicatorDef(name)?.paneId != null).length
+)
+
+const computedHeight = computed(() => {
+  const base = parseInt(props.height) || 500
+  return `${base + subPaneCount.value * SUB_PANE_HEIGHT}px`
+})
 
 function calculatePricePrecision(price: number): number {
   if (price >= 10000) return 2
@@ -145,7 +156,7 @@ function addIndicator(name: string) {
   chart.createIndicator(
     { name: def.key, ...(params ? { calcParams: params } : {}) } as any,
     isStack,
-    { id: paneId },
+    { id: paneId, ...(def.paneId ? { height: SUB_PANE_HEIGHT } : {}) },
   )
   if (def.colors) {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -221,6 +232,10 @@ watch(() => props.indicators, (newIndicators, oldIndicators) => {
     }
   })
 }, { deep: true })
+
+watch(computedHeight, () => {
+  nextTick(() => chart?.resize())
+})
 
 watch(() => props.indicatorParams, () => {
   if (!chart) return
