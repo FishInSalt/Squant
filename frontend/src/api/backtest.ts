@@ -30,11 +30,16 @@ export const deleteBacktest = (id: string) =>
 export const exportBacktestResult = (id: string, format: 'csv' | 'json' = 'csv') =>
   get<{ content: string; filename: string; content_type: string }>(`/backtest/${id}/export`, { format })
 
-// 获取回测K线数据（历史蜡烛图，大数据量需要更长超时）
-export const getBacktestCandles = (id: string) =>
-  get<{ timestamp: string; open: number; high: number; low: number; close: number; volume: number }[]>(
-    `/backtest/${id}/candles`, undefined, { timeout: 120000 },
-  )
+// 获取回测K线数据（分页加载，支持游标翻页）
+export const getBacktestCandles = (id: string, params?: {
+  before?: string   // ISO datetime — 获取此时间之前的数据
+  after?: string    // ISO datetime — 获取此时间之后的数据
+  limit?: number    // 最大返回条数 (1-2000, 默认 1000)
+}) =>
+  get<{
+    candles: { timestamp: string; open: number; high: number; low: number; close: number; volume: number }[]
+    total_count: number
+  }>(`/backtest/${id}/candles`, params as Record<string, unknown>)
 
 // 获取正在运行的回测
 export const getRunningBacktests = () =>

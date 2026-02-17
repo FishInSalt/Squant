@@ -580,19 +580,20 @@ class TestGetBacktestCandles:
 
     @pytest.mark.asyncio
     async def test_get_candles_success(self, client: AsyncClient, mock_backtest_run) -> None:
-        """Test getting candle data within limit (no downsampling)."""
+        """Test getting candle data (default: last N candles)."""
         from decimal import Decimal
 
+        # Default query uses ORDER BY time DESC → reversed, so mock returns DESC order
         mock_rows = [
-            (
-                datetime(2024, 1, 1, tzinfo=UTC),
-                Decimal("42000.0"), Decimal("42500.0"),
-                Decimal("41800.0"), Decimal("42300.0"), Decimal("100.5"),
-            ),
             (
                 datetime(2024, 1, 1, 1, tzinfo=UTC),
                 Decimal("42300.0"), Decimal("42800.0"),
                 Decimal("42100.0"), Decimal("42600.0"), Decimal("150.2"),
+            ),
+            (
+                datetime(2024, 1, 1, tzinfo=UTC),
+                Decimal("42000.0"), Decimal("42500.0"),
+                Decimal("41800.0"), Decimal("42300.0"), Decimal("100.5"),
             ),
         ]
 
@@ -622,34 +623,34 @@ class TestGetBacktestCandles:
                 assert response.status_code == 200
                 data = response.json()
                 assert data["code"] == 0
-                assert len(data["data"]) == 2
-                assert data["data"][0]["open"] == 42000.0
-                assert data["data"][1]["close"] == 42600.0
+                assert data["data"]["total_count"] == 2
+                assert len(data["data"]["candles"]) == 2
+                assert data["data"]["candles"][0]["open"] == 42000.0
+                assert data["data"]["candles"][1]["close"] == 42600.0
         finally:
             app.dependency_overrides.pop(get_session, None)
 
     @pytest.mark.asyncio
-    async def test_get_candles_downsampled(self, client: AsyncClient, mock_backtest_run) -> None:
-        """Test that large datasets are downsampled via OHLCV aggregation."""
+    async def test_get_candles_with_before(self, client: AsyncClient, mock_backtest_run) -> None:
+        """Test fetching candles before a given timestamp (scroll left)."""
         from decimal import Decimal
 
-        # Aggregated rows returned by the downsampling SQL
-        aggregated_rows = [
+        mock_rows = [
             (
                 datetime(2024, 1, 1, tzinfo=UTC),
-                Decimal("42000.0"), Decimal("43000.0"),
-                Decimal("41000.0"), Decimal("42500.0"), Decimal("5000.0"),
+                Decimal("42000.0"), Decimal("42500.0"),
+                Decimal("41800.0"), Decimal("42300.0"), Decimal("100.5"),
             ),
         ]
 
         count_result = MagicMock()
-        count_result.scalar.return_value = 100000  # exceeds 50000 limit
+        count_result.scalar.return_value = 5000
 
-        agg_result = MagicMock()
-        agg_result.all.return_value = aggregated_rows
+        data_result = MagicMock()
+        data_result.all.return_value = mock_rows
 
         mock_session = AsyncMock()
-        mock_session.execute = AsyncMock(side_effect=[count_result, agg_result])
+        mock_session.execute = AsyncMock(side_effect=[count_result, data_result])
 
         async def override_session():
             yield mock_session
@@ -662,15 +663,63 @@ class TestGetBacktestCandles:
                 mock_service.get = AsyncMock(return_value=mock_backtest_run)
                 mock_service_class.return_value = mock_service
 
-                response = await client.get(f"/api/v1/backtest/{mock_backtest_run.id}/candles")
+                response = await client.get(
+                    f"/api/v1/backtest/{mock_backtest_run.id}/candles",
+                    params={"before": "2024-06-01T00:00:00Z", "limit": 500},
+                )
 
                 assert response.status_code == 200
                 data = response.json()
                 assert data["code"] == 0
-                assert len(data["data"]) == 1
-                # Aggregated: max high, min low
-                assert data["data"][0]["high"] == 43000.0
-                assert data["data"][0]["low"] == 41000.0
+                assert data["data"]["total_count"] == 5000
+                assert len(data["data"]["candles"]) == 1
+        finally:
+            app.dependency_overrides.pop(get_session, None)
+
+    @pytest.mark.asyncio
+    async def test_get_candles_with_after(self, client: AsyncClient, mock_backtest_run) -> None:
+        """Test fetching candles after a given timestamp (scroll right)."""
+        from decimal import Decimal
+
+        mock_rows = [
+            (
+                datetime(2024, 1, 1, 2, tzinfo=UTC),
+                Decimal("42500.0"), Decimal("43000.0"),
+                Decimal("42200.0"), Decimal("42800.0"), Decimal("200.0"),
+            ),
+        ]
+
+        count_result = MagicMock()
+        count_result.scalar.return_value = 5000
+
+        data_result = MagicMock()
+        data_result.all.return_value = mock_rows
+
+        mock_session = AsyncMock()
+        mock_session.execute = AsyncMock(side_effect=[count_result, data_result])
+
+        async def override_session():
+            yield mock_session
+
+        app.dependency_overrides[get_session] = override_session
+
+        try:
+            with patch("squant.api.v1.backtest.BacktestService") as mock_service_class:
+                mock_service = MagicMock()
+                mock_service.get = AsyncMock(return_value=mock_backtest_run)
+                mock_service_class.return_value = mock_service
+
+                response = await client.get(
+                    f"/api/v1/backtest/{mock_backtest_run.id}/candles",
+                    params={"after": "2024-01-01T01:00:00Z", "limit": 500},
+                )
+
+                assert response.status_code == 200
+                data = response.json()
+                assert data["code"] == 0
+                assert data["data"]["total_count"] == 5000
+                assert len(data["data"]["candles"]) == 1
+                assert data["data"]["candles"][0]["open"] == 42500.0
         finally:
             app.dependency_overrides.pop(get_session, None)
 
@@ -733,6 +782,7 @@ class TestGetBacktestCandles:
                 assert response.status_code == 200
                 data = response.json()
                 assert data["code"] == 0
-                assert data["data"] == []
+                assert data["data"]["total_count"] == 0
+                assert data["data"]["candles"] == []
         finally:
             app.dependency_overrides.pop(get_session, None)

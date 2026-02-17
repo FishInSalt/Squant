@@ -1,11 +1,11 @@
 """Backtest API endpoints."""
 
 import logging
-import math
+from datetime import datetime
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import and_, func, select, text
+from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from squant.api.utils import ApiResponse, PaginatedData
@@ -19,6 +19,7 @@ from squant.schemas.backtest import (
     BacktestListItem,
     BacktestMetrics,
     BacktestRunResponse,
+    CandlesPageResponse,
     CandlestickPoint,
     CheckDataRequest,
     CreateBacktestRequest,
@@ -433,22 +434,28 @@ async def delete_backtest(
         raise HTTPException(status_code=404, detail=str(e))
 
 
-@router.get("/{run_id}/candles", response_model=ApiResponse[list[CandlestickPoint]])
+@router.get("/{run_id}/candles", response_model=ApiResponse[CandlesPageResponse])
 async def get_backtest_candles(
     run_id: UUID,
+    before: datetime | None = Query(None, description="Fetch candles before this time"),
+    after: datetime | None = Query(None, description="Fetch candles after this time"),
+    limit: int = Query(1000, ge=1, le=2000, description="Max candles to return"),
     session: AsyncSession = Depends(get_session),
-) -> ApiResponse[list[CandlestickPoint]]:
-    """Get historical candlestick data for a backtest run's period.
+) -> ApiResponse[CandlesPageResponse]:
+    """Get paginated candlestick data for a backtest run's period.
 
-    Returns the OHLCV data from the klines table for the backtest's
-    exchange, symbol, timeframe, and date range.
+    Supports cursor-based pagination via `before` / `after` timestamps.
+    Default (no cursor): returns the last `limit` candles of the backtest period.
 
     Args:
         run_id: Backtest run ID.
+        before: Return candles with time < before (scroll left / older data).
+        after: Return candles with time > after (scroll right / newer data).
+        limit: Max number of candles to return (1-2000, default 1000).
         session: Database session.
 
     Returns:
-        List of candlestick data points.
+        Paginated candles with total_count metadata.
 
     Raises:
         HTTPException: 404 if backtest not found, 400 if no data available.
@@ -463,65 +470,63 @@ async def get_backtest_candles(
     if not run.backtest_start or not run.backtest_end:
         raise HTTPException(status_code=400, detail="Backtest date range not set")
 
-    max_candles = 50000
-    where_clause = and_(
+    # Base filter: always within backtest date range
+    base_filters = [
         Kline.exchange == run.exchange,
         Kline.symbol == run.symbol,
         Kline.timeframe == run.timeframe,
         Kline.time >= run.backtest_start,
         Kline.time <= run.backtest_end,
+    ]
+
+    # Total count (full backtest range, no cursor filter)
+    count_result = await session.execute(
+        select(func.count()).select_from(Kline).where(and_(*base_filters))
     )
+    total_count = count_result.scalar() or 0
 
-    # Count total rows to decide whether to downsample
-    count_result = await session.execute(select(func.count()).select_from(Kline).where(where_clause))
-    total = count_result.scalar() or 0
+    # Build paginated query with cursor
+    filters = list(base_filters)
+    if before:
+        filters.append(Kline.time < before)
+    if after:
+        filters.append(Kline.time > after)
 
-    if total <= max_candles:
-        # Direct query — all rows fit within limit
+    if before:
+        # Fetch N newest candles before cursor → reverse to chronological order
         stmt = (
             select(Kline.time, Kline.open, Kline.high, Kline.low, Kline.close, Kline.volume)
-            .where(where_clause)
-            .order_by(Kline.time.asc())
+            .where(and_(*filters))
+            .order_by(Kline.time.desc())
+            .limit(limit)
         )
         result = await session.execute(stmt)
-        rows = result.all()
+        rows = list(reversed(result.all()))
     else:
-        # Downsample with proper OHLCV aggregation:
-        # first open, max high, min low, last close, sum volume
-        step = math.ceil(total / max_candles)
-        logger.info(
-            "Downsampling candles for %s: %d rows → ~%d (step=%d)",
-            run_id, total, total // step, step,
-        )
-        raw_sql = text("""
-            WITH numbered AS (
-                SELECT time, open, high, low, close, volume,
-                       (ROW_NUMBER() OVER (ORDER BY time) - 1) / :step AS grp
-                FROM klines
-                WHERE exchange = :exchange AND symbol = :symbol
-                      AND timeframe = :timeframe
-                      AND time >= :start_time AND time <= :end_time
+        if after:
+            # Fetch N oldest candles after cursor
+            stmt = (
+                select(
+                    Kline.time, Kline.open, Kline.high, Kline.low, Kline.close, Kline.volume,
+                )
+                .where(and_(*filters))
+                .order_by(Kline.time.asc())
+                .limit(limit)
             )
-            SELECT
-                MIN(time) AS time,
-                (ARRAY_AGG(open ORDER BY time))[1] AS open,
-                MAX(high) AS high,
-                MIN(low) AS low,
-                (ARRAY_AGG(close ORDER BY time DESC))[1] AS close,
-                SUM(volume) AS volume
-            FROM numbered
-            GROUP BY grp
-            ORDER BY MIN(time)
-        """)
-        result = await session.execute(raw_sql, {
-            "step": step,
-            "exchange": run.exchange,
-            "symbol": run.symbol,
-            "timeframe": run.timeframe,
-            "start_time": run.backtest_start,
-            "end_time": run.backtest_end,
-        })
+        else:
+            # Default: last N candles of the backtest period
+            stmt = (
+                select(
+                    Kline.time, Kline.open, Kline.high, Kline.low, Kline.close, Kline.volume,
+                )
+                .where(and_(*filters))
+                .order_by(Kline.time.desc())
+                .limit(limit)
+            )
+        result = await session.execute(stmt)
         rows = result.all()
+        if not after:
+            rows = list(reversed(rows))
 
     candles = [
         CandlestickPoint(
@@ -531,7 +536,7 @@ async def get_backtest_candles(
         for row in rows
     ]
 
-    return ApiResponse(data=candles)
+    return ApiResponse(data=CandlesPageResponse(candles=candles, total_count=total_count))
 
 
 @router.get("/{run_id}/export", response_model=ApiResponse[dict])

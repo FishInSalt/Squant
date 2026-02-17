@@ -118,6 +118,8 @@
           v-else
           :candles="candles"
           :trades="result.trades"
+          :total-count="totalCandleCount"
+          :on-load-more="loadMoreCandles"
           height="500px"
         />
       </div>
@@ -309,6 +311,7 @@ const result = ref<BacktestResult | null>(null)
 
 const candles = ref<Candle[]>([])
 const candlesLoading = ref(false)
+const totalCandleCount = ref(0)
 
 const tradesPage = ref(1)
 const tradesPageSize = ref(20)
@@ -398,23 +401,36 @@ async function loadResult() {
   }
 }
 
+function transformCandle(c: any): Candle {
+  return {
+    timestamp: new Date(c.timestamp).getTime(),
+    open: c.open,
+    high: c.high,
+    low: c.low,
+    close: c.close,
+    volume: c.volume,
+  }
+}
+
 async function loadCandles() {
   candlesLoading.value = true
   try {
-    const response = await getBacktestCandles(props.id)
-    candles.value = response.data.map((c: any) => ({
-      timestamp: new Date(c.timestamp).getTime(),
-      open: c.open,
-      high: c.high,
-      low: c.low,
-      close: c.close,
-      volume: c.volume,
-    }))
+    const response = await getBacktestCandles(props.id, { limit: 1000 })
+    totalCandleCount.value = response.data.total_count
+    candles.value = response.data.candles.map(transformCandle)
   } catch (error) {
     console.error('Failed to load candles:', error)
   } finally {
     candlesLoading.value = false
   }
+}
+
+async function loadMoreCandles(params: { before?: number; after?: number }): Promise<Candle[]> {
+  const apiParams: Record<string, unknown> = { limit: 500 }
+  if (params.before) apiParams.before = new Date(params.before).toISOString()
+  if (params.after) apiParams.after = new Date(params.after).toISOString()
+  const response = await getBacktestCandles(props.id, apiParams as any)
+  return response.data.candles.map(transformCandle)
 }
 
 function startPolling() {

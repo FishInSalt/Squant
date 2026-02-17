@@ -38,34 +38,45 @@
           </div>
         </el-popover>
       </div>
+      <span class="toolbar-spacer"></span>
+      <span v-if="isLoadingMore" class="loading-hint">
+        <el-icon class="is-loading"><Loading /></el-icon>
+        加载中...
+      </span>
     </div>
     <div ref="chartContainer" class="kline-container" :style="{ height }"></div>
-    <div class="navigation-bar" v-if="candles.length > 0">
+    <div class="navigation-bar" v-if="allCandles.length > 0">
       <span class="nav-label">{{ navDateLabel }}</span>
       <el-slider
         v-model="navPosition"
         :min="0"
-        :max="candles.length - 1"
+        :max="allCandles.length - 1"
         :step="1"
         :show-tooltip="false"
         @input="onNavInput"
       />
-      <span class="nav-tip">拖动滑块定位 · 滚轮缩放</span>
+      <span class="nav-tip">拖动滑块定位 · 滚轮缩放 · 滑动加载</span>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
+import { ref, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { init, dispose, registerOverlay, type Chart } from 'klinecharts'
-import { Setting } from '@element-plus/icons-vue'
+import { Setting, Loading } from '@element-plus/icons-vue'
 import type { Candle, Trade } from '@/types'
 import { INDICATOR_DEFS, getDefaultParams, getIndicatorDef, type IndicatorParams } from './indicatorConfig'
 
+// --- Constants ---
+const LOAD_TRIGGER = 50     // Distance from edge (in bars) to trigger loading
+const MAX_LOADED = 5000     // Max candles kept in memory
+
 interface Props {
-  candles: Candle[]
+  candles: Candle[]           // Initial data from parent
   trades?: Trade[]
   height?: string
+  totalCount?: number         // Total candles in backtest (for knowing if more exists)
+  onLoadMore?: (params: { before?: number; after?: number }) => Promise<Candle[]>
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -75,11 +86,18 @@ const props = withDefaults(defineProps<Props>(), {
 const chartContainer = ref<HTMLDivElement | null>(null)
 let chart: Chart | null = null
 
-// Navigation slider: single position index
+// Navigation slider
 const navPosition = ref(0)
 
+// Indicators
 const activeIndicators = ref<string[]>(['MA', 'VOL'])
 const indicatorParams = ref<IndicatorParams>(getDefaultParams())
+
+// --- Sliding window state ---
+const allCandles = ref<Candle[]>([])
+const isLoadingMore = ref(false)
+let hasMoreBefore = true
+let hasMoreAfter = false  // Initial load gets the tail, so no more after
 
 function formatNavDate(ts: number): string {
   const d = new Date(ts)
@@ -90,9 +108,9 @@ function formatNavDate(ts: number): string {
 }
 
 const navDateLabel = computed(() => {
-  if (props.candles.length === 0) return ''
-  const idx = Math.min(navPosition.value, props.candles.length - 1)
-  return formatNavDate(props.candles[idx]?.timestamp ?? 0)
+  if (allCandles.value.length === 0) return ''
+  const idx = Math.min(navPosition.value, allCandles.value.length - 1)
+  return formatNavDate(allCandles.value[idx]?.timestamp ?? 0)
 })
 
 let overlaysRegistered = false
@@ -113,7 +131,7 @@ function registerTradeOverlays() {
       if (!coordinates[0]) return []
       const { x, y } = coordinates[0]
       const s = 4
-      const gap = 6  // below the low price anchor
+      const gap = 6
       return [
         {
           type: 'polygon',
@@ -147,7 +165,7 @@ function registerTradeOverlays() {
       if (!coordinates[0]) return []
       const { x, y } = coordinates[0]
       const s = 4
-      const gap = 6  // above the high price anchor
+      const gap = 6
       return [
         {
           type: 'text',
@@ -188,7 +206,7 @@ function syncNavFromChart() {
   if (!chart || suppressSync) return
   const range = chart.getVisibleRange()
   const mid = Math.round((range.from + range.to) / 2)
-  const maxIdx = props.candles.length - 1
+  const maxIdx = allCandles.value.length - 1
   navPosition.value = Math.max(0, Math.min(mid, maxIdx))
 }
 
@@ -200,8 +218,108 @@ function onNavInput(val: number | number[]) {
   setTimeout(() => { suppressSync = false }, 60)
 }
 
+// --- Scroll-based lazy loading ---
+async function checkAndLoadMore() {
+  if (!chart || isLoadingMore.value || !props.onLoadMore) return
+
+  const dataLen = allCandles.value.length
+  if (dataLen === 0) return
+
+  const range = chart.getVisibleRange()
+
+  // Scroll left — load older data
+  if (range.from <= LOAD_TRIGGER && hasMoreBefore) {
+    await loadMoreData('before')
+  }
+  // Scroll right — load newer data
+  else if (range.to >= dataLen - LOAD_TRIGGER && hasMoreAfter) {
+    await loadMoreData('after')
+  }
+}
+
+async function loadMoreData(direction: 'before' | 'after') {
+  if (!chart || !props.onLoadMore || isLoadingMore.value) return
+
+  isLoadingMore.value = true
+
+  // Save current viewport anchor timestamp
+  const range = chart.getVisibleRange()
+  const anchorIdx = Math.max(0, range.from)
+  const anchorTs = allCandles.value[anchorIdx]?.timestamp
+
+  try {
+    let newCandles: Candle[]
+    if (direction === 'before') {
+      const oldestTs = allCandles.value[0].timestamp
+      newCandles = await props.onLoadMore({ before: oldestTs })
+    } else {
+      const newestTs = allCandles.value[allCandles.value.length - 1].timestamp
+      newCandles = await props.onLoadMore({ after: newestTs })
+    }
+
+    if (newCandles.length === 0) {
+      if (direction === 'before') hasMoreBefore = false
+      else hasMoreAfter = false
+      return
+    }
+
+    // Merge data
+    if (direction === 'before') {
+      allCandles.value = [...newCandles, ...allCandles.value]
+      // Trim from tail if too large
+      if (allCandles.value.length > MAX_LOADED) {
+        allCandles.value = allCandles.value.slice(0, MAX_LOADED)
+        hasMoreAfter = true
+      }
+    } else {
+      allCandles.value = [...allCandles.value, ...newCandles]
+      // Trim from head if too large
+      if (allCandles.value.length > MAX_LOADED) {
+        allCandles.value = allCandles.value.slice(allCandles.value.length - MAX_LOADED)
+        hasMoreBefore = true
+      }
+    }
+
+    // Check if we've reached the boundary
+    if (newCandles.length < 500) {
+      if (direction === 'before') hasMoreBefore = false
+      else hasMoreAfter = false
+    }
+
+    // Refresh chart
+    refreshChartData()
+
+    // Restore viewport position
+    if (anchorTs) {
+      chart!.scrollToTimestamp(anchorTs)
+    }
+  } catch (error) {
+    console.error('Failed to load more candles:', error)
+  } finally {
+    isLoadingMore.value = false
+  }
+}
+
+/** Re-apply data and overlays to chart without disposing */
+function refreshChartData() {
+  if (!chart) return
+
+  const klineData = allCandles.value.map((c) => ({
+    timestamp: c.timestamp,
+    open: c.open,
+    high: c.high,
+    low: c.low,
+    close: c.close,
+    volume: c.volume,
+  }))
+  chart.applyNewData(klineData)
+
+  // Rebuild trade markers with updated data
+  rebuildTradeMarkers()
+}
+
 function initChart() {
-  if (!chartContainer.value || props.candles.length === 0) return
+  if (!chartContainer.value || allCandles.value.length === 0) return
 
   registerTradeOverlays()
 
@@ -264,14 +382,14 @@ function initChart() {
   chart!.setRightMinVisibleBarCount(1)
 
   // Set precision
-  const latestPrice = props.candles[props.candles.length - 1].close
+  const latestPrice = allCandles.value[allCandles.value.length - 1].close
   const pricePrecision = calculatePricePrecision(latestPrice)
-  const latestVolume = props.candles[props.candles.length - 1].volume
+  const latestVolume = allCandles.value[allCandles.value.length - 1].volume
   const volumePrecision = latestVolume >= 1 ? 2 : 6
   chart!.setPriceVolumePrecision(pricePrecision, volumePrecision)
 
   // Load data
-  const klineData = props.candles.map((c) => ({
+  const klineData = allCandles.value.map((c) => ({
     timestamp: c.timestamp,
     open: c.open,
     high: c.high,
@@ -285,16 +403,22 @@ function initChart() {
   activeIndicators.value.forEach((ind) => addIndicator(ind))
 
   // Add trade markers
-  addTradeMarkers()
+  rebuildTradeMarkers()
 
   // Initialize slider to the end of data (chart default view)
-  navPosition.value = props.candles.length - 1
+  navPosition.value = allCandles.value.length - 1
 
-  // Keep slider in sync when user zooms/scrolls directly on chart
+  // Keep slider in sync + detect scroll for lazy loading
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  chart!.subscribeAction('onZoom' as any, () => syncNavFromChart())
+  chart!.subscribeAction('onZoom' as any, () => {
+    syncNavFromChart()
+    checkAndLoadMore()
+  })
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  chart!.subscribeAction('onScroll' as any, () => syncNavFromChart())
+  chart!.subscribeAction('onScroll' as any, () => {
+    syncNavFromChart()
+    checkAndLoadMore()
+  })
 }
 
 function addIndicator(name: string) {
@@ -356,19 +480,31 @@ function resetParams(name: string) {
   onParamChange(name)
 }
 
-function addTradeMarkers() {
+/** Rebuild trade markers based on current allCandles data */
+function rebuildTradeMarkers() {
   if (!chart || !props.trades || props.trades.length === 0) return
 
-  // Build timestamp → low/high price maps from candle data
+  // Remove existing trade overlays
+  chart.removeOverlay({ name: 'buyMarker' })
+  chart.removeOverlay({ name: 'sellMarker' })
+
+  const data = allCandles.value
+  if (data.length === 0) return
+
+  // Build timestamp → low/high price maps from current data
   const lowMap = new Map<number, number>()
   const highMap = new Map<number, number>()
-  for (const c of props.candles) {
+  for (const c of data) {
     lowMap.set(c.timestamp, c.low)
     highMap.set(c.timestamp, c.high)
   }
 
+  // Time range of loaded data
+  const minTs = data[0].timestamp
+  const maxTs = data[data.length - 1].timestamp
+
   // Find closest candle timestamp via binary search
-  const sortedTs = props.candles.map(c => c.timestamp).sort((a, b) => a - b)
+  const sortedTs = data.map(c => c.timestamp)
   function findClosestTs(ts: number): number {
     let lo = 0, hi = sortedTs.length - 1
     while (lo < hi) {
@@ -398,34 +534,63 @@ function addTradeMarkers() {
 
   for (const trade of props.trades) {
     const entryTs = new Date(trade.entry_time).getTime()
-    overlays.push({
-      name: 'buyMarker',
-      lock: true,
-      points: [{ timestamp: entryTs, value: findLow(entryTs) }],
-    })
+
+    // Only add markers within loaded data range
+    if (entryTs >= minTs && entryTs <= maxTs) {
+      overlays.push({
+        name: 'buyMarker',
+        lock: true,
+        points: [{ timestamp: entryTs, value: findLow(entryTs) }],
+      })
+    }
 
     if (trade.exit_time && trade.exit_price) {
       const exitTs = new Date(trade.exit_time).getTime()
-      overlays.push({
-        name: 'sellMarker',
-        lock: true,
-        points: [{ timestamp: exitTs, value: findHigh(exitTs) }],
-      })
+      if (exitTs >= minTs && exitTs <= maxTs) {
+        overlays.push({
+          name: 'sellMarker',
+          lock: true,
+          points: [{ timestamp: exitTs, value: findHigh(exitTs) }],
+        })
+      }
     }
   }
 
-  chart.createOverlay(overlays)
+  if (overlays.length > 0) {
+    chart.createOverlay(overlays)
+  }
 }
 
-watch(() => [props.candles, props.trades], () => {
+// Watch for initial data from parent (reference change only, not deep)
+watch(() => props.candles, (newCandles) => {
+  if (newCandles.length === 0) return
+
+  // Reset window state
+  allCandles.value = [...newCandles]
+  hasMoreBefore = (props.totalCount ?? newCandles.length) > newCandles.length
+  hasMoreAfter = false
+
+  // Dispose and recreate chart
   if (chart && chartContainer.value) {
     dispose(chartContainer.value)
     chart = null
   }
   nextTick(() => initChart())
+})
+
+// Watch for trades change (rebuild markers)
+watch(() => props.trades, () => {
+  if (chart) {
+    rebuildTradeMarkers()
+  }
 }, { deep: true })
 
 onMounted(() => {
+  if (props.candles.length > 0) {
+    allCandles.value = [...props.candles]
+    hasMoreBefore = (props.totalCount ?? props.candles.length) > props.candles.length
+    hasMoreAfter = false
+  }
   initChart()
 })
 
@@ -465,6 +630,18 @@ onUnmounted(() => {
           color: #409EFF;
         }
       }
+    }
+
+    .toolbar-spacer {
+      flex: 1;
+    }
+
+    .loading-hint {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      font-size: 12px;
+      color: #909399;
     }
   }
 

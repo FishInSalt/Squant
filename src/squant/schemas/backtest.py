@@ -259,6 +259,13 @@ class CandlestickPoint(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class CandlesPageResponse(BaseModel):
+    """Paginated candles response with metadata."""
+
+    candles: list[CandlestickPoint]
+    total_count: int
+
+
 class BacktestReportExport(BaseModel):
     """Backtest report export data (TRD-009#4)."""
 
