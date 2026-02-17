@@ -100,7 +100,7 @@
         <div class="card-header">
           <h3 class="card-title">收益曲线</h3>
         </div>
-        <EquityCurve :data="result.equity_curve" height="400px" show-benchmark />
+        <EquityCurve :data="result.equity_curve" :trades="result.trades" height="400px" show-benchmark />
       </div>
 
       <div class="trades-section card">
