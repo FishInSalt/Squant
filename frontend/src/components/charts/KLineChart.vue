@@ -107,7 +107,7 @@ function initChart() {
   chart = init(chartContainer.value, { styles })
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  chart?.subscribeAction('crosshair' as any, (data: any) => {
+  chart?.subscribeAction('onCrosshairChange' as any, (data: any) => {
     if (data?.kLineData) {
       emit('crosshair', { timestamp: data.kLineData.timestamp, price: data.kLineData.close })
     } else {

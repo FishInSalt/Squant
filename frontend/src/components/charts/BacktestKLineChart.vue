@@ -70,6 +70,21 @@
         </el-popover>
       </div>
       <span class="toolbar-spacer"></span>
+      <div v-if="hoveredTrades.length > 0" class="trade-info">
+        <div v-for="(t, i) in hoveredTrades" :key="i" class="trade-item">
+          <span class="trade-tag" :class="t.type">{{ t.type === 'buy' ? '买入' : '卖出' }}</span>
+          <span class="trade-field">{{ t.price }}</span>
+          <span class="trade-sep">&times;</span>
+          <span class="trade-field">{{ t.amount }}</span>
+          <span class="trade-time">{{ formatTradeTime(t.time) }}</span>
+          <template v-if="t.pnl != null">
+            <span class="trade-pnl" :class="t.pnl >= 0 ? 'profit' : 'loss'">
+              {{ t.pnl >= 0 ? '+' : '' }}{{ t.pnl.toFixed(2) }}
+              ({{ t.pnlPct != null ? (t.pnlPct >= 0 ? '+' : '') + t.pnlPct.toFixed(2) + '%' : '' }})
+            </span>
+          </template>
+        </div>
+      </div>
       <span v-if="isLoadingMore" class="loading-hint">
         <el-icon class="is-loading"><Loading /></el-icon>
         加载中...
@@ -134,6 +149,18 @@ const computedHeight = computed(() => {
   return `${base + subPaneCount.value * SUB_PANE_HEIGHT}px`
 })
 
+// --- Trade tooltip state ---
+interface TradeTooltip {
+  type: 'buy' | 'sell'
+  price: number
+  amount: number
+  time: string
+  pnl?: number
+  pnlPct?: number
+}
+const tradeInfoMap = ref<Map<number, TradeTooltip[]>>(new Map())
+const hoveredTrades = ref<TradeTooltip[]>([])
+
 // --- Sliding window state ---
 const allCandles = ref<Candle[]>([])
 const isLoadingMore = ref(false)
@@ -146,6 +173,15 @@ function formatNavDate(ts: number): string {
   const m = String(d.getMonth() + 1).padStart(2, '0')
   const day = String(d.getDate()).padStart(2, '0')
   return `${y}-${m}-${day}`
+}
+
+function formatTradeTime(iso: string): string {
+  const d = new Date(iso)
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  const h = String(d.getHours()).padStart(2, '0')
+  const min = String(d.getMinutes()).padStart(2, '0')
+  return `${m}-${day} ${h}:${min}`
 }
 
 const navDateLabel = computed(() => {
@@ -449,6 +485,16 @@ function initChart() {
   // Initialize slider to the end of data (chart default view)
   navPosition.value = allCandles.value.length - 1
 
+  // Show trade info on crosshair hover
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  chart!.subscribeAction('onCrosshairChange' as any, (data: any) => {
+    if (data?.kLineData) {
+      hoveredTrades.value = tradeInfoMap.value.get(data.kLineData.timestamp) ?? []
+    } else {
+      hoveredTrades.value = []
+    }
+  })
+
   // Keep slider in sync + detect scroll for lazy loading
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   chart!.subscribeAction('onZoom' as any, () => {
@@ -560,16 +606,23 @@ function onDynamicParamChange(name: string) {
   addIndicator(name)
 }
 
-/** Rebuild trade markers based on current allCandles data */
+/** Rebuild trade markers and tooltip map based on current allCandles data */
 function rebuildTradeMarkers() {
-  if (!chart || !props.trades || props.trades.length === 0) return
+  if (!chart || !props.trades || props.trades.length === 0) {
+    tradeInfoMap.value = new Map()
+    hoveredTrades.value = []
+    return
+  }
 
   // Remove existing trade overlays
   chart.removeOverlay({ name: 'buyMarker' })
   chart.removeOverlay({ name: 'sellMarker' })
 
   const data = allCandles.value
-  if (data.length === 0) return
+  if (data.length === 0) {
+    tradeInfoMap.value = new Map()
+    return
+  }
 
   // Build timestamp → low/high price maps from current data
   const lowMap = new Map<number, number>()
@@ -600,41 +653,67 @@ function rebuildTradeMarkers() {
     return best
   }
 
+  function snapTs(ts: number): number {
+    return lowMap.has(ts) ? ts : findClosestTs(ts)
+  }
+
   function findLow(ts: number): number {
-    const closest = lowMap.has(ts) ? ts : findClosestTs(ts)
-    return lowMap.get(closest) ?? 0
+    return lowMap.get(snapTs(ts)) ?? 0
   }
 
   function findHigh(ts: number): number {
-    const closest = highMap.has(ts) ? ts : findClosestTs(ts)
-    return highMap.get(closest) ?? 0
+    return highMap.get(snapTs(ts)) ?? 0
   }
 
   const overlays: any[] = []
+  const newTradeMap = new Map<number, TradeTooltip[]>()
+
+  function addToMap(candleTs: number, info: TradeTooltip) {
+    if (!newTradeMap.has(candleTs)) newTradeMap.set(candleTs, [])
+    newTradeMap.get(candleTs)!.push(info)
+  }
 
   for (const trade of props.trades) {
     const entryTs = new Date(trade.entry_time).getTime()
 
     // Only add markers within loaded data range
     if (entryTs >= minTs && entryTs <= maxTs) {
+      const snapped = snapTs(entryTs)
       overlays.push({
         name: 'buyMarker',
         lock: true,
         points: [{ timestamp: entryTs, value: findLow(entryTs) }],
+      })
+      addToMap(snapped, {
+        type: 'buy',
+        price: trade.entry_price,
+        amount: trade.amount,
+        time: trade.entry_time,
       })
     }
 
     if (trade.exit_time && trade.exit_price) {
       const exitTs = new Date(trade.exit_time).getTime()
       if (exitTs >= minTs && exitTs <= maxTs) {
+        const snapped = snapTs(exitTs)
         overlays.push({
           name: 'sellMarker',
           lock: true,
           points: [{ timestamp: exitTs, value: findHigh(exitTs) }],
         })
+        addToMap(snapped, {
+          type: 'sell',
+          price: trade.exit_price!,
+          amount: trade.amount,
+          time: trade.exit_time,
+          pnl: trade.pnl,
+          pnlPct: trade.pnl_pct,
+        })
       }
     }
   }
+
+  tradeInfoMap.value = newTradeMap
 
   if (overlays.length > 0) {
     chart.createOverlay(overlays)
@@ -719,6 +798,66 @@ onUnmounted(() => {
 
     .toolbar-spacer {
       flex: 1;
+    }
+
+    .trade-info {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+
+      .trade-item {
+        display: flex;
+        align-items: center;
+        gap: 5px;
+        font-size: 12px;
+        color: #606266;
+        white-space: nowrap;
+      }
+
+      .trade-tag {
+        display: inline-block;
+        padding: 0 5px;
+        border-radius: 2px;
+        font-size: 11px;
+        font-weight: 600;
+        line-height: 18px;
+
+        &.buy {
+          color: #fff;
+          background: #00C853;
+        }
+
+        &.sell {
+          color: #fff;
+          background: #FF1744;
+        }
+      }
+
+      .trade-field {
+        font-weight: 500;
+        font-variant-numeric: tabular-nums;
+      }
+
+      .trade-sep {
+        color: #C0C4CC;
+      }
+
+      .trade-time {
+        color: #909399;
+      }
+
+      .trade-pnl {
+        font-weight: 500;
+        font-variant-numeric: tabular-nums;
+
+        &.profit {
+          color: #00C853;
+        }
+
+        &.loss {
+          color: #FF1744;
+        }
+      }
     }
 
     .loading-hint {
