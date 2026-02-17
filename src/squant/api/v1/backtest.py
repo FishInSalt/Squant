@@ -1,15 +1,18 @@
 """Backtest API endpoints."""
 
 import logging
+import math
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy import and_, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from squant.api.utils import ApiResponse, PaginatedData
 from squant.engine.backtest.runner import BacktestError
 from squant.infra.database import get_session
 from squant.models.enums import RunStatus
+from squant.models.market import Kline
 from squant.schemas.backtest import (
     AvailableSymbolResponse,
     BacktestDetailResponse,
@@ -28,8 +31,6 @@ from squant.schemas.backtest import (
 from squant.services.backtest import (
     BacktestNotFoundError,
     BacktestService,
-    IncompleteDataError,
-    InsufficientDataError,
     InvalidInitialCapitalError,
 )
 from squant.services.data_loader import DataLoader
@@ -462,23 +463,73 @@ async def get_backtest_candles(
     if not run.backtest_start or not run.backtest_end:
         raise HTTPException(status_code=400, detail="Backtest date range not set")
 
-    loader = DataLoader(session)
-    candles: list[CandlestickPoint] = []
-    async for bar in loader.load_bars(
-        exchange=run.exchange,
-        symbol=run.symbol,
-        timeframe=run.timeframe,
-        start=run.backtest_start,
-        end=run.backtest_end,
-    ):
-        candles.append(CandlestickPoint(
-            timestamp=bar.time,
-            open=bar.open,
-            high=bar.high,
-            low=bar.low,
-            close=bar.close,
-            volume=bar.volume,
-        ))
+    max_candles = 50000
+    where_clause = and_(
+        Kline.exchange == run.exchange,
+        Kline.symbol == run.symbol,
+        Kline.timeframe == run.timeframe,
+        Kline.time >= run.backtest_start,
+        Kline.time <= run.backtest_end,
+    )
+
+    # Count total rows to decide whether to downsample
+    count_result = await session.execute(select(func.count()).select_from(Kline).where(where_clause))
+    total = count_result.scalar() or 0
+
+    if total <= max_candles:
+        # Direct query — all rows fit within limit
+        stmt = (
+            select(Kline.time, Kline.open, Kline.high, Kline.low, Kline.close, Kline.volume)
+            .where(where_clause)
+            .order_by(Kline.time.asc())
+        )
+        result = await session.execute(stmt)
+        rows = result.all()
+    else:
+        # Downsample with proper OHLCV aggregation:
+        # first open, max high, min low, last close, sum volume
+        step = math.ceil(total / max_candles)
+        logger.info(
+            "Downsampling candles for %s: %d rows → ~%d (step=%d)",
+            run_id, total, total // step, step,
+        )
+        raw_sql = text("""
+            WITH numbered AS (
+                SELECT time, open, high, low, close, volume,
+                       (ROW_NUMBER() OVER (ORDER BY time) - 1) / :step AS grp
+                FROM klines
+                WHERE exchange = :exchange AND symbol = :symbol
+                      AND timeframe = :timeframe
+                      AND time >= :start_time AND time <= :end_time
+            )
+            SELECT
+                MIN(time) AS time,
+                (ARRAY_AGG(open ORDER BY time))[1] AS open,
+                MAX(high) AS high,
+                MIN(low) AS low,
+                (ARRAY_AGG(close ORDER BY time DESC))[1] AS close,
+                SUM(volume) AS volume
+            FROM numbered
+            GROUP BY grp
+            ORDER BY MIN(time)
+        """)
+        result = await session.execute(raw_sql, {
+            "step": step,
+            "exchange": run.exchange,
+            "symbol": run.symbol,
+            "timeframe": run.timeframe,
+            "start_time": run.backtest_start,
+            "end_time": run.backtest_end,
+        })
+        rows = result.all()
+
+    candles = [
+        CandlestickPoint(
+            timestamp=row[0], open=row[1], high=row[2],
+            low=row[3], close=row[4], volume=row[5],
+        )
+        for row in rows
+    ]
 
     return ApiResponse(data=candles)
 

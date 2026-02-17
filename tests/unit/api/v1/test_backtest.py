@@ -11,6 +11,7 @@ import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 
+from squant.infra.database import get_session
 from squant.main import app
 from squant.models.enums import RunStatus
 from squant.services.backtest import (
@@ -579,55 +580,99 @@ class TestGetBacktestCandles:
 
     @pytest.mark.asyncio
     async def test_get_candles_success(self, client: AsyncClient, mock_backtest_run) -> None:
-        """Test getting candle data for a completed backtest."""
-        from squant.engine.backtest.types import Bar
+        """Test getting candle data within limit (no downsampling)."""
         from decimal import Decimal
 
-        mock_bars = [
-            Bar(
-                time=datetime(2024, 1, 1, tzinfo=UTC),
-                symbol="BTC/USDT",
-                open=Decimal("42000.0"),
-                high=Decimal("42500.0"),
-                low=Decimal("41800.0"),
-                close=Decimal("42300.0"),
-                volume=Decimal("100.5"),
+        mock_rows = [
+            (
+                datetime(2024, 1, 1, tzinfo=UTC),
+                Decimal("42000.0"), Decimal("42500.0"),
+                Decimal("41800.0"), Decimal("42300.0"), Decimal("100.5"),
             ),
-            Bar(
-                time=datetime(2024, 1, 1, 1, tzinfo=UTC),
-                symbol="BTC/USDT",
-                open=Decimal("42300.0"),
-                high=Decimal("42800.0"),
-                low=Decimal("42100.0"),
-                close=Decimal("42600.0"),
-                volume=Decimal("150.2"),
+            (
+                datetime(2024, 1, 1, 1, tzinfo=UTC),
+                Decimal("42300.0"), Decimal("42800.0"),
+                Decimal("42100.0"), Decimal("42600.0"), Decimal("150.2"),
             ),
         ]
 
-        async def mock_load_bars(**kwargs):
-            for bar in mock_bars:
-                yield bar
+        # First call: COUNT query; second call: SELECT query
+        count_result = MagicMock()
+        count_result.scalar.return_value = 2
 
-        with (
-            patch("squant.api.v1.backtest.BacktestService") as mock_service_class,
-            patch("squant.api.v1.backtest.DataLoader") as mock_loader_class,
-        ):
-            mock_service = MagicMock()
-            mock_service.get = AsyncMock(return_value=mock_backtest_run)
-            mock_service_class.return_value = mock_service
+        data_result = MagicMock()
+        data_result.all.return_value = mock_rows
 
-            mock_loader = MagicMock()
-            mock_loader.load_bars = MagicMock(return_value=mock_load_bars())
-            mock_loader_class.return_value = mock_loader
+        mock_session = AsyncMock()
+        mock_session.execute = AsyncMock(side_effect=[count_result, data_result])
 
-            response = await client.get(f"/api/v1/backtest/{mock_backtest_run.id}/candles")
+        async def override_session():
+            yield mock_session
 
-            assert response.status_code == 200
-            data = response.json()
-            assert data["code"] == 0
-            assert len(data["data"]) == 2
-            assert data["data"][0]["open"] == 42000.0
-            assert data["data"][1]["close"] == 42600.0
+        app.dependency_overrides[get_session] = override_session
+
+        try:
+            with patch("squant.api.v1.backtest.BacktestService") as mock_service_class:
+                mock_service = MagicMock()
+                mock_service.get = AsyncMock(return_value=mock_backtest_run)
+                mock_service_class.return_value = mock_service
+
+                response = await client.get(f"/api/v1/backtest/{mock_backtest_run.id}/candles")
+
+                assert response.status_code == 200
+                data = response.json()
+                assert data["code"] == 0
+                assert len(data["data"]) == 2
+                assert data["data"][0]["open"] == 42000.0
+                assert data["data"][1]["close"] == 42600.0
+        finally:
+            app.dependency_overrides.pop(get_session, None)
+
+    @pytest.mark.asyncio
+    async def test_get_candles_downsampled(self, client: AsyncClient, mock_backtest_run) -> None:
+        """Test that large datasets are downsampled via OHLCV aggregation."""
+        from decimal import Decimal
+
+        # Aggregated rows returned by the downsampling SQL
+        aggregated_rows = [
+            (
+                datetime(2024, 1, 1, tzinfo=UTC),
+                Decimal("42000.0"), Decimal("43000.0"),
+                Decimal("41000.0"), Decimal("42500.0"), Decimal("5000.0"),
+            ),
+        ]
+
+        count_result = MagicMock()
+        count_result.scalar.return_value = 100000  # exceeds 50000 limit
+
+        agg_result = MagicMock()
+        agg_result.all.return_value = aggregated_rows
+
+        mock_session = AsyncMock()
+        mock_session.execute = AsyncMock(side_effect=[count_result, agg_result])
+
+        async def override_session():
+            yield mock_session
+
+        app.dependency_overrides[get_session] = override_session
+
+        try:
+            with patch("squant.api.v1.backtest.BacktestService") as mock_service_class:
+                mock_service = MagicMock()
+                mock_service.get = AsyncMock(return_value=mock_backtest_run)
+                mock_service_class.return_value = mock_service
+
+                response = await client.get(f"/api/v1/backtest/{mock_backtest_run.id}/candles")
+
+                assert response.status_code == 200
+                data = response.json()
+                assert data["code"] == 0
+                assert len(data["data"]) == 1
+                # Aggregated: max high, min low
+                assert data["data"][0]["high"] == 43000.0
+                assert data["data"][0]["low"] == 41000.0
+        finally:
+            app.dependency_overrides.pop(get_session, None)
 
     @pytest.mark.asyncio
     async def test_get_candles_not_found(self, client: AsyncClient) -> None:
@@ -661,26 +706,33 @@ class TestGetBacktestCandles:
     @pytest.mark.asyncio
     async def test_get_candles_empty_data(self, client: AsyncClient, mock_backtest_run) -> None:
         """Test getting candles when no historical data available."""
+        # COUNT query returns 0
+        count_result = MagicMock()
+        count_result.scalar.return_value = 0
 
-        async def mock_load_bars(**kwargs):
-            return
-            yield  # make it an async generator
+        # Data query returns empty
+        data_result = MagicMock()
+        data_result.all.return_value = []
 
-        with (
-            patch("squant.api.v1.backtest.BacktestService") as mock_service_class,
-            patch("squant.api.v1.backtest.DataLoader") as mock_loader_class,
-        ):
-            mock_service = MagicMock()
-            mock_service.get = AsyncMock(return_value=mock_backtest_run)
-            mock_service_class.return_value = mock_service
+        mock_session = AsyncMock()
+        mock_session.execute = AsyncMock(side_effect=[count_result, data_result])
 
-            mock_loader = MagicMock()
-            mock_loader.load_bars = MagicMock(return_value=mock_load_bars())
-            mock_loader_class.return_value = mock_loader
+        async def override_session():
+            yield mock_session
 
-            response = await client.get(f"/api/v1/backtest/{mock_backtest_run.id}/candles")
+        app.dependency_overrides[get_session] = override_session
 
-            assert response.status_code == 200
-            data = response.json()
-            assert data["code"] == 0
-            assert data["data"] == []
+        try:
+            with patch("squant.api.v1.backtest.BacktestService") as mock_service_class:
+                mock_service = MagicMock()
+                mock_service.get = AsyncMock(return_value=mock_backtest_run)
+                mock_service_class.return_value = mock_service
+
+                response = await client.get(f"/api/v1/backtest/{mock_backtest_run.id}/candles")
+
+                assert response.status_code == 200
+                data = response.json()
+                assert data["code"] == 0
+                assert data["data"] == []
+        finally:
+            app.dependency_overrides.pop(get_session, None)

@@ -82,8 +82,12 @@ api.interceptors.response.use(
 export default api
 
 // 导出便捷方法
-export const get = <T>(url: string, params?: Record<string, unknown>) =>
-  api.get<unknown, ApiResponse<T>>(url, { params })
+export const get = <T>(
+  url: string,
+  params?: Record<string, unknown>,
+  config?: { timeout?: number },
+) =>
+  api.get<unknown, ApiResponse<T>>(url, { params, ...config })
 
 export const post = <T>(url: string, data?: unknown) =>
   api.post<unknown, ApiResponse<T>>(url, data)
