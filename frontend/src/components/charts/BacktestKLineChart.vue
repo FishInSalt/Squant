@@ -136,23 +136,23 @@ function registerTradeOverlays() {
       if (!coordinates[0]) return []
       const { x, y } = coordinates[0]
       const s = 4
-      const gap = 6
+      const gap = 6  // above the high price anchor
       return [
+        {
+          type: 'text',
+          attrs: { x, y: y - gap - s * 2 - 10, text: 'S', align: 'center', baseline: 'middle' },
+          styles: { color: '#FF1744', size: 9, family: 'Arial', backgroundColor: 'transparent' },
+        },
         {
           type: 'polygon',
           attrs: {
             coordinates: [
-              { x: x - s, y: y + gap },
-              { x: x + s, y: y + gap },
-              { x, y: y + gap + s * 2 },
+              { x: x - s, y: y - gap - s * 2 },
+              { x: x + s, y: y - gap - s * 2 },
+              { x, y: y - gap },
             ],
           },
           styles: { style: 'fill', color: '#FF1744', borderColor: '#FF1744', borderSize: 1 },
-        },
-        {
-          type: 'text',
-          attrs: { x, y: y + gap + s * 2 + 10, text: 'S', align: 'center', baseline: 'middle' },
-          styles: { color: '#FF1744', size: 9, family: 'Arial', backgroundColor: 'transparent' },
         },
       ]
     },
@@ -332,17 +332,17 @@ function toggleIndicator(name: string) {
 function addTradeMarkers() {
   if (!chart || !props.trades || props.trades.length === 0) return
 
-  // Build timestamp → low price map from candle data
+  // Build timestamp → low/high price maps from candle data
   const lowMap = new Map<number, number>()
+  const highMap = new Map<number, number>()
   for (const c of props.candles) {
     lowMap.set(c.timestamp, c.low)
+    highMap.set(c.timestamp, c.high)
   }
 
-  // Find closest candle low for a given timestamp
+  // Find closest candle timestamp via binary search
   const sortedTs = props.candles.map(c => c.timestamp).sort((a, b) => a - b)
-  function findLow(ts: number): number {
-    if (lowMap.has(ts)) return lowMap.get(ts)!
-    // Binary search for closest
+  function findClosestTs(ts: number): number {
     let lo = 0, hi = sortedTs.length - 1
     while (lo < hi) {
       const mid = (lo + hi) >> 1
@@ -354,7 +354,17 @@ function addTradeMarkers() {
     for (const c of candidates) {
       if (Math.abs(c - ts) < Math.abs(best - ts)) best = c
     }
-    return lowMap.get(best) ?? 0
+    return best
+  }
+
+  function findLow(ts: number): number {
+    const closest = lowMap.has(ts) ? ts : findClosestTs(ts)
+    return lowMap.get(closest) ?? 0
+  }
+
+  function findHigh(ts: number): number {
+    const closest = highMap.has(ts) ? ts : findClosestTs(ts)
+    return highMap.get(closest) ?? 0
   }
 
   const overlays: any[] = []
@@ -372,7 +382,7 @@ function addTradeMarkers() {
       overlays.push({
         name: 'sellMarker',
         lock: true,
-        points: [{ timestamp: exitTs, value: findLow(exitTs) }],
+        points: [{ timestamp: exitTs, value: findHigh(exitTs) }],
       })
     }
   }
