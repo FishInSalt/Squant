@@ -141,6 +141,7 @@ class EquityCurvePoint(BaseModel):
     cash: NumberDecimal
     position_value: NumberDecimal
     unrealized_pnl: NumberDecimal
+    benchmark_equity: NumberDecimal | None = None
 
     model_config = {"from_attributes": True}
 

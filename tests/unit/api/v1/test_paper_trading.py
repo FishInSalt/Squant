@@ -395,6 +395,7 @@ class TestGetEquityCurve:
         mock_point.cash = Decimal("9000")
         mock_point.position_value = Decimal("1500")
         mock_point.unrealized_pnl = Decimal("500")
+        mock_point.benchmark_equity = None
         mock_curve = [mock_point]
 
         with patch("squant.api.v1.paper_trading.PaperTradingService") as mock_service_class:

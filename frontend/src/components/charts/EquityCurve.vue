@@ -22,10 +22,23 @@ const props = withDefaults(defineProps<Props>(), {
 const chartRef = ref<HTMLDivElement | null>(null)
 let chart: echarts.ECharts | null = null
 
+function getTimeFormat(data: EquityPoint[]): string {
+  if (data.length < 2) return 'YYYY-MM-DD'
+  const first = new Date(data[0].time).getTime()
+  const last = new Date(data[data.length - 1].time).getTime()
+  const spanDays = (last - first) / (1000 * 60 * 60 * 24)
+  if (spanDays > 365) return 'YYYY-MM'
+  if (spanDays > 30) return 'MM-DD'
+  return 'MM-DD HH:mm'
+}
+
 function initChart() {
   if (!chartRef.value) return
 
   chart = echarts.init(chartRef.value)
+
+  const hasBenchmark = props.showBenchmark && props.data.some(d => d.benchmark_equity != null)
+  const timeFormat = getTimeFormat(props.data)
 
   const option: echarts.EChartsOption = {
     tooltip: {
@@ -38,7 +51,9 @@ function initChart() {
         params.forEach((item: any) => {
           const color = item.color
           const name = item.seriesName
-          const value = formatNumber(item.value, 2)
+          const rawValue = Array.isArray(item.value) ? item.value[1] : item.value
+          const sign = rawValue > 0 ? '+' : ''
+          const value = `${sign}${formatNumber(rawValue, 2)}%`
           html += `<div style="display: flex; align-items: center; gap: 4px;">
             <span style="display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: ${color};"></span>
             <span>${name}: ${value}</span>
@@ -49,14 +64,14 @@ function initChart() {
       },
     },
     legend: {
-      show: props.showBenchmark,
+      show: hasBenchmark,
       top: 10,
-      data: ['策略收益', '基准收益'],
+      data: ['策略收益', '基准收益（买入持有）'],
     },
     grid: {
       left: 60,
       right: 20,
-      top: props.showBenchmark ? 40 : 20,
+      top: hasBenchmark ? 40 : 20,
       bottom: 30,
     },
     xAxis: {
@@ -66,7 +81,7 @@ function initChart() {
       },
       axisLabel: {
         color: '#909399',
-        formatter: (value: number) => formatDateTime(value, 'MM-DD'),
+        formatter: (value: number) => formatDateTime(value, timeFormat),
       },
       splitLine: { show: false },
     },
@@ -75,7 +90,7 @@ function initChart() {
       axisLine: { show: false },
       axisLabel: {
         color: '#909399',
-        formatter: (value: number) => formatNumber(value, 0),
+        formatter: (value: number) => `${formatNumber(value, 1)}%`,
       },
       splitLine: {
         lineStyle: { color: '#eee', type: 'dashed' },
@@ -85,7 +100,7 @@ function initChart() {
       {
         name: '策略收益',
         type: 'line',
-        smooth: true,
+        smooth: false,
         showSymbol: false,
         lineStyle: { width: 2, color: '#1890FF' },
         areaStyle: {
@@ -99,13 +114,13 @@ function initChart() {
     ],
   }
 
-  if (props.showBenchmark) {
+  if (hasBenchmark) {
     (option.series as any[]).push({
-      name: '基准收益',
+      name: '基准收益（买入持有）',
       type: 'line',
-      smooth: true,
+      smooth: false,
       showSymbol: false,
-      lineStyle: { width: 2, color: '#909399', type: 'dashed' },
+      lineStyle: { width: 2, color: '#E6A23C', type: 'dashed' },
       data: [],
     })
   }
@@ -115,13 +130,22 @@ function initChart() {
 }
 
 function updateData(data: EquityPoint[]) {
-  if (!chart) return
+  if (!chart || data.length === 0) return
 
-  const equityData = data.map((d) => [d.time, d.equity])
-  const benchmarkData: unknown[] = []
+  const initialEquity = data[0].equity
+  if (!initialEquity || initialEquity === 0) return
+
+  // Convert to return % from initial equity
+  const equityData = data.map((d) => [d.time, (d.equity / initialEquity - 1) * 100])
 
   const series: any[] = [{ data: equityData }]
-  if (props.showBenchmark) {
+
+  const hasBenchmark = props.showBenchmark && data.some(d => d.benchmark_equity != null)
+  if (hasBenchmark) {
+    const benchmarkData = data.map((d) => {
+      const bm = d.benchmark_equity ?? initialEquity
+      return [d.time, (bm / initialEquity - 1) * 100]
+    })
     series.push({ data: benchmarkData })
   }
 
@@ -132,8 +156,12 @@ function handleResize() {
   chart?.resize()
 }
 
-watch(() => props.data, (newData) => {
-  updateData(newData)
+watch(() => props.data, () => {
+  if (chart) {
+    chart.dispose()
+    chart = null
+  }
+  initChart()
 }, { deep: true })
 
 onMounted(() => {

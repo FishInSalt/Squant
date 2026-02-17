@@ -204,7 +204,8 @@ class TestDefaultMemoryLimits:
         context = BacktestContext(initial_capital=Decimal("100000"))
 
         # Access internal deques to check maxlen
-        assert context._equity_curve.maxlen == 10000
+        # equity_curve defaults to None (unlimited) to avoid data loss
+        assert context._equity_curve.maxlen is None
         assert context._completed_orders.maxlen == 1000
         assert context._fills.maxlen == 5000
         assert context._trades.maxlen == 1000

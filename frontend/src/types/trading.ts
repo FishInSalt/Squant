@@ -85,6 +85,7 @@ export interface EquityPoint {
   cash: number
   position_value: number
   unrealized_pnl: number
+  benchmark_equity?: number
 }
 
 // 用于实盘交易的收益曲线点

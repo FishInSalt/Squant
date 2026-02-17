@@ -480,6 +480,7 @@ class TestGetEquityCurve:
         mock_point.time = datetime.now(UTC)
         mock_point.equity = Decimal("10500")
         mock_point.cash = Decimal("9000")
+        mock_point.benchmark_equity = None
         mock_point.position_value = Decimal("1500")
         mock_point.unrealized_pnl = Decimal("500")
         mock_curve = [mock_point]

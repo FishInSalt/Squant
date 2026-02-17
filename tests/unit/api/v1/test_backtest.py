@@ -382,6 +382,7 @@ class TestGetBacktestDetail:
         mock_equity_point.cash = 5000.0
         mock_equity_point.position_value = 5500.0
         mock_equity_point.unrealized_pnl = 500.0
+        mock_equity_point.benchmark_equity = 10200.0
 
         with patch("squant.api.v1.backtest.BacktestService") as mock_service_class:
             mock_service = MagicMock()
@@ -424,6 +425,7 @@ class TestGetEquityCurve:
         mock_equity_point.cash = 5000.0
         mock_equity_point.position_value = 5500.0
         mock_equity_point.unrealized_pnl = 500.0
+        mock_equity_point.benchmark_equity = 10200.0
 
         with patch("squant.api.v1.backtest.BacktestService") as mock_service_class:
             mock_service = MagicMock()

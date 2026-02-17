@@ -210,6 +210,7 @@ class EquitySnapshot:
     cash: Decimal
     position_value: Decimal
     unrealized_pnl: Decimal
+    benchmark_equity: Decimal = Decimal("0")
 
 
 @dataclass

@@ -99,11 +99,8 @@
       <div class="chart-section card">
         <div class="card-header">
           <h3 class="card-title">收益曲线</h3>
-          <el-tag type="info" size="small" effect="plain">
-            基准对比（买入持有）功能开发中
-          </el-tag>
         </div>
-        <EquityCurve :data="result.equity_curve" height="400px" />
+        <EquityCurve :data="result.equity_curve" height="400px" show-benchmark />
       </div>
 
       <div class="trades-section card">

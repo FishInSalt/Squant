@@ -46,7 +46,7 @@ class BacktestContext:
         slippage: Decimal = Decimal("0"),
         params: dict[str, Any] | None = None,
         max_bar_history: int = 1000,
-        max_equity_curve: int = 10000,
+        max_equity_curve: int | None = None,
         max_completed_orders: int = 1000,
         max_fills: int = 5000,
         max_trades: int = 1000,
@@ -60,7 +60,7 @@ class BacktestContext:
             slippage: Slippage rate for market orders.
             params: Strategy parameters.
             max_bar_history: Maximum bars to keep in history buffer.
-            max_equity_curve: Maximum equity snapshots to keep.
+            max_equity_curve: Maximum equity snapshots to keep (None=unlimited).
             max_completed_orders: Maximum completed orders to keep.
             max_fills: Maximum fills to keep.
             max_trades: Maximum trades to keep.
@@ -91,8 +91,11 @@ class BacktestContext:
         self._bar_history: deque[Bar] = deque(maxlen=max_bar_history)
         self._current_bar: Bar | None = None
 
-        # Equity tracking
+        # Equity tracking (no limit — all snapshots needed for metrics & display)
         self._equity_curve: deque[EquitySnapshot] = deque(maxlen=max_equity_curve)
+
+        # Benchmark tracking (buy-and-hold)
+        self._benchmark_initial_price: Decimal | None = None
 
         # Logging
         self._logs: deque[str] = deque(maxlen=max_logs)
@@ -625,12 +628,22 @@ class BacktestContext:
         position_value = self._get_position_value()
         unrealized_pnl = self._get_unrealized_pnl()
 
+        # Compute buy-and-hold benchmark equity
+        benchmark_equity = self._initial_capital
+        if self._current_bar:
+            current_price = self._current_bar.close
+            if self._benchmark_initial_price is None:
+                self._benchmark_initial_price = current_price
+            if self._benchmark_initial_price > 0:
+                benchmark_equity = self._initial_capital * current_price / self._benchmark_initial_price
+
         snapshot = EquitySnapshot(
             time=time,
             equity=self._cash + position_value,
             cash=self._cash,
             position_value=position_value,
             unrealized_pnl=unrealized_pnl,
+            benchmark_equity=benchmark_equity,
         )
         self._equity_curve.append(snapshot)
 
