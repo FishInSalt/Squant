@@ -20,18 +20,56 @@
           </template>
           <div class="param-form">
             <div class="param-header">{{ ind.label }} 参数</div>
-            <div v-for="(p, i) in ind.params" :key="i" class="param-row">
-              <span class="param-label">{{ p.label }}</span>
-              <el-input-number
-                v-model="indicatorParams[ind.key][i]"
-                :min="p.min"
-                :max="p.max"
-                :step="p.step"
+            <!-- Dynamic-count indicators: variable number of lines -->
+            <template v-if="ind.dynamicCount">
+              <div v-for="(val, i) in indicatorParams[ind.key]" :key="i" class="param-row">
+                <span class="param-label">{{ getDynamicLabel(ind, i) }}</span>
+                <el-input-number
+                  v-model="indicatorParams[ind.key][i]"
+                  :min="1"
+                  :max="500"
+                  :step="1"
+                  size="small"
+                  controls-position="right"
+                  @change="onDynamicParamChange(ind.key)"
+                />
+                <el-button
+                  v-if="indicatorParams[ind.key].length > 1"
+                  :icon="Minus"
+                  size="small"
+                  circle
+                  text
+                  type="danger"
+                  class="remove-btn"
+                  @click="removeParam(ind.key, i)"
+                />
+              </div>
+              <el-button
+                v-if="indicatorParams[ind.key].length < (ind.maxCount ?? 8)"
                 size="small"
-                controls-position="right"
-                @change="onParamChange(ind.key)"
-              />
-            </div>
+                text
+                type="primary"
+                :icon="Plus"
+                @click="addParam(ind.key)"
+              >
+                添加
+              </el-button>
+            </template>
+            <!-- Fixed-count indicators: standard params -->
+            <template v-else>
+              <div v-for="(p, i) in ind.params" :key="i" class="param-row">
+                <span class="param-label">{{ p.label }}</span>
+                <el-input-number
+                  v-model="indicatorParams[ind.key][i]"
+                  :min="p.min"
+                  :max="p.max"
+                  :step="p.step"
+                  size="small"
+                  controls-position="right"
+                  @change="onParamChange(ind.key)"
+                />
+              </div>
+            </template>
             <el-button size="small" text type="info" @click="resetParams(ind.key)">
               恢复默认
             </el-button>
@@ -63,9 +101,9 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { init, dispose, registerOverlay, type Chart } from 'klinecharts'
-import { Setting, Loading } from '@element-plus/icons-vue'
+import { Setting, Loading, Plus, Minus } from '@element-plus/icons-vue'
 import type { Candle, Trade } from '@/types'
-import { INDICATOR_DEFS, getDefaultParams, getIndicatorDef, type IndicatorParams } from './indicatorConfig'
+import { INDICATOR_DEFS, getDefaultParams, getIndicatorDef, getDynamicParamLabel, suggestNewPeriod, type IndicatorParams } from './indicatorConfig'
 
 // --- Constants ---
 const LOAD_TRIGGER = 50     // Distance from edge (in bars) to trigger loading
@@ -477,7 +515,42 @@ function resetParams(name: string) {
   const def = getIndicatorDef(name)
   if (!def) return
   indicatorParams.value[name] = def.params.map((p) => p.default)
-  onParamChange(name)
+  if (def.dynamicCount) {
+    onDynamicParamChange(name)
+  } else {
+    onParamChange(name)
+  }
+}
+
+// --- Dynamic-count indicator helpers ---
+function getDynamicLabel(def: { paramPrefix?: string; key: string }, index: number): string {
+  return getDynamicParamLabel(def as any, index)
+}
+
+function addParam(name: string) {
+  const def = getIndicatorDef(name)
+  if (!def) return
+  const current = indicatorParams.value[name]
+  const newPeriod = suggestNewPeriod(def, current)
+  indicatorParams.value[name] = [...current, newPeriod]
+  onDynamicParamChange(name)
+}
+
+function removeParam(name: string, index: number) {
+  const current = indicatorParams.value[name]
+  if (current.length <= 1) return
+  indicatorParams.value[name] = current.filter((_, i) => i !== index)
+  onDynamicParamChange(name)
+}
+
+/** Re-create indicator when line count changes (overrideIndicator can't change line count) */
+function onDynamicParamChange(name: string) {
+  const def = getIndicatorDef(name)
+  if (!chart || !def) return
+  const paneId = def.paneId ?? 'candle_pane'
+  // Remove and re-add to apply new line count
+  chart.removeIndicator(paneId, def.key)
+  addIndicator(name)
 }
 
 /** Rebuild trade markers based on current allCandles data */
@@ -704,16 +777,21 @@ onUnmounted(() => {
     display: flex;
     align-items: center;
     justify-content: space-between;
+    gap: 4px;
     margin-bottom: 6px;
 
     .param-label {
       font-size: 12px;
       color: #606266;
-      min-width: 40px;
+      min-width: 36px;
     }
 
     :deep(.el-input-number) {
-      width: 130px;
+      width: 110px;
+    }
+
+    .remove-btn {
+      flex-shrink: 0;
     }
   }
 

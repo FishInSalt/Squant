@@ -176,7 +176,14 @@ function overrideIndicatorParams(name: string) {
   if (!chart || !def) return
   const paneId = def.paneId ?? 'candle_pane'
   const params = props.indicatorParams?.[name]
-  if (params) {
+  if (!params) return
+
+  if (def.dynamicCount) {
+    // Dynamic-count: remove and re-add to apply new line count
+    chart.removeIndicator(paneId, def.key)
+    addIndicator(name)
+  } else {
+    // Fixed-count: override in place
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     chart.overrideIndicator({ name: def.key, calcParams: params } as any, paneId)
   }
