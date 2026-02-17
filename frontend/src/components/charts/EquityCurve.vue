@@ -72,8 +72,23 @@ function initChart() {
       left: 60,
       right: 20,
       top: hasBenchmark ? 40 : 20,
-      bottom: 30,
+      bottom: 60,
     },
+    dataZoom: [
+      {
+        type: 'slider',
+        xAxisIndex: 0,
+        height: 20,
+        bottom: 8,
+        borderColor: '#ddd',
+        fillerColor: 'rgba(24, 144, 255, 0.1)',
+        handleStyle: { color: '#1890FF' },
+      },
+      {
+        type: 'inside',
+        xAxisIndex: 0,
+      },
+    ],
     xAxis: {
       type: 'time',
       axisLine: {

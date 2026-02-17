@@ -80,7 +80,7 @@
         </div>
         <div class="metric-card card">
           <span class="label">胜率</span>
-          <span class="value">{{ formatPercent(result.metrics.win_rate) }}</span>
+          <span class="value">{{ formatNumber(result.metrics.win_rate, 2) }}%</span>
         </div>
         <div class="metric-card card">
           <span class="label">盈亏比</span>
@@ -109,7 +109,7 @@
           <div class="trade-summary">
             <el-tag type="success" size="small" effect="plain">盈利 {{ tradeStats.wins }}</el-tag>
             <el-tag type="danger" size="small" effect="plain">亏损 {{ tradeStats.losses }}</el-tag>
-            <el-tag size="small" effect="plain">胜率 {{ formatPercent(tradeStats.winRate) }}</el-tag>
+            <el-tag size="small" effect="plain">胜率 {{ formatNumber(tradeStats.winRate, 2) }}%</el-tag>
             <span class="trade-count">共 {{ result.trades.length }} 笔</span>
           </div>
         </div>
@@ -199,7 +199,7 @@
           </div>
           <div class="detail-item">
             <span class="label">年化波动率</span>
-            <span class="value">{{ formatPercent(result.metrics.volatility) }}</span>
+            <span class="value">{{ formatNumber(result.metrics.volatility, 2) }}%</span>
           </div>
           <div class="detail-item">
             <span class="label">索提诺比率</span>
