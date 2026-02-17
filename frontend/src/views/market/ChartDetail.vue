@@ -72,15 +72,44 @@
     <div class="chart-container card" v-loading="loading" element-loading-text="加载K线数据...">
       <div class="chart-toolbar">
         <span class="toolbar-label">指标:</span>
-        <el-checkbox-group v-model="selectedIndicators">
-          <el-checkbox value="MA">MA</el-checkbox>
-          <el-checkbox value="EMA">EMA</el-checkbox>
-          <el-checkbox value="BOLL">BOLL</el-checkbox>
-          <el-checkbox value="VOL">VOL</el-checkbox>
-          <el-checkbox value="MACD">MACD</el-checkbox>
-          <el-checkbox value="RSI">RSI</el-checkbox>
-          <el-checkbox value="KDJ">KDJ</el-checkbox>
-        </el-checkbox-group>
+        <div class="indicator-tags">
+          <div v-for="ind in INDICATOR_DEFS" :key="ind.key" class="indicator-item">
+            <el-check-tag
+              :checked="selectedIndicators.includes(ind.key)"
+              @change="toggleIndicator(ind.key)"
+            >
+              {{ ind.label }}
+            </el-check-tag>
+            <el-popover
+              v-if="selectedIndicators.includes(ind.key)"
+              trigger="click"
+              :width="220"
+              placement="bottom-start"
+            >
+              <template #reference>
+                <el-icon class="param-icon"><Setting /></el-icon>
+              </template>
+              <div class="param-form">
+                <div class="param-header">{{ ind.label }} 参数</div>
+                <div v-for="(p, i) in ind.params" :key="i" class="param-row">
+                  <span class="param-label">{{ p.label }}</span>
+                  <el-input-number
+                    v-model="indicatorParams[ind.key][i]"
+                    :min="p.min"
+                    :max="p.max"
+                    :step="p.step"
+                    size="small"
+                    controls-position="right"
+                    @change="onParamChange(ind.key)"
+                  />
+                </div>
+                <el-button size="small" text type="info" @click="resetParams(ind.key)">
+                  恢复默认
+                </el-button>
+              </div>
+            </el-popover>
+          </div>
+        </div>
         <span class="toolbar-spacer"></span>
         <span class="realtime-status" :class="{ active: wsStore.isConnected }">
           <el-icon v-if="wsStore.isConnected" color="#67C23A"><CircleCheckFilled /></el-icon>
@@ -94,6 +123,7 @@
         ref="chartRef"
         :data="candles"
         :indicators="selectedIndicators"
+        :indicator-params="indicatorParams"
         height="600px"
       />
     </div>
@@ -123,7 +153,8 @@ import { useWebSocketStore, type CandleUpdate } from '@/stores/websocket'
 import KLineChart from '@/components/charts/KLineChart.vue'
 import PriceCell from '@/components/common/PriceCell.vue'
 import { formatPrice, formatVolume, formatLargeNumber, formatExchangeName } from '@/utils/format'
-import { CircleCheckFilled, CircleCloseFilled } from '@element-plus/icons-vue'
+import { CircleCheckFilled, CircleCloseFilled, Setting } from '@element-plus/icons-vue'
+import { INDICATOR_DEFS, getDefaultParams, getIndicatorDef, type IndicatorParams } from '@/components/charts/indicatorConfig'
 import { getCandles, getTicker } from '@/api/market'
 import { addRecentSymbol } from '@/utils/storage'
 import type { Candle, Ticker, Timeframe } from '@/types'
@@ -142,6 +173,7 @@ const candles = ref<Candle[]>([])
 const ticker = ref<Ticker | null>(null)
 const selectedTimeframe = ref<Timeframe>('1h')
 const selectedIndicators = ref(['MA', 'VOL'])
+const indicatorParams = ref<IndicatorParams>(getDefaultParams())
 const loading = ref(false)
 const lastCandleUpdate = ref<string>('')  // 调试：最近的 K 线更新时间
 
@@ -160,6 +192,27 @@ const isInWatchlist = computed(() =>
 
 // Use current exchange from store (may differ from route param after switching)
 const currentExchange = computed(() => marketStore.currentExchange)
+
+function toggleIndicator(name: string) {
+  const idx = selectedIndicators.value.indexOf(name)
+  if (idx >= 0) {
+    selectedIndicators.value.splice(idx, 1)
+  } else {
+    selectedIndicators.value.push(name)
+  }
+}
+
+function onParamChange(_name: string) {
+  // Trigger deep watch by replacing the object reference
+  indicatorParams.value = { ...indicatorParams.value }
+}
+
+function resetParams(name: string) {
+  const def = getIndicatorDef(name)
+  if (!def) return
+  indicatorParams.value[name] = def.params.map((p) => p.default)
+  onParamChange(name)
+}
 
 async function loadCandles() {
   loading.value = true
@@ -414,6 +467,30 @@ onUnmounted(() => {
         font-size: 14px;
       }
 
+      .indicator-tags {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        flex-wrap: wrap;
+
+        .indicator-item {
+          display: inline-flex;
+          align-items: center;
+          gap: 2px;
+
+          .param-icon {
+            font-size: 14px;
+            color: #909399;
+            cursor: pointer;
+            transition: color 0.2s;
+
+            &:hover {
+              color: #409EFF;
+            }
+          }
+        }
+      }
+
       .toolbar-spacer {
         flex: 1;
       }
@@ -440,6 +517,37 @@ onUnmounted(() => {
     display: flex;
     gap: 12px;
     padding: 16px;
+  }
+}
+
+.param-form {
+  .param-header {
+    font-size: 13px;
+    font-weight: 500;
+    color: #303133;
+    margin-bottom: 8px;
+  }
+
+  .param-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 6px;
+
+    .param-label {
+      font-size: 12px;
+      color: #606266;
+      min-width: 40px;
+    }
+
+    :deep(.el-input-number) {
+      width: 130px;
+    }
+  }
+
+  .el-button {
+    margin-top: 4px;
+    width: 100%;
   }
 }
 </style>

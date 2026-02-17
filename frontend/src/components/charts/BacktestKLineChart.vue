@@ -2,14 +2,42 @@
   <div class="backtest-kline">
     <div class="indicator-toolbar">
       <span class="toolbar-label">指标：</span>
-      <el-check-tag
-        v-for="ind in availableIndicators"
-        :key="ind.key"
-        :checked="activeIndicators.includes(ind.key)"
-        @change="toggleIndicator(ind.key)"
-      >
-        {{ ind.label }}
-      </el-check-tag>
+      <div v-for="ind in INDICATOR_DEFS" :key="ind.key" class="indicator-item">
+        <el-check-tag
+          :checked="activeIndicators.includes(ind.key)"
+          @change="toggleIndicator(ind.key)"
+        >
+          {{ ind.label }}
+        </el-check-tag>
+        <el-popover
+          v-if="activeIndicators.includes(ind.key)"
+          trigger="click"
+          :width="220"
+          placement="bottom-start"
+        >
+          <template #reference>
+            <el-icon class="param-icon"><Setting /></el-icon>
+          </template>
+          <div class="param-form">
+            <div class="param-header">{{ ind.label }} 参数</div>
+            <div v-for="(p, i) in ind.params" :key="i" class="param-row">
+              <span class="param-label">{{ p.label }}</span>
+              <el-input-number
+                v-model="indicatorParams[ind.key][i]"
+                :min="p.min"
+                :max="p.max"
+                :step="p.step"
+                size="small"
+                controls-position="right"
+                @change="onParamChange(ind.key)"
+              />
+            </div>
+            <el-button size="small" text type="info" @click="resetParams(ind.key)">
+              恢复默认
+            </el-button>
+          </div>
+        </el-popover>
+      </div>
     </div>
     <div ref="chartContainer" class="kline-container" :style="{ height }"></div>
     <div class="navigation-bar" v-if="candles.length > 0">
@@ -30,7 +58,9 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { init, dispose, registerOverlay, type Chart } from 'klinecharts'
+import { Setting } from '@element-plus/icons-vue'
 import type { Candle, Trade } from '@/types'
+import { INDICATOR_DEFS, getDefaultParams, getIndicatorDef, type IndicatorParams } from './indicatorConfig'
 
 interface Props {
   candles: Candle[]
@@ -48,27 +78,8 @@ let chart: Chart | null = null
 // Navigation slider: single position index
 const navPosition = ref(0)
 
-const availableIndicators = [
-  { key: 'MA', label: 'MA' },
-  { key: 'EMA', label: 'EMA' },
-  { key: 'BOLL', label: 'BOLL' },
-  { key: 'VOL', label: 'VOL' },
-  { key: 'MACD', label: 'MACD' },
-  { key: 'RSI', label: 'RSI' },
-  { key: 'KDJ', label: 'KDJ' },
-]
-
 const activeIndicators = ref<string[]>(['MA', 'VOL'])
-
-const indicatorMapping: Record<string, { name: string; paneId?: string; colors?: string[] }> = {
-  MA: { name: 'MA', colors: ['#FF9600', '#935EBD', '#2196F3', '#E040FB'] },
-  EMA: { name: 'EMA', colors: ['#E11D74', '#01C5C4', '#4CAF50'] },
-  BOLL: { name: 'BOLL', colors: ['#FF6D00', '#0D47A1', '#00897B'] },
-  VOL: { name: 'VOL', paneId: 'volume' },
-  MACD: { name: 'MACD', paneId: 'macd' },
-  RSI: { name: 'RSI', paneId: 'rsi' },
-  KDJ: { name: 'KDJ', paneId: 'kdj' },
-}
+const indicatorParams = ref<IndicatorParams>(getDefaultParams())
 
 function formatNavDate(ts: number): string {
   const d = new Date(ts)
@@ -287,34 +298,34 @@ function initChart() {
 }
 
 function addIndicator(name: string) {
-  const config = indicatorMapping[name]
-  if (chart && config) {
-    const paneId = config.paneId ?? 'candle_pane'
-    const isStack = !config.paneId
-    chart.createIndicator(config.name, isStack, { id: paneId })
-    if (config.colors) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      chart.overrideIndicator({
-        name: config.name,
-        styles: {
-          lines: config.colors.map((color) => ({
-            style: 'solid',
-            smooth: false,
-            size: 1,
-            dashedValue: [2, 2],
-            color,
-          })),
-        },
-      } as any, paneId)
-    }
+  const def = getIndicatorDef(name)
+  if (!chart || !def) return
+  const paneId = def.paneId ?? 'candle_pane'
+  const isStack = !def.paneId
+  const params = indicatorParams.value[name]
+  chart.createIndicator({ name: def.key, calcParams: params } as any, isStack, { id: paneId })
+  if (def.colors) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    chart.overrideIndicator({
+      name: def.key,
+      styles: {
+        lines: def.colors.map((color) => ({
+          style: 'solid',
+          smooth: false,
+          size: 1,
+          dashedValue: [2, 2],
+          color,
+        })),
+      },
+    } as any, paneId)
   }
 }
 
 function removeIndicator(name: string) {
-  const config = indicatorMapping[name]
-  if (chart && config) {
-    const paneId = config.paneId ?? 'candle_pane'
-    chart.removeIndicator(paneId, config.name)
+  const def = getIndicatorDef(name)
+  if (chart && def) {
+    const paneId = def.paneId ?? 'candle_pane'
+    chart.removeIndicator(paneId, def.key)
   }
 }
 
@@ -327,6 +338,22 @@ function toggleIndicator(name: string) {
     activeIndicators.value.push(name)
     addIndicator(name)
   }
+}
+
+function onParamChange(name: string) {
+  const def = getIndicatorDef(name)
+  if (!chart || !def) return
+  const paneId = def.paneId ?? 'candle_pane'
+  const params = indicatorParams.value[name]
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  chart.overrideIndicator({ name: def.key, calcParams: params } as any, paneId)
+}
+
+function resetParams(name: string) {
+  const def = getIndicatorDef(name)
+  if (!def) return
+  indicatorParams.value[name] = def.params.map((p) => p.default)
+  onParamChange(name)
 }
 
 function addTradeMarkers() {
@@ -422,6 +449,23 @@ onUnmounted(() => {
       font-size: 13px;
       color: #909399;
     }
+
+    .indicator-item {
+      display: inline-flex;
+      align-items: center;
+      gap: 2px;
+
+      .param-icon {
+        font-size: 14px;
+        color: #909399;
+        cursor: pointer;
+        transition: color 0.2s;
+
+        &:hover {
+          color: #409EFF;
+        }
+      }
+    }
   }
 
   .kline-container {
@@ -468,6 +512,37 @@ onUnmounted(() => {
         height: 14px;
       }
     }
+  }
+}
+
+.param-form {
+  .param-header {
+    font-size: 13px;
+    font-weight: 500;
+    color: #303133;
+    margin-bottom: 8px;
+  }
+
+  .param-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 6px;
+
+    .param-label {
+      font-size: 12px;
+      color: #606266;
+      min-width: 40px;
+    }
+
+    :deep(.el-input-number) {
+      width: 130px;
+    }
+  }
+
+  .el-button {
+    margin-top: 4px;
+    width: 100%;
   }
 }
 </style>
