@@ -357,7 +357,7 @@ async function initEditor() {
   const code = strategy.value?.code || ''
   editCode.value = code
 
-  editorInstance = monacoModule.editor.create(editorContainerRef.value, {
+  editorInstance = monacoModule!.editor.create(editorContainerRef.value, {
     value: code,
     language: 'python',
     theme: 'vs',

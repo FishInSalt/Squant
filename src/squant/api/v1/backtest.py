@@ -16,6 +16,7 @@ from squant.schemas.backtest import (
     BacktestListItem,
     BacktestMetrics,
     BacktestRunResponse,
+    CandlestickPoint,
     CheckDataRequest,
     CreateBacktestRequest,
     DataAvailabilityResponse,
@@ -429,6 +430,57 @@ async def delete_backtest(
         return ApiResponse(data=None, message="Backtest deleted")
     except BacktestNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
+
+
+@router.get("/{run_id}/candles", response_model=ApiResponse[list[CandlestickPoint]])
+async def get_backtest_candles(
+    run_id: UUID,
+    session: AsyncSession = Depends(get_session),
+) -> ApiResponse[list[CandlestickPoint]]:
+    """Get historical candlestick data for a backtest run's period.
+
+    Returns the OHLCV data from the klines table for the backtest's
+    exchange, symbol, timeframe, and date range.
+
+    Args:
+        run_id: Backtest run ID.
+        session: Database session.
+
+    Returns:
+        List of candlestick data points.
+
+    Raises:
+        HTTPException: 404 if backtest not found, 400 if no data available.
+    """
+    service = BacktestService(session)
+
+    try:
+        run = await service.get(run_id)
+    except BacktestNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+    if not run.backtest_start or not run.backtest_end:
+        raise HTTPException(status_code=400, detail="Backtest date range not set")
+
+    loader = DataLoader(session)
+    candles: list[CandlestickPoint] = []
+    async for bar in loader.load_bars(
+        exchange=run.exchange,
+        symbol=run.symbol,
+        timeframe=run.timeframe,
+        start=run.backtest_start,
+        end=run.backtest_end,
+    ):
+        candles.append(CandlestickPoint(
+            timestamp=bar.time,
+            open=bar.open,
+            high=bar.high,
+            low=bar.low,
+            close=bar.close,
+            volume=bar.volume,
+        ))
+
+    return ApiResponse(data=candles)
 
 
 @router.get("/{run_id}/export", response_model=ApiResponse[dict])

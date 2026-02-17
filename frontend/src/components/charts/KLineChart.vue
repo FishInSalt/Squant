@@ -226,18 +226,19 @@ function addIndicator(name: string) {
     chart.createIndicator(config.name, isStack, { id: paneId })
     // 用 overrideIndicator 设置自定义颜色，避免同类指标颜色重复
     if (config.colors) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       chart.overrideIndicator({
         name: config.name,
         styles: {
           lines: config.colors.map((color) => ({
-            style: 'solid' as const,
+            style: 'solid',
             smooth: false,
             size: 1,
             dashedValue: [2, 2],
             color,
           })),
         },
-      }, paneId)
+      } as any, paneId)
     }
   }
 }

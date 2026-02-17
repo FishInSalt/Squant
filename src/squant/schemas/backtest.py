@@ -246,6 +246,19 @@ class ExportFormat(str, enum.Enum):
     CSV = "csv"
 
 
+class CandlestickPoint(BaseModel):
+    """Single candlestick data point for backtest K-line chart."""
+
+    timestamp: datetime
+    open: NumberDecimal
+    high: NumberDecimal
+    low: NumberDecimal
+    close: NumberDecimal
+    volume: NumberDecimal
+
+    model_config = {"from_attributes": True}
+
+
 class BacktestReportExport(BaseModel):
     """Backtest report export data (TRD-009#4)."""
 

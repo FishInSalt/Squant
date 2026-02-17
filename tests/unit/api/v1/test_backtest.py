@@ -572,3 +572,115 @@ class TestListAvailableSymbols:
             mock_loader.get_available_symbols.assert_called_once_with(
                 exchange="okx", timeframe="1h"
             )
+
+
+class TestGetBacktestCandles:
+    """Tests for GET /api/v1/backtest/{run_id}/candles endpoint."""
+
+    @pytest.mark.asyncio
+    async def test_get_candles_success(self, client: AsyncClient, mock_backtest_run) -> None:
+        """Test getting candle data for a completed backtest."""
+        from squant.engine.backtest.types import Bar
+        from decimal import Decimal
+
+        mock_bars = [
+            Bar(
+                time=datetime(2024, 1, 1, tzinfo=UTC),
+                symbol="BTC/USDT",
+                open=Decimal("42000.0"),
+                high=Decimal("42500.0"),
+                low=Decimal("41800.0"),
+                close=Decimal("42300.0"),
+                volume=Decimal("100.5"),
+            ),
+            Bar(
+                time=datetime(2024, 1, 1, 1, tzinfo=UTC),
+                symbol="BTC/USDT",
+                open=Decimal("42300.0"),
+                high=Decimal("42800.0"),
+                low=Decimal("42100.0"),
+                close=Decimal("42600.0"),
+                volume=Decimal("150.2"),
+            ),
+        ]
+
+        async def mock_load_bars(**kwargs):
+            for bar in mock_bars:
+                yield bar
+
+        with (
+            patch("squant.api.v1.backtest.BacktestService") as mock_service_class,
+            patch("squant.api.v1.backtest.DataLoader") as mock_loader_class,
+        ):
+            mock_service = MagicMock()
+            mock_service.get = AsyncMock(return_value=mock_backtest_run)
+            mock_service_class.return_value = mock_service
+
+            mock_loader = MagicMock()
+            mock_loader.load_bars = MagicMock(return_value=mock_load_bars())
+            mock_loader_class.return_value = mock_loader
+
+            response = await client.get(f"/api/v1/backtest/{mock_backtest_run.id}/candles")
+
+            assert response.status_code == 200
+            data = response.json()
+            assert data["code"] == 0
+            assert len(data["data"]) == 2
+            assert data["data"][0]["open"] == 42000.0
+            assert data["data"][1]["close"] == 42600.0
+
+    @pytest.mark.asyncio
+    async def test_get_candles_not_found(self, client: AsyncClient) -> None:
+        """Test getting candles for non-existent backtest."""
+        run_id = uuid4()
+
+        with patch("squant.api.v1.backtest.BacktestService") as mock_service_class:
+            mock_service = MagicMock()
+            mock_service.get = AsyncMock(side_effect=BacktestNotFoundError(str(run_id)))
+            mock_service_class.return_value = mock_service
+
+            response = await client.get(f"/api/v1/backtest/{run_id}/candles")
+
+            assert response.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_get_candles_no_date_range(self, client: AsyncClient, mock_backtest_run) -> None:
+        """Test getting candles when backtest has no date range set."""
+        mock_backtest_run.backtest_start = None
+        mock_backtest_run.backtest_end = None
+
+        with patch("squant.api.v1.backtest.BacktestService") as mock_service_class:
+            mock_service = MagicMock()
+            mock_service.get = AsyncMock(return_value=mock_backtest_run)
+            mock_service_class.return_value = mock_service
+
+            response = await client.get(f"/api/v1/backtest/{mock_backtest_run.id}/candles")
+
+            assert response.status_code == 400
+
+    @pytest.mark.asyncio
+    async def test_get_candles_empty_data(self, client: AsyncClient, mock_backtest_run) -> None:
+        """Test getting candles when no historical data available."""
+
+        async def mock_load_bars(**kwargs):
+            return
+            yield  # make it an async generator
+
+        with (
+            patch("squant.api.v1.backtest.BacktestService") as mock_service_class,
+            patch("squant.api.v1.backtest.DataLoader") as mock_loader_class,
+        ):
+            mock_service = MagicMock()
+            mock_service.get = AsyncMock(return_value=mock_backtest_run)
+            mock_service_class.return_value = mock_service
+
+            mock_loader = MagicMock()
+            mock_loader.load_bars = MagicMock(return_value=mock_load_bars())
+            mock_loader_class.return_value = mock_loader
+
+            response = await client.get(f"/api/v1/backtest/{mock_backtest_run.id}/candles")
+
+            assert response.status_code == 200
+            data = response.json()
+            assert data["code"] == 0
+            assert data["data"] == []

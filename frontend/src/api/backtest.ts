@@ -30,6 +30,10 @@ export const deleteBacktest = (id: string) =>
 export const exportBacktestResult = (id: string, format: 'csv' | 'json' = 'csv') =>
   get<{ content: string; filename: string; content_type: string }>(`/backtest/${id}/export`, { format })
 
+// 获取回测K线数据（历史蜡烛图）
+export const getBacktestCandles = (id: string) =>
+  get<{ timestamp: string; open: number; high: number; low: number; close: number; volume: number }[]>(`/backtest/${id}/candles`)
+
 // 获取正在运行的回测
 export const getRunningBacktests = () =>
   get<PaginatedData<BacktestRun>>('/backtest', { status: 'running' })

@@ -103,6 +103,25 @@
         <EquityCurve :data="result.equity_curve" :trades="result.trades" height="400px" show-benchmark />
       </div>
 
+      <div class="kline-section card" v-if="candles.length > 0 || candlesLoading">
+        <div class="card-header">
+          <h3 class="card-title">K线图 · 交易标记</h3>
+          <span class="kline-info" v-if="backtest">
+            {{ backtest.symbol }} · {{ backtest.timeframe }}
+          </span>
+        </div>
+        <div v-if="candlesLoading" class="kline-loading">
+          <el-icon class="is-loading"><Loading /></el-icon>
+          <span>加载K线数据...</span>
+        </div>
+        <BacktestKLineChart
+          v-else
+          :candles="candles"
+          :trades="result.trades"
+          height="500px"
+        />
+      </div>
+
       <div class="trades-section card">
         <div class="card-header">
           <h3 class="card-title">交易记录</h3>
@@ -269,8 +288,10 @@ import { useRouter } from 'vue-router'
 import StatusBadge from '@/components/common/StatusBadge.vue'
 import PriceCell from '@/components/common/PriceCell.vue'
 import EquityCurve from '@/components/charts/EquityCurve.vue'
+import BacktestKLineChart from '@/components/charts/BacktestKLineChart.vue'
 import { formatDateTime, formatPrice, formatNumber, formatPercent } from '@/utils/format'
-import { getBacktestStatus, getBacktestResult, exportBacktestResult, cancelBacktest } from '@/api/backtest'
+import { getBacktestStatus, getBacktestResult, getBacktestCandles, exportBacktestResult, cancelBacktest } from '@/api/backtest'
+import type { Candle } from '@/types'
 import { useNotification } from '@/composables/useNotification'
 import type { BacktestRun, BacktestResult } from '@/types'
 
@@ -285,6 +306,9 @@ const loading = ref(true)
 const cancelling = ref(false)
 const backtest = ref<BacktestRun | null>(null)
 const result = ref<BacktestResult | null>(null)
+
+const candles = ref<Candle[]>([])
+const candlesLoading = ref(false)
 
 const tradesPage = ref(1)
 const tradesPageSize = ref(20)
@@ -367,8 +391,29 @@ async function loadResult() {
   try {
     const response = await getBacktestResult(props.id)
     result.value = response.data
+    // Load candle data for K-line chart in background
+    loadCandles()
   } catch (error) {
     console.error('Failed to load result:', error)
+  }
+}
+
+async function loadCandles() {
+  candlesLoading.value = true
+  try {
+    const response = await getBacktestCandles(props.id)
+    candles.value = response.data.map((c: any) => ({
+      timestamp: new Date(c.timestamp).getTime(),
+      open: c.open,
+      high: c.high,
+      low: c.low,
+      close: c.close,
+      volume: c.volume,
+    }))
+  } catch (error) {
+    console.error('Failed to load candles:', error)
+  } finally {
+    candlesLoading.value = false
   }
 }
 
@@ -549,6 +594,24 @@ onUnmounted(() => {
 
   .chart-section {
     margin-bottom: 24px;
+  }
+
+  .kline-section {
+    margin-bottom: 24px;
+
+    .kline-info {
+      font-size: 13px;
+      color: #909399;
+    }
+
+    .kline-loading {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      height: 200px;
+      color: #909399;
+    }
   }
 
   .trades-section {
