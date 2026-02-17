@@ -12,7 +12,7 @@
         <el-popover
           v-if="activeIndicators.includes(ind.key)"
           trigger="click"
-          :width="220"
+          :width="300"
           placement="bottom-start"
         >
           <template #reference>
@@ -30,19 +30,13 @@
                   :max="500"
                   :step="1"
                   size="small"
-                  controls-position="right"
                   @change="onDynamicParamChange(ind.key)"
                 />
-                <el-button
+                <el-icon
                   v-if="indicatorParams[ind.key].length > 1"
-                  :icon="Minus"
-                  size="small"
-                  circle
-                  text
-                  type="danger"
                   class="remove-btn"
                   @click="removeParam(ind.key, i)"
-                />
+                ><CircleClose /></el-icon>
               </div>
               <el-button
                 v-if="indicatorParams[ind.key].length < (ind.maxCount ?? 8)"
@@ -65,7 +59,6 @@
                   :max="p.max"
                   :step="p.step"
                   size="small"
-                  controls-position="right"
                   @change="onParamChange(ind.key)"
                 />
               </div>
@@ -101,7 +94,7 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { init, dispose, registerOverlay, type Chart } from 'klinecharts'
-import { Setting, Loading, Plus, Minus } from '@element-plus/icons-vue'
+import { Setting, Loading, Plus, CircleClose } from '@element-plus/icons-vue'
 import type { Candle, Trade } from '@/types'
 import { INDICATOR_DEFS, getDefaultParams, getIndicatorDef, getDynamicParamLabel, suggestNewPeriod, type IndicatorParams } from './indicatorConfig'
 
@@ -770,33 +763,43 @@ onUnmounted(() => {
     font-size: 13px;
     font-weight: 500;
     color: #303133;
-    margin-bottom: 8px;
+    margin-bottom: 10px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid #f0f0f0;
   }
 
   .param-row {
     display: flex;
     align-items: center;
-    justify-content: space-between;
-    gap: 4px;
-    margin-bottom: 6px;
+    gap: 8px;
+    margin-bottom: 8px;
 
     .param-label {
       font-size: 12px;
       color: #606266;
-      min-width: 36px;
+      min-width: 40px;
+      font-weight: 500;
     }
 
     :deep(.el-input-number) {
-      width: 110px;
+      flex: 1;
     }
 
     .remove-btn {
       flex-shrink: 0;
+      font-size: 16px;
+      color: #C0C4CC;
+      cursor: pointer;
+      transition: color 0.2s;
+
+      &:hover {
+        color: #F56C6C;
+      }
     }
   }
 
-  .el-button {
-    margin-top: 4px;
+  > .el-button {
+    margin-top: 6px;
     width: 100%;
   }
 }
