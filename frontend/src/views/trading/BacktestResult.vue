@@ -116,8 +116,8 @@
             <span class="trade-count">共 {{ result.trades.length }} 笔</span>
           </div>
         </div>
-        <el-table :data="paginatedTrades" stripe max-height="500" :default-sort="{ prop: 'entry_time', order: 'ascending' }">
-          <el-table-column prop="entry_time" label="入场时间" width="170" sortable :sort-method="(a: any, b: any) => new Date(a.entry_time).getTime() - new Date(b.entry_time).getTime()">
+        <el-table :data="paginatedTrades" stripe max-height="500" :default-sort="{ prop: 'entry_time', order: 'ascending' }" @sort-change="handleSortChange">
+          <el-table-column prop="entry_time" label="入场时间" width="170" sortable="custom">
             <template #default="{ row }">
               {{ formatDateTime(row.entry_time) }}
             </template>
@@ -129,7 +129,7 @@
               </el-tag>
             </template>
           </el-table-column>
-          <el-table-column prop="entry_price" label="入场价" width="120" align="right" sortable>
+          <el-table-column prop="entry_price" label="入场价" width="120" align="right" sortable="custom">
             <template #default="{ row }">
               {{ formatPrice(row.entry_price) }}
             </template>
@@ -139,7 +139,7 @@
               {{ row.exit_price ? formatPrice(row.exit_price) : '-' }}
             </template>
           </el-table-column>
-          <el-table-column prop="exit_time" label="出场时间" width="170" sortable :sort-method="(a: any, b: any) => new Date(a.exit_time).getTime() - new Date(b.exit_time).getTime()">
+          <el-table-column prop="exit_time" label="出场时间" width="170" sortable="custom">
             <template #default="{ row }">
               {{ row.exit_time ? formatDateTime(row.exit_time) : '-' }}
             </template>
@@ -154,7 +154,7 @@
               {{ formatNumber(row.fees, 4) }}
             </template>
           </el-table-column>
-          <el-table-column prop="pnl" label="盈亏" width="120" align="right" sortable>
+          <el-table-column prop="pnl" label="盈亏" width="120" align="right" sortable="custom">
             <template #default="{ row }">
               <PriceCell
                 v-if="row.pnl !== undefined"
@@ -165,7 +165,7 @@
               <span v-else>-</span>
             </template>
           </el-table-column>
-          <el-table-column prop="pnl_pct" label="盈亏%" width="100" align="right" sortable>
+          <el-table-column prop="pnl_pct" label="盈亏%" width="100" align="right" sortable="custom">
             <template #default="{ row }">
               <PriceCell
                 v-if="row.pnl_pct !== undefined"
@@ -291,11 +291,34 @@ const result = ref<BacktestResult | null>(null)
 
 const tradesPage = ref(1)
 const tradesPageSize = ref(20)
+const tradesSortProp = ref('')
+const tradesSortOrder = ref('')
+
+const sortedTrades = computed(() => {
+  if (!result.value) return []
+  const trades = [...result.value.trades]
+  if (!tradesSortProp.value || !tradesSortOrder.value) return trades
+
+  const prop = tradesSortProp.value
+  const asc = tradesSortOrder.value === 'ascending'
+
+  trades.sort((a: any, b: any) => {
+    let va = a[prop]
+    let vb = b[prop]
+    if (prop === 'entry_time' || prop === 'exit_time') {
+      va = va ? new Date(va).getTime() : 0
+      vb = vb ? new Date(vb).getTime() : 0
+    }
+    if (va < vb) return asc ? -1 : 1
+    if (va > vb) return asc ? 1 : -1
+    return 0
+  })
+  return trades
+})
 
 const paginatedTrades = computed(() => {
-  if (!result.value) return []
   const start = (tradesPage.value - 1) * tradesPageSize.value
-  return result.value.trades.slice(start, start + tradesPageSize.value)
+  return sortedTrades.value.slice(start, start + tradesPageSize.value)
 })
 
 const tradeStats = computed(() => {
@@ -306,6 +329,12 @@ const tradeStats = computed(() => {
   const winRate = trades.length > 0 ? (wins / trades.length) * 100 : 0
   return { wins, losses, winRate }
 })
+
+function handleSortChange({ prop, order }: { prop: string; order: string | null }) {
+  tradesSortProp.value = prop || ''
+  tradesSortOrder.value = order || ''
+  tradesPage.value = 1
+}
 
 function handleTradesPageSizeChange(size: number) {
   tradesPageSize.value = size
