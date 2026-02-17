@@ -47,9 +47,9 @@ class BacktestContext:
         params: dict[str, Any] | None = None,
         max_bar_history: int = 1000,
         max_equity_curve: int | None = None,
-        max_completed_orders: int = 1000,
+        max_completed_orders: int | None = None,
         max_fills: int = 5000,
-        max_trades: int = 1000,
+        max_trades: int | None = None,
         max_logs: int = 1000,
     ):
         """Initialize backtest context.
