@@ -47,6 +47,41 @@
     </div>
 
     <div v-if="backtest?.status === 'completed' && result && result.metrics" class="result-content">
+      <div class="config-section card">
+        <div class="card-header">
+          <h3 class="card-title">回测配置</h3>
+        </div>
+        <el-descriptions :column="4" border>
+          <el-descriptions-item label="交易所">{{ formatExchangeName(backtest.exchange) }}</el-descriptions-item>
+          <el-descriptions-item label="交易对">{{ backtest.symbol }}</el-descriptions-item>
+          <el-descriptions-item label="时间周期">{{ backtest.timeframe }}</el-descriptions-item>
+          <el-descriptions-item label="初始资金">{{ formatNumber(backtest.initial_capital ?? 0, 2) }} USDT</el-descriptions-item>
+          <el-descriptions-item label="回测起始">{{ backtest.backtest_start ? formatDateTime(backtest.backtest_start) : '-' }}</el-descriptions-item>
+          <el-descriptions-item label="回测结束">{{ backtest.backtest_end ? formatDateTime(backtest.backtest_end) : '-' }}</el-descriptions-item>
+          <el-descriptions-item label="手续费率">{{ formatNumber((backtest.commission_rate ?? 0) * 100, 4) }}%</el-descriptions-item>
+          <el-descriptions-item label="滑点">{{ backtest.slippage != null ? formatNumber(backtest.slippage * 100, 4) + '%' : '-' }}</el-descriptions-item>
+        </el-descriptions>
+
+        <template v-if="backtest.params && Object.keys(backtest.params).length > 0">
+          <h4 class="sub-title">策略参数</h4>
+          <el-descriptions :column="4" border>
+            <el-descriptions-item v-for="(val, key) in backtest.params" :key="key" :label="String(key)">
+              {{ val }}
+            </el-descriptions-item>
+          </el-descriptions>
+        </template>
+
+        <template v-if="strategy?.code">
+          <div class="code-toggle" @click="codeExpanded = !codeExpanded">
+            <el-icon><component :is="codeExpanded ? 'ArrowDown' : 'ArrowRight'" /></el-icon>
+            <span>策略代码</span>
+          </div>
+          <div v-show="codeExpanded" class="code-block">
+            <pre><code>{{ strategy.code }}</code></pre>
+          </div>
+        </template>
+      </div>
+
       <div class="metrics-grid">
         <div class="metric-card card">
           <span class="label">总收益率</span>
@@ -291,11 +326,13 @@ import StatusBadge from '@/components/common/StatusBadge.vue'
 import PriceCell from '@/components/common/PriceCell.vue'
 import EquityCurve from '@/components/charts/EquityCurve.vue'
 import BacktestKLineChart from '@/components/charts/BacktestKLineChart.vue'
-import { formatDateTime, formatPrice, formatNumber, formatPercent } from '@/utils/format'
+import { formatDateTime, formatPrice, formatNumber, formatPercent, formatExchangeName } from '@/utils/format'
 import { getBacktestStatus, getBacktestResult, getBacktestCandles, exportBacktestResult, cancelBacktest } from '@/api/backtest'
+import { getStrategy } from '@/api/strategy'
 import type { Candle } from '@/types'
 import { useNotification } from '@/composables/useNotification'
 import type { BacktestRun, BacktestResult } from '@/types'
+import type { Strategy } from '@/types/strategy'
 
 const props = defineProps<{
   id: string
@@ -308,6 +345,8 @@ const loading = ref(true)
 const cancelling = ref(false)
 const backtest = ref<BacktestRun | null>(null)
 const result = ref<BacktestResult | null>(null)
+const strategy = ref<Strategy | null>(null)
+const codeExpanded = ref(false)
 
 const candles = ref<Candle[]>([])
 const candlesLoading = ref(false)
@@ -396,6 +435,12 @@ async function loadResult() {
     result.value = response.data
     // Load candle data for K-line chart in background
     loadCandles()
+    // Load strategy code in background
+    if (backtest.value?.strategy_id) {
+      getStrategy(backtest.value.strategy_id)
+        .then((res) => { strategy.value = res.data })
+        .catch(() => { /* strategy code is optional */ })
+    }
   } catch (error) {
     console.error('Failed to load result:', error)
   }
@@ -573,6 +618,55 @@ onUnmounted(() => {
     .error-message {
       color: #ff4d4f;
       margin-bottom: 16px;
+    }
+  }
+
+  .config-section {
+    margin-bottom: 24px;
+
+    .sub-title {
+      font-size: 14px;
+      font-weight: 600;
+      margin: 16px 0 8px;
+      color: #303133;
+    }
+
+    .code-toggle {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin-top: 16px;
+      cursor: pointer;
+      font-size: 14px;
+      font-weight: 500;
+      color: #606266;
+      user-select: none;
+
+      &:hover {
+        color: #409eff;
+      }
+    }
+
+    .code-block {
+      margin-top: 8px;
+      background: #fafafa;
+      border: 1px solid #ebeef5;
+      border-radius: 4px;
+      max-height: 400px;
+      overflow: auto;
+
+      pre {
+        margin: 0;
+        padding: 16px;
+
+        code {
+          font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+          font-size: 13px;
+          line-height: 1.6;
+          color: #303133;
+          white-space: pre;
+        }
+      }
     }
   }
 

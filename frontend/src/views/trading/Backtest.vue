@@ -111,9 +111,9 @@
                 <el-input-number
                   v-model="form.commission_rate"
                   :min="0"
-                  :max="1"
+                  :max="100"
                   :step="0.01"
-                  :precision="3"
+                  :precision="4"
                   style="width: 100%"
                 />
               </el-form-item>
@@ -123,9 +123,9 @@
                 <el-input-number
                   v-model="form.slippage"
                   :min="0"
-                  :max="1"
+                  :max="100"
                   :step="0.01"
-                  :precision="3"
+                  :precision="4"
                   style="width: 100%"
                 />
               </el-form-item>
@@ -261,8 +261,8 @@ const form = reactive({
   timeframe: '1h',
   dateRange: [] as string[],
   initial_capital: 10000,
-  commission_rate: 0.001,
-  slippage: 0.001,
+  commission_rate: 0.1,
+  slippage: 0.1,
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   params: {} as Record<string, any>,
 })
@@ -324,8 +324,8 @@ function handleReset() {
   form.timeframe = '1h'
   form.dateRange = []
   form.initial_capital = 10000
-  form.commission_rate = 0.001
-  form.slippage = 0.001
+  form.commission_rate = 0.1
+  form.slippage = 0.1
   form.params = {}
   formRef.value?.resetFields()
 }
@@ -382,8 +382,8 @@ async function handleSubmit() {
       start_date: form.dateRange[0],
       end_date: form.dateRange[1],
       initial_capital: form.initial_capital,
-      commission_rate: form.commission_rate,
-      slippage: form.slippage,
+      commission_rate: form.commission_rate / 100,
+      slippage: form.slippage / 100,
       params: form.params,
     }
 
