@@ -239,6 +239,7 @@ import { formatExchangeName, formatDateTime } from '@/utils/format'
 import { TIMEFRAME_OPTIONS } from '@/utils/constants'
 import { getSymbols } from '@/api/market'
 import { startBacktest, getBacktests, checkDataAvailability } from '@/api/backtest'
+import { downloadHistoricalData } from '@/api/system'
 import { useNotification } from '@/composables/useNotification'
 import type { BacktestRun } from '@/types'
 
@@ -347,6 +348,21 @@ function handleStrategyChange() {
   }
 }
 
+async function triggerDownload() {
+  try {
+    await downloadHistoricalData({
+      exchange: form.exchange,
+      symbol: form.symbol,
+      timeframe: form.timeframe,
+      start_date: form.dateRange[0],
+      end_date: form.dateRange[1],
+    })
+    toastSuccess('下载任务已创建，可在「系统管理 > 数据管理」中查看进度')
+  } catch {
+    toastError('创建下载任务失败')
+  }
+}
+
 async function handleSubmit() {
   const valid = await formRef.value?.validate()
   if (!valid) return
@@ -363,15 +379,27 @@ async function handleSubmit() {
     })
     const availability = checkResponse.data
     if (!availability.has_data) {
-      toastError('所选时间范围内无可用历史数据，请调整时间范围或交易对')
+      try {
+        await ElMessageBox.confirm(
+          `所选时间范围内无可用历史数据（${form.exchange} · ${form.symbol} · ${form.timeframe}），是否立即下载？`,
+          '缺少历史数据',
+          { confirmButtonText: '下载数据', cancelButtonText: '取消', type: 'warning' },
+        )
+        await triggerDownload()
+      } catch { /* 用户取消 */ }
       return
     }
     if (!availability.is_complete) {
-      toastError(
-        `历史数据不完整（仅有 ${availability.total_bars} 根K线，` +
-        `覆盖 ${availability.first_bar?.slice(0, 10) || '?'} 至 ${availability.last_bar?.slice(0, 10) || '?'}），` +
-        '请调整时间范围'
-      )
+      try {
+        await ElMessageBox.confirm(
+          `历史数据不完整（仅有 ${availability.total_bars} 根K线，` +
+          `覆盖 ${availability.first_bar?.slice(0, 10) || '?'} 至 ${availability.last_bar?.slice(0, 10) || '?'}），` +
+          `是否下载完整数据？`,
+          '历史数据不完整',
+          { confirmButtonText: '下载数据', cancelButtonText: '取消', type: 'warning' },
+        )
+        await triggerDownload()
+      } catch { /* 用户取消 */ }
       return
     }
 
