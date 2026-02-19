@@ -134,8 +134,14 @@
       <div class="chart-section card">
         <div class="card-header">
           <h3 class="card-title">收益曲线</h3>
+          <el-switch
+            v-if="result.trades.length > 0"
+            v-model="showTradeMarkers"
+            active-text="显示买卖点"
+            size="small"
+          />
         </div>
-        <EquityCurve :data="result.equity_curve" :trades="result.trades" height="400px" show-benchmark />
+        <EquityCurve :data="result.equity_curve" :trades="showTradeMarkers ? result.trades : []" height="400px" show-benchmark />
       </div>
 
       <div class="kline-section card" v-if="candles.length > 0 || candlesLoading">
@@ -357,6 +363,7 @@ const backtest = ref<BacktestRun | null>(null)
 const result = ref<BacktestResult | null>(null)
 const strategy = ref<Strategy | null>(null)
 const codeExpanded = ref(false)
+const showTradeMarkers = ref(true)
 
 const candles = ref<Candle[]>([])
 const candlesLoading = ref(false)
