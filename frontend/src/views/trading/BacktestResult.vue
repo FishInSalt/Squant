@@ -187,9 +187,19 @@
               {{ formatPrice(row.entry_price) }}
             </template>
           </el-table-column>
+          <el-table-column label="建仓金额" width="120" align="right">
+            <template #default="{ row }">
+              {{ formatNumber(row.entry_price * row.amount, 2) }}
+            </template>
+          </el-table-column>
           <el-table-column prop="exit_price" label="出场价" width="120" align="right">
             <template #default="{ row }">
               {{ row.exit_price ? formatPrice(row.exit_price) : '-' }}
+            </template>
+          </el-table-column>
+          <el-table-column label="平仓金额" width="120" align="right">
+            <template #default="{ row }">
+              {{ row.exit_price ? formatNumber(row.exit_price * row.amount, 2) : '-' }}
             </template>
           </el-table-column>
           <el-table-column prop="exit_time" label="出场时间" width="170" sortable="custom">
