@@ -254,15 +254,16 @@ const historyLoading = ref(false)
 const symbols = ref<string[]>([])
 const backtestHistory = ref<BacktestRun[]>([])
 
+const q = route.query
 const form = reactive({
-  strategy_id: (route.query.strategy_id as string) || '',
-  exchange: (route.query.exchange as string) || 'okx',
-  symbol: (route.query.symbol as string) || '',
-  timeframe: '1h',
-  dateRange: [] as string[],
-  initial_capital: 10000,
-  commission_rate: 0.1,
-  slippage: 0.1,
+  strategy_id: (q.strategy_id as string) || '',
+  exchange: (q.exchange as string) || 'okx',
+  symbol: (q.symbol as string) || '',
+  timeframe: (q.timeframe as string) || '1h',
+  dateRange: (q.start_date && q.end_date ? [q.start_date as string, q.end_date as string] : []) as string[],
+  initial_capital: q.initial_capital ? Number(q.initial_capital) : 10000,
+  commission_rate: q.commission_rate ? Number(q.commission_rate) : 0.1,
+  slippage: q.slippage ? Number(q.slippage) : 0.1,
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   params: {} as Record<string, any>,
 })
@@ -411,6 +412,13 @@ onMounted(async () => {
 
   if (form.strategy_id) {
     handleStrategyChange()
+    // Override with query params if present (from "再次回测")
+    if (q.params) {
+      try {
+        const parsed = JSON.parse(q.params as string)
+        Object.assign(form.params, parsed)
+      } catch { /* ignore invalid JSON */ }
+    }
   }
 })
 </script>

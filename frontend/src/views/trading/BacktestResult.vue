@@ -496,14 +496,22 @@ function goBack() {
 
 function runAgain() {
   if (backtest.value) {
-    router.push({
-      path: '/trading/backtest',
-      query: {
-        strategy_id: backtest.value.strategy_id,
-        exchange: backtest.value.exchange,
-        symbol: backtest.value.symbol,
-      },
-    })
+    const b = backtest.value
+    const query: Record<string, string> = {
+      strategy_id: b.strategy_id,
+      exchange: b.exchange,
+      symbol: b.symbol,
+      timeframe: b.timeframe,
+      initial_capital: String(b.initial_capital ?? 10000),
+      commission_rate: String((b.commission_rate ?? 0) * 100),
+      slippage: String((b.slippage ?? 0) * 100),
+    }
+    if (b.backtest_start) query.start_date = b.backtest_start
+    if (b.backtest_end) query.end_date = b.backtest_end
+    if (b.params && Object.keys(b.params).length > 0) {
+      query.params = JSON.stringify(b.params)
+    }
+    router.push({ path: '/trading/backtest', query })
   }
 }
 
