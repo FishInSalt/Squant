@@ -155,6 +155,7 @@
         :data="candles"
         :indicators="selectedIndicators"
         :indicator-params="indicatorParams"
+        :on-load-more="loadMoreCandles"
         height="600px"
       />
     </div>
@@ -294,6 +295,21 @@ async function loadTicker() {
     ticker.value = response.data
   } catch (error) {
     console.error('Failed to load ticker:', error)
+  }
+}
+
+async function loadMoreCandles(params: { before: number }): Promise<Candle[]> {
+  try {
+    const response = await getCandles(
+      props.symbol,
+      selectedTimeframe.value,
+      300,
+      params.before
+    )
+    return response.data.candles
+  } catch (error) {
+    console.error('Failed to load more candles:', error)
+    return []
   }
 }
 

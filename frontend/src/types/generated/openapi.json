@@ -322,7 +322,7 @@
           "Market"
         ],
         "summary": "Get Candles",
-        "description": "Get candlestick (OHLCV) data for a trading pair.\n\nReturns historical price data in candlestick format.",
+        "description": "Get candlestick (OHLCV) data for a trading pair.\n\nReturns historical price data in candlestick format.\nWhen end_time is provided, returns candles before that timestamp\n(useful for scroll-loading historical data).",
         "operationId": "get_candles_api_v1_market_candles__symbol__get",
         "parameters": [
           {
@@ -361,6 +361,24 @@
               "title": "Limit"
             },
             "description": "Number of candles"
+          },
+          {
+            "name": "end_time",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "End timestamp in milliseconds. When provided, fetches candles before this time.",
+              "title": "End Time"
+            },
+            "description": "End timestamp in milliseconds. When provided, fetches candles before this time."
           }
         ],
         "responses": {

@@ -4,7 +4,7 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
-import { init, dispose, type Chart } from 'klinecharts'
+import { init, dispose, LoadDataType, type Chart } from 'klinecharts'
 import type { Candle } from '@/types'
 import { getIndicatorDef, type IndicatorParams } from './indicatorConfig'
 
@@ -13,6 +13,7 @@ interface Props {
   height?: string
   indicators?: string[]
   indicatorParams?: IndicatorParams
+  onLoadMore?: (params: { before: number }) => Promise<Candle[]>
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -47,6 +48,17 @@ function calculatePricePrecision(price: number): number {
   if (price >= 0.1) return 6
   if (price >= 0.01) return 7
   return 8
+}
+
+function toKLineData(c: Candle) {
+  return {
+    timestamp: c.timestamp,
+    open: c.open,
+    high: c.high,
+    low: c.low,
+    close: c.close,
+    volume: c.volume,
+  }
 }
 
 function initChart() {
@@ -115,6 +127,25 @@ function initChart() {
     }
   })
 
+  // Register lazy-loading callback using klinecharts' native API.
+  // The library automatically detects when the user scrolls to the left edge (from === 0),
+  // triggers the callback, and internally prepends data while preserving the viewport position.
+  if (props.onLoadMore) {
+    chart?.setLoadDataCallback(({ type, data, callback }) => {
+      if (type === LoadDataType.Forward && data) {
+        // Forward = user scrolled to see the oldest bar → load older data
+        props.onLoadMore!({ before: data.timestamp }).then((candles) => {
+          callback(candles.map(toKLineData), candles.length >= 300)
+        }).catch(() => {
+          callback([], false)
+        })
+      } else {
+        // Backward (newer data) or no boundary data — not needed, realtime WS handles it
+        callback([], false)
+      }
+    })
+  }
+
   if (props.data.length > 0) {
     updateData(props.data)
     props.indicators.forEach((indicator) => addIndicator(indicator))
@@ -131,15 +162,9 @@ function updateData(candles: Candle[]) {
   const volumePrecision = latestVolume >= 1 ? 2 : 6
   chart.setPriceVolumePrecision(pricePrecision, volumePrecision)
 
-  const klineData = candles.map((c) => ({
-    timestamp: c.timestamp,
-    open: c.open,
-    high: c.high,
-    low: c.low,
-    close: c.close,
-    volume: c.volume,
-  }))
-  chart.applyNewData(klineData)
+  // Pass more=true when onLoadMore is available, telling the library
+  // that more historical data can be loaded when user scrolls left
+  chart.applyNewData(candles.map(toKLineData), !!props.onLoadMore)
 }
 
 function updateCandle(candle: { timestamp: number; open: number; high: number; low: number; close: number; volume: number }) {

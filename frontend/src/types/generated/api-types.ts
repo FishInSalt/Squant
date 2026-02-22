@@ -191,6 +191,8 @@ export interface paths {
          * @description Get candlestick (OHLCV) data for a trading pair.
          *
          *     Returns historical price data in candlestick format.
+         *     When end_time is provided, returns candles before that timestamp
+         *     (useful for scroll-loading historical data).
          */
         get: operations["get_candles_api_v1_market_candles__symbol__get"];
         put?: never;
@@ -5756,6 +5758,8 @@ export interface operations {
                 timeframe?: string;
                 /** @description Number of candles */
                 limit?: number;
+                /** @description End timestamp in milliseconds. When provided, fetches candles before this time. */
+                end_time?: number | null;
             };
             header?: never;
             path: {
