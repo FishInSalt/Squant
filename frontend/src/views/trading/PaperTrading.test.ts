@@ -66,4 +66,11 @@ describe('PaperTrading', () => {
     await flushPromises()
     expect(wrapper.text()).toContain('暂无模拟交易会话')
   })
+
+  it('shows commission rate and slippage fields', async () => {
+    const wrapper = mountView(PaperTrading)
+    await flushPromises()
+    expect(wrapper.text()).toContain('手续费率 (%)')
+    expect(wrapper.text()).toContain('滑点 (%)')
+  })
 })
