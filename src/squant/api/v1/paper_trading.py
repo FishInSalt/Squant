@@ -11,7 +11,7 @@ from squant.api.deps import RedisClient
 from squant.api.utils import ApiResponse, PaginatedData
 from squant.infra.database import get_session
 from squant.models.enums import RunStatus
-from squant.schemas.backtest import EquityCurvePoint
+from squant.schemas.backtest import EquityCurvePoint, TradeRecordResponse
 from squant.schemas.paper_trading import (
     PaperTradingListItem,
     PaperTradingRunResponse,
@@ -153,6 +153,22 @@ async def get_paper_trading_status(
             for order in status.get("pending_orders", [])
         ]
 
+        trades = [
+            TradeRecordResponse(
+                symbol=t["symbol"],
+                side=t["side"],
+                entry_time=t["entry_time"],
+                entry_price=Decimal(t["entry_price"]),
+                exit_time=t.get("exit_time"),
+                exit_price=Decimal(t["exit_price"]) if t.get("exit_price") else None,
+                amount=Decimal(t["amount"]),
+                pnl=Decimal(t["pnl"]),
+                pnl_pct=Decimal(t["pnl_pct"]),
+                fees=Decimal(t["fees"]),
+            )
+            for t in status.get("trades", [])
+        ]
+
         response = PaperTradingStatusResponse(
             run_id=UUID(status["run_id"]),
             symbol=status["symbol"],
@@ -170,6 +186,7 @@ async def get_paper_trading_status(
             pending_orders=pending_orders,
             completed_orders_count=status["completed_orders_count"],
             trades_count=status["trades_count"],
+            trades=trades,
         )
 
         return ApiResponse(data=response)

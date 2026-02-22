@@ -7,6 +7,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
+from squant.schemas.backtest import TradeRecordResponse
 from squant.schemas.types import NumberDecimal
 
 
@@ -104,6 +105,7 @@ class PaperTradingStatusResponse(BaseModel):
     pending_orders: list[PendingOrderInfo]
     completed_orders_count: int
     trades_count: int
+    trades: list[TradeRecordResponse] = Field(default_factory=list)
 
 
 class PaperTradingListItem(BaseModel):

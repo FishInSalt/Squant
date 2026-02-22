@@ -1459,7 +1459,7 @@
           "Backtest"
         ],
         "summary": "Run Backtest",
-        "description": "Create and run a backtest synchronously.\n\nThis endpoint creates a backtest run and executes it immediately,\nreturning when the backtest completes.\n\nArgs:\n    request: Backtest configuration.\n    session: Database session.\n\nReturns:\n    Backtest run with results.\n\nRaises:\n    HTTPException: 400 if insufficient data, 404 if strategy not found.",
+        "description": "Create a backtest and start execution in background.\n\nReturns immediately with a PENDING run record. The backtest executes\nasynchronously — poll GET /backtest/{run_id} for status updates.\n\nArgs:\n    request: Backtest configuration.\n    session: Database session.\n\nReturns:\n    Created backtest run (status: pending).\n\nRaises:\n    HTTPException: 400 if invalid config, 404 if strategy not found.",
         "operationId": "run_backtest_api_v1_backtest_post",
         "requestBody": {
           "required": true,
@@ -1639,7 +1639,7 @@
           "Backtest"
         ],
         "summary": "Execute Backtest",
-        "description": "Execute a pending backtest.\n\nArgs:\n    run_id: Backtest run ID.\n    session: Database session.\n\nReturns:\n    Updated backtest run with results.\n\nRaises:\n    HTTPException: 400 if execution fails or data incomplete, 404 if not found.",
+        "description": "Start execution of a pending backtest in background.\n\nReturns immediately. Poll GET /backtest/{run_id} for status updates.\n\nArgs:\n    run_id: Backtest run ID.\n    session: Database session.\n\nReturns:\n    Current backtest run record.\n\nRaises:\n    HTTPException: 404 if not found, 400 if not in pending state.",
         "operationId": "execute_backtest_api_v1_backtest__run_id__run_post",
         "parameters": [
           {
@@ -1990,6 +1990,102 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ApiResponse_list_EquityCurvePoint__"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/backtest/{run_id}/candles": {
+      "get": {
+        "tags": [
+          "Backtest"
+        ],
+        "summary": "Get Backtest Candles",
+        "description": "Get paginated candlestick data for a backtest run's period.\n\nSupports cursor-based pagination via `before` / `after` timestamps.\nDefault (no cursor): returns the last `limit` candles of the backtest period.\n\nArgs:\n    run_id: Backtest run ID.\n    before: Return candles with time < before (scroll left / older data).\n    after: Return candles with time > after (scroll right / newer data).\n    limit: Max number of candles to return (1-2000, default 1000).\n    session: Database session.\n\nReturns:\n    Paginated candles with total_count metadata.\n\nRaises:\n    HTTPException: 404 if backtest not found, 400 if no data available.",
+        "operationId": "get_backtest_candles_api_v1_backtest__run_id__candles_get",
+        "parameters": [
+          {
+            "name": "run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Run Id"
+            }
+          },
+          {
+            "name": "before",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Fetch candles before this time",
+              "title": "Before"
+            },
+            "description": "Fetch candles before this time"
+          },
+          {
+            "name": "after",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Fetch candles after this time",
+              "title": "After"
+            },
+            "description": "Fetch candles after this time"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 2000,
+              "minimum": 1,
+              "description": "Max candles to return",
+              "default": 1000,
+              "title": "Limit"
+            },
+            "description": "Max candles to return"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_CandlesPageResponse_"
                 }
               }
             }
@@ -3653,6 +3749,371 @@
           }
         }
       }
+    },
+    "/api/v1/system/data/download": {
+      "post": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Start Download",
+        "description": "Start a historical data download task.",
+        "operationId": "start_download_api_v1_system_data_download_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DownloadDataRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_DownloadTaskResponse_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/system/data/download/tasks": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "List Download Tasks",
+        "description": "List all download tasks (most recent first).",
+        "operationId": "list_download_tasks_api_v1_system_data_download_tasks_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_list_DownloadTaskResponse__"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/system/data/download/{task_id}": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Get Download Task",
+        "description": "Get download task status by ID.",
+        "operationId": "get_download_task_api_v1_system_data_download__task_id__get",
+        "parameters": [
+          {
+            "name": "task_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Task Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_DownloadTaskResponse_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Remove Download Task",
+        "description": "Remove a completed or failed download task from the list.",
+        "operationId": "remove_download_task_api_v1_system_data_download__task_id__delete",
+        "parameters": [
+          {
+            "name": "task_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Task Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_NoneType_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/system/data/download/{task_id}/cancel": {
+      "post": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Cancel Download Task",
+        "description": "Cancel a running download task.",
+        "operationId": "cancel_download_task_api_v1_system_data_download__task_id__cancel_post",
+        "parameters": [
+          {
+            "name": "task_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Task Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_DownloadTaskResponse_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/system/data/list": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "List Historical Data",
+        "description": "List available historical data in the database.",
+        "operationId": "list_historical_data_api_v1_system_data_list_get",
+        "parameters": [
+          {
+            "name": "exchange",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by exchange",
+              "title": "Exchange"
+            },
+            "description": "Filter by exchange"
+          },
+          {
+            "name": "symbol",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by symbol",
+              "title": "Symbol"
+            },
+            "description": "Filter by symbol"
+          },
+          {
+            "name": "timeframe",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by timeframe",
+              "title": "Timeframe"
+            },
+            "description": "Filter by timeframe"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_list_HistoricalDataItem__"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/system/data/{data_id}": {
+      "delete": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Delete Historical Data",
+        "description": "Delete historical data for a specific exchange/symbol/timeframe.\n\nThe data_id format is \"exchange:symbol:timeframe\" (e.g., \"okx:BTC/USDT:1h\").",
+        "operationId": "delete_historical_data_api_v1_system_data__data_id__delete",
+        "parameters": [
+          {
+            "name": "data_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Data Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_NoneType_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/system/symbols/{exchange_id}": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "List Exchange Symbols",
+        "description": "List available trading symbols for an exchange via CCXT.",
+        "operationId": "list_exchange_symbols_api_v1_system_symbols__exchange_id__get",
+        "parameters": [
+          {
+            "name": "exchange_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Exchange Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_list_str__"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -3747,6 +4208,28 @@
           "data"
         ],
         "title": "ApiResponse[BalanceResponse]"
+      },
+      "ApiResponse_CandlesPageResponse_": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "default": 0
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "success"
+          },
+          "data": {
+            "$ref": "#/components/schemas/CandlesPageResponse"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "title": "ApiResponse[CandlesPageResponse]"
       },
       "ApiResponse_CandlestickResponse_": {
         "properties": {
@@ -3857,6 +4340,28 @@
           "data"
         ],
         "title": "ApiResponse[DataAvailabilityResponse]"
+      },
+      "ApiResponse_DownloadTaskResponse_": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "default": 0
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "success"
+          },
+          "data": {
+            "$ref": "#/components/schemas/DownloadTaskResponse"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "title": "ApiResponse[DownloadTaskResponse]"
       },
       "ApiResponse_EmergencyCloseResponse_": {
         "properties": {
@@ -4510,6 +5015,32 @@
         ],
         "title": "ApiResponse[list[AvailableSymbolResponse]]"
       },
+      "ApiResponse_list_DownloadTaskResponse__": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "default": 0
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "success"
+          },
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/DownloadTaskResponse"
+            },
+            "type": "array",
+            "title": "Data"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "title": "ApiResponse[list[DownloadTaskResponse]]"
+      },
       "ApiResponse_list_EquityCurvePoint__": {
         "properties": {
           "code": {
@@ -4561,6 +5092,32 @@
           "data"
         ],
         "title": "ApiResponse[list[ExchangeAccountListItem]]"
+      },
+      "ApiResponse_list_HistoricalDataItem__": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "default": 0
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "success"
+          },
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/HistoricalDataItem"
+            },
+            "type": "array",
+            "title": "Data"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "title": "ApiResponse[list[HistoricalDataItem]]"
       },
       "ApiResponse_list_LiveTradingListItem__": {
         "properties": {
@@ -4691,6 +5248,32 @@
           "data"
         ],
         "title": "ApiResponse[list[WatchlistItemResponse]]"
+      },
+      "ApiResponse_list_str__": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "default": 0
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "success"
+          },
+          "data": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Data"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "title": "ApiResponse[list[str]]"
       },
       "AvailableSymbolResponse": {
         "properties": {
@@ -5294,6 +5877,28 @@
         "title": "BalanceResponse",
         "description": "Account balance response."
       },
+      "CandlesPageResponse": {
+        "properties": {
+          "candles": {
+            "items": {
+              "$ref": "#/components/schemas/CandlestickPoint"
+            },
+            "type": "array",
+            "title": "Candles"
+          },
+          "total_count": {
+            "type": "integer",
+            "title": "Total Count"
+          }
+        },
+        "type": "object",
+        "required": [
+          "candles",
+          "total_count"
+        ],
+        "title": "CandlesPageResponse",
+        "description": "Paginated candles response with metadata."
+      },
       "CandlestickItem": {
         "properties": {
           "timestamp": {
@@ -5339,6 +5944,46 @@
         ],
         "title": "CandlestickItem",
         "description": "Single candlestick."
+      },
+      "CandlestickPoint": {
+        "properties": {
+          "timestamp": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Timestamp"
+          },
+          "open": {
+            "type": "number",
+            "title": "Open"
+          },
+          "high": {
+            "type": "number",
+            "title": "High"
+          },
+          "low": {
+            "type": "number",
+            "title": "Low"
+          },
+          "close": {
+            "type": "number",
+            "title": "Close"
+          },
+          "volume": {
+            "type": "number",
+            "title": "Volume"
+          }
+        },
+        "type": "object",
+        "required": [
+          "timestamp",
+          "open",
+          "high",
+          "low",
+          "close",
+          "volume"
+        ],
+        "title": "CandlestickPoint",
+        "description": "Single candlestick data point for backtest K-line chart."
       },
       "CandlestickResponse": {
         "properties": {
@@ -6091,6 +6736,151 @@
         "title": "DetailedHealthStatus",
         "description": "Detailed health check response with components."
       },
+      "DownloadDataRequest": {
+        "properties": {
+          "exchange": {
+            "type": "string",
+            "maxLength": 32,
+            "minLength": 1,
+            "title": "Exchange",
+            "description": "Exchange ID (okx, binance, bybit)"
+          },
+          "symbol": {
+            "type": "string",
+            "maxLength": 32,
+            "minLength": 1,
+            "title": "Symbol",
+            "description": "Trading pair (e.g., BTC/USDT)"
+          },
+          "timeframe": {
+            "type": "string",
+            "maxLength": 8,
+            "minLength": 1,
+            "title": "Timeframe",
+            "description": "Candle timeframe (1m, 5m, 15m, 30m, 1h, 4h, 1d, 1w)"
+          },
+          "start_date": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Start Date",
+            "description": "Download start date"
+          },
+          "end_date": {
+            "type": "string",
+            "format": "date-time",
+            "title": "End Date",
+            "description": "Download end date"
+          }
+        },
+        "type": "object",
+        "required": [
+          "exchange",
+          "symbol",
+          "timeframe",
+          "start_date",
+          "end_date"
+        ],
+        "title": "DownloadDataRequest",
+        "description": "Request to start a historical data download."
+      },
+      "DownloadTaskResponse": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "exchange": {
+            "type": "string",
+            "title": "Exchange"
+          },
+          "symbol": {
+            "type": "string",
+            "title": "Symbol"
+          },
+          "timeframe": {
+            "type": "string",
+            "title": "Timeframe"
+          },
+          "start_date": {
+            "type": "string",
+            "title": "Start Date"
+          },
+          "end_date": {
+            "type": "string",
+            "title": "End Date"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "progress": {
+            "type": "number",
+            "title": "Progress"
+          },
+          "total_candles": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Total Candles"
+          },
+          "downloaded_candles": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Downloaded Candles"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "created_at": {
+            "type": "string",
+            "title": "Created At"
+          },
+          "completed_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completed At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "exchange",
+          "symbol",
+          "timeframe",
+          "start_date",
+          "end_date",
+          "status",
+          "progress",
+          "created_at"
+        ],
+        "title": "DownloadTaskResponse",
+        "description": "Download task status response.\n\nMatches frontend DataDownloadTask type in types/common.ts."
+      },
       "EmergencyCloseResponse": {
         "properties": {
           "run_id": {
@@ -6195,6 +6985,17 @@
           "unrealized_pnl": {
             "type": "number",
             "title": "Unrealized Pnl"
+          },
+          "benchmark_equity": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Benchmark Equity"
           }
         },
         "type": "object",
@@ -6348,6 +7149,72 @@
         ],
         "title": "HealthStatus",
         "description": "Health check response model."
+      },
+      "HistoricalDataItem": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "exchange": {
+            "type": "string",
+            "title": "Exchange"
+          },
+          "symbol": {
+            "type": "string",
+            "title": "Symbol"
+          },
+          "timeframe": {
+            "type": "string",
+            "title": "Timeframe"
+          },
+          "start_date": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Start Date"
+          },
+          "end_date": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "End Date"
+          },
+          "candle_count": {
+            "type": "integer",
+            "title": "Candle Count"
+          },
+          "file_size": {
+            "type": "integer",
+            "title": "File Size",
+            "default": 0
+          },
+          "created_at": {
+            "type": "string",
+            "title": "Created At",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "exchange",
+          "symbol",
+          "timeframe",
+          "candle_count"
+        ],
+        "title": "HistoricalDataItem",
+        "description": "Historical data summary item.\n\nMaps from DataLoader.get_available_symbols() output."
       },
       "LiveOrderInfo": {
         "properties": {
@@ -7882,6 +8749,13 @@
           "trades_count": {
             "type": "integer",
             "title": "Trades Count"
+          },
+          "trades": {
+            "items": {
+              "$ref": "#/components/schemas/TradeRecordResponse"
+            },
+            "type": "array",
+            "title": "Trades"
           }
         },
         "type": "object",

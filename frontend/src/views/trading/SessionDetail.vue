@@ -218,6 +218,74 @@
         </el-table>
       </div>
 
+      <div v-if="isPaper && paperTrades.length > 0" class="trades-section card">
+        <div class="card-header">
+          <h3 class="card-title">交易记录</h3>
+          <span class="item-count">共 {{ paperTrades.length }} 笔</span>
+        </div>
+        <el-table :data="paperTrades" stripe empty-text="暂无交易记录" max-height="400">
+          <el-table-column prop="side" label="方向" width="80">
+            <template #default="{ row }">
+              <el-tag
+                :type="row.side === 'buy' ? 'success' : 'danger'"
+                size="small"
+              >
+                {{ row.side === 'buy' ? '买入' : '卖出' }}
+              </el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column prop="entry_time" label="开仓时间" width="170">
+            <template #default="{ row }">
+              {{ formatTradeTime(row.entry_time) }}
+            </template>
+          </el-table-column>
+          <el-table-column prop="entry_price" label="开仓价" width="130" align="right">
+            <template #default="{ row }">
+              {{ formatPrice(row.entry_price) }}
+            </template>
+          </el-table-column>
+          <el-table-column prop="exit_time" label="平仓时间" width="170">
+            <template #default="{ row }">
+              {{ row.exit_time ? formatTradeTime(row.exit_time) : '-' }}
+            </template>
+          </el-table-column>
+          <el-table-column prop="exit_price" label="平仓价" width="130" align="right">
+            <template #default="{ row }">
+              {{ row.exit_price != null ? formatPrice(row.exit_price) : '-' }}
+            </template>
+          </el-table-column>
+          <el-table-column prop="amount" label="数量" width="120" align="right">
+            <template #default="{ row }">
+              {{ formatNumber(row.amount, 4) }}
+            </template>
+          </el-table-column>
+          <el-table-column prop="pnl" label="盈亏" width="130" align="right">
+            <template #default="{ row }">
+              <PriceCell
+                :value="row.pnl"
+                :change="row.pnl"
+                show-sign
+              />
+            </template>
+          </el-table-column>
+          <el-table-column prop="pnl_pct" label="盈亏%" width="100" align="right">
+            <template #default="{ row }">
+              <PriceCell
+                :value="row.pnl_pct"
+                :change="row.pnl_pct"
+                show-sign
+                suffix="%"
+              />
+            </template>
+          </el-table-column>
+          <el-table-column prop="fees" label="手续费" width="100" align="right">
+            <template #default="{ row }">
+              {{ formatNumber(row.fees, 4) }}
+            </template>
+          </el-table-column>
+        </el-table>
+      </div>
+
       <div v-if="equityCurve.length > 0" class="equity-section card">
         <div class="card-header">
           <h3 class="card-title">收益曲线</h3>
@@ -286,6 +354,7 @@ import type {
   LiveOrderInfo,
   Position,
   RiskState,
+  Trade,
 } from '@/types'
 
 const props = defineProps<{
@@ -332,10 +401,25 @@ const liveOrders = computed<LiveOrderInfo[]>(() => {
   return (status.value as LiveTradingStatus).live_orders || []
 })
 
+const paperTrades = computed<Trade[]>(() => {
+  if (!status.value || !isPaper.value) return []
+  return (status.value as PaperTradingStatus).trades || []
+})
+
 const riskState = computed<RiskState | null>(() => {
   if (!status.value || !isLive.value) return null
   return (status.value as LiveTradingStatus).risk_state || null
 })
+
+function formatTradeTime(time: string): string {
+  return new Date(time).toLocaleString('zh-CN', {
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  })
+}
 
 async function loadSession() {
   try {
@@ -553,6 +637,7 @@ onUnmounted(() => {
   .equity-section,
   .positions-section,
   .orders-section,
+  .trades-section,
   .risk-section {
     margin-bottom: 24px;
 

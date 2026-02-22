@@ -217,6 +217,7 @@ export interface PaperTradingStatus {
   pending_orders: PendingOrderInfo[]
   completed_orders_count: number
   trades_count: number
+  trades: Trade[]
 }
 
 // 实盘订单信息（匹配后端 LiveOrderInfo）

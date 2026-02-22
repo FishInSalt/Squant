@@ -412,6 +412,22 @@ class PaperTradingEngine:
                 }
             )
 
+        trades = [
+            {
+                "symbol": t.symbol,
+                "side": t.side.value,
+                "entry_time": t.entry_time.isoformat(),
+                "entry_price": str(t.entry_price),
+                "exit_time": t.exit_time.isoformat() if t.exit_time else None,
+                "exit_price": str(t.exit_price) if t.exit_price is not None else None,
+                "amount": str(t.amount),
+                "pnl": str(t.pnl),
+                "pnl_pct": str(t.pnl_pct),
+                "fees": str(t.fees),
+            }
+            for t in self._context.trades
+        ]
+
         return {
             "run_id": str(self._run_id),
             "symbol": self._symbol,
@@ -431,4 +447,5 @@ class PaperTradingEngine:
             "pending_orders": pending_orders,
             "completed_orders_count": len(self._context.completed_orders),
             "trades_count": len(self._context.trades),
+            "trades": trades,
         }

@@ -704,20 +704,20 @@ export interface paths {
         put?: never;
         /**
          * Run Backtest
-         * @description Create and run a backtest synchronously.
+         * @description Create a backtest and start execution in background.
          *
-         *     This endpoint creates a backtest run and executes it immediately,
-         *     returning when the backtest completes.
+         *     Returns immediately with a PENDING run record. The backtest executes
+         *     asynchronously — poll GET /backtest/{run_id} for status updates.
          *
          *     Args:
          *         request: Backtest configuration.
          *         session: Database session.
          *
          *     Returns:
-         *         Backtest run with results.
+         *         Created backtest run (status: pending).
          *
          *     Raises:
-         *         HTTPException: 400 if insufficient data, 404 if strategy not found.
+         *         HTTPException: 400 if invalid config, 404 if strategy not found.
          */
         post: operations["run_backtest_api_v1_backtest_post"];
         delete?: never;
@@ -770,17 +770,19 @@ export interface paths {
         put?: never;
         /**
          * Execute Backtest
-         * @description Execute a pending backtest.
+         * @description Start execution of a pending backtest in background.
+         *
+         *     Returns immediately. Poll GET /backtest/{run_id} for status updates.
          *
          *     Args:
          *         run_id: Backtest run ID.
          *         session: Database session.
          *
          *     Returns:
-         *         Updated backtest run with results.
+         *         Current backtest run record.
          *
          *     Raises:
-         *         HTTPException: 400 if execution fails or data incomplete, 404 if not found.
+         *         HTTPException: 404 if not found, 400 if not in pending state.
          */
         post: operations["execute_backtest_api_v1_backtest__run_id__run_post"];
         delete?: never;
@@ -973,6 +975,42 @@ export interface paths {
          *         HTTPException: 404 if not found.
          */
         get: operations["get_equity_curve_api_v1_backtest__run_id__equity_curve_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/backtest/{run_id}/candles": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Backtest Candles
+         * @description Get paginated candlestick data for a backtest run's period.
+         *
+         *     Supports cursor-based pagination via `before` / `after` timestamps.
+         *     Default (no cursor): returns the last `limit` candles of the backtest period.
+         *
+         *     Args:
+         *         run_id: Backtest run ID.
+         *         before: Return candles with time < before (scroll left / older data).
+         *         after: Return candles with time > after (scroll right / newer data).
+         *         limit: Max number of candles to return (1-2000, default 1000).
+         *         session: Database session.
+         *
+         *     Returns:
+         *         Paginated candles with total_count metadata.
+         *
+         *     Raises:
+         *         HTTPException: 404 if backtest not found, 400 if no data available.
+         */
+        get: operations["get_backtest_candles_api_v1_backtest__run_id__candles_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1944,6 +1982,152 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/system/data/download": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Start Download
+         * @description Start a historical data download task.
+         */
+        post: operations["start_download_api_v1_system_data_download_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/system/data/download/tasks": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Download Tasks
+         * @description List all download tasks (most recent first).
+         */
+        get: operations["list_download_tasks_api_v1_system_data_download_tasks_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/system/data/download/{task_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Download Task
+         * @description Get download task status by ID.
+         */
+        get: operations["get_download_task_api_v1_system_data_download__task_id__get"];
+        put?: never;
+        post?: never;
+        /**
+         * Remove Download Task
+         * @description Remove a completed or failed download task from the list.
+         */
+        delete: operations["remove_download_task_api_v1_system_data_download__task_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/system/data/download/{task_id}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Cancel Download Task
+         * @description Cancel a running download task.
+         */
+        post: operations["cancel_download_task_api_v1_system_data_download__task_id__cancel_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/system/data/list": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Historical Data
+         * @description List available historical data in the database.
+         */
+        get: operations["list_historical_data_api_v1_system_data_list_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/system/data/{data_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Delete Historical Data
+         * @description Delete historical data for a specific exchange/symbol/timeframe.
+         *
+         *     The data_id format is "exchange:symbol:timeframe" (e.g., "okx:BTC/USDT:1h").
+         */
+        delete: operations["delete_historical_data_api_v1_system_data__data_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/system/symbols/{exchange_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Exchange Symbols
+         * @description List available trading symbols for an exchange via CCXT.
+         */
+        get: operations["list_exchange_symbols_api_v1_system_symbols__exchange_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -2005,6 +2189,20 @@ export interface components {
              */
             message: string;
             data: components["schemas"]["BalanceResponse"];
+        };
+        /** ApiResponse[CandlesPageResponse] */
+        ApiResponse_CandlesPageResponse_: {
+            /**
+             * Code
+             * @default 0
+             */
+            code: number;
+            /**
+             * Message
+             * @default success
+             */
+            message: string;
+            data: components["schemas"]["CandlesPageResponse"];
         };
         /** ApiResponse[CandlestickResponse] */
         ApiResponse_CandlestickResponse_: {
@@ -2075,6 +2273,20 @@ export interface components {
              */
             message: string;
             data: components["schemas"]["DataAvailabilityResponse"];
+        };
+        /** ApiResponse[DownloadTaskResponse] */
+        ApiResponse_DownloadTaskResponse_: {
+            /**
+             * Code
+             * @default 0
+             */
+            code: number;
+            /**
+             * Message
+             * @default success
+             */
+            message: string;
+            data: components["schemas"]["DownloadTaskResponse"];
         };
         /** ApiResponse[EmergencyCloseResponse] */
         ApiResponse_EmergencyCloseResponse_: {
@@ -2487,6 +2699,21 @@ export interface components {
             /** Data */
             data: components["schemas"]["AvailableSymbolResponse"][];
         };
+        /** ApiResponse[list[DownloadTaskResponse]] */
+        ApiResponse_list_DownloadTaskResponse__: {
+            /**
+             * Code
+             * @default 0
+             */
+            code: number;
+            /**
+             * Message
+             * @default success
+             */
+            message: string;
+            /** Data */
+            data: components["schemas"]["DownloadTaskResponse"][];
+        };
         /** ApiResponse[list[EquityCurvePoint]] */
         ApiResponse_list_EquityCurvePoint__: {
             /**
@@ -2516,6 +2743,21 @@ export interface components {
             message: string;
             /** Data */
             data: components["schemas"]["ExchangeAccountListItem"][];
+        };
+        /** ApiResponse[list[HistoricalDataItem]] */
+        ApiResponse_list_HistoricalDataItem__: {
+            /**
+             * Code
+             * @default 0
+             */
+            code: number;
+            /**
+             * Message
+             * @default success
+             */
+            message: string;
+            /** Data */
+            data: components["schemas"]["HistoricalDataItem"][];
         };
         /** ApiResponse[list[LiveTradingListItem]] */
         ApiResponse_list_LiveTradingListItem__: {
@@ -2591,6 +2833,21 @@ export interface components {
             message: string;
             /** Data */
             data: components["schemas"]["WatchlistItemResponse"][];
+        };
+        /** ApiResponse[list[str]] */
+        ApiResponse_list_str__: {
+            /**
+             * Code
+             * @default 0
+             */
+            code: number;
+            /**
+             * Message
+             * @default success
+             */
+            message: string;
+            /** Data */
+            data: string[];
         };
         /**
          * AvailableSymbolResponse
@@ -2915,6 +3172,16 @@ export interface components {
             total_usd_value?: number | null;
         };
         /**
+         * CandlesPageResponse
+         * @description Paginated candles response with metadata.
+         */
+        CandlesPageResponse: {
+            /** Candles */
+            candles: components["schemas"]["CandlestickPoint"][];
+            /** Total Count */
+            total_count: number;
+        };
+        /**
          * CandlestickItem
          * @description Single candlestick.
          */
@@ -2949,6 +3216,27 @@ export interface components {
              * Volume
              * @description Volume
              */
+            volume: number;
+        };
+        /**
+         * CandlestickPoint
+         * @description Single candlestick data point for backtest K-line chart.
+         */
+        CandlestickPoint: {
+            /**
+             * Timestamp
+             * Format: date-time
+             */
+            timestamp: string;
+            /** Open */
+            open: number;
+            /** High */
+            high: number;
+            /** Low */
+            low: number;
+            /** Close */
+            close: number;
+            /** Volume */
             volume: number;
         };
         /**
@@ -3362,6 +3650,73 @@ export interface components {
             };
         };
         /**
+         * DownloadDataRequest
+         * @description Request to start a historical data download.
+         */
+        DownloadDataRequest: {
+            /**
+             * Exchange
+             * @description Exchange ID (okx, binance, bybit)
+             */
+            exchange: string;
+            /**
+             * Symbol
+             * @description Trading pair (e.g., BTC/USDT)
+             */
+            symbol: string;
+            /**
+             * Timeframe
+             * @description Candle timeframe (1m, 5m, 15m, 30m, 1h, 4h, 1d, 1w)
+             */
+            timeframe: string;
+            /**
+             * Start Date
+             * Format: date-time
+             * @description Download start date
+             */
+            start_date: string;
+            /**
+             * End Date
+             * Format: date-time
+             * @description Download end date
+             */
+            end_date: string;
+        };
+        /**
+         * DownloadTaskResponse
+         * @description Download task status response.
+         *
+         *     Matches frontend DataDownloadTask type in types/common.ts.
+         */
+        DownloadTaskResponse: {
+            /** Id */
+            id: string;
+            /** Exchange */
+            exchange: string;
+            /** Symbol */
+            symbol: string;
+            /** Timeframe */
+            timeframe: string;
+            /** Start Date */
+            start_date: string;
+            /** End Date */
+            end_date: string;
+            /** Status */
+            status: string;
+            /** Progress */
+            progress: number;
+            /** Total Candles */
+            total_candles?: number | null;
+            /** Downloaded Candles */
+            downloaded_candles?: number | null;
+            /** Error */
+            error?: string | null;
+            /** Created At */
+            created_at: string;
+            /** Completed At */
+            completed_at?: string | null;
+        };
+        /**
          * EmergencyCloseResponse
          * @description Response from emergency close operation.
          */
@@ -3404,6 +3759,8 @@ export interface components {
             position_value: number;
             /** Unrealized Pnl */
             unrealized_pnl: number;
+            /** Benchmark Equity */
+            benchmark_equity?: number | null;
         };
         /**
          * ExchangeAccountListItem
@@ -3490,6 +3847,38 @@ export interface components {
             timestamp: string;
             /** Version */
             version: string;
+        };
+        /**
+         * HistoricalDataItem
+         * @description Historical data summary item.
+         *
+         *     Maps from DataLoader.get_available_symbols() output.
+         */
+        HistoricalDataItem: {
+            /** Id */
+            id: string;
+            /** Exchange */
+            exchange: string;
+            /** Symbol */
+            symbol: string;
+            /** Timeframe */
+            timeframe: string;
+            /** Start Date */
+            start_date?: string | null;
+            /** End Date */
+            end_date?: string | null;
+            /** Candle Count */
+            candle_count: number;
+            /**
+             * File Size
+             * @default 0
+             */
+            file_size: number;
+            /**
+             * Created At
+             * @default
+             */
+            created_at: string;
         };
         /**
          * LiveOrderInfo
@@ -4201,6 +4590,8 @@ export interface components {
             completed_orders_count: number;
             /** Trades Count */
             trades_count: number;
+            /** Trades */
+            trades?: components["schemas"]["TradeRecordResponse"][];
         };
         /**
          * PendingOrderInfo
@@ -6424,6 +6815,44 @@ export interface operations {
             };
         };
     };
+    get_backtest_candles_api_v1_backtest__run_id__candles_get: {
+        parameters: {
+            query?: {
+                /** @description Fetch candles before this time */
+                before?: string | null;
+                /** @description Fetch candles after this time */
+                after?: string | null;
+                /** @description Max candles to return */
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_CandlesPageResponse_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     export_backtest_report_api_v1_backtest__run_id__export_get: {
         parameters: {
             query?: {
@@ -7479,6 +7908,250 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ApiResponse_list_WatchlistItemResponse__"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    start_download_api_v1_system_data_download_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DownloadDataRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_DownloadTaskResponse_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_download_tasks_api_v1_system_data_download_tasks_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_list_DownloadTaskResponse__"];
+                };
+            };
+        };
+    };
+    get_download_task_api_v1_system_data_download__task_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_DownloadTaskResponse_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    remove_download_task_api_v1_system_data_download__task_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_NoneType_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    cancel_download_task_api_v1_system_data_download__task_id__cancel_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_DownloadTaskResponse_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_historical_data_api_v1_system_data_list_get: {
+        parameters: {
+            query?: {
+                /** @description Filter by exchange */
+                exchange?: string | null;
+                /** @description Filter by symbol */
+                symbol?: string | null;
+                /** @description Filter by timeframe */
+                timeframe?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_list_HistoricalDataItem__"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_historical_data_api_v1_system_data__data_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                data_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_NoneType_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_exchange_symbols_api_v1_system_symbols__exchange_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                exchange_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_list_str__"];
                 };
             };
             /** @description Validation Error */
