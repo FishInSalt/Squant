@@ -24,6 +24,33 @@
       <p class="error-message">{{ session.error_message }}</p>
     </div>
 
+    <div v-if="session" class="config-section card">
+      <div class="card-header">
+        <h3 class="card-title">会话配置</h3>
+      </div>
+      <el-descriptions :column="4" border>
+        <el-descriptions-item label="交易所">{{ formatExchangeName(session.exchange) }}</el-descriptions-item>
+        <el-descriptions-item label="交易对">{{ session.symbol }}</el-descriptions-item>
+        <el-descriptions-item label="时间周期">{{ session.timeframe }}</el-descriptions-item>
+        <el-descriptions-item label="初始资金">{{ formatNumber(session.initial_capital ?? 0, 2) }}</el-descriptions-item>
+        <el-descriptions-item label="手续费率">{{ formatNumber((session.commission_rate ?? 0) * 100, 4) }}%</el-descriptions-item>
+        <el-descriptions-item label="滑点">{{ session.slippage != null ? formatNumber(session.slippage * 100, 4) + '%' : '-' }}</el-descriptions-item>
+        <el-descriptions-item label="启动时间">{{ session.started_at ? new Date(session.started_at).toLocaleString('zh-CN') : '-' }}</el-descriptions-item>
+        <el-descriptions-item label="停止时间">{{ session.stopped_at ? new Date(session.stopped_at).toLocaleString('zh-CN') : '-' }}</el-descriptions-item>
+      </el-descriptions>
+      <div v-if="session.params && Object.keys(session.params).length > 0" class="config-params">
+        <el-descriptions :column="4" border>
+          <el-descriptions-item
+            v-for="(value, key) in session.params"
+            :key="key"
+            :label="String(key)"
+          >
+            {{ value }}
+          </el-descriptions-item>
+        </el-descriptions>
+      </div>
+    </div>
+
     <div v-if="status" class="result-content">
       <div class="metrics-grid">
         <div class="metric-card card">
@@ -353,7 +380,7 @@ import { CircleCloseFilled } from '@element-plus/icons-vue'
 import StatusBadge from '@/components/common/StatusBadge.vue'
 import PriceCell from '@/components/common/PriceCell.vue'
 import EquityCurve from '@/components/charts/EquityCurve.vue'
-import { formatNumber, formatPrice, formatOrderType } from '@/utils/format'
+import { formatNumber, formatPrice, formatOrderType, formatExchangeName } from '@/utils/format'
 import { getPaperSession, getPaperSessionStatus, stopPaperTrading, getPaperEquityCurve } from '@/api/paper'
 import {
   getLiveSession,
@@ -634,6 +661,14 @@ onUnmounted(() => {
       text-align: center;
       max-width: 600px;
       word-break: break-word;
+    }
+  }
+
+  .config-section {
+    margin-bottom: 24px;
+
+    .config-params {
+      margin-top: 12px;
     }
   }
 
