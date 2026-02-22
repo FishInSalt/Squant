@@ -263,8 +263,10 @@ async def get_candles(
     end_time: Annotated[
         int | None,
         Query(
+            ge=0,
+            le=32503680000000,
             description="End timestamp in milliseconds. "
-            "When provided, fetches candles before this time."
+            "When provided, fetches candles before this time.",
         ),
     ] = None,
 ) -> ApiResponse[CandlestickResponse]:

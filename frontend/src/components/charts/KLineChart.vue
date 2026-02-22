@@ -137,7 +137,7 @@ function initChart() {
         props.onLoadMore!({ before: data.timestamp }).then((candles) => {
           callback(candles.map(toKLineData), candles.length >= 300)
         }).catch(() => {
-          callback([], false)
+          callback([], true)
         })
       } else {
         // Backward (newer data) or no boundary data — not needed, realtime WS handles it
