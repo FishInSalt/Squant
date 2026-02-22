@@ -37,6 +37,16 @@
       </el-tab-pane>
 
       <el-tab-pane label="模拟交易" name="paper">
+        <div v-if="runningPaperCount > 1" class="tab-actions">
+          <el-button
+            type="danger"
+            size="small"
+            :loading="stoppingAll"
+            @click="handleStopAllPaper"
+          >
+            停止全部 ({{ runningPaperCount }})
+          </el-button>
+        </div>
         <div class="sessions-grid">
           <SessionCard
             v-for="item in paperSessions"
@@ -76,7 +86,7 @@ import { useRouter } from 'vue-router'
 import { useTradingStore } from '@/stores/trading'
 import StatusBadge from '@/components/common/StatusBadge.vue'
 import { formatExchangeName, formatNumber, formatRelativeTime } from '@/utils/format'
-import { stopPaperTrading } from '@/api/paper'
+import { stopPaperTrading, stopAllPaperTrading } from '@/api/paper'
 import { stopLiveTrading, emergencyClosePositions, getLiveSessionStatus } from '@/api/live'
 import { useNotification } from '@/composables/useNotification'
 import { confirmStopLive, confirmEmergencyClose, toPositionRows, type PositionRow } from '@/composables/useTradingConfirm'
@@ -232,6 +242,27 @@ async function handleStopPaper(id: string) {
   }
 }
 
+const stoppingAll = ref(false)
+const runningPaperCount = computed(() =>
+  paperSessions.value.filter((s) => s.status === 'running').length,
+)
+
+async function handleStopAllPaper() {
+  const confirmed = await confirmDanger(`确定要停止全部 ${runningPaperCount.value} 个模拟交易吗？`)
+  if (!confirmed) return
+
+  stoppingAll.value = true
+  try {
+    const response = await stopAllPaperTrading()
+    toastSuccess(`已停止 ${response.data.stopped_count} 个模拟交易`)
+    tradingStore.loadRunningPaperSessions()
+  } catch (error) {
+    toastError('停止失败')
+  } finally {
+    stoppingAll.value = false
+  }
+}
+
 async function handleStopLive(id: string) {
   const { confirmed, cancelOrders } = await confirmStopLive()
   if (!confirmed) return
@@ -291,6 +322,12 @@ onUnmounted(() => {
   .page-title {
     font-size: 20px;
     font-weight: 600;
+  }
+
+  .tab-actions {
+    display: flex;
+    justify-content: flex-end;
+    margin-bottom: 12px;
   }
 
   .sessions-grid {

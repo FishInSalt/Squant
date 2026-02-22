@@ -240,6 +240,20 @@ async def list_active_sessions(
     return ApiResponse(data=items)
 
 
+@router.post("/stop-all", response_model=ApiResponse[dict])
+async def stop_all_paper_trading(
+    session: AsyncSession = Depends(get_session),
+) -> ApiResponse[dict]:
+    """Stop all active paper trading sessions.
+
+    Returns:
+        Number of sessions stopped.
+    """
+    service = PaperTradingService(session)
+    stopped = await service.stop_all()
+    return ApiResponse(data={"stopped_count": stopped})
+
+
 @router.get("/runs", response_model=ApiResponse[PaginatedData[PaperTradingRunResponse]])
 async def list_paper_trading_runs(
     page: int = Query(1, ge=1, description="Page number"),

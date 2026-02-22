@@ -16,6 +16,10 @@ export const startPaperTrading = (config: {
 export const stopPaperTrading = (id: string) =>
   post<void>(`/paper/${id}/stop`)
 
+// 停止所有模拟交易
+export const stopAllPaperTrading = () =>
+  post<{ stopped_count: number }>('/paper/stop-all')
+
 // 获取会话状态
 export const getPaperSession = (id: string) =>
   get<PaperSession>(`/paper/${id}`)

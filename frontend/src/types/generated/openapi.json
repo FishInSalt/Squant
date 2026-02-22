@@ -2308,6 +2308,28 @@
         }
       }
     },
+    "/api/v1/paper/stop-all": {
+      "post": {
+        "tags": [
+          "Paper Trading"
+        ],
+        "summary": "Stop All Paper Trading",
+        "description": "Stop all active paper trading sessions.\n\nReturns:\n    Number of sessions stopped.",
+        "operationId": "stop_all_paper_trading_api_v1_paper_stop_all_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_dict_"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/paper/runs": {
       "get": {
         "tags": [

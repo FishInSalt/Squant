@@ -579,6 +579,27 @@ class PaperTradingService:
         # The strategy_id will need to be added by the API layer if needed
         return sessions
 
+    async def stop_all(self) -> int:
+        """Stop all active paper trading sessions.
+
+        Returns:
+            Number of sessions stopped.
+        """
+        session_manager = get_session_manager()
+        active = session_manager.list_sessions()
+        stopped = 0
+
+        for sess in active:
+            run_id = UUID(sess["run_id"])
+            try:
+                await self.stop(run_id)
+                stopped += 1
+            except Exception as e:
+                logger.warning(f"Failed to stop session {run_id}: {e}")
+
+        logger.info(f"Stopped {stopped}/{len(active)} paper trading sessions")
+        return stopped
+
     async def list_runs(
         self,
         page: int = 1,

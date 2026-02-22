@@ -1162,6 +1162,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/paper/stop-all": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Stop All Paper Trading
+         * @description Stop all active paper trading sessions.
+         *
+         *     Returns:
+         *         Number of sessions stopped.
+         */
+        post: operations["stop_all_paper_trading_api_v1_paper_stop_all_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/paper/runs": {
         parameters: {
             query?: never;
@@ -7000,6 +7023,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    stop_all_paper_trading_api_v1_paper_stop_all_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_dict_"];
                 };
             };
         };
