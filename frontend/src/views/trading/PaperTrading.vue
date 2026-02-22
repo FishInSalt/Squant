@@ -96,6 +96,33 @@
             </el-col>
           </el-row>
 
+          <el-row :gutter="16">
+            <el-col :span="12">
+              <el-form-item label="手续费率 (%)" prop="commission_rate">
+                <el-input-number
+                  v-model="form.commission_rate"
+                  :min="0"
+                  :max="100"
+                  :step="0.01"
+                  :precision="4"
+                  style="width: 100%"
+                />
+              </el-form-item>
+            </el-col>
+            <el-col :span="12">
+              <el-form-item label="滑点 (%)" prop="slippage">
+                <el-input-number
+                  v-model="form.slippage"
+                  :min="0"
+                  :max="100"
+                  :step="0.01"
+                  :precision="4"
+                  style="width: 100%"
+                />
+              </el-form-item>
+            </el-col>
+          </el-row>
+
           <div v-if="selectedStrategy?.params_schema?.properties" class="params-section">
             <h4>策略参数</h4>
             <el-row :gutter="16">
@@ -230,6 +257,8 @@ const form = reactive({
   symbol: (route.query.symbol as string) || '',
   timeframe: '1h',
   initial_capital: 10000,
+  commission_rate: 0.1,
+  slippage: 0.1,
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   params: {} as Record<string, any>,
 })
@@ -298,6 +327,8 @@ async function handleSubmit() {
       symbol: form.symbol,
       timeframe: form.timeframe,
       initial_capital: form.initial_capital,
+      commission_rate: form.commission_rate / 100,
+      slippage: form.slippage / 100,
       params: form.params,
     }
 
