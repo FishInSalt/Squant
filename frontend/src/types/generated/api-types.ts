@@ -4592,6 +4592,8 @@ export interface components {
             trades_count: number;
             /** Trades */
             trades?: components["schemas"]["TradeRecordResponse"][];
+            /** Logs */
+            logs?: string[];
         };
         /**
          * PendingOrderInfo

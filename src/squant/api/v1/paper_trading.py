@@ -187,6 +187,7 @@ async def get_paper_trading_status(
             completed_orders_count=status["completed_orders_count"],
             trades_count=status["trades_count"],
             trades=trades,
+            logs=status.get("logs", []),
         )
 
         return ApiResponse(data=response)

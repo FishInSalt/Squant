@@ -106,6 +106,7 @@ class PaperTradingStatusResponse(BaseModel):
     completed_orders_count: int
     trades_count: int
     trades: list[TradeRecordResponse] = Field(default_factory=list)
+    logs: list[str] = Field(default_factory=list)
 
 
 class PaperTradingListItem(BaseModel):

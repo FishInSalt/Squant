@@ -8756,6 +8756,13 @@
             },
             "type": "array",
             "title": "Trades"
+          },
+          "logs": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Logs"
           }
         },
         "type": "object",

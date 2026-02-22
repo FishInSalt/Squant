@@ -448,4 +448,5 @@ class PaperTradingEngine:
             "completed_orders_count": len(self._context.completed_orders),
             "trades_count": len(self._context.trades),
             "trades": trades,
+            "logs": self._context.logs,
         }

@@ -293,6 +293,25 @@
         <EquityCurve :data="equityCurve" height="300px" />
       </div>
 
+      <div v-if="isPaper && paperLogs.length > 0" class="logs-section card">
+        <div class="card-header">
+          <h3 class="card-title">运行日志</h3>
+          <div class="log-controls">
+            <el-switch
+              v-model="autoScrollLogs"
+              active-text="自动滚动"
+              size="small"
+            />
+            <span class="item-count">共 {{ paperLogs.length }} 条</span>
+          </div>
+        </div>
+        <div ref="logContainerRef" class="log-container">
+          <div v-for="(log, index) in paperLogs" :key="index" class="log-entry">
+            {{ log }}
+          </div>
+        </div>
+      </div>
+
       <div v-if="isLive && riskState" class="risk-section card">
         <div class="card-header">
           <h3 class="card-title">风控状态</h3>
@@ -328,7 +347,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, watch, nextTick, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { CircleCloseFilled } from '@element-plus/icons-vue'
 import StatusBadge from '@/components/common/StatusBadge.vue'
@@ -406,6 +425,14 @@ const paperTrades = computed<Trade[]>(() => {
   return (status.value as PaperTradingStatus).trades || []
 })
 
+const paperLogs = computed<string[]>(() => {
+  if (!status.value || !isPaper.value) return []
+  return (status.value as PaperTradingStatus).logs || []
+})
+
+const autoScrollLogs = ref(true)
+const logContainerRef = ref<HTMLElement | null>(null)
+
 const riskState = computed<RiskState | null>(() => {
   if (!status.value || !isLive.value) return null
   return (status.value as LiveTradingStatus).risk_state || null
@@ -420,6 +447,14 @@ function formatTradeTime(time: string): string {
     second: '2-digit',
   })
 }
+
+watch(paperLogs, () => {
+  if (autoScrollLogs.value && logContainerRef.value) {
+    nextTick(() => {
+      logContainerRef.value!.scrollTop = logContainerRef.value!.scrollHeight
+    })
+  }
+})
 
 async function loadSession() {
   try {
@@ -638,6 +673,7 @@ onUnmounted(() => {
   .positions-section,
   .orders-section,
   .trades-section,
+  .logs-section,
   .risk-section {
     margin-bottom: 24px;
 
@@ -645,6 +681,29 @@ onUnmounted(() => {
       font-size: 12px;
       color: #909399;
     }
+  }
+
+  .log-controls {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+
+  .log-container {
+    max-height: 300px;
+    overflow-y: auto;
+    background: #fafafa;
+    border-radius: 4px;
+    padding: 12px;
+    font-family: Consolas, Monaco, 'Courier New', monospace;
+    font-size: 12px;
+    line-height: 1.6;
+  }
+
+  .log-entry {
+    padding: 2px 0;
+    color: #606266;
+    word-break: break-all;
   }
 
   .risk-grid {
