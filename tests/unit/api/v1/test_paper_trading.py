@@ -454,3 +454,94 @@ class TestPersistEquitySnapshots:
             response = await client.post(f"/api/v1/paper/{run_id}/persist")
 
             assert response.status_code == 404
+
+
+class TestStopAllPaperTrading:
+    """Tests for POST /api/v1/paper/stop-all endpoint."""
+
+    @pytest.mark.asyncio
+    async def test_stop_all_success(self, client: AsyncClient) -> None:
+        """Test stopping all paper trading sessions."""
+        with patch("squant.api.v1.paper_trading.PaperTradingService") as mock_service_class:
+            mock_service = MagicMock()
+            mock_service.stop_all = AsyncMock(return_value=3)
+            mock_service_class.return_value = mock_service
+
+            response = await client.post("/api/v1/paper/stop-all")
+
+            assert response.status_code == 200
+            data = response.json()
+            assert data["data"]["stopped_count"] == 3
+
+    @pytest.mark.asyncio
+    async def test_stop_all_no_sessions(self, client: AsyncClient) -> None:
+        """Test stop-all when no sessions are running."""
+        with patch("squant.api.v1.paper_trading.PaperTradingService") as mock_service_class:
+            mock_service = MagicMock()
+            mock_service.stop_all = AsyncMock(return_value=0)
+            mock_service_class.return_value = mock_service
+
+            response = await client.post("/api/v1/paper/stop-all")
+
+            assert response.status_code == 200
+            data = response.json()
+            assert data["data"]["stopped_count"] == 0
+
+
+class TestGetStatusWithTradesAndLogs:
+    """Tests for trades and logs in status response."""
+
+    @pytest.mark.asyncio
+    async def test_status_includes_trades_and_logs(
+        self, client: AsyncClient, mock_run
+    ) -> None:
+        """Test that status response includes trades and logs fields."""
+        now = datetime.now(UTC)
+        mock_status = {
+            "run_id": str(mock_run.id),
+            "symbol": "BTC/USDT",
+            "timeframe": "1m",
+            "is_running": True,
+            "started_at": now,
+            "stopped_at": None,
+            "error_message": None,
+            "bar_count": 50,
+            "cash": "9000",
+            "equity": "10100",
+            "initial_capital": "10000",
+            "total_fees": "0.1",
+            "positions": {},
+            "pending_orders": [],
+            "completed_orders_count": 1,
+            "trades_count": 1,
+            "trades": [
+                {
+                    "symbol": "BTC/USDT",
+                    "side": "buy",
+                    "entry_time": now.isoformat(),
+                    "entry_price": "50000",
+                    "exit_time": now.isoformat(),
+                    "exit_price": "51000",
+                    "amount": "0.1",
+                    "pnl": "100",
+                    "pnl_pct": "2.0",
+                    "fees": "0.1",
+                }
+            ],
+            "logs": ["[2024-01-01] Buy triggered", "[2024-01-01] Order filled"],
+        }
+
+        with patch("squant.api.v1.paper_trading.PaperTradingService") as mock_service_class:
+            mock_service = MagicMock()
+            mock_service.get_status = AsyncMock(return_value=mock_status)
+            mock_service_class.return_value = mock_service
+
+            response = await client.get(f"/api/v1/paper/{mock_run.id}/status")
+
+            assert response.status_code == 200
+            data = response.json()["data"]
+            assert len(data["trades"]) == 1
+            assert data["trades"][0]["symbol"] == "BTC/USDT"
+            assert data["trades"][0]["pnl"] == 100.0
+            assert len(data["logs"]) == 2
+            assert "Buy triggered" in data["logs"][0]

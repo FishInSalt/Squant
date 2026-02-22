@@ -302,6 +302,119 @@ class TestStateSnapshot:
         assert Decimal(snapshot["positions"]["BTC/USDT"]["amount"]) == Decimal("0.1")
 
 
+    @pytest.mark.asyncio
+    async def test_state_snapshot_includes_trades_and_logs(self, engine, strategy):
+        """Test snapshot includes trades and logs fields."""
+        await engine.start()
+
+        snapshot = engine.get_state_snapshot()
+
+        assert "trades" in snapshot
+        assert "logs" in snapshot
+        assert isinstance(snapshot["trades"], list)
+        assert isinstance(snapshot["logs"], list)
+        assert snapshot["trades"] == []
+        assert snapshot["logs"] == []
+
+    @pytest.mark.asyncio
+    async def test_state_snapshot_with_completed_trade(self, run_id):
+        """Test snapshot includes trade records after a buy-sell cycle."""
+
+        class BuySellStrategy(Strategy):
+            """Strategy that buys on first bar, sells on second."""
+
+            def on_init(self):
+                self.bar_num = 0
+
+            def on_bar(self, bar):
+                self.bar_num += 1
+                if self.bar_num == 1:
+                    self.ctx.buy(bar.symbol, Decimal("0.1"))
+                elif self.bar_num == 3 and self.ctx.has_position(bar.symbol):
+                    self.ctx.sell(bar.symbol, Decimal("0.1"))
+
+            def on_stop(self):
+                pass
+
+        strategy = BuySellStrategy()
+        engine = PaperTradingEngine(
+            run_id=run_id,
+            strategy=strategy,
+            symbol="BTC/USDT",
+            timeframe="1m",
+            initial_capital=Decimal("10000"),
+            commission_rate=Decimal("0.001"),
+            slippage=Decimal("0"),
+        )
+        await engine.start()
+
+        # Bar 1: strategy places buy order
+        candle1 = WSCandle(
+            symbol="BTC/USDT", timeframe="1m",
+            timestamp=datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC),
+            open=Decimal("40000"), high=Decimal("41000"),
+            low=Decimal("39000"), close=Decimal("40500"),
+            volume=Decimal("100"), is_closed=True,
+        )
+        await engine.process_candle(candle1)
+
+        # Bar 2: buy order fills at open
+        candle2 = WSCandle(
+            symbol="BTC/USDT", timeframe="1m",
+            timestamp=datetime(2024, 1, 1, 12, 1, 0, tzinfo=UTC),
+            open=Decimal("40500"), high=Decimal("41500"),
+            low=Decimal("40000"), close=Decimal("41000"),
+            volume=Decimal("100"), is_closed=True,
+        )
+        await engine.process_candle(candle2)
+
+        # Bar 3: strategy places sell order
+        candle3 = WSCandle(
+            symbol="BTC/USDT", timeframe="1m",
+            timestamp=datetime(2024, 1, 1, 12, 2, 0, tzinfo=UTC),
+            open=Decimal("41000"), high=Decimal("42000"),
+            low=Decimal("40500"), close=Decimal("41500"),
+            volume=Decimal("100"), is_closed=True,
+        )
+        await engine.process_candle(candle3)
+
+        # Bar 4: sell order fills, completing the trade
+        candle4 = WSCandle(
+            symbol="BTC/USDT", timeframe="1m",
+            timestamp=datetime(2024, 1, 1, 12, 3, 0, tzinfo=UTC),
+            open=Decimal("41500"), high=Decimal("42500"),
+            low=Decimal("41000"), close=Decimal("42000"),
+            volume=Decimal("100"), is_closed=True,
+        )
+        await engine.process_candle(candle4)
+
+        snapshot = engine.get_state_snapshot()
+
+        assert len(snapshot["trades"]) >= 1
+        trade = snapshot["trades"][0]
+        assert trade["symbol"] == "BTC/USDT"
+        assert trade["side"] in ("buy", "sell")
+        assert "entry_time" in trade
+        assert "entry_price" in trade
+        assert "amount" in trade
+        assert "pnl" in trade
+        assert "pnl_pct" in trade
+        assert "fees" in trade
+
+    @pytest.mark.asyncio
+    async def test_state_snapshot_logs_on_error(self, engine, strategy):
+        """Test snapshot logs field is populated when strategy logs messages."""
+        await engine.start()
+
+        # Manually add a log via context
+        engine.context.log("Test log message")
+
+        snapshot = engine.get_state_snapshot()
+
+        assert len(snapshot["logs"]) == 1
+        assert "Test log message" in snapshot["logs"][0]
+
+
 class TestPendingSnapshots:
     """Tests for pending snapshot management."""
 

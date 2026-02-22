@@ -532,6 +532,70 @@ class TestPaperTradingService:
             mock_session.commit.assert_called_once()
 
 
+    @pytest.mark.asyncio
+    async def test_stop_all_success(self, mock_session, mock_run, mock_engine):
+        """Test stopping all active paper trading sessions."""
+        run_id_1 = uuid4()
+        run_id_2 = uuid4()
+
+        with (
+            patch("squant.services.paper_trading.get_session_manager") as mock_get_manager,
+            patch.object(PaperTradingService, "stop", new_callable=AsyncMock) as mock_stop,
+        ):
+            mock_manager = MagicMock()
+            mock_manager.list_sessions.return_value = [
+                {"run_id": str(run_id_1), "symbol": "BTC/USDT", "is_running": True},
+                {"run_id": str(run_id_2), "symbol": "ETH/USDT", "is_running": True},
+            ]
+            mock_get_manager.return_value = mock_manager
+            mock_stop.return_value = mock_run
+
+            service = PaperTradingService(mock_session)
+            count = await service.stop_all()
+
+            assert count == 2
+            assert mock_stop.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_stop_all_empty(self, mock_session):
+        """Test stop_all when no sessions are active."""
+        with patch("squant.services.paper_trading.get_session_manager") as mock_get_manager:
+            mock_manager = MagicMock()
+            mock_manager.list_sessions.return_value = []
+            mock_get_manager.return_value = mock_manager
+
+            service = PaperTradingService(mock_session)
+            count = await service.stop_all()
+
+            assert count == 0
+
+    @pytest.mark.asyncio
+    async def test_stop_all_partial_failure(self, mock_session, mock_run):
+        """Test stop_all continues when one session fails to stop."""
+        run_id_1 = uuid4()
+        run_id_2 = uuid4()
+
+        with (
+            patch("squant.services.paper_trading.get_session_manager") as mock_get_manager,
+            patch.object(PaperTradingService, "stop", new_callable=AsyncMock) as mock_stop,
+        ):
+            mock_manager = MagicMock()
+            mock_manager.list_sessions.return_value = [
+                {"run_id": str(run_id_1), "symbol": "BTC/USDT", "is_running": True},
+                {"run_id": str(run_id_2), "symbol": "ETH/USDT", "is_running": True},
+            ]
+            mock_get_manager.return_value = mock_manager
+            # First call fails, second succeeds
+            mock_stop.side_effect = [Exception("Failed"), mock_run]
+
+            service = PaperTradingService(mock_session)
+            count = await service.stop_all()
+
+            # Only 1 succeeded
+            assert count == 1
+            assert mock_stop.call_count == 2
+
+
 class TestSessionNotFoundError:
     """Tests for SessionNotFoundError."""
 
