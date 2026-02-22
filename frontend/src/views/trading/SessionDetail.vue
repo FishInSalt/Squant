@@ -218,6 +218,13 @@
         </el-table>
       </div>
 
+      <div v-if="equityCurve.length > 0" class="equity-section card">
+        <div class="card-header">
+          <h3 class="card-title">收益曲线</h3>
+        </div>
+        <EquityCurve :data="equityCurve" height="300px" />
+      </div>
+
       <div v-if="isLive && riskState" class="risk-section card">
         <div class="card-header">
           <h3 class="card-title">风控状态</h3>
@@ -258,13 +265,15 @@ import { useRouter } from 'vue-router'
 import { CircleCloseFilled } from '@element-plus/icons-vue'
 import StatusBadge from '@/components/common/StatusBadge.vue'
 import PriceCell from '@/components/common/PriceCell.vue'
+import EquityCurve from '@/components/charts/EquityCurve.vue'
 import { formatNumber, formatPrice, formatOrderType } from '@/utils/format'
-import { getPaperSession, getPaperSessionStatus, stopPaperTrading } from '@/api/paper'
+import { getPaperSession, getPaperSessionStatus, stopPaperTrading, getPaperEquityCurve } from '@/api/paper'
 import {
   getLiveSession,
   getLiveSessionStatus,
   stopLiveTrading,
   emergencyClosePositions,
+  getLiveEquityCurve,
 } from '@/api/live'
 import { useNotification } from '@/composables/useNotification'
 import { confirmStopLive, confirmEmergencyClose, type PositionRow } from '@/composables/useTradingConfirm'
@@ -290,6 +299,9 @@ const { toastSuccess, toastError, confirmDanger } = useNotification()
 const loading = ref(true)
 const session = ref<PaperSession | LiveSession | null>(null)
 const status = ref<PaperTradingStatus | LiveTradingStatus | null>(null)
+import type { EquityPoint } from '@/types'
+
+const equityCurve = ref<EquityPoint[]>([])
 
 let refreshTimer: ReturnType<typeof setInterval> | null = null
 
@@ -339,11 +351,29 @@ async function loadSession() {
     } else {
       stopPolling()
     }
+    loadEquityCurve()
   } catch (error) {
     console.error('Failed to load session:', error)
     toastError('加载会话失败')
   } finally {
     loading.value = false
+  }
+}
+
+async function loadEquityCurve() {
+  try {
+    const response = isPaper.value
+      ? await getPaperEquityCurve(props.id)
+      : await getLiveEquityCurve(props.id)
+    equityCurve.value = response.data.map((d: any) => ({
+      time: d.time,
+      equity: d.equity,
+      cash: d.cash ?? 0,
+      position_value: d.position_value ?? 0,
+      unrealized_pnl: d.unrealized_pnl ?? 0,
+    }))
+  } catch {
+    // equity curve is optional, don't block UI
   }
 }
 
@@ -520,6 +550,7 @@ onUnmounted(() => {
     }
   }
 
+  .equity-section,
   .positions-section,
   .orders-section,
   .risk-section {

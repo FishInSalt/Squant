@@ -1,5 +1,5 @@
 import { get, post } from './index'
-import type { PaperSession, PaperTradingStatus, PaginatedData } from '@/types'
+import type { PaperSession, PaperTradingStatus, PaginatedData, EquityCurvePoint } from '@/types'
 
 // 启动模拟交易
 export const startPaperTrading = (config: {
@@ -36,4 +36,8 @@ export const getPaperSessions = (params?: {
 // 获取运行中的会话
 export const getRunningPaperSessions = () =>
   get<PaperSession[]>('/paper')
+
+// 获取权益曲线
+export const getPaperEquityCurve = (id: string) =>
+  get<EquityCurvePoint[]>(`/paper/${id}/equity-curve`)
 
