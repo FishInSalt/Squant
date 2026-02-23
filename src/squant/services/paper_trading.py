@@ -664,14 +664,17 @@ class PaperTradingService:
             raise SessionNotFoundError(run_id)
         return run
 
-    async def get_equity_curve(self, run_id: UUID) -> list[EquityCurve]:
+    async def get_equity_curve(self, run_id: UUID) -> list:
         """Get equity curve for a paper trading run.
+
+        Merges persisted snapshots from DB with pending (not-yet-persisted)
+        snapshots from engine memory for real-time data.
 
         Args:
             run_id: Run ID.
 
         Returns:
-            List of EquityCurve records.
+            List of equity curve records (EquityCurve + EquitySnapshot).
 
         Raises:
             SessionNotFoundError: If run not found.
@@ -681,7 +684,17 @@ class PaperTradingService:
         if not run:
             raise SessionNotFoundError(run_id)
 
-        return await self.equity_repo.get_by_run(str(run_id))
+        persisted = await self.equity_repo.get_by_run(str(run_id))
+
+        # Append pending snapshots from engine memory for real-time updates
+        session_manager = get_session_manager()
+        engine = session_manager.get(run_id)
+        if engine:
+            pending = engine.peek_pending_snapshots()
+            if pending:
+                return list(persisted) + pending
+
+        return persisted
 
     async def persist_snapshots(self, run_id: UUID) -> int:
         """Persist pending equity snapshots for a session.

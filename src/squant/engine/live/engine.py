@@ -1221,6 +1221,10 @@ class LiveTradingEngine:
         self._pending_snapshots.clear()
         return snapshots
 
+    def peek_pending_snapshots(self) -> list[EquitySnapshot]:
+        """Read pending equity snapshots without clearing them."""
+        return self._pending_snapshots.copy()
+
     def should_persist_snapshots(self) -> bool:
         """Check if snapshots should be persisted."""
         return len(self._pending_snapshots) >= self._snapshot_batch_size

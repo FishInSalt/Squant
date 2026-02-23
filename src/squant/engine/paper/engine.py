@@ -381,6 +381,14 @@ class PaperTradingEngine:
         self._pending_snapshots.clear()
         return snapshots
 
+    def peek_pending_snapshots(self) -> list[EquitySnapshot]:
+        """Read pending equity snapshots without clearing them.
+
+        Returns:
+            Copy of pending snapshots (non-destructive).
+        """
+        return self._pending_snapshots.copy()
+
     def should_persist_snapshots(self) -> bool:
         """Check if snapshots should be persisted.
 

@@ -69,14 +69,6 @@ function initChart() {
 
   chart = echarts.init(chartRef.value)
 
-  const hasBenchmark = props.showBenchmark && props.data.some(d => d.benchmark_equity != null)
-  const hasTrades = props.trades && props.trades.length > 0
-  const timeFormat = getTimeFormat(props.data)
-
-  const legendData = ['策略收益']
-  if (hasBenchmark) legendData.push('基准收益（买入持有）')
-  if (hasTrades) legendData.push('买入', '卖出')
-
   const option: echarts.EChartsOption = {
     tooltip: {
       trigger: 'axis',
@@ -115,14 +107,14 @@ function initChart() {
       },
     },
     legend: {
-      show: hasBenchmark || hasTrades,
+      show: false,
       top: 10,
-      data: legendData,
+      data: [],
     },
     grid: {
       left: 60,
       right: 20,
-      top: (hasBenchmark || hasTrades) ? 40 : 20,
+      top: 20,
       bottom: 60,
     },
     dataZoom: [
@@ -147,7 +139,6 @@ function initChart() {
       },
       axisLabel: {
         color: '#909399',
-        formatter: (value: number) => formatDateTime(value, timeFormat),
       },
       splitLine: { show: false },
     },
@@ -177,41 +168,33 @@ function initChart() {
         },
         data: [],
       },
+      {
+        name: '基准收益（买入持有）',
+        type: 'line',
+        smooth: false,
+        showSymbol: false,
+        lineStyle: { width: 2, color: '#E6A23C', type: 'dashed' },
+        data: [],
+      },
+      {
+        name: '买入',
+        type: 'scatter',
+        symbolSize: 10,
+        symbol: 'triangle',
+        itemStyle: { color: '#67C23A' },
+        z: 10,
+        data: [],
+      },
+      {
+        name: '卖出',
+        type: 'scatter',
+        symbolSize: 10,
+        symbol: 'pin',
+        itemStyle: { color: '#F56C6C' },
+        z: 10,
+        data: [],
+      },
     ],
-  }
-
-  const seriesArr = option.series as any[]
-
-  if (hasBenchmark) {
-    seriesArr.push({
-      name: '基准收益（买入持有）',
-      type: 'line',
-      smooth: false,
-      showSymbol: false,
-      lineStyle: { width: 2, color: '#E6A23C', type: 'dashed' },
-      data: [],
-    })
-  }
-
-  if (hasTrades) {
-    seriesArr.push({
-      name: '买入',
-      type: 'scatter',
-      symbolSize: 10,
-      symbol: 'triangle',
-      itemStyle: { color: '#67C23A' },
-      z: 10,
-      data: [],
-    })
-    seriesArr.push({
-      name: '卖出',
-      type: 'scatter',
-      symbolSize: 10,
-      symbol: 'pin',
-      itemStyle: { color: '#F56C6C' },
-      z: 10,
-      data: [],
-    })
   }
 
   chart.setOption(option)
@@ -227,25 +210,21 @@ function updateData(data: EquityPoint[]) {
   // Convert to return % from initial equity
   const equityData = data.map((d) => [d.time, (d.equity / initialEquity - 1) * 100])
 
-  const series: any[] = [{ data: equityData }]
-
   const hasBenchmark = props.showBenchmark && data.some(d => d.benchmark_equity != null)
-  if (hasBenchmark) {
-    const benchmarkData = data.map((d) => {
-      const bm = d.benchmark_equity ?? initialEquity
-      return [d.time, (bm / initialEquity - 1) * 100]
-    })
-    series.push({ data: benchmarkData })
-  }
+  const benchmarkData = hasBenchmark
+    ? data.map((d) => {
+        const bm = d.benchmark_equity ?? initialEquity
+        return [d.time, (bm / initialEquity - 1) * 100]
+      })
+    : []
 
   // Build trade markers
+  let buyData: any[] = []
+  let sellData: any[] = []
   const trades = props.trades
   if (trades && trades.length > 0) {
     const returnMap = buildReturnMap(data, initialEquity)
     const sortedKeys = Array.from(returnMap.keys()).sort((a, b) => a - b)
-
-    const buyData: any[] = []
-    const sellData: any[] = []
 
     for (const t of trades) {
       // Buy marker at entry_time
@@ -270,12 +249,35 @@ function updateData(data: EquityPoint[]) {
         }
       }
     }
-
-    series.push({ data: buyData })
-    series.push({ data: sellData })
   }
 
-  chart.setOption({ series })
+  const hasTrades = buyData.length > 0 || sellData.length > 0
+  const legendData = ['策略收益']
+  if (hasBenchmark) legendData.push('基准收益（买入持有）')
+  if (hasTrades) { legendData.push('买入'); legendData.push('卖出') }
+
+  const timeFormat = getTimeFormat(data)
+
+  chart.setOption({
+    legend: {
+      show: hasBenchmark || hasTrades,
+      data: legendData,
+    },
+    grid: {
+      top: (hasBenchmark || hasTrades) ? 40 : 20,
+    },
+    xAxis: {
+      axisLabel: {
+        formatter: (value: number) => formatDateTime(value, timeFormat),
+      },
+    },
+    series: [
+      { data: equityData },
+      { data: benchmarkData },
+      { data: buyData },
+      { data: sellData },
+    ],
+  })
 }
 
 function handleResize() {
@@ -283,11 +285,11 @@ function handleResize() {
 }
 
 watch(() => [props.data, props.trades], () => {
-  if (chart) {
-    chart.dispose()
-    chart = null
+  if (!chart) {
+    initChart()
+    return
   }
-  initChart()
+  updateData(props.data)
 }, { deep: true })
 
 onMounted(() => {

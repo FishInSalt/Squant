@@ -668,9 +668,9 @@ async function loadStatus() {
       : await getLiveSessionStatus(props.id)
     status.value = response.data
 
-    // Refresh equity curve every 5 polls (~15s)
+    // Refresh equity curve every 2 polls (~6s)
     equityCurvePollCount++
-    if (equityCurvePollCount % 5 === 0) {
+    if (equityCurvePollCount % 2 === 0) {
       loadEquityCurve()
     }
 
