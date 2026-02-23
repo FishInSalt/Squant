@@ -275,6 +275,28 @@ describe('SessionDetail', () => {
       expect(wrapper.text()).toContain('暂无持仓')
     })
 
+    it('shows position market value and pnl%', async () => {
+      const wrapper = mountPaper()
+      await flushPromises()
+      // market_value = 0.1 * 52000 = 5200
+      expect(wrapper.text()).toContain('市值')
+      expect(wrapper.text()).toContain('5,200')
+      // pnl% = 200 / (50000 * 0.1) * 100 = 4%
+      expect(wrapper.text()).toContain('盈亏%')
+      expect(wrapper.text()).toMatch(/4\.0+%/)
+    })
+
+    it('shows symbol column in trades table', async () => {
+      const wrapper = mountPaper()
+      await flushPromises()
+      // Switch to trades tab
+      const tradesTab = wrapper.findAll('.el-tabs__item').find(el => el.text().includes('交易记录'))
+      await tradesTab!.trigger('click')
+      await flushPromises()
+      // Trade record should show BTC/USDT symbol
+      expect(wrapper.text()).toContain('BTC/USDT')
+    })
+
     it('shows max drawdown from equity curve', async () => {
       vi.mocked(paperApi.getPaperEquityCurve).mockResolvedValue(
         wrapApiResponse([

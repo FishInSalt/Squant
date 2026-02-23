@@ -191,6 +191,11 @@
                   {{ row.current_price != null ? formatPrice(row.current_price) : '-' }}
                 </template>
               </el-table-column>
+              <el-table-column prop="market_value" label="市值" min-width="120" align="right">
+                <template #default="{ row }">
+                  {{ row.market_value != null ? formatPrice(row.market_value) : '-' }}
+                </template>
+              </el-table-column>
               <el-table-column prop="unrealized_pnl" label="未实现盈亏" min-width="140" align="right">
                 <template #default="{ row }">
                   <PriceCell
@@ -198,6 +203,18 @@
                     :value="row.unrealized_pnl"
                     :change="row.unrealized_pnl"
                     show-sign
+                  />
+                  <span v-else>-</span>
+                </template>
+              </el-table-column>
+              <el-table-column prop="pnl_pct" label="盈亏%" min-width="100" align="right">
+                <template #default="{ row }">
+                  <PriceCell
+                    v-if="row.pnl_pct != null"
+                    :value="row.pnl_pct"
+                    :change="row.pnl_pct"
+                    show-sign
+                    suffix="%"
                   />
                   <span v-else>-</span>
                 </template>
@@ -245,6 +262,11 @@
               <el-table-column prop="status" label="状态" min-width="90">
                 <template #default="{ row }">
                   <StatusBadge :status="row.status" />
+                </template>
+              </el-table-column>
+              <el-table-column prop="created_at" label="创建时间" min-width="140">
+                <template #default="{ row }">
+                  {{ row.created_at ? formatTradeTime(row.created_at) : '-' }}
                 </template>
               </el-table-column>
             </el-table>
@@ -305,6 +327,7 @@
               <el-badge v-if="paperTrades.length" :value="paperTrades.length" class="tab-badge" />
             </template>
             <el-table :data="paperTrades" stripe empty-text="暂无交易记录" max-height="400">
+              <el-table-column prop="symbol" label="币对" min-width="120" />
               <el-table-column prop="side" label="方向" min-width="70">
                 <template #default="{ row }">
                   <el-tag
@@ -530,11 +553,20 @@ const positions = computed<[string, Position][]>(() => {
 })
 
 const positionRows = computed(() => {
-  return positions.value.map(([symbol, pos]) => ({
-    ...pos,
-    symbol,
-    side: pos.amount > 0 ? 'long' : pos.amount < 0 ? 'short' : 'flat',
-  }))
+  return positions.value.map(([symbol, pos]) => {
+    const marketValue = pos.current_price != null ? pos.amount * pos.current_price : null
+    const costBasis = pos.avg_entry_price * pos.amount
+    const pnlPct = pos.unrealized_pnl != null && costBasis > 0
+      ? (pos.unrealized_pnl / costBasis) * 100
+      : null
+    return {
+      ...pos,
+      symbol,
+      side: pos.amount > 0 ? 'long' : pos.amount < 0 ? 'short' : 'flat',
+      market_value: marketValue,
+      pnl_pct: pnlPct,
+    }
+  })
 })
 
 const paperPendingOrders = computed<PendingOrderInfo[]>(() => {
