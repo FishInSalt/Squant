@@ -144,10 +144,8 @@ class BackgroundTaskManager:
         settings = get_settings()
         session_manager = get_session_manager()
 
-        # Get unhealthy sessions first
-        unhealthy_ids = await session_manager.check_health(settings.paper_session_timeout_seconds)
-
         # Persist snapshots for unhealthy sessions before cleanup (PP-C07)
+        unhealthy_ids = await session_manager.check_health(settings.paper_session_timeout_seconds)
         if unhealthy_ids:
             try:
                 async with get_session_context() as db_session:
@@ -167,14 +165,17 @@ class BackgroundTaskManager:
             except Exception as e:
                 logger.error(f"Failed to open DB session for pre-cleanup persistence: {e}")
 
-        count = await session_manager.cleanup_stale_sessions(settings.paper_session_timeout_seconds)
-        if count > 0:
-            logger.warning(f"Cleaned up {count} stale paper trading sessions")
-            # Update DB status for cleaned-up sessions
+        # cleanup_stale_sessions returns actual cleaned IDs (avoids double check_health race)
+        cleaned_ids = await session_manager.cleanup_stale_sessions(
+            settings.paper_session_timeout_seconds
+        )
+        if cleaned_ids:
+            logger.warning(f"Cleaned up {len(cleaned_ids)} stale paper trading sessions")
+            # Update DB status for actually cleaned sessions
             try:
                 async with get_session_context() as db_session:
                     service = PaperTradingService(db_session)
-                    for run_id in unhealthy_ids:
+                    for run_id in cleaned_ids:
                         try:
                             await service.mark_session_error(
                                 run_id,

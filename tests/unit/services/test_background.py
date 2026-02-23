@@ -2,6 +2,7 @@
 
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
+from uuid import uuid4
 
 import pytest
 
@@ -228,7 +229,8 @@ class TestHealthCheck:
         manager = BackgroundTaskManager()
 
         mock_session_manager = AsyncMock()
-        mock_session_manager.cleanup_stale_sessions = AsyncMock(return_value=0)
+        mock_session_manager.check_health = AsyncMock(return_value=[])
+        mock_session_manager.cleanup_stale_sessions = AsyncMock(return_value=[])
 
         mock_settings = MagicMock()
         mock_settings.paper_session_timeout_seconds = 300
@@ -248,18 +250,30 @@ class TestHealthCheck:
         """Test that health_check logs when sessions are cleaned up."""
         manager = BackgroundTaskManager()
 
+        cleaned_ids = [uuid4(), uuid4()]
         mock_session_manager = AsyncMock()
-        mock_session_manager.cleanup_stale_sessions = AsyncMock(return_value=2)
+        mock_session_manager.check_health = AsyncMock(return_value=cleaned_ids)
+        mock_session_manager.cleanup_stale_sessions = AsyncMock(return_value=cleaned_ids)
 
         mock_settings = MagicMock()
         mock_settings.paper_session_timeout_seconds = 300
+
+        mock_service = AsyncMock()
+        mock_db_session = AsyncMock()
 
         with (
             patch(
                 "squant.engine.paper.manager.get_session_manager", return_value=mock_session_manager
             ),
             patch("squant.config.get_settings", return_value=mock_settings),
+            patch("squant.infra.database.get_session_context") as mock_ctx,
+            patch(
+                "squant.services.paper_trading.PaperTradingService",
+                return_value=mock_service,
+            ),
         ):
+            mock_ctx.return_value.__aenter__ = AsyncMock(return_value=mock_db_session)
+            mock_ctx.return_value.__aexit__ = AsyncMock(return_value=False)
             with patch("squant.services.background.logger") as mock_logger:
                 await manager._health_check()
 

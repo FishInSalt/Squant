@@ -238,23 +238,25 @@ class LiveSessionManager:
                     unhealthy.append(run_id)
         return unhealthy
 
-    async def cleanup_stale_sessions(self, timeout_seconds: int = 300) -> int:
+    async def cleanup_stale_sessions(self, timeout_seconds: int = 300) -> list[UUID]:
         """Stop and unregister stale sessions.
 
         Args:
             timeout_seconds: Maximum seconds since last activity.
 
         Returns:
-            Number of sessions cleaned up.
+            List of run_ids that were actually cleaned up.
         """
         unhealthy = await self.check_health(timeout_seconds)
+        cleaned: list[UUID] = []
         for run_id in unhealthy:
             engine = self._sessions.get(run_id)
             if engine:
                 logger.warning(f"Cleaning up stale live session {run_id}")
                 await engine.stop(error="Session timeout: no activity detected")
                 await self.unregister(run_id)
-        return len(unhealthy)
+                cleaned.append(run_id)
+        return cleaned
 
 
 # Global live session manager instance

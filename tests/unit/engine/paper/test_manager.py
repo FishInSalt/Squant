@@ -323,9 +323,9 @@ class TestHealthCheck:
         await session_manager.register(healthy_engine)
         await session_manager.register(stale_engine)
 
-        count = await session_manager.cleanup_stale_sessions(timeout_seconds=300)
+        cleaned = await session_manager.cleanup_stale_sessions(timeout_seconds=300)
 
-        assert count == 1
+        assert cleaned == [stale_engine.run_id]
         assert session_manager.session_count == 1
         assert session_manager.get(healthy_engine.run_id) is not None
         assert session_manager.get(stale_engine.run_id) is None
@@ -342,9 +342,9 @@ class TestHealthCheck:
 
         await session_manager.register(engine)
 
-        count = await session_manager.cleanup_stale_sessions(timeout_seconds=300)
+        cleaned = await session_manager.cleanup_stale_sessions(timeout_seconds=300)
 
-        assert count == 0
+        assert cleaned == []
         assert session_manager.session_count == 1
 
 

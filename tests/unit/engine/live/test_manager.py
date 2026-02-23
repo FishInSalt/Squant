@@ -344,7 +344,7 @@ class TestHealthCheck:
 
         cleaned = await session_manager.cleanup_stale_sessions(timeout_seconds=300)
 
-        assert cleaned == 1
+        assert cleaned == [mock_engine.run_id]
         mock_engine.stop.assert_called_once()
         assert session_manager.session_count == 0
 
