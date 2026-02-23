@@ -490,13 +490,6 @@ async function loadSession() {
       ? await getPaperSession(props.id)
       : await getLiveSession(props.id)
     session.value = response.data
-
-    if (isRunning.value) {
-      await loadStatus()
-      startPolling()
-    } else {
-      stopPolling()
-    }
     loadEquityCurve()
   } catch (error) {
     console.error('Failed to load session:', error)
@@ -532,7 +525,13 @@ async function loadStatus() {
 
     if (!status.value.is_running) {
       stopPolling()
-      await loadSession()
+      // Refresh session to get final state (inline fetch, not loadSession, to avoid recursion)
+      try {
+        const sessionResp = isPaper.value
+          ? await getPaperSession(props.id)
+          : await getLiveSession(props.id)
+        session.value = sessionResp.data
+      } catch { /* ignore refresh failure */ }
     }
   } catch (error) {
     console.error('Failed to load status:', error)
@@ -562,6 +561,7 @@ async function handleStop() {
     try {
       await stopPaperTrading(props.id)
       toastSuccess('已停止')
+      stopPolling()
       await loadSession()
     } catch (error) {
       toastError('停止失败')
@@ -572,6 +572,7 @@ async function handleStop() {
     try {
       await stopLiveTrading(props.id, cancelOrders)
       toastSuccess(cancelOrders ? '已停止，挂单已取消' : '已停止，挂单已保留')
+      stopPolling()
       await loadSession()
     } catch (error) {
       toastError('停止失败')
@@ -595,14 +596,22 @@ async function handleEmergencyClose() {
   try {
     await emergencyClosePositions(props.id)
     toastSuccess('紧急平仓执行中')
+    stopPolling()
     await loadSession()
   } catch (error) {
     toastError('执行失败')
   }
 }
 
-onMounted(() => {
-  loadSession()
+onMounted(async () => {
+  await loadSession()
+  if (isRunning.value) {
+    await loadStatus()
+    // Only start polling if engine confirms still running
+    if (status.value?.is_running) {
+      startPolling()
+    }
+  }
 })
 
 onUnmounted(() => {

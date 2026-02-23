@@ -170,6 +170,22 @@ class BackgroundTaskManager:
         count = await session_manager.cleanup_stale_sessions(settings.paper_session_timeout_seconds)
         if count > 0:
             logger.warning(f"Cleaned up {count} stale paper trading sessions")
+            # Update DB status for cleaned-up sessions
+            try:
+                async with get_session_context() as db_session:
+                    service = PaperTradingService(db_session)
+                    for run_id in unhealthy_ids:
+                        try:
+                            await service.mark_session_error(
+                                run_id,
+                                error_message="Session timeout: no activity detected",
+                            )
+                        except Exception as e:
+                            logger.error(
+                                f"Failed to update DB for stale session {run_id}: {e}"
+                            )
+            except Exception as e:
+                logger.error(f"Failed to open DB session for stale session DB update: {e}")
 
 
 # Global instance

@@ -565,6 +565,27 @@ class PaperTradingService:
             "trades_count": 0,
         }
 
+    async def mark_session_error(self, run_id: UUID, error_message: str) -> None:
+        """Mark a session as error in the database.
+
+        Used by background health checks when a session is cleaned up
+        due to timeout or stale state.
+
+        Args:
+            run_id: Run ID of the session to mark.
+            error_message: Error description.
+        """
+        run = await self.run_repo.get(run_id)
+        if run and run.status == RunStatus.RUNNING:
+            await self.run_repo.update(
+                run.id,
+                status=RunStatus.ERROR,
+                error_message=error_message,
+                stopped_at=datetime.now(UTC),
+            )
+            await self.session.commit()
+            logger.info(f"Marked session {run_id} as error: {error_message}")
+
     def list_active(self) -> list[dict[str, Any]]:
         """List all active paper trading sessions.
 

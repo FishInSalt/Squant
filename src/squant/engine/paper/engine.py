@@ -150,11 +150,28 @@ class PaperTradingEngine:
         """Get last activity timestamp."""
         return self._last_active_at
 
+    # Timeframe to seconds mapping for adaptive health check timeout
+    _TIMEFRAME_SECONDS: dict[str, int] = {
+        "1m": 60,
+        "5m": 300,
+        "15m": 900,
+        "30m": 1800,
+        "1h": 3600,
+        "4h": 14400,
+        "1d": 86400,
+        "1w": 604800,
+    }
+
     def is_healthy(self, timeout_seconds: int = 300) -> bool:
         """Check if engine is healthy (recently active).
 
+        The effective timeout adapts to the candle timeframe: it uses
+        max(timeout_seconds, timeframe_seconds * 3) so that longer
+        timeframes (e.g., 1h, 4h) are not incorrectly marked as stale
+        between candle intervals.
+
         Args:
-            timeout_seconds: Maximum seconds since last activity.
+            timeout_seconds: Base timeout in seconds since last activity.
 
         Returns:
             True if healthy, False if stale or not running.
@@ -163,8 +180,10 @@ class PaperTradingEngine:
             return False
         if self._last_active_at is None:
             return True  # Just started, no candles processed yet
+        tf_seconds = self._TIMEFRAME_SECONDS.get(self._timeframe, 300)
+        effective_timeout = max(timeout_seconds, tf_seconds * 3)
         elapsed = (datetime.now(UTC) - self._last_active_at).total_seconds()
-        return elapsed < timeout_seconds
+        return elapsed < effective_timeout
 
     @property
     def context(self) -> BacktestContext:
