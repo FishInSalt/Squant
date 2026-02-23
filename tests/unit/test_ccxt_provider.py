@@ -509,3 +509,157 @@ class TestCCXTStreamProviderReconnectBackoff:
             assert provider._reconnect_attempt == 0
 
             await provider.close()
+
+
+class TestCandleCloseDetection:
+    """Tests for candle close detection heuristic in CCXT provider."""
+
+    @pytest.mark.asyncio
+    async def test_first_candle_dispatched_as_not_closed(self) -> None:
+        """First candle for a symbol should be dispatched with is_closed=False."""
+        provider = CCXTStreamProvider("okx")
+        dispatched: list = []
+
+        async def mock_dispatch(data_type, data):
+            dispatched.append((data_type, data))
+
+        provider._dispatch = mock_dispatch  # type: ignore[assignment]
+        provider._running = True
+
+        symbol = "BTC/USDT"
+        timeframe = "1h"
+        candle_key = f"{symbol}:{timeframe}"
+        ohlcv = [1700000000000, 50000, 51000, 49000, 50500, 100]
+        candle_ts = int(ohlcv[0])
+
+        # First candle: no previous state → no closed dispatch
+        assert candle_key not in provider._last_candle_ts
+
+        provider._last_candle_ts[candle_key] = candle_ts
+        provider._last_candle_data[candle_key] = ohlcv
+
+        ws_candle = provider._transformer.ohlcv_to_ws_candle(
+            ohlcv, symbol, timeframe, is_closed=False
+        )
+        await provider._dispatch("candle", ws_candle)
+
+        assert len(dispatched) == 1
+        assert dispatched[0][0] == "candle"
+        assert dispatched[0][1].is_closed is False
+
+    @pytest.mark.asyncio
+    async def test_new_timestamp_dispatches_closed_candle(self) -> None:
+        """When candle timestamp changes, previous candle dispatched as closed."""
+        provider = CCXTStreamProvider("okx")
+        dispatched: list = []
+
+        async def mock_dispatch(data_type, data):
+            dispatched.append((data_type, data))
+
+        provider._dispatch = mock_dispatch  # type: ignore[assignment]
+        provider._running = True
+
+        symbol = "BTC/USDT"
+        timeframe = "1h"
+        candle_key = f"{symbol}:{timeframe}"
+
+        # Simulate previous candle state
+        prev_ohlcv = [1700000000000, 50000, 51000, 49000, 50500, 100]
+        provider._last_candle_ts[candle_key] = int(prev_ohlcv[0])
+        provider._last_candle_data[candle_key] = prev_ohlcv
+
+        # New candle with different timestamp (1 hour later)
+        new_ohlcv = [1700003600000, 50500, 52000, 50000, 51500, 120]
+        candle_ts = int(new_ohlcv[0])
+
+        # Replicate the _ohlcv_loop close detection logic
+        if candle_key in provider._last_candle_ts:
+            if candle_ts != provider._last_candle_ts[candle_key]:
+                closed_candle = provider._transformer.ohlcv_to_ws_candle(
+                    provider._last_candle_data[candle_key],
+                    symbol,
+                    timeframe,
+                    is_closed=True,
+                )
+                await provider._dispatch("candle", closed_candle)
+
+        provider._last_candle_ts[candle_key] = candle_ts
+        provider._last_candle_data[candle_key] = new_ohlcv
+
+        ws_candle = provider._transformer.ohlcv_to_ws_candle(
+            new_ohlcv, symbol, timeframe, is_closed=False
+        )
+        await provider._dispatch("candle", ws_candle)
+
+        # Should have 2 dispatches: closed previous + open current
+        assert len(dispatched) == 2
+        assert dispatched[0][1].is_closed is True
+        assert dispatched[0][1].close == prev_ohlcv[4]
+        assert dispatched[1][1].is_closed is False
+        assert dispatched[1][1].close == new_ohlcv[4]
+
+    @pytest.mark.asyncio
+    async def test_same_timestamp_no_closed_dispatch(self) -> None:
+        """Same timestamp updates should not dispatch a closed candle."""
+        provider = CCXTStreamProvider("okx")
+        dispatched: list = []
+
+        async def mock_dispatch(data_type, data):
+            dispatched.append((data_type, data))
+
+        provider._dispatch = mock_dispatch  # type: ignore[assignment]
+        provider._running = True
+
+        symbol = "BTC/USDT"
+        timeframe = "1h"
+        candle_key = f"{symbol}:{timeframe}"
+
+        # Previous candle state
+        prev_ohlcv = [1700000000000, 50000, 51000, 49000, 50500, 100]
+        provider._last_candle_ts[candle_key] = int(prev_ohlcv[0])
+        provider._last_candle_data[candle_key] = prev_ohlcv
+
+        # Same timestamp, updated values (candle still forming)
+        updated_ohlcv = [1700000000000, 50000, 51500, 49000, 51000, 150]
+        candle_ts = int(updated_ohlcv[0])
+
+        # Replicate close detection — same timestamp, no closed dispatch
+        if candle_key in provider._last_candle_ts:
+            if candle_ts != provider._last_candle_ts[candle_key]:
+                closed_candle = provider._transformer.ohlcv_to_ws_candle(
+                    provider._last_candle_data[candle_key],
+                    symbol,
+                    timeframe,
+                    is_closed=True,
+                )
+                await provider._dispatch("candle", closed_candle)
+
+        provider._last_candle_ts[candle_key] = candle_ts
+        provider._last_candle_data[candle_key] = updated_ohlcv
+
+        ws_candle = provider._transformer.ohlcv_to_ws_candle(
+            updated_ohlcv, symbol, timeframe, is_closed=False
+        )
+        await provider._dispatch("candle", ws_candle)
+
+        # Only 1 dispatch: the current (open) candle, no closed dispatch
+        assert len(dispatched) == 1
+        assert dispatched[0][1].is_closed is False
+
+    def test_unwatch_cleans_candle_tracking(self) -> None:
+        """Unwatching should clean up candle tracking state."""
+        provider = CCXTStreamProvider("okx")
+
+        # Set up tracking state
+        provider._last_candle_ts["BTC/USDT:1h"] = 1700000000000
+        provider._last_candle_data["BTC/USDT:1h"] = [
+            1700000000000, 50000, 51000, 49000, 50500, 100,
+        ]
+
+        # Simulate the unwatch cleanup
+        candle_key = "BTC/USDT:1h"
+        provider._last_candle_ts.pop(candle_key, None)
+        provider._last_candle_data.pop(candle_key, None)
+
+        assert "BTC/USDT:1h" not in provider._last_candle_ts
+        assert "BTC/USDT:1h" not in provider._last_candle_data

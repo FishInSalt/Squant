@@ -100,6 +100,11 @@ class CCXTStreamProvider:
         self._reconnect_max_delay = 60.0  # Maximum delay in seconds
         self._reconnect_attempt: int = 0  # Current reconnect attempt counter
 
+        # Candle close detection: track last timestamp to detect when a new candle starts
+        # (meaning the previous one closed). CCXT doesn't provide is_closed natively.
+        self._last_candle_ts: dict[str, int] = {}  # "symbol:timeframe" -> timestamp_ms
+        self._last_candle_data: dict[str, list[Any]] = {}  # "symbol:timeframe" -> OHLCV array
+
         # Batch ticker watching - more efficient than individual watch_ticker calls
         self._watched_ticker_symbols: set[str] = set()
         self._tickers_task: asyncio.Task[None] | None = None
@@ -569,6 +574,11 @@ class CCXTStreamProvider:
                 task.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
                     await task
+            # Clean up candle tracking state for ohlcv subscriptions
+            if subscription_key.startswith("ohlcv:"):
+                candle_key = subscription_key[6:]  # "ohlcv:BTC/USDT:1h" -> "BTC/USDT:1h"
+                self._last_candle_ts.pop(candle_key, None)
+                self._last_candle_data.pop(candle_key, None)
             logger.info(f"Unwatched: {subscription_key}")
 
     async def unwatch_ticker(self, symbol: str) -> None:
@@ -751,10 +761,28 @@ class CCXTStreamProvider:
                 self._mark_success(key)
                 logger.debug(f"Received {len(ohlcv_list)} OHLCV candles for {symbol} {timeframe}")
 
-                # Process each candle (usually just the latest)
+                # Process the latest candle with close detection
                 for ohlcv in ohlcv_list[-1:]:  # Only process the latest
-                    # Determine if candle is closed based on timestamp
-                    # This is a heuristic - CCXT doesn't always provide is_closed
+                    candle_key = f"{symbol}:{timeframe}"
+                    candle_ts = int(ohlcv[0])
+
+                    # Detect candle close: when timestamp changes, previous candle closed
+                    if candle_key in self._last_candle_ts:
+                        if candle_ts != self._last_candle_ts[candle_key]:
+                            # Previous candle has closed - dispatch with is_closed=True
+                            closed_candle = self._transformer.ohlcv_to_ws_candle(
+                                self._last_candle_data[candle_key],
+                                symbol,
+                                timeframe,
+                                is_closed=True,
+                            )
+                            await self._dispatch("candle", closed_candle)
+
+                    # Track current candle state
+                    self._last_candle_ts[candle_key] = candle_ts
+                    self._last_candle_data[candle_key] = ohlcv
+
+                    # Dispatch current (open) candle for real-time UI updates
                     ws_candle = self._transformer.ohlcv_to_ws_candle(
                         ohlcv, symbol, timeframe, is_closed=False
                     )
