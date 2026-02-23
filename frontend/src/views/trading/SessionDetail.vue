@@ -1,5 +1,6 @@
 <template>
   <div class="session-detail" v-loading="loading">
+    <!-- Header -->
     <div class="page-header" v-if="session">
       <div class="header-left">
         <el-button icon="ArrowLeft" @click="goBack">返回</el-button>
@@ -9,6 +10,7 @@
             {{ isPaper ? '模拟' : '实盘' }}
           </el-tag>
           <StatusBadge :status="session.status" />
+          <span v-if="runningDuration" class="running-duration">已运行 {{ runningDuration }}</span>
         </div>
       </div>
       <div class="header-right" v-if="isRunning">
@@ -19,355 +21,401 @@
       </div>
     </div>
 
-    <div v-if="session?.error_message" class="error-status card">
+    <!-- Error bar -->
+    <div v-if="session?.error_message" class="error-bar">
       <el-icon class="error-icon"><CircleCloseFilled /></el-icon>
-      <p class="error-message">{{ session.error_message }}</p>
+      <span class="error-message">{{ session.error_message }}</span>
     </div>
 
-    <div v-if="session" class="config-section card">
-      <div class="card-header">
-        <h3 class="card-title">会话配置</h3>
-      </div>
-      <el-descriptions :column="4" border>
-        <el-descriptions-item label="交易所">{{ formatExchangeName(session.exchange) }}</el-descriptions-item>
-        <el-descriptions-item label="交易对">{{ session.symbol }}</el-descriptions-item>
-        <el-descriptions-item label="时间周期">{{ session.timeframe }}</el-descriptions-item>
-        <el-descriptions-item label="初始资金">{{ formatNumber(session.initial_capital ?? 0, 2) }}</el-descriptions-item>
-        <el-descriptions-item label="手续费率">{{ formatNumber((session.commission_rate ?? 0) * 100, 4) }}%</el-descriptions-item>
-        <el-descriptions-item label="滑点">{{ session.slippage != null ? formatNumber(session.slippage * 100, 4) + '%' : '-' }}</el-descriptions-item>
-        <el-descriptions-item label="启动时间">{{ session.started_at ? new Date(session.started_at).toLocaleString('zh-CN') : '-' }}</el-descriptions-item>
-        <el-descriptions-item label="停止时间">{{ session.stopped_at ? new Date(session.stopped_at).toLocaleString('zh-CN') : '-' }}</el-descriptions-item>
-      </el-descriptions>
-      <div v-if="session.params && Object.keys(session.params).length > 0" class="config-params">
-        <el-descriptions :column="4" border>
-          <el-descriptions-item
-            v-for="(value, key) in session.params"
-            :key="key"
-            :label="String(key)"
-          >
-            {{ value }}
-          </el-descriptions-item>
-        </el-descriptions>
-      </div>
-    </div>
-
-    <div v-if="status" class="result-content">
-      <div class="metrics-grid">
-        <div class="metric-card card">
-          <span class="label">当前权益</span>
-          <span class="value">{{ formatNumber(status.equity, 2) }}</span>
-        </div>
-        <div class="metric-card card">
-          <span class="label">可用资金</span>
-          <span class="value">{{ formatNumber(status.cash, 2) }}</span>
-        </div>
-        <div class="metric-card card">
-          <span class="label">已实现盈亏</span>
-          <PriceCell
-            :value="status.realized_pnl"
-            :change="status.realized_pnl"
-            show-sign
-            class="value"
-          />
-        </div>
-        <div class="metric-card card">
-          <span class="label">未实现盈亏</span>
-          <PriceCell
-            :value="status.unrealized_pnl"
-            :change="status.unrealized_pnl"
-            show-sign
-            class="value"
-          />
-        </div>
-      </div>
-
-      <div class="metrics-grid secondary">
-        <div class="metric-card card">
-          <span class="label">初始资金</span>
-          <span class="value secondary-value">{{ formatNumber(status.initial_capital, 2) }}</span>
-        </div>
-        <div class="metric-card card">
-          <span class="label">总手续费</span>
-          <span class="value secondary-value">{{ formatNumber(status.total_fees, 2) }}</span>
-        </div>
-        <div class="metric-card card">
-          <span class="label">已处理Bar数</span>
-          <span class="value secondary-value">{{ status.bar_count }}</span>
-        </div>
-        <div class="metric-card card">
-          <span class="label">已完成订单 / 交易数</span>
-          <span class="value secondary-value">
-            {{ status.completed_orders_count }} / {{ status.trades_count }}
-          </span>
-        </div>
-      </div>
-
-      <div class="positions-section card">
-        <div class="card-header">
-          <h3 class="card-title">当前持仓</h3>
-          <span class="item-count">共 {{ positions.length }} 项</span>
-        </div>
-        <el-table :data="positionRows" stripe empty-text="暂无持仓">
-          <el-table-column prop="symbol" label="币对" width="140" />
-          <el-table-column prop="side" label="方向" width="80">
-            <template #default="{ row }">
-              <el-tag
-                :type="row.side === 'long' ? 'success' : row.side === 'short' ? 'danger' : 'info'"
-                size="small"
-              >
-                {{ row.side === 'long' ? '多' : row.side === 'short' ? '空' : '空仓' }}
-              </el-tag>
-            </template>
-          </el-table-column>
-          <el-table-column prop="amount" label="数量" width="120" align="right">
-            <template #default="{ row }">
-              {{ formatNumber(row.amount, 4) }}
-            </template>
-          </el-table-column>
-          <el-table-column prop="avg_entry_price" label="均价" width="140" align="right">
-            <template #default="{ row }">
-              {{ formatPrice(row.avg_entry_price) }}
-            </template>
-          </el-table-column>
-          <el-table-column prop="current_price" label="现价" width="140" align="right">
-            <template #default="{ row }">
-              {{ row.current_price != null ? formatPrice(row.current_price) : '-' }}
-            </template>
-          </el-table-column>
-          <el-table-column prop="unrealized_pnl" label="未实现盈亏" width="160" align="right">
-            <template #default="{ row }">
-              <PriceCell
-                v-if="row.unrealized_pnl != null"
-                :value="row.unrealized_pnl"
-                :change="row.unrealized_pnl"
-                show-sign
-              />
-              <span v-else>-</span>
-            </template>
-          </el-table-column>
-        </el-table>
-      </div>
-
-      <div class="orders-section card">
-        <div class="card-header">
-          <h3 class="card-title">挂单</h3>
-          <span class="item-count">
-            共 {{ isPaper ? paperPendingOrders.length : liveOrders.length }} 项
-          </span>
-        </div>
-
-        <el-table
-          v-if="isPaper"
-          :data="paperPendingOrders"
-          stripe
-          empty-text="暂无挂单"
-        >
-          <el-table-column prop="symbol" label="币对" width="140" />
-          <el-table-column prop="side" label="方向" width="80">
-            <template #default="{ row }">
-              <el-tag
-                :type="row.side === 'buy' ? 'success' : 'danger'"
-                size="small"
-              >
-                {{ row.side === 'buy' ? '买入' : '卖出' }}
-              </el-tag>
-            </template>
-          </el-table-column>
-          <el-table-column prop="type" label="类型" width="100">
-            <template #default="{ row }">
-              {{ formatOrderType(row.type) }}
-            </template>
-          </el-table-column>
-          <el-table-column prop="amount" label="数量" width="120" align="right">
-            <template #default="{ row }">
-              {{ formatNumber(row.amount, 4) }}
-            </template>
-          </el-table-column>
-          <el-table-column prop="price" label="价格" width="140" align="right">
-            <template #default="{ row }">
-              {{ row.price != null ? formatPrice(row.price) : '市价' }}
-            </template>
-          </el-table-column>
-          <el-table-column prop="status" label="状态" width="100">
-            <template #default="{ row }">
-              <StatusBadge :status="row.status" />
-            </template>
-          </el-table-column>
-        </el-table>
-
-        <el-table
-          v-else
-          :data="liveOrders"
-          stripe
-          empty-text="暂无挂单"
-        >
-          <el-table-column prop="symbol" label="币对" width="140" />
-          <el-table-column prop="side" label="方向" width="80">
-            <template #default="{ row }">
-              <el-tag
-                :type="row.side === 'buy' ? 'success' : 'danger'"
-                size="small"
-              >
-                {{ row.side === 'buy' ? '买入' : '卖出' }}
-              </el-tag>
-            </template>
-          </el-table-column>
-          <el-table-column prop="type" label="类型" width="100">
-            <template #default="{ row }">
-              {{ formatOrderType(row.type) }}
-            </template>
-          </el-table-column>
-          <el-table-column prop="amount" label="数量" width="120" align="right">
-            <template #default="{ row }">
-              {{ formatNumber(row.amount, 4) }}
-            </template>
-          </el-table-column>
-          <el-table-column prop="filled_amount" label="已成交" width="120" align="right">
-            <template #default="{ row }">
-              {{ formatNumber(row.filled_amount, 4) }}
-            </template>
-          </el-table-column>
-          <el-table-column prop="price" label="价格" width="140" align="right">
-            <template #default="{ row }">
-              {{ row.price != null ? formatPrice(row.price) : '市价' }}
-            </template>
-          </el-table-column>
-          <el-table-column prop="avg_fill_price" label="均价" width="140" align="right">
-            <template #default="{ row }">
-              {{ row.avg_fill_price != null ? formatPrice(row.avg_fill_price) : '-' }}
-            </template>
-          </el-table-column>
-          <el-table-column prop="status" label="状态" width="100">
-            <template #default="{ row }">
-              <StatusBadge :status="row.status" />
-            </template>
-          </el-table-column>
-        </el-table>
-      </div>
-
-      <div v-if="isPaper && paperTrades.length > 0" class="trades-section card">
-        <div class="card-header">
-          <h3 class="card-title">交易记录</h3>
-          <span class="item-count">共 {{ paperTrades.length }} 笔</span>
-        </div>
-        <el-table :data="paperTrades" stripe empty-text="暂无交易记录" max-height="400">
-          <el-table-column prop="side" label="方向" width="80">
-            <template #default="{ row }">
-              <el-tag
-                :type="row.side === 'buy' ? 'success' : 'danger'"
-                size="small"
-              >
-                {{ row.side === 'buy' ? '买入' : '卖出' }}
-              </el-tag>
-            </template>
-          </el-table-column>
-          <el-table-column prop="entry_time" label="开仓时间" width="170">
-            <template #default="{ row }">
-              {{ formatTradeTime(row.entry_time) }}
-            </template>
-          </el-table-column>
-          <el-table-column prop="entry_price" label="开仓价" width="130" align="right">
-            <template #default="{ row }">
-              {{ formatPrice(row.entry_price) }}
-            </template>
-          </el-table-column>
-          <el-table-column prop="exit_time" label="平仓时间" width="170">
-            <template #default="{ row }">
-              {{ row.exit_time ? formatTradeTime(row.exit_time) : '-' }}
-            </template>
-          </el-table-column>
-          <el-table-column prop="exit_price" label="平仓价" width="130" align="right">
-            <template #default="{ row }">
-              {{ row.exit_price != null ? formatPrice(row.exit_price) : '-' }}
-            </template>
-          </el-table-column>
-          <el-table-column prop="amount" label="数量" width="120" align="right">
-            <template #default="{ row }">
-              {{ formatNumber(row.amount, 4) }}
-            </template>
-          </el-table-column>
-          <el-table-column prop="pnl" label="盈亏" width="130" align="right">
-            <template #default="{ row }">
-              <PriceCell
-                :value="row.pnl"
-                :change="row.pnl"
-                show-sign
-              />
-            </template>
-          </el-table-column>
-          <el-table-column prop="pnl_pct" label="盈亏%" width="100" align="right">
-            <template #default="{ row }">
-              <PriceCell
-                :value="row.pnl_pct"
-                :change="row.pnl_pct"
-                show-sign
-                suffix="%"
-              />
-            </template>
-          </el-table-column>
-          <el-table-column prop="fees" label="手续费" width="100" align="right">
-            <template #default="{ row }">
-              {{ formatNumber(row.fees, 4) }}
-            </template>
-          </el-table-column>
-        </el-table>
-      </div>
-
-      <div v-if="equityCurve.length > 0" class="equity-section card">
-        <div class="card-header">
-          <h3 class="card-title">收益曲线</h3>
-        </div>
-        <EquityCurve :data="equityCurve" height="300px" />
-      </div>
-
-      <div v-if="isPaper && paperLogs.length > 0" class="logs-section card">
-        <div class="card-header">
-          <h3 class="card-title">运行日志</h3>
-          <div class="log-controls">
-            <el-switch
-              v-model="autoScrollLogs"
-              active-text="自动滚动"
-              size="small"
-            />
-            <span class="item-count">共 {{ paperLogs.length }} 条</span>
-          </div>
-        </div>
-        <div ref="logContainerRef" class="log-container">
-          <div v-for="(log, index) in paperLogs" :key="index" class="log-entry">
-            {{ log }}
-          </div>
-        </div>
-      </div>
-
-      <div v-if="isLive && riskState" class="risk-section card">
-        <div class="card-header">
-          <h3 class="card-title">风控状态</h3>
-        </div>
-        <div class="risk-grid">
-          <div class="risk-item">
-            <span class="label">日盈亏</span>
+    <div v-if="session" class="result-content">
+      <!-- Metrics grid -->
+      <div v-if="status" class="metrics-section">
+        <div class="metrics-grid primary">
+          <div class="metric-card card highlight">
+            <span class="label">总收益率</span>
             <PriceCell
-              :value="riskState.daily_pnl"
-              :change="riskState.daily_pnl"
+              :value="totalReturnPct"
+              :change="totalReturnPct"
+              :decimals="2"
+              show-sign
+              suffix="%"
+              class="value primary-value"
+            />
+          </div>
+          <div class="metric-card card">
+            <span class="label">当前权益</span>
+            <span class="value">{{ formatNumber(status.equity, 2) }}</span>
+          </div>
+          <div class="metric-card card">
+            <span class="label">可用资金</span>
+            <span class="value">{{ formatNumber(status.cash, 2) }}</span>
+          </div>
+          <div class="metric-card card">
+            <span class="label">未实现盈亏</span>
+            <PriceCell
+              :value="status.unrealized_pnl"
+              :change="status.unrealized_pnl"
               show-sign
               class="value"
             />
           </div>
-          <div class="risk-item">
-            <span class="label">日交易次数</span>
-            <span class="value">{{ riskState.daily_trade_count }}</span>
-          </div>
-          <div class="risk-item">
-            <span class="label">连续亏损</span>
-            <span class="value">{{ riskState.consecutive_losses }}</span>
-          </div>
-          <div class="risk-item">
-            <span class="label">熔断状态</span>
-            <StatusBadge
-              :status="riskState.circuit_breaker_active ? 'active' : 'inactive'"
+        </div>
+
+        <div class="metrics-grid secondary">
+          <div class="metric-card card">
+            <span class="label">已实现盈亏</span>
+            <PriceCell
+              :value="status.realized_pnl"
+              :change="status.realized_pnl"
+              show-sign
+              class="value secondary-value"
             />
           </div>
+          <div class="metric-card card">
+            <span class="label">总手续费</span>
+            <span class="value secondary-value">{{ formatNumber(status.total_fees, 2) }}</span>
+          </div>
+          <div class="metric-card card">
+            <span class="label">最大回撤</span>
+            <span class="value secondary-value" :class="maxDrawdownPct != null && maxDrawdownPct < 0 ? 'text-danger' : ''">
+              {{ maxDrawdownPct != null ? formatNumber(maxDrawdownPct, 2) + '%' : '-' }}
+            </span>
+          </div>
+          <div class="metric-card card">
+            <span class="label">胜率</span>
+            <span class="value secondary-value">
+              {{ winRate != null ? formatNumber(winRate, 1) + '%' : '-' }}
+            </span>
+          </div>
         </div>
+      </div>
+
+      <!-- Config section (collapsible) -->
+      <div class="config-section card">
+        <div class="config-header" @click="configExpanded = !configExpanded">
+          <div class="config-summary">
+            <h3 class="card-title">会话配置</h3>
+            <span v-if="!configExpanded" class="config-brief">
+              {{ formatExchangeName(session.exchange) }} · {{ session.symbol }} · {{ session.timeframe }}
+              · 初始资金 {{ formatNumber(session.initial_capital ?? 0, 2) }}
+            </span>
+          </div>
+          <el-icon class="expand-icon" :class="{ expanded: configExpanded }"><ArrowDown /></el-icon>
+        </div>
+        <div v-show="configExpanded" class="config-body">
+          <el-descriptions :column="4" border>
+            <el-descriptions-item label="交易所">{{ formatExchangeName(session.exchange) }}</el-descriptions-item>
+            <el-descriptions-item label="交易对">{{ session.symbol }}</el-descriptions-item>
+            <el-descriptions-item label="时间周期">{{ session.timeframe }}</el-descriptions-item>
+            <el-descriptions-item label="初始资金">{{ formatNumber(session.initial_capital ?? 0, 2) }}</el-descriptions-item>
+            <el-descriptions-item label="手续费率">{{ formatNumber((session.commission_rate ?? 0) * 100, 4) }}%</el-descriptions-item>
+            <el-descriptions-item label="滑点">{{ session.slippage != null ? formatNumber(session.slippage * 100, 4) + '%' : '-' }}</el-descriptions-item>
+            <el-descriptions-item label="启动时间">{{ session.started_at ? new Date(session.started_at).toLocaleString('zh-CN') : '-' }}</el-descriptions-item>
+            <el-descriptions-item label="停止时间">{{ session.stopped_at ? new Date(session.stopped_at).toLocaleString('zh-CN') : '-' }}</el-descriptions-item>
+            <el-descriptions-item v-if="status" label="已处理Bar数">{{ status.bar_count }}</el-descriptions-item>
+            <el-descriptions-item v-if="status" label="已完成订单/交易数">
+              {{ status.completed_orders_count }} / {{ status.trades_count }}
+            </el-descriptions-item>
+          </el-descriptions>
+          <div v-if="session.params && Object.keys(session.params).length > 0" class="config-params">
+            <el-descriptions :column="4" border>
+              <el-descriptions-item
+                v-for="(value, key) in session.params"
+                :key="key"
+                :label="String(key)"
+              >
+                {{ value }}
+              </el-descriptions-item>
+            </el-descriptions>
+          </div>
+        </div>
+      </div>
+
+      <!-- Waiting for first bar -->
+      <div v-if="status && status.bar_count === 0 && isRunning" class="waiting-hint">
+        <el-icon class="is-loading"><Loading /></el-icon>
+        <span>等待第一根K线数据...</span>
+      </div>
+
+      <!-- K-line chart -->
+      <div class="kline-section card">
+        <TradingKLineChart
+          :symbol="session.symbol"
+          :timeframe="session.timeframe"
+          :trades="isPaper ? paperTrades : undefined"
+          :realtime="isRunning && !!status?.is_running"
+          height="500px"
+        />
+      </div>
+
+      <!-- Equity curve (always visible) -->
+      <div class="equity-section card">
+        <div class="card-header">
+          <h3 class="card-title">收益曲线</h3>
+        </div>
+        <EquityCurve :data="equityCurveWithFallback" height="250px" />
+      </div>
+
+      <!-- Activity Tabs -->
+      <div class="activity-section card">
+        <el-tabs v-model="activeTab">
+          <el-tab-pane name="positions">
+            <template #label>
+              持仓
+              <el-badge v-if="positions.length" :value="positions.length" class="tab-badge" />
+            </template>
+            <el-table :data="positionRows" stripe empty-text="暂无持仓">
+              <el-table-column prop="symbol" label="币对" min-width="120" />
+              <el-table-column prop="side" label="方向" min-width="80">
+                <template #default="{ row }">
+                  <el-tag
+                    :type="row.side === 'long' ? 'success' : row.side === 'short' ? 'danger' : 'info'"
+                    size="small"
+                  >
+                    {{ row.side === 'long' ? '多' : row.side === 'short' ? '空' : '空仓' }}
+                  </el-tag>
+                </template>
+              </el-table-column>
+              <el-table-column prop="amount" label="数量" min-width="100" align="right">
+                <template #default="{ row }">
+                  {{ formatNumber(row.amount, 4) }}
+                </template>
+              </el-table-column>
+              <el-table-column prop="avg_entry_price" label="均价" min-width="120" align="right">
+                <template #default="{ row }">
+                  {{ formatPrice(row.avg_entry_price) }}
+                </template>
+              </el-table-column>
+              <el-table-column prop="current_price" label="现价" min-width="120" align="right">
+                <template #default="{ row }">
+                  {{ row.current_price != null ? formatPrice(row.current_price) : '-' }}
+                </template>
+              </el-table-column>
+              <el-table-column prop="unrealized_pnl" label="未实现盈亏" min-width="140" align="right">
+                <template #default="{ row }">
+                  <PriceCell
+                    v-if="row.unrealized_pnl != null"
+                    :value="row.unrealized_pnl"
+                    :change="row.unrealized_pnl"
+                    show-sign
+                  />
+                  <span v-else>-</span>
+                </template>
+              </el-table-column>
+            </el-table>
+          </el-tab-pane>
+
+          <el-tab-pane name="orders">
+            <template #label>
+              挂单
+              <el-badge v-if="pendingCount" :value="pendingCount" class="tab-badge" />
+            </template>
+            <el-table
+              v-if="isPaper"
+              :data="paperPendingOrders"
+              stripe
+              empty-text="暂无挂单"
+            >
+              <el-table-column prop="symbol" label="币对" min-width="120" />
+              <el-table-column prop="side" label="方向" min-width="80">
+                <template #default="{ row }">
+                  <el-tag
+                    :type="row.side === 'buy' ? 'success' : 'danger'"
+                    size="small"
+                  >
+                    {{ row.side === 'buy' ? '买入' : '卖出' }}
+                  </el-tag>
+                </template>
+              </el-table-column>
+              <el-table-column prop="type" label="类型" min-width="90">
+                <template #default="{ row }">
+                  {{ formatOrderType(row.type) }}
+                </template>
+              </el-table-column>
+              <el-table-column prop="amount" label="数量" min-width="100" align="right">
+                <template #default="{ row }">
+                  {{ formatNumber(row.amount, 4) }}
+                </template>
+              </el-table-column>
+              <el-table-column prop="price" label="价格" min-width="120" align="right">
+                <template #default="{ row }">
+                  {{ row.price != null ? formatPrice(row.price) : '市价' }}
+                </template>
+              </el-table-column>
+              <el-table-column prop="status" label="状态" min-width="90">
+                <template #default="{ row }">
+                  <StatusBadge :status="row.status" />
+                </template>
+              </el-table-column>
+            </el-table>
+
+            <el-table
+              v-else
+              :data="liveOrders"
+              stripe
+              empty-text="暂无挂单"
+            >
+              <el-table-column prop="symbol" label="币对" min-width="120" />
+              <el-table-column prop="side" label="方向" min-width="80">
+                <template #default="{ row }">
+                  <el-tag
+                    :type="row.side === 'buy' ? 'success' : 'danger'"
+                    size="small"
+                  >
+                    {{ row.side === 'buy' ? '买入' : '卖出' }}
+                  </el-tag>
+                </template>
+              </el-table-column>
+              <el-table-column prop="type" label="类型" min-width="90">
+                <template #default="{ row }">
+                  {{ formatOrderType(row.type) }}
+                </template>
+              </el-table-column>
+              <el-table-column prop="amount" label="数量" min-width="100" align="right">
+                <template #default="{ row }">
+                  {{ formatNumber(row.amount, 4) }}
+                </template>
+              </el-table-column>
+              <el-table-column prop="filled_amount" label="已成交" min-width="100" align="right">
+                <template #default="{ row }">
+                  {{ formatNumber(row.filled_amount, 4) }}
+                </template>
+              </el-table-column>
+              <el-table-column prop="price" label="价格" min-width="120" align="right">
+                <template #default="{ row }">
+                  {{ row.price != null ? formatPrice(row.price) : '市价' }}
+                </template>
+              </el-table-column>
+              <el-table-column prop="avg_fill_price" label="均价" min-width="120" align="right">
+                <template #default="{ row }">
+                  {{ row.avg_fill_price != null ? formatPrice(row.avg_fill_price) : '-' }}
+                </template>
+              </el-table-column>
+              <el-table-column prop="status" label="状态" min-width="90">
+                <template #default="{ row }">
+                  <StatusBadge :status="row.status" />
+                </template>
+              </el-table-column>
+            </el-table>
+          </el-tab-pane>
+
+          <el-tab-pane v-if="isPaper" name="trades">
+            <template #label>
+              交易记录
+              <el-badge v-if="paperTrades.length" :value="paperTrades.length" class="tab-badge" />
+            </template>
+            <el-table :data="paperTrades" stripe empty-text="暂无交易记录" max-height="400">
+              <el-table-column prop="side" label="方向" min-width="70">
+                <template #default="{ row }">
+                  <el-tag
+                    :type="row.side === 'buy' ? 'success' : 'danger'"
+                    size="small"
+                  >
+                    {{ row.side === 'buy' ? '买入' : '卖出' }}
+                  </el-tag>
+                </template>
+              </el-table-column>
+              <el-table-column prop="entry_time" label="开仓时间" min-width="140">
+                <template #default="{ row }">
+                  {{ formatTradeTime(row.entry_time) }}
+                </template>
+              </el-table-column>
+              <el-table-column prop="entry_price" label="开仓价" min-width="110" align="right">
+                <template #default="{ row }">
+                  {{ formatPrice(row.entry_price) }}
+                </template>
+              </el-table-column>
+              <el-table-column prop="exit_time" label="平仓时间" min-width="140">
+                <template #default="{ row }">
+                  {{ row.exit_time ? formatTradeTime(row.exit_time) : '-' }}
+                </template>
+              </el-table-column>
+              <el-table-column prop="exit_price" label="平仓价" min-width="110" align="right">
+                <template #default="{ row }">
+                  {{ row.exit_price != null ? formatPrice(row.exit_price) : '-' }}
+                </template>
+              </el-table-column>
+              <el-table-column prop="amount" label="数量" min-width="100" align="right">
+                <template #default="{ row }">
+                  {{ formatNumber(row.amount, 4) }}
+                </template>
+              </el-table-column>
+              <el-table-column prop="pnl" label="盈亏" min-width="110" align="right">
+                <template #default="{ row }">
+                  <PriceCell
+                    :value="row.pnl"
+                    :change="row.pnl"
+                    show-sign
+                  />
+                </template>
+              </el-table-column>
+              <el-table-column prop="pnl_pct" label="盈亏%" min-width="90" align="right">
+                <template #default="{ row }">
+                  <PriceCell
+                    :value="row.pnl_pct"
+                    :change="row.pnl_pct"
+                    show-sign
+                    suffix="%"
+                  />
+                </template>
+              </el-table-column>
+              <el-table-column prop="fees" label="手续费" min-width="90" align="right">
+                <template #default="{ row }">
+                  {{ formatNumber(row.fees, 4) }}
+                </template>
+              </el-table-column>
+            </el-table>
+          </el-tab-pane>
+
+          <el-tab-pane v-if="isPaper" name="logs">
+            <template #label>
+              日志
+              <el-badge v-if="paperLogs.length" :value="paperLogs.length" class="tab-badge" />
+            </template>
+            <div class="log-controls">
+              <el-switch
+                v-model="autoScrollLogs"
+                active-text="自动滚动"
+                size="small"
+              />
+            </div>
+            <div ref="logContainerRef" class="log-container">
+              <div v-for="(log, index) in paperLogs" :key="index" class="log-entry">
+                {{ log }}
+              </div>
+              <div v-if="paperLogs.length === 0" class="empty-logs">暂无日志</div>
+            </div>
+          </el-tab-pane>
+
+          <el-tab-pane v-if="isLive && riskState" name="risk">
+            <template #label>风控</template>
+            <div class="risk-grid">
+              <div class="risk-item">
+                <span class="label">日盈亏</span>
+                <PriceCell
+                  :value="riskState.daily_pnl"
+                  :change="riskState.daily_pnl"
+                  show-sign
+                  class="value"
+                />
+              </div>
+              <div class="risk-item">
+                <span class="label">日交易次数</span>
+                <span class="value">{{ riskState.daily_trade_count }}</span>
+              </div>
+              <div class="risk-item">
+                <span class="label">连续亏损</span>
+                <span class="value">{{ riskState.consecutive_losses }}</span>
+              </div>
+              <div class="risk-item">
+                <span class="label">熔断状态</span>
+                <StatusBadge
+                  :status="riskState.circuit_breaker_active ? 'active' : 'inactive'"
+                />
+              </div>
+            </div>
+          </el-tab-pane>
+        </el-tabs>
       </div>
     </div>
   </div>
@@ -376,11 +424,12 @@
 <script setup lang="ts">
 import { ref, computed, watch, nextTick, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
-import { CircleCloseFilled } from '@element-plus/icons-vue'
+import { CircleCloseFilled, ArrowDown, Loading } from '@element-plus/icons-vue'
 import StatusBadge from '@/components/common/StatusBadge.vue'
 import PriceCell from '@/components/common/PriceCell.vue'
 import EquityCurve from '@/components/charts/EquityCurve.vue'
-import { formatNumber, formatPrice, formatOrderType, formatExchangeName } from '@/utils/format'
+import TradingKLineChart from '@/components/charts/TradingKLineChart.vue'
+import { formatNumber, formatPrice, formatOrderType, formatExchangeName, formatDuration } from '@/utils/format'
 import { getPaperSession, getPaperSessionStatus, stopPaperTrading, getPaperEquityCurve } from '@/api/paper'
 import {
   getLiveSession,
@@ -401,6 +450,7 @@ import type {
   Position,
   RiskState,
   Trade,
+  EquityPoint,
 } from '@/types'
 
 const props = defineProps<{
@@ -414,15 +464,65 @@ const { toastSuccess, toastError, confirmDanger } = useNotification()
 const loading = ref(true)
 const session = ref<PaperSession | LiveSession | null>(null)
 const status = ref<PaperTradingStatus | LiveTradingStatus | null>(null)
-import type { EquityPoint } from '@/types'
-
 const equityCurve = ref<EquityPoint[]>([])
 
 let refreshTimer: ReturnType<typeof setInterval> | null = null
+let equityCurvePollCount = 0
+
+// Running duration timer
+const now = ref(Date.now())
+let durationTimer: ReturnType<typeof setInterval> | null = null
 
 const isPaper = computed(() => props.type === 'paper')
 const isLive = computed(() => props.type === 'live')
 const isRunning = computed(() => session.value?.status === 'running')
+
+// Tabs
+const activeTab = ref('positions')
+
+// Config collapse
+const configExpanded = ref(false)
+
+// Auto-scroll logs
+const autoScrollLogs = ref(true)
+const logContainerRef = ref<HTMLElement | null>(null)
+
+// --- Computed: new metrics ---
+
+const totalReturnPct = computed(() => {
+  if (!status.value?.initial_capital) return 0
+  return ((status.value.equity - status.value.initial_capital) / status.value.initial_capital) * 100
+})
+
+const winRate = computed<number | null>(() => {
+  if (!isPaper.value) return null
+  const trades = paperTrades.value.filter(t => t.exit_time != null)
+  if (trades.length === 0) return null
+  return (trades.filter(t => t.pnl > 0).length / trades.length) * 100
+})
+
+const maxDrawdownPct = computed<number | null>(() => {
+  if (equityCurve.value.length < 2) return null
+  let peak = equityCurve.value[0].equity
+  let maxDd = 0
+  for (const p of equityCurve.value) {
+    if (p.equity > peak) peak = p.equity
+    const dd = (peak - p.equity) / peak * 100
+    if (dd > maxDd) maxDd = dd
+  }
+  return -maxDd
+})
+
+const runningDuration = computed(() => {
+  if (!session.value?.started_at) return ''
+  const start = new Date(session.value.started_at).getTime()
+  const end = session.value.stopped_at ? new Date(session.value.stopped_at).getTime() : now.value
+  const seconds = Math.floor((end - start) / 1000)
+  if (seconds < 0) return ''
+  return formatDuration(seconds)
+})
+
+// --- Existing computed ---
 
 const positions = computed<[string, Position][]>(() => {
   if (!status.value) return []
@@ -447,6 +547,10 @@ const liveOrders = computed<LiveOrderInfo[]>(() => {
   return (status.value as LiveTradingStatus).live_orders || []
 })
 
+const pendingCount = computed(() => {
+  return isPaper.value ? paperPendingOrders.value.length : liveOrders.value.length
+})
+
 const paperTrades = computed<Trade[]>(() => {
   if (!status.value || !isPaper.value) return []
   return (status.value as PaperTradingStatus).trades || []
@@ -457,12 +561,20 @@ const paperLogs = computed<string[]>(() => {
   return (status.value as PaperTradingStatus).logs || []
 })
 
-const autoScrollLogs = ref(true)
-const logContainerRef = ref<HTMLElement | null>(null)
-
 const riskState = computed<RiskState | null>(() => {
   if (!status.value || !isLive.value) return null
   return (status.value as LiveTradingStatus).risk_state || null
+})
+
+// Equity curve fallback: always show at least a flat line
+const equityCurveWithFallback = computed<EquityPoint[]>(() => {
+  if (equityCurve.value.length > 0) return equityCurve.value
+  const ic = status.value?.initial_capital ?? session.value?.initial_capital ?? 10000
+  const t = session.value?.started_at ?? new Date().toISOString()
+  return [
+    { time: t, equity: ic, cash: ic, position_value: 0, unrealized_pnl: 0 },
+    { time: new Date().toISOString(), equity: ic, cash: ic, position_value: 0, unrealized_pnl: 0 },
+  ]
 })
 
 function formatTradeTime(time: string): string {
@@ -475,8 +587,9 @@ function formatTradeTime(time: string): string {
   })
 }
 
+// Auto-scroll logs only when logs tab is visible
 watch(paperLogs, () => {
-  if (autoScrollLogs.value && logContainerRef.value) {
+  if (autoScrollLogs.value && logContainerRef.value && activeTab.value === 'logs') {
     nextTick(() => {
       logContainerRef.value!.scrollTop = logContainerRef.value!.scrollHeight
     })
@@ -523,9 +636,14 @@ async function loadStatus() {
       : await getLiveSessionStatus(props.id)
     status.value = response.data
 
+    // Refresh equity curve every 5 polls (~15s)
+    equityCurvePollCount++
+    if (equityCurvePollCount % 5 === 0) {
+      loadEquityCurve()
+    }
+
     if (!status.value.is_running) {
       stopPolling()
-      // Refresh session to get final state (inline fetch, not loadSession, to avoid recursion)
       try {
         const sessionResp = isPaper.value
           ? await getPaperSession(props.id)
@@ -607,15 +725,22 @@ onMounted(async () => {
   await loadSession()
   if (isRunning.value) {
     await loadStatus()
-    // Only start polling if engine confirms still running
     if (status.value?.is_running) {
       startPolling()
     }
   }
+  // Start duration timer
+  durationTimer = setInterval(() => {
+    now.value = Date.now()
+  }, 1000)
 })
 
 onUnmounted(() => {
   stopPolling()
+  if (durationTimer) {
+    clearInterval(durationTimer)
+    durationTimer = null
+  }
 })
 </script>
 
@@ -643,6 +768,11 @@ onUnmounted(() => {
         font-weight: 600;
         margin: 0;
       }
+
+      .running-duration {
+        font-size: 13px;
+        color: #909399;
+      }
     }
 
     .header-right {
@@ -651,44 +781,43 @@ onUnmounted(() => {
     }
   }
 
-  .error-status {
+  .error-bar {
     display: flex;
-    flex-direction: column;
     align-items: center;
-    padding: 60px;
-    margin-bottom: 24px;
+    gap: 8px;
+    padding: 12px 16px;
+    margin-bottom: 16px;
+    background: #fff2f0;
+    border: 1px solid #ffccc7;
+    border-radius: 4px;
 
     .error-icon {
-      font-size: 48px;
+      font-size: 16px;
       color: #ff4d4f;
-      margin-bottom: 16px;
+      flex-shrink: 0;
     }
 
     .error-message {
       color: #ff4d4f;
-      margin-bottom: 16px;
-      text-align: center;
-      max-width: 600px;
       word-break: break-word;
     }
   }
 
-  .config-section {
+  .metrics-section {
     margin-bottom: 24px;
-
-    .config-params {
-      margin-top: 12px;
-    }
   }
 
   .metrics-grid {
     display: grid;
     grid-template-columns: repeat(4, 1fr);
     gap: 16px;
-    margin-bottom: 24px;
+
+    &.primary {
+      margin-bottom: 16px;
+    }
 
     &.secondary {
-      margin-bottom: 24px;
+      margin-bottom: 0;
     }
   }
 
@@ -697,6 +826,10 @@ onUnmounted(() => {
     flex-direction: column;
     gap: 8px;
     padding: 20px;
+
+    &.highlight {
+      border-left: 3px solid #409eff;
+    }
 
     .label {
       font-size: 12px;
@@ -707,23 +840,104 @@ onUnmounted(() => {
       font-size: 24px;
       font-weight: 600;
 
+      &.primary-value {
+        font-size: 28px;
+      }
+
       &.secondary-value {
         font-size: 18px;
       }
     }
+
+    .text-danger {
+      color: #FF1744;
+    }
   }
 
-  .equity-section,
-  .positions-section,
-  .orders-section,
-  .trades-section,
-  .logs-section,
-  .risk-section {
+  .config-section {
     margin-bottom: 24px;
 
-    .item-count {
-      font-size: 12px;
-      color: #909399;
+    .config-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      cursor: pointer;
+      padding: 16px 20px;
+
+      .config-summary {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+
+        .card-title {
+          margin: 0;
+          font-size: 16px;
+          font-weight: 600;
+        }
+
+        .config-brief {
+          font-size: 13px;
+          color: #909399;
+        }
+      }
+
+      .expand-icon {
+        transition: transform 0.3s;
+        color: #909399;
+
+        &.expanded {
+          transform: rotate(180deg);
+        }
+      }
+    }
+
+    .config-body {
+      padding: 0 20px 16px;
+    }
+
+    .config-params {
+      margin-top: 12px;
+    }
+  }
+
+  .waiting-hint {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    padding: 24px;
+    margin-bottom: 24px;
+    color: #909399;
+    font-size: 14px;
+  }
+
+  .kline-section {
+    margin-bottom: 24px;
+    padding: 16px;
+  }
+
+  .equity-section {
+    margin-bottom: 24px;
+  }
+
+  .activity-section {
+    margin-bottom: 24px;
+    padding: 0 16px 16px;
+
+    :deep(.el-tabs__header) {
+      margin-bottom: 16px;
+    }
+
+    .tab-badge {
+      margin-left: 4px;
+      vertical-align: middle;
+
+      :deep(.el-badge__content) {
+        height: 16px;
+        line-height: 16px;
+        padding: 0 5px;
+        font-size: 11px;
+      }
     }
   }
 
@@ -731,6 +945,7 @@ onUnmounted(() => {
     display: flex;
     align-items: center;
     gap: 12px;
+    margin-bottom: 8px;
   }
 
   .log-container {
@@ -750,11 +965,17 @@ onUnmounted(() => {
     word-break: break-all;
   }
 
+  .empty-logs {
+    color: #c0c4cc;
+    text-align: center;
+    padding: 24px 0;
+  }
+
   .risk-grid {
     display: grid;
     grid-template-columns: repeat(4, 1fr);
     gap: 16px;
-    padding: 16px;
+    padding: 16px 0;
   }
 
   .risk-item {

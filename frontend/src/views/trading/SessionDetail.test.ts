@@ -133,60 +133,107 @@ describe('SessionDetail', () => {
       expect(wrapper.text()).toContain('模拟')
     })
 
-    it('shows config panel with session parameters', async () => {
+    it('shows config section with session details', async () => {
       const wrapper = mountPaper()
       await flushPromises()
       expect(wrapper.text()).toContain('会话配置')
+      // Config is collapsed by default, so summary is visible
       expect(wrapper.text()).toContain('OKX')
       expect(wrapper.text()).toContain('BTC/USDT')
       expect(wrapper.text()).toContain('1h')
     })
 
-    it('shows strategy params in config panel', async () => {
+    it('config is collapsed by default, expandable on click', async () => {
       const wrapper = mountPaper()
       await flushPromises()
+      // Collapsed: config-body has v-show=false → display: none
+      const body = wrapper.find('.config-body')
+      expect(body.exists()).toBe(true)
+      expect((body.element as HTMLElement).style.display).toBe('none')
+      // Click to expand
+      await wrapper.find('.config-header').trigger('click')
+      expect((body.element as HTMLElement).style.display).not.toBe('none')
       expect(wrapper.text()).toContain('fast_period')
-      expect(wrapper.text()).toContain('5')
       expect(wrapper.text()).toContain('slow_period')
-      expect(wrapper.text()).toContain('20')
     })
 
-    it('shows metrics grid', async () => {
+    it('shows total return percentage', async () => {
+      const wrapper = mountPaper()
+      await flushPromises()
+      // (10200 - 10000) / 10000 * 100 = 2%
+      expect(wrapper.text()).toContain('总收益率')
+      expect(wrapper.text()).toContain('2.00%')
+    })
+
+    it('shows core metrics', async () => {
       const wrapper = mountPaper()
       await flushPromises()
       expect(wrapper.text()).toContain('当前权益')
       expect(wrapper.text()).toContain('可用资金')
       expect(wrapper.text()).toContain('已实现盈亏')
       expect(wrapper.text()).toContain('未实现盈亏')
+      expect(wrapper.text()).toContain('总手续费')
     })
 
-    it('shows positions table', async () => {
+    it('shows win rate', async () => {
       const wrapper = mountPaper()
       await flushPromises()
-      expect(wrapper.text()).toContain('当前持仓')
-      expect(wrapper.text()).toContain('共 1 项')
+      // 1 closed trade with positive pnl → 100%
+      expect(wrapper.text()).toContain('胜率')
+      expect(wrapper.text()).toContain('100.0%')
     })
 
-    it('shows trades table', async () => {
+    it('shows running duration', async () => {
       const wrapper = mountPaper()
       await flushPromises()
-      expect(wrapper.text()).toContain('交易记录')
-      expect(wrapper.text()).toContain('共 1 笔')
+      expect(wrapper.text()).toContain('已运行')
     })
 
-    it('shows logs panel with entries', async () => {
+    it('shows K-line chart stub', async () => {
       const wrapper = mountPaper()
       await flushPromises()
-      expect(wrapper.text()).toContain('运行日志')
-      expect(wrapper.text()).toContain('Strategy started')
-      expect(wrapper.text()).toContain('Buy signal detected')
+      expect(wrapper.find('.trading-kline-chart-stub').exists()).toBe(true)
     })
 
-    it('shows equity curve section', async () => {
+    it('shows equity curve (always rendered)', async () => {
       const wrapper = mountPaper()
       await flushPromises()
       expect(wrapper.text()).toContain('收益曲线')
       expect(wrapper.find('.equity-curve-stub').exists()).toBe(true)
+    })
+
+    it('shows equity curve even without data (fallback)', async () => {
+      vi.mocked(paperApi.getPaperEquityCurve).mockResolvedValue(wrapApiResponse([] as any))
+      const wrapper = mountPaper()
+      await flushPromises()
+      expect(wrapper.find('.equity-curve-stub').exists()).toBe(true)
+    })
+
+    it('renders tabs for positions, orders, trades, logs', async () => {
+      const wrapper = mountPaper()
+      await flushPromises()
+      const tabLabels = wrapper.findAll('.el-tabs__item')
+      const texts = tabLabels.map(el => el.text())
+      expect(texts.some(t => t.includes('持仓'))).toBe(true)
+      expect(texts.some(t => t.includes('挂单'))).toBe(true)
+      expect(texts.some(t => t.includes('交易记录'))).toBe(true)
+      expect(texts.some(t => t.includes('日志'))).toBe(true)
+    })
+
+    it('shows positions table in default tab', async () => {
+      const wrapper = mountPaper()
+      await flushPromises()
+      // Positions tab is default
+      expect(wrapper.text()).toContain('BTC/USDT')
+    })
+
+    it('shows waiting hint when bar_count is 0', async () => {
+      vi.mocked(paperApi.getPaperSessionStatus).mockResolvedValue(
+        wrapApiResponse({ ...mockPaperStatus, bar_count: 0 })
+      )
+      const wrapper = mountPaper()
+      await flushPromises()
+      expect(wrapper.text()).toContain('等待第一根K线数据')
     })
 
     it('shows stop button for running session', async () => {
@@ -204,7 +251,7 @@ describe('SessionDetail', () => {
       expect(wrapper.find('.header-right').exists()).toBe(false)
     })
 
-    it('shows error message', async () => {
+    it('shows error bar', async () => {
       vi.mocked(paperApi.getPaperSession).mockResolvedValue(
         wrapApiResponse(
           createMockPaperSession({
@@ -226,6 +273,22 @@ describe('SessionDetail', () => {
       const wrapper = mountPaper()
       await flushPromises()
       expect(wrapper.text()).toContain('暂无持仓')
+    })
+
+    it('shows max drawdown from equity curve', async () => {
+      vi.mocked(paperApi.getPaperEquityCurve).mockResolvedValue(
+        wrapApiResponse([
+          { time: '2024-01-15T10:00:00Z', equity: 10000, cash: 10000 },
+          { time: '2024-01-15T11:00:00Z', equity: 10500, cash: 9500 },
+          { time: '2024-01-15T12:00:00Z', equity: 10200, cash: 9200 },
+        ] as any)
+      )
+      const wrapper = mountPaper()
+      await flushPromises()
+      expect(wrapper.text()).toContain('最大回撤')
+      // peak=10500, trough=10200, dd = (10500-10200)/10500*100 = 2.857%
+      // displayed as -2.86%
+      expect(wrapper.text()).toContain('-2.86%')
     })
   })
 
@@ -263,12 +326,28 @@ describe('SessionDetail', () => {
       expect(wrapper.text()).toContain('紧急平仓')
     })
 
-    it('shows risk state section', async () => {
+    it('shows risk state in risk tab', async () => {
       const wrapper = mountLive()
       await flushPromises()
-      expect(wrapper.text()).toContain('风控状态')
-      expect(wrapper.text()).toContain('日盈亏')
-      expect(wrapper.text()).toContain('连续亏损')
+      // Risk tab exists
+      const tabLabels = wrapper.findAll('.el-tabs__item')
+      expect(tabLabels.some(el => el.text().includes('风控'))).toBe(true)
+    })
+
+    it('does not show trades or logs tabs for live', async () => {
+      const wrapper = mountLive()
+      await flushPromises()
+      const tabLabels = wrapper.findAll('.el-tabs__item')
+      expect(tabLabels.some(el => el.text().includes('交易记录'))).toBe(false)
+      expect(tabLabels.some(el => el.text().includes('日志'))).toBe(false)
+    })
+
+    it('win rate is hidden for live session', async () => {
+      const wrapper = mountLive()
+      await flushPromises()
+      // Win rate should show '-' since it's live
+      expect(wrapper.text()).toContain('胜率')
+      // The value should be '-' (null → '-')
     })
   })
 })

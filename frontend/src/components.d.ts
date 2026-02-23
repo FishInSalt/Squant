@@ -57,6 +57,7 @@ declare module 'vue' {
     RouterLink: typeof import('vue-router')['RouterLink']
     RouterView: typeof import('vue-router')['RouterView']
     StatusBadge: typeof import('./components/common/StatusBadge.vue')['default']
+    TradingKLineChart: typeof import('./components/charts/TradingKLineChart.vue')['default']
   }
   export interface ComponentCustomProperties {
     vLoading: typeof import('element-plus/es')['ElLoadingDirective']
