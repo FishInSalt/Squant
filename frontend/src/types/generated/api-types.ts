@@ -3955,10 +3955,10 @@ export interface components {
          */
         LiveTradingListItem: {
             /**
-             * Run Id
+             * Id
              * Format: uuid
              */
-            run_id: string;
+            id: string;
             /**
              * Strategy Id
              * Format: uuid
@@ -3970,12 +3970,23 @@ export interface components {
             account_id?: string | null;
             /** Symbol */
             symbol: string;
+            /** Exchange */
+            exchange: string;
             /** Timeframe */
             timeframe: string;
+            /** Status */
+            status: string;
             /** Is Running */
             is_running: boolean;
+            /** Initial Capital */
+            initial_capital: number | null;
             /** Started At */
             started_at: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
             /** Bar Count */
             bar_count: number;
             /** Equity */
@@ -4483,10 +4494,10 @@ export interface components {
          */
         PaperTradingListItem: {
             /**
-             * Run Id
+             * Id
              * Format: uuid
              */
-            run_id: string;
+            id: string;
             /**
              * Strategy Id
              * Format: uuid
@@ -4496,12 +4507,23 @@ export interface components {
             strategy_name?: string | null;
             /** Symbol */
             symbol: string;
+            /** Exchange */
+            exchange: string;
             /** Timeframe */
             timeframe: string;
+            /** Status */
+            status: string;
             /** Is Running */
             is_running: boolean;
+            /** Initial Capital */
+            initial_capital: number | null;
             /** Started At */
             started_at: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
             /** Bar Count */
             bar_count: number;
             /** Equity */

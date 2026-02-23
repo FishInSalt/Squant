@@ -267,7 +267,9 @@ class TestMarketCandlestickEndpoints:
         assert data["symbol"] == "BTC/USDT"
         assert data["timeframe"] == "1h"
         assert len(data["candles"]) == 2
-        mock_exchange.get_candlesticks.assert_called_once_with("BTC/USDT", TimeFrame.H1, limit=2)
+        mock_exchange.get_candlesticks.assert_called_once_with(
+            "BTC/USDT", TimeFrame.H1, limit=2, start_time=None
+        )
 
     @pytest.mark.asyncio
     async def test_get_candles_invalid_timeframe(

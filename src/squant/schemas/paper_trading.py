@@ -112,13 +112,17 @@ class PaperTradingStatusResponse(BaseModel):
 class PaperTradingListItem(BaseModel):
     """Paper trading list item (active session summary)."""
 
-    run_id: UUID
+    id: UUID
     strategy_id: UUID
     strategy_name: str | None = None
     symbol: str
+    exchange: str
     timeframe: str
+    status: str
     is_running: bool
+    initial_capital: NumberDecimal | None
     started_at: datetime | None
+    created_at: datetime
     bar_count: int
     equity: NumberDecimal
     cash: NumberDecimal

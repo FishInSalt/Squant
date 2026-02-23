@@ -224,13 +224,17 @@ async def list_active_sessions(
 
         items.append(
             PaperTradingListItem(
-                run_id=UUID(sess["run_id"]),
+                id=UUID(sess["run_id"]),
                 strategy_id=strategy_id,
                 strategy_name=run.strategy_name,
                 symbol=sess["symbol"],
+                exchange=run.exchange,
                 timeframe=sess["timeframe"],
+                status=run.status.value if hasattr(run.status, "value") else run.status,
                 is_running=sess["is_running"],
+                initial_capital=run.initial_capital,
                 started_at=sess.get("started_at"),
+                created_at=run.created_at,
                 bar_count=sess["bar_count"],
                 equity=Decimal(sess["equity"]),
                 cash=Decimal(sess["cash"]),

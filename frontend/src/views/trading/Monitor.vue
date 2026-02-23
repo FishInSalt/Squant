@@ -142,7 +142,7 @@ const SessionCard = defineComponent({
         ]),
 
         h('div', { class: 'session-meta' }, [
-          h('span', null, `启动于 ${formatRelativeTime((session as any).created_at)}`),
+          h('span', null, `启动于 ${formatRelativeTime((session as any).started_at || (session as any).created_at)}`),
         ]),
 
         session.status === 'running' && h('div', {

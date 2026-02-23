@@ -7407,10 +7407,10 @@
       },
       "LiveTradingListItem": {
         "properties": {
-          "run_id": {
+          "id": {
             "type": "string",
             "format": "uuid",
-            "title": "Run Id"
+            "title": "Id"
           },
           "strategy_id": {
             "type": "string",
@@ -7443,13 +7443,32 @@
             "type": "string",
             "title": "Symbol"
           },
+          "exchange": {
+            "type": "string",
+            "title": "Exchange"
+          },
           "timeframe": {
             "type": "string",
             "title": "Timeframe"
           },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
           "is_running": {
             "type": "boolean",
             "title": "Is Running"
+          },
+          "initial_capital": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Initial Capital"
           },
           "started_at": {
             "anyOf": [
@@ -7462,6 +7481,11 @@
               }
             ],
             "title": "Started At"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
           },
           "bar_count": {
             "type": "integer",
@@ -7478,12 +7502,16 @@
         },
         "type": "object",
         "required": [
-          "run_id",
+          "id",
           "strategy_id",
           "symbol",
+          "exchange",
           "timeframe",
+          "status",
           "is_running",
+          "initial_capital",
           "started_at",
+          "created_at",
           "bar_count",
           "equity",
           "cash"
@@ -8471,10 +8499,10 @@
       },
       "PaperTradingListItem": {
         "properties": {
-          "run_id": {
+          "id": {
             "type": "string",
             "format": "uuid",
-            "title": "Run Id"
+            "title": "Id"
           },
           "strategy_id": {
             "type": "string",
@@ -8496,13 +8524,32 @@
             "type": "string",
             "title": "Symbol"
           },
+          "exchange": {
+            "type": "string",
+            "title": "Exchange"
+          },
           "timeframe": {
             "type": "string",
             "title": "Timeframe"
           },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
           "is_running": {
             "type": "boolean",
             "title": "Is Running"
+          },
+          "initial_capital": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Initial Capital"
           },
           "started_at": {
             "anyOf": [
@@ -8515,6 +8562,11 @@
               }
             ],
             "title": "Started At"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
           },
           "bar_count": {
             "type": "integer",
@@ -8531,12 +8583,16 @@
         },
         "type": "object",
         "required": [
-          "run_id",
+          "id",
           "strategy_id",
           "symbol",
+          "exchange",
           "timeframe",
+          "status",
           "is_running",
+          "initial_capital",
           "started_at",
+          "created_at",
           "bar_count",
           "equity",
           "cash"

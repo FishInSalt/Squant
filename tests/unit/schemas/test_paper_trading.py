@@ -543,12 +543,16 @@ class TestPaperTradingListItem:
         """Test paper trading list item."""
         now = datetime.now(UTC)
         item = PaperTradingListItem(
-            run_id=uuid4(),
+            id=uuid4(),
             strategy_id=uuid4(),
             symbol="BTC/USDT",
+            exchange="okx",
             timeframe="1m",
+            status="running",
             is_running=True,
+            initial_capital=Decimal("10000"),
             started_at=now,
+            created_at=now,
             bar_count=500,
             equity=Decimal("10500"),
             cash=Decimal("5000"),
@@ -557,16 +561,24 @@ class TestPaperTradingListItem:
         assert item.symbol == "BTC/USDT"
         assert item.is_running is True
         assert item.equity == Decimal("10500")
+        assert item.initial_capital == Decimal("10000")
+        assert item.exchange == "okx"
+        assert item.status == "running"
 
     def test_not_started_item(self):
         """Test list item for session not yet started."""
+        now = datetime.now(UTC)
         item = PaperTradingListItem(
-            run_id=uuid4(),
+            id=uuid4(),
             strategy_id=uuid4(),
             symbol="ETH/USDT",
+            exchange="binance",
             timeframe="5m",
+            status="pending",
             is_running=False,
+            initial_capital=Decimal("10000"),
             started_at=None,
+            created_at=now,
             bar_count=0,
             equity=Decimal("10000"),
             cash=Decimal("10000"),
