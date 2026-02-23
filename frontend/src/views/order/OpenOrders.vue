@@ -93,7 +93,7 @@
 
         <el-table-column prop="status" label="状态" width="100">
           <template #default="{ row }">
-            <StatusBadge :status="row.status" />
+            <StatusBadge :status="row.status" context="order" />
           </template>
         </el-table-column>
 

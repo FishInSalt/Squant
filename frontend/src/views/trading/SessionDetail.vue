@@ -261,7 +261,7 @@
               </el-table-column>
               <el-table-column prop="status" label="状态" min-width="90">
                 <template #default="{ row }">
-                  <StatusBadge :status="row.status" />
+                  <StatusBadge :status="row.status" context="order" />
                 </template>
               </el-table-column>
               <el-table-column prop="created_at" label="创建时间" min-width="140">
@@ -315,7 +315,7 @@
               </el-table-column>
               <el-table-column prop="status" label="状态" min-width="90">
                 <template #default="{ row }">
-                  <StatusBadge :status="row.status" />
+                  <StatusBadge :status="row.status" context="order" />
                 </template>
               </el-table-column>
             </el-table>

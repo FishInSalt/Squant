@@ -11,20 +11,26 @@ type Status = 'pending' | 'running' | 'completed' | 'failed' | 'stopped' |
               'submitted' | 'open' | 'partial' | 'filled' | 'cancelled' | 'rejected' |
               'active' | 'inactive' | 'archived' | 'triggered' | 'connected' | 'disconnected' | 'error'
 
+type StatusContext = 'session' | 'order'
+
+type TagType = 'success' | 'warning' | 'info' | 'danger' | 'primary'
+
 interface Props {
   status: Status
+  context?: StatusContext
   size?: 'small' | 'default' | 'large'
   effect?: 'dark' | 'light' | 'plain'
   showText?: boolean
 }
 
 const props = withDefaults(defineProps<Props>(), {
+  context: 'session',
   size: 'small',
   effect: 'light',
   showText: true,
 })
 
-const statusConfig: Record<Status, { type: 'success' | 'warning' | 'info' | 'danger' | 'primary'; text: string }> = {
+const statusConfig: Record<Status, { type: TagType; text: string }> = {
   // 会话状态
   pending: { type: 'info', text: '待启动' },
   running: { type: 'success', text: '运行中' },
@@ -49,6 +55,24 @@ const statusConfig: Record<Status, { type: 'success' | 'warning' | 'info' | 'dan
   error: { type: 'danger', text: '错误' },
 }
 
-const tagType = computed(() => statusConfig[props.status]?.type || 'info')
-const displayText = computed(() => statusConfig[props.status]?.text || props.status)
+// Context-specific overrides for statuses that have different meanings
+const orderOverrides: Partial<Record<Status, { type: TagType; text: string }>> = {
+  pending: { type: 'primary', text: '等待成交' },
+}
+
+const tagType = computed(() => {
+  if (props.context === 'order') {
+    const override = orderOverrides[props.status]
+    if (override) return override.type
+  }
+  return statusConfig[props.status]?.type || 'info'
+})
+
+const displayText = computed(() => {
+  if (props.context === 'order') {
+    const override = orderOverrides[props.status]
+    if (override) return override.text
+  }
+  return statusConfig[props.status]?.text || props.status
+})
 </script>
