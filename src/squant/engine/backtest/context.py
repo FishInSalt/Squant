@@ -255,6 +255,9 @@ class BacktestContext:
             created_at=self._current_bar.time if self._current_bar else None,
         )
         self._pending_orders.append(order)
+
+        price_info = f"@{price}" if price is not None else "市价"
+        self.log(f"提交买入 {symbol} {amount} {price_info}")
         return order.id
 
     def sell(
@@ -311,6 +314,9 @@ class BacktestContext:
             created_at=self._current_bar.time if self._current_bar else None,
         )
         self._pending_orders.append(order)
+
+        price_info = f"@{price}" if price is not None else "市价"
+        self.log(f"提交卖出 {symbol} {amount} {price_info}")
         return order.id
 
     def cancel_order(self, order_id: str) -> bool:
@@ -514,6 +520,9 @@ class BacktestContext:
         self._fills.append(fill)
         self._total_fees += fill.fee
 
+        side_label = "买入" if fill.side == OrderSide.BUY else "卖出"
+        self.log(f"成交 {side_label} {fill.symbol} {fill.amount}@{fill.price} 手续费={fill.fee}")
+
         # Update position (this may also raise if trying to go short)
         position.update(fill.amount, fill.price, fill.side)
 
@@ -574,6 +583,8 @@ class BacktestContext:
                 amount=abs(new_amount),
                 fees=fill.fee,
             )
+            direction = "多" if fill.side == OrderSide.BUY else "空"
+            self.log(f"开仓 {fill.symbol} {direction} {abs(new_amount)}@{fill.price}")
 
         # Position increased
         elif (prev_amount > 0 and new_amount > prev_amount) or (
@@ -587,6 +598,10 @@ class BacktestContext:
                 self._open_trade.entry_price = (prev_value + new_value) / abs(new_amount)
                 self._open_trade.fees += fill.fee
                 self._open_trade.amount = abs(new_amount)
+                self.log(
+                    f"加仓 {fill.symbol} +{added_amount}@{fill.price} "
+                    f"持仓={abs(new_amount)} 均价={self._open_trade.entry_price:.4f}"
+                )
 
         # Position decreased or closed
         elif self._open_trade:
@@ -613,8 +628,19 @@ class BacktestContext:
                 if cost_basis != Decimal("0"):
                     self._open_trade.pnl_pct = pnl / cost_basis * 100
 
+                pnl_sign = "+" if pnl >= 0 else ""
+                self.log(
+                    f"平仓 {fill.symbol} {fill_amount}@{fill.price} "
+                    f"盈亏={pnl_sign}{pnl:.4f} ({pnl_sign}{self._open_trade.pnl_pct:.2f}%)"
+                )
+
                 self._trades.append(self._open_trade)
                 self._open_trade = None
+            else:
+                self.log(
+                    f"减仓 {fill.symbol} -{fill_amount}@{fill.price} "
+                    f"剩余={abs(new_amount)}"
+                )
 
             # Note: Position reversal (long→short or short→long) is not supported
             # in spot trading. sell() validation prevents negative positions.
