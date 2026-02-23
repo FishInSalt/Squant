@@ -135,6 +135,10 @@ async def get_paper_trading_status(
             symbol: PositionInfo(
                 amount=Decimal(pos["amount"]),
                 avg_entry_price=Decimal(pos["avg_entry_price"]),
+                current_price=Decimal(pos["current_price"]) if pos.get("current_price") else None,
+                unrealized_pnl=(
+                    Decimal(pos["unrealized_pnl"]) if pos.get("unrealized_pnl") else None
+                ),
             )
             for symbol, pos in status.get("positions", {}).items()
         }

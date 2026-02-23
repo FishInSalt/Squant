@@ -204,6 +204,12 @@ async def get_live_trading_status(
             symbol: LivePositionInfo(
                 amount=Decimal(str(pos.get("amount", 0))),
                 avg_entry_price=Decimal(str(pos.get("avg_entry_price", 0))),
+                current_price=(
+                    Decimal(str(pos["current_price"])) if pos.get("current_price") else None
+                ),
+                unrealized_pnl=(
+                    Decimal(str(pos["unrealized_pnl"])) if pos.get("unrealized_pnl") else None
+                ),
             )
             for symbol, pos in status.get("positions", {}).items()
         }
