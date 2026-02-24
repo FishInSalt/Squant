@@ -7,7 +7,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 
-type Status = 'pending' | 'running' | 'completed' | 'failed' | 'stopped' |
+type Status = 'pending' | 'running' | 'completed' | 'failed' | 'stopped' | 'interrupted' |
               'submitted' | 'open' | 'partial' | 'filled' | 'cancelled' | 'rejected' |
               'active' | 'inactive' | 'archived' | 'triggered' | 'connected' | 'disconnected' | 'error'
 
@@ -53,6 +53,7 @@ const statusConfig: Record<Status, { type: TagType; text: string }> = {
   connected: { type: 'success', text: '已连接' },
   disconnected: { type: 'info', text: '未连接' },
   error: { type: 'danger', text: '错误' },
+  interrupted: { type: 'warning', text: '已中断' },
 }
 
 // Context-specific overrides for statuses that have different meanings

@@ -341,7 +341,7 @@ async def list_live_trading_runs(
     Args:
         page: Page number (1-indexed).
         page_size: Items per page.
-        status: Optional status filter (pending, running, stopped, error).
+        status: Optional status filter (pending, running, stopped, error, interrupted).
         session: Database session.
 
     Returns:

@@ -1,6 +1,6 @@
 // 交易相关类型
 export type TradingMode = 'backtest' | 'paper' | 'live'
-export type SessionStatus = 'pending' | 'running' | 'completed' | 'error' | 'stopped' | 'cancelled'
+export type SessionStatus = 'pending' | 'running' | 'completed' | 'error' | 'stopped' | 'cancelled' | 'interrupted'
 
 // 回测配置（用于提交请求）
 export interface BacktestConfig {

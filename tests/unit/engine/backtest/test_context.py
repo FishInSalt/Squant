@@ -1243,3 +1243,294 @@ class TestTradeTracking:
         # pnl_pct = -264 / (44000 * 3) * 100
         expected_pnl_pct = Decimal("-264") / Decimal("132000") * 100
         assert trade.pnl_pct == expected_pnl_pct
+
+
+class TestRestoreState:
+    """Tests for restore_state() — session resume support."""
+
+    def test_restore_cash(self, context: BacktestContext) -> None:
+        """Test that cash is restored from state."""
+        context.restore_state({"cash": "5000.50"})
+        assert context.cash == Decimal("5000.50")
+
+    def test_restore_total_fees(self, context: BacktestContext) -> None:
+        """Test that total_fees is restored from state."""
+        context.restore_state({"total_fees": "123.45"})
+        assert context._total_fees == Decimal("123.45")
+
+    def test_restore_positions(self, context: BacktestContext) -> None:
+        """Test that positions are restored from state."""
+        state = {
+            "positions": {
+                "BTC/USDT": {
+                    "amount": "0.5",
+                    "avg_entry_price": "45000",
+                    "current_price": "46000",
+                },
+            }
+        }
+        context.restore_state(state)
+
+        assert "BTC/USDT" in context._positions
+        pos = context._positions["BTC/USDT"]
+        assert pos.amount == Decimal("0.5")
+        assert pos.avg_entry_price == Decimal("45000")
+        assert context._last_prices["BTC/USDT"] == Decimal("46000")
+
+    def test_restore_positions_clears_previous(self, context: BacktestContext) -> None:
+        """Test that restore_state clears pre-existing positions."""
+        from squant.engine.backtest.types import Position
+
+        context._positions["ETH/USDT"] = Position(
+            symbol="ETH/USDT", amount=Decimal("1"), avg_entry_price=Decimal("3000")
+        )
+
+        context.restore_state({
+            "positions": {
+                "BTC/USDT": {"amount": "1", "avg_entry_price": "50000"},
+            }
+        })
+
+        assert "ETH/USDT" not in context._positions
+        assert "BTC/USDT" in context._positions
+
+    def test_restore_trades(self, context: BacktestContext) -> None:
+        """Test that closed trades are restored from state."""
+        state = {
+            "trades": [
+                {
+                    "symbol": "BTC/USDT",
+                    "side": "buy",
+                    "entry_time": "2024-06-01T12:00:00+00:00",
+                    "entry_price": "50000",
+                    "exit_time": "2024-06-01T13:00:00+00:00",
+                    "exit_price": "51000",
+                    "amount": "0.1",
+                    "pnl": "100",
+                    "pnl_pct": "2.0",
+                    "fees": "10.2",
+                },
+            ]
+        }
+        context.restore_state(state)
+
+        assert len(context.trades) == 1
+        trade = context.trades[0]
+        assert trade.symbol == "BTC/USDT"
+        assert trade.entry_price == Decimal("50000")
+        assert trade.exit_price == Decimal("51000")
+        assert trade.pnl == Decimal("100")
+        assert trade.fees == Decimal("10.2")
+
+    def test_restore_open_position_creates_open_trade(self, context: BacktestContext) -> None:
+        """Test that an open position causes _open_trade to be set."""
+        state = {
+            "positions": {
+                "BTC/USDT": {
+                    "amount": "0.5",
+                    "avg_entry_price": "45000",
+                },
+            }
+        }
+        context.restore_state(state)
+
+        assert context._open_trade is not None
+        assert context._open_trade.symbol == "BTC/USDT"
+        assert context._open_trade.entry_price == Decimal("45000")
+        assert context._open_trade.amount == Decimal("0.5")
+
+    def test_restore_short_position_creates_sell_open_trade(self, context: BacktestContext) -> None:
+        """Test that a short (negative amount) position creates a SELL open trade."""
+        state = {
+            "positions": {
+                "BTC/USDT": {
+                    "amount": "-0.5",
+                    "avg_entry_price": "45000",
+                },
+            }
+        }
+        context.restore_state(state)
+
+        assert context._open_trade is not None
+        assert context._open_trade.side == OrderSide.SELL
+        assert context._open_trade.amount == Decimal("0.5")
+
+    def test_restore_no_positions_clears_open_trade(self, context: BacktestContext) -> None:
+        """Test that empty positions dict clears _open_trade."""
+        context.restore_state({"positions": {}})
+
+        assert context._open_trade is None
+        assert context._partial_exit_pnl == Decimal("0")
+
+    def test_restore_partial_state(self, context: BacktestContext) -> None:
+        """Test that only provided fields are restored."""
+        original_cash = context.cash
+        context.restore_state({"total_fees": "50"})
+
+        # Cash unchanged, fees restored
+        assert context.cash == original_cash
+        assert context._total_fees == Decimal("50")
+
+    def test_restore_empty_state(self, context: BacktestContext) -> None:
+        """Test that empty state dict is a no-op."""
+        original_cash = context.cash
+        context.restore_state({})
+        assert context.cash == original_cash
+
+    def test_restore_full_state(self, context: BacktestContext) -> None:
+        """Test complete state restoration combining all fields."""
+        state = {
+            "cash": "8000",
+            "total_fees": "200",
+            "positions": {
+                "BTC/USDT": {
+                    "amount": "0.1",
+                    "avg_entry_price": "40000",
+                    "current_price": "42000",
+                },
+            },
+            "trades": [
+                {
+                    "symbol": "ETH/USDT",
+                    "side": "buy",
+                    "entry_time": "2024-01-01T10:00:00+00:00",
+                    "entry_price": "2000",
+                    "exit_time": "2024-01-01T11:00:00+00:00",
+                    "exit_price": "2100",
+                    "amount": "1.0",
+                    "pnl": "100",
+                    "pnl_pct": "5.0",
+                    "fees": "4.1",
+                },
+            ],
+        }
+        context.restore_state(state)
+
+        assert context.cash == Decimal("8000")
+        assert context._total_fees == Decimal("200")
+        assert "BTC/USDT" in context._positions
+        assert len(context.trades) == 1
+        assert context._open_trade is not None
+        assert context._partial_exit_pnl == Decimal("0")
+
+
+class TestBuildResultSnapshot:
+    """Tests for build_result_snapshot() — result persistence support."""
+
+    def test_empty_context(self, context: BacktestContext) -> None:
+        """Test snapshot of fresh context."""
+        result = context.build_result_snapshot()
+
+        assert result["cash"] == str(context.cash)
+        assert result["total_fees"] == "0"
+        assert result["unrealized_pnl"] == "0"
+        assert result["realized_pnl"] == "0"
+        assert result["positions"] == {}
+        assert result["trades"] == []
+        assert result["trades_count"] == 0
+        assert result["logs"] == []
+
+    def test_with_position(self, context: BacktestContext, sample_bar: Bar) -> None:
+        """Test snapshot includes open positions with unrealized PnL."""
+        from squant.engine.backtest.types import Position
+
+        context._positions["BTC/USDT"] = Position(
+            symbol="BTC/USDT",
+            amount=Decimal("0.5"),
+            avg_entry_price=Decimal("40000"),
+        )
+        context._last_prices["BTC/USDT"] = Decimal("42000")
+
+        result = context.build_result_snapshot()
+
+        assert "BTC/USDT" in result["positions"]
+        pos = result["positions"]["BTC/USDT"]
+        assert pos["amount"] == "0.5"
+        assert pos["avg_entry_price"] == "40000"
+        assert pos["current_price"] == "42000"
+        # unrealized = (42000 - 40000) * 0.5 = 1000
+        assert Decimal(pos["unrealized_pnl"]) == Decimal("1000")
+        # Top-level total matches
+        assert Decimal(result["unrealized_pnl"]) == Decimal("1000")
+
+    def test_with_trades(self, context: BacktestContext) -> None:
+        """Test snapshot includes closed trades."""
+        from squant.engine.backtest.types import TradeRecord
+
+        context._trades.append(TradeRecord(
+            symbol="BTC/USDT",
+            side=OrderSide.BUY,
+            entry_time=datetime(2024, 1, 1, 10, 0, 0, tzinfo=UTC),
+            entry_price=Decimal("40000"),
+            exit_time=datetime(2024, 1, 1, 11, 0, 0, tzinfo=UTC),
+            exit_price=Decimal("41000"),
+            amount=Decimal("0.1"),
+            pnl=Decimal("100"),
+            pnl_pct=Decimal("2.5"),
+            fees=Decimal("8"),
+        ))
+
+        result = context.build_result_snapshot()
+
+        assert result["trades_count"] == 1
+        assert len(result["trades"]) == 1
+        trade = result["trades"][0]
+        assert trade["symbol"] == "BTC/USDT"
+        assert trade["entry_price"] == "40000"
+        assert trade["exit_price"] == "41000"
+        assert trade["pnl"] == "100"
+        # Top-level realized PnL
+        assert Decimal(result["realized_pnl"]) == Decimal("100")
+
+    def test_roundtrip_with_restore(self, context: BacktestContext) -> None:
+        """Test that build_result_snapshot output can be fed to restore_state."""
+        from squant.engine.backtest.types import Position, TradeRecord
+
+        # Set up state
+        context._cash = Decimal("8000")
+        context._total_fees = Decimal("50")
+        context._positions["BTC/USDT"] = Position(
+            symbol="BTC/USDT",
+            amount=Decimal("0.2"),
+            avg_entry_price=Decimal("45000"),
+        )
+        context._last_prices["BTC/USDT"] = Decimal("46000")
+        context._trades.append(TradeRecord(
+            symbol="ETH/USDT",
+            side=OrderSide.BUY,
+            entry_time=datetime(2024, 6, 1, 12, 0, 0, tzinfo=UTC),
+            entry_price=Decimal("3000"),
+            exit_time=datetime(2024, 6, 1, 13, 0, 0, tzinfo=UTC),
+            exit_price=Decimal("3100"),
+            amount=Decimal("1"),
+            pnl=Decimal("100"),
+            pnl_pct=Decimal("3.33"),
+            fees=Decimal("6.2"),
+        ))
+        context.log("Test trade executed")
+        context.log("Position opened")
+
+        # Snapshot → restore into a fresh context
+        snapshot = context.build_result_snapshot()
+
+        # Verify top-level aggregates in snapshot
+        assert Decimal(snapshot["realized_pnl"]) == Decimal("100")
+        assert Decimal(snapshot["unrealized_pnl"]) == Decimal("200")  # (46000-45000)*0.2
+        assert len(snapshot["logs"]) == 2
+
+        new_ctx = BacktestContext(
+            initial_capital=Decimal("100000"),
+            commission_rate=Decimal("0.001"),
+        )
+        new_ctx.restore_state(snapshot)
+
+        assert new_ctx.cash == Decimal("8000")
+        assert new_ctx._total_fees == Decimal("50")
+        assert "BTC/USDT" in new_ctx._positions
+        assert new_ctx._positions["BTC/USDT"].amount == Decimal("0.2")
+        assert new_ctx._last_prices["BTC/USDT"] == Decimal("46000")
+        assert len(new_ctx.trades) == 1
+        assert new_ctx.trades[0].pnl == Decimal("100")
+        # Logs restored
+        assert len(new_ctx.logs) == 2
+        assert "Test trade executed" in new_ctx.logs[0]

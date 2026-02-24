@@ -242,13 +242,16 @@ describe('SessionDetail', () => {
       expect(wrapper.find('.header-right').exists()).toBe(true)
     })
 
-    it('hides stop button for stopped session', async () => {
+    it('hides stop button but shows resume for stopped paper session', async () => {
       vi.mocked(paperApi.getPaperSession).mockResolvedValue(
         wrapApiResponse(createMockPaperSession({ id: 'p-1', status: 'stopped' }))
       )
       const wrapper = mountPaper()
       await flushPromises()
-      expect(wrapper.find('.header-right').exists()).toBe(false)
+      // Stop button hidden, but resume button is visible for stopped paper sessions
+      expect(wrapper.find('.header-right').exists()).toBe(true)
+      expect(wrapper.findAll('button').some(b => b.text().includes('停止'))).toBe(false)
+      expect(wrapper.findAll('button').some(b => b.text().includes('恢复'))).toBe(true)
     })
 
     it('shows error bar', async () => {

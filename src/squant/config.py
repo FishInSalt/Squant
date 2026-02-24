@@ -253,6 +253,12 @@ class PaperTradingSettings(BaseSettings):
     max_sessions: int = Field(
         default=20, ge=1, le=100, description="Max concurrent paper trading sessions"
     )
+    warmup_bars: int = Field(
+        default=200, ge=0, le=5000, description="Bars to replay for strategy warmup on resume"
+    )
+    auto_recovery: bool = Field(
+        default=True, description="Auto-recover orphaned sessions on startup"
+    )
 
 
 class CircuitBreakerSettings(BaseSettings):

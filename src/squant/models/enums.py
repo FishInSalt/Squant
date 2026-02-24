@@ -19,6 +19,7 @@ class RunStatus(str, enum.Enum):
     STOPPED = "stopped"
     CANCELLED = "cancelled"  # TRD-008#3: User cancelled the run
     ERROR = "error"
+    INTERRUPTED = "interrupted"  # Infrastructure interruption (restart, health timeout)
     COMPLETED = "completed"
 
 

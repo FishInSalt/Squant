@@ -16,6 +16,10 @@ export const startPaperTrading = (config: {
 export const stopPaperTrading = (id: string) =>
   post<void>(`/paper/${id}/stop`)
 
+// 恢复模拟交易
+export const resumePaperTrading = (id: string, config?: { warmup_bars?: number }) =>
+  post<PaperSession>(`/paper/${id}/resume`, config)
+
 // 停止所有模拟交易
 export const stopAllPaperTrading = () =>
   post<{ stopped_count: number }>('/paper/stop-all')

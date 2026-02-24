@@ -9,7 +9,7 @@ The BacktestContext is injected into user strategies and provides:
 """
 
 from collections import deque
-from datetime import datetime
+from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
 
@@ -703,3 +703,141 @@ class BacktestContext:
                         # Short position
                         total += (position.avg_entry_price - price) * abs(position.amount)
         return total
+
+    def build_result_snapshot(self) -> dict[str, Any]:
+        """Build a minimal result snapshot for persistence.
+
+        Contains only the fields needed by restore_state() to resume a session.
+        Called after each candle to keep the DB up-to-date for crash recovery.
+
+        Returns:
+            Dict suitable for storing in StrategyRun.result JSONB.
+        """
+        positions: dict[str, dict[str, str | None]] = {}
+        for symbol, pos in self._positions.items():
+            if pos.is_open:
+                price = self._last_prices.get(symbol)
+                unrealized = None
+                if price is not None:
+                    if pos.amount > 0:
+                        unrealized = str((price - pos.avg_entry_price) * pos.amount)
+                    else:
+                        unrealized = str((pos.avg_entry_price - price) * abs(pos.amount))
+                positions[symbol] = {
+                    "amount": str(pos.amount),
+                    "avg_entry_price": str(pos.avg_entry_price),
+                    "current_price": str(price) if price is not None else None,
+                    "unrealized_pnl": unrealized,
+                }
+
+        trades = [
+            {
+                "symbol": t.symbol,
+                "side": t.side.value,
+                "entry_time": t.entry_time.isoformat(),
+                "entry_price": str(t.entry_price),
+                "exit_time": t.exit_time.isoformat() if t.exit_time else None,
+                "exit_price": str(t.exit_price) if t.exit_price is not None else None,
+                "amount": str(t.amount),
+                "pnl": str(t.pnl),
+                "pnl_pct": str(t.pnl_pct),
+                "fees": str(t.fees),
+            }
+            for t in self._trades
+        ]
+
+        # Compute totals
+        unrealized_pnl_total = Decimal("0")
+        for pos_data in positions.values():
+            if pos_data.get("unrealized_pnl") is not None:
+                unrealized_pnl_total += Decimal(pos_data["unrealized_pnl"])
+
+        realized_pnl = sum((t.pnl for t in self._trades), Decimal("0"))
+
+        return {
+            "cash": str(self._cash),
+            "equity": str(self.equity),
+            "total_fees": str(self._total_fees),
+            "unrealized_pnl": str(unrealized_pnl_total),
+            "realized_pnl": str(realized_pnl),
+            "positions": positions,
+            "trades": trades,
+            "trades_count": len(self._trades),
+            "completed_orders_count": len(self._completed_orders),
+            "logs": list(self._logs),
+        }
+
+    def restore_state(self, state: dict[str, Any]) -> None:
+        """Restore trading state from a saved result snapshot.
+
+        Used when resuming a paper/live trading session. Restores financial
+        state (cash, positions, trades); strategy internal state is rebuilt
+        via warmup bar replay.
+
+        Args:
+            state: Result dict from StrategyRun.result JSONB.
+        """
+        # Restore cash
+        if "cash" in state:
+            self._cash = Decimal(str(state["cash"]))
+
+        # Restore total fees
+        if "total_fees" in state:
+            self._total_fees = Decimal(str(state["total_fees"]))
+
+        # Restore positions
+        if "positions" in state:
+            self._positions.clear()
+            for symbol, pos_data in state["positions"].items():
+                pos = Position(
+                    symbol=symbol,
+                    amount=Decimal(str(pos_data["amount"])),
+                    avg_entry_price=Decimal(str(pos_data["avg_entry_price"])),
+                )
+                self._positions[symbol] = pos
+                # Restore last_prices for equity calculation
+                if pos_data.get("current_price"):
+                    self._last_prices[symbol] = Decimal(str(pos_data["current_price"]))
+
+        # Restore closed trades (for display and metrics)
+        if "trades" in state:
+            self._trades.clear()
+            for t in state["trades"]:
+                trade = TradeRecord(
+                    symbol=t["symbol"],
+                    side=OrderSide(t["side"]),
+                    entry_time=datetime.fromisoformat(t["entry_time"]),
+                    entry_price=Decimal(str(t["entry_price"])),
+                    exit_time=(
+                        datetime.fromisoformat(t["exit_time"]) if t.get("exit_time") else None
+                    ),
+                    exit_price=(
+                        Decimal(str(t["exit_price"])) if t.get("exit_price") is not None else None
+                    ),
+                    amount=Decimal(str(t["amount"])),
+                    pnl=Decimal(str(t["pnl"])),
+                    pnl_pct=Decimal(str(t["pnl_pct"])),
+                    fees=Decimal(str(t["fees"])),
+                )
+                self._trades.append(trade)
+
+        # Restore logs
+        if "logs" in state:
+            self._logs.clear()
+            for log_entry in state["logs"]:
+                self._logs.append(log_entry)
+
+        # Rebuild _open_trade if there's an open position
+        self._open_trade = None
+        self._partial_exit_pnl = Decimal("0")
+        for symbol, pos in self._positions.items():
+            if pos.is_open:
+                self._open_trade = TradeRecord(
+                    symbol=symbol,
+                    side=OrderSide.BUY if pos.amount > 0 else OrderSide.SELL,
+                    entry_time=datetime.now(UTC),
+                    entry_price=pos.avg_entry_price,
+                    amount=abs(pos.amount),
+                    fees=Decimal("0"),
+                )
+                break

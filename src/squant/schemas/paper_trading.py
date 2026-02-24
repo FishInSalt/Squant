@@ -38,6 +38,17 @@ class StartPaperTradingRequest(BaseModel):
     params: dict[str, Any] | None = Field(None, description="Strategy parameters")
 
 
+class ResumePaperTradingRequest(BaseModel):
+    """Request to resume a stopped/errored paper trading session."""
+
+    warmup_bars: int = Field(
+        default=200,
+        ge=0,
+        le=5000,
+        description="Number of historical bars to replay for strategy warmup",
+    )
+
+
 class PaperTradingRunResponse(BaseModel):
     """Paper trading run response."""
 

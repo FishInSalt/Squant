@@ -9,6 +9,7 @@ describe('StatusBadge', () => {
       ['completed', 'primary', '已完成'],
       ['failed', 'danger', '已失败'],
       ['stopped', 'warning', '已停止'],
+      ['interrupted', 'warning', '已中断'],
     ])('renders %s as %s tag with text %s', (status, expectedType, expectedText) => {
       const wrapper = mount(StatusBadge, { props: { status: status as any } })
       expect(wrapper.text()).toBe(expectedText)

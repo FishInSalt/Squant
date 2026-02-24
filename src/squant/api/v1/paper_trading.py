@@ -18,12 +18,14 @@ from squant.schemas.paper_trading import (
     PaperTradingStatusResponse,
     PendingOrderInfo,
     PositionInfo,
+    ResumePaperTradingRequest,
     StartPaperTradingRequest,
 )
 from squant.services.paper_trading import (
     PaperTradingError,
     PaperTradingService,
     SessionNotFoundError,
+    SessionNotResumableError,
     StrategyInstantiationError,
 )
 from squant.services.strategy import StrategyNotFoundError
@@ -104,6 +106,41 @@ async def stop_paper_trading(
         return ApiResponse(data=PaperTradingRunResponse.model_validate(run))
     except SessionNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
+
+
+@router.post("/{run_id}/resume", response_model=ApiResponse[PaperTradingRunResponse])
+async def resume_paper_trading(
+    run_id: UUID,
+    redis: RedisClient,
+    request: ResumePaperTradingRequest | None = None,
+    session: AsyncSession = Depends(get_session),
+) -> ApiResponse[PaperTradingRunResponse]:
+    """Resume a stopped or errored paper trading session.
+
+    Restores trading state from the saved result snapshot and replays
+    historical bars to rebuild strategy internal state.
+
+    Args:
+        run_id: Paper trading run ID.
+        request: Optional resume configuration.
+        redis: Redis client for circuit breaker check.
+        session: Database session.
+
+    Returns:
+        Updated paper trading run record.
+    """
+    service = PaperTradingService(session)
+    warmup_bars = request.warmup_bars if request else 200
+
+    try:
+        run = await service.resume(run_id, warmup_bars=warmup_bars, redis=redis)
+        return ApiResponse(data=PaperTradingRunResponse.model_validate(run))
+    except SessionNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except SessionNotResumableError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    except PaperTradingError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 @router.get("/{run_id}/status", response_model=ApiResponse[PaperTradingStatusResponse])
@@ -274,7 +311,7 @@ async def list_paper_trading_runs(
     Args:
         page: Page number (1-indexed).
         page_size: Items per page.
-        status: Optional status filter (pending, running, stopped, error).
+        status: Optional status filter (pending, running, stopped, error, interrupted).
         session: Database session.
 
     Returns:

@@ -133,8 +133,9 @@ class BackgroundTaskManager:
     async def _health_check(self) -> None:
         """Check and cleanup stale sessions.
 
-        Before cleaning up, persist any pending snapshots for unhealthy sessions
-        to avoid data loss (PP-C07).
+        Before cleaning up:
+        1. Persist any pending snapshots for unhealthy sessions (PP-C07)
+        2. Capture engine state snapshots for result preservation
         """
         from squant.config import get_settings
         from squant.engine.paper.manager import get_session_manager
@@ -146,24 +147,50 @@ class BackgroundTaskManager:
 
         # Persist snapshots for unhealthy sessions before cleanup (PP-C07)
         unhealthy_ids = await session_manager.check_health(settings.paper_session_timeout_seconds)
-        if unhealthy_ids:
-            try:
-                async with get_session_context() as db_session:
-                    service = PaperTradingService(db_session)
-                    for run_id in unhealthy_ids:
-                        try:
-                            count = await service.persist_snapshots(run_id)
-                            if count > 0:
-                                logger.info(
-                                    f"Persisted {count} snapshots for stale session {run_id} "
-                                    f"before cleanup"
-                                )
-                        except Exception as e:
-                            logger.error(
-                                f"Failed to persist snapshots for stale session {run_id}: {e}"
+        if not unhealthy_ids:
+            return
+
+        # Capture engine state snapshots BEFORE cleanup so result data is preserved
+        engine_states: dict[str, dict] = {}
+        for run_id in unhealthy_ids:
+            engine = session_manager.get(run_id)
+            if engine:
+                try:
+                    state = engine.get_state_snapshot()
+                    engine_states[str(run_id)] = {
+                        "cash": state["cash"],
+                        "equity": state["equity"],
+                        "total_fees": state["total_fees"],
+                        "bar_count": state["bar_count"],
+                        "realized_pnl": state["realized_pnl"],
+                        "unrealized_pnl": state["unrealized_pnl"],
+                        "positions": state["positions"],
+                        "trades": state.get("trades", []),
+                        "completed_orders_count": state["completed_orders_count"],
+                        "trades_count": state["trades_count"],
+                        "logs": list(state.get("logs", [])),
+                    }
+                except Exception as e:
+                    logger.error(f"Failed to capture state for session {run_id}: {e}")
+
+        # Persist pending equity snapshots before cleanup
+        try:
+            async with get_session_context() as db_session:
+                service = PaperTradingService(db_session)
+                for run_id in unhealthy_ids:
+                    try:
+                        count = await service.persist_snapshots(run_id)
+                        if count > 0:
+                            logger.info(
+                                f"Persisted {count} snapshots for stale session {run_id} "
+                                f"before cleanup"
                             )
-            except Exception as e:
-                logger.error(f"Failed to open DB session for pre-cleanup persistence: {e}")
+                    except Exception as e:
+                        logger.error(
+                            f"Failed to persist snapshots for stale session {run_id}: {e}"
+                        )
+        except Exception as e:
+            logger.error(f"Failed to open DB session for pre-cleanup persistence: {e}")
 
         # cleanup_stale_sessions returns actual cleaned IDs (avoids double check_health race)
         cleaned_ids = await session_manager.cleanup_stale_sessions(
@@ -171,15 +198,16 @@ class BackgroundTaskManager:
         )
         if cleaned_ids:
             logger.warning(f"Cleaned up {len(cleaned_ids)} stale paper trading sessions")
-            # Update DB status for actually cleaned sessions
+            # Update DB status for actually cleaned sessions, including result data
             try:
                 async with get_session_context() as db_session:
                     service = PaperTradingService(db_session)
                     for run_id in cleaned_ids:
                         try:
-                            await service.mark_session_error(
+                            await service.mark_session_interrupted(
                                 run_id,
                                 error_message="Session timeout: no activity detected",
+                                result=engine_states.get(str(run_id)),
                             )
                         except Exception as e:
                             logger.error(

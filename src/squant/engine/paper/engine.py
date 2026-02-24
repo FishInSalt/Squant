@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
@@ -18,6 +19,11 @@ from squant.engine.backtest.strategy_base import Strategy
 from squant.engine.backtest.types import Bar, EquitySnapshot
 from squant.engine.resource_limits import ResourceLimitExceededError, resource_limiter
 from squant.infra.exchange.okx.ws_types import WSCandle
+
+# Callback type for synchronous snapshot persistence
+SnapshotPersistCallback = Callable[[str, EquitySnapshot], Awaitable[None]]
+# Callback type for synchronous result state persistence
+ResultPersistCallback = Callable[[str, dict[str, Any]], Awaitable[None]]
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +51,8 @@ class PaperTradingEngine:
         commission_rate: Decimal = Decimal("0.001"),
         slippage: Decimal = Decimal("0"),
         params: dict[str, Any] | None = None,
+        on_snapshot: SnapshotPersistCallback | None = None,
+        on_result: ResultPersistCallback | None = None,
     ):
         """Initialize paper trading engine.
 
@@ -57,6 +65,12 @@ class PaperTradingEngine:
             commission_rate: Commission rate.
             slippage: Slippage rate.
             params: Strategy parameters.
+            on_snapshot: Optional callback for synchronous snapshot persistence.
+                Called after each equity snapshot is recorded. If the callback
+                succeeds, the snapshot is not added to the pending batch.
+            on_result: Optional callback for synchronous result state persistence.
+                Called after each bar is fully processed (including strategy on_bar).
+                Persists the trading state needed for crash recovery.
         """
         self._run_id = run_id
         self._strategy = strategy
@@ -98,7 +112,11 @@ class PaperTradingEngine:
         self._bar_count = 0
         self._last_active_at: datetime | None = None
 
-        # Pending equity snapshots for batch persistence
+        # Synchronous persistence callbacks
+        self._on_snapshot = on_snapshot
+        self._on_result = on_result
+
+        # Pending equity snapshots for batch persistence (fallback when callback fails)
         self._pending_snapshots: list[EquitySnapshot] = []
         self._snapshot_batch_size = 10  # Persist every N bars
 
@@ -309,9 +327,20 @@ class PaperTradingEngine:
                 # 6. Record equity snapshot (before strategy, consistent with live engine P0-1)
                 self._context._record_equity_snapshot(bar.time)
 
-                # Track pending snapshot for persistence
+                # Persist snapshot: try synchronous callback first, fall back to batch
                 if self._context.equity_curve:
-                    self._pending_snapshots.append(self._context.equity_curve[-1])
+                    latest_snapshot = self._context.equity_curve[-1]
+                    persisted = False
+                    if self._on_snapshot:
+                        try:
+                            await self._on_snapshot(str(self._run_id), latest_snapshot)
+                            persisted = True
+                        except Exception as e:
+                            logger.warning(
+                                f"Snapshot persist callback failed for {self._run_id}: {e}"
+                            )
+                    if not persisted:
+                        self._pending_snapshots.append(latest_snapshot)
 
                 # 7. Call strategy on_bar with resource limits (STR-013)
                 from squant.config import get_settings
@@ -335,6 +364,17 @@ class PaperTradingEngine:
                     self._context.log(f"ERROR in on_bar: {e}")
 
                 self._bar_count += 1
+
+                # Persist result state for crash recovery
+                if self._on_result:
+                    try:
+                        result_data = self._context.build_result_snapshot()
+                        result_data["bar_count"] = self._bar_count
+                        await self._on_result(str(self._run_id), result_data)
+                    except Exception as e:
+                        logger.warning(
+                            f"Result persist callback failed for {self._run_id}: {e}"
+                        )
 
                 logger.debug(
                     f"Processed bar {self._bar_count} at {bar.time}, equity={self._context.equity}"

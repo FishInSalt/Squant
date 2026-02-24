@@ -976,3 +976,212 @@ class TestDeadlockFix:
         # Lock should be released — another stop() should be a no-op, not deadlock
         await engine.stop()
         assert engine.is_running is False
+
+
+class TestSnapshotCallback:
+    """Tests for on_snapshot callback (Phase 1: synchronous equity persistence)."""
+
+    @pytest.fixture
+    def callback(self):
+        """Create a mock snapshot persist callback."""
+        from unittest.mock import AsyncMock
+
+        return AsyncMock()
+
+    @pytest.fixture
+    def engine_with_callback(self, run_id, strategy, callback):
+        """Create engine with snapshot callback."""
+        return PaperTradingEngine(
+            run_id=run_id,
+            strategy=strategy,
+            symbol="BTC/USDT",
+            timeframe="1m",
+            initial_capital=Decimal("10000"),
+            commission_rate=Decimal("0.001"),
+            slippage=Decimal("0"),
+            params={"threshold": Decimal("50000")},
+            on_snapshot=callback,
+        )
+
+    @pytest.fixture
+    def closed_candle(self):
+        """Create a closed candle for testing."""
+        return WSCandle(
+            symbol="BTC/USDT",
+            timeframe="1m",
+            timestamp=datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC),
+            open=Decimal("45000"),
+            high=Decimal("46000"),
+            low=Decimal("44000"),
+            close=Decimal("45500"),
+            volume=Decimal("100"),
+            is_closed=True,
+        )
+
+    @pytest.mark.asyncio
+    async def test_callback_called_on_candle(self, engine_with_callback, callback, closed_candle):
+        """Test that on_snapshot callback is called after processing a candle."""
+        await engine_with_callback.start()
+        await engine_with_callback.process_candle(closed_candle)
+
+        callback.assert_called_once()
+        call_args = callback.call_args
+        assert call_args[0][0] == str(engine_with_callback.run_id)  # run_id
+
+    @pytest.mark.asyncio
+    async def test_callback_success_skips_pending(
+        self, engine_with_callback, callback, closed_candle
+    ):
+        """Test that successful callback means snapshot is NOT added to pending."""
+        await engine_with_callback.start()
+        await engine_with_callback.process_candle(closed_candle)
+
+        callback.assert_called_once()
+        # Should not be in pending since callback succeeded
+        assert len(engine_with_callback.get_pending_snapshots()) == 0
+
+    @pytest.mark.asyncio
+    async def test_callback_failure_adds_to_pending(
+        self, engine_with_callback, callback, closed_candle
+    ):
+        """Test that failed callback adds snapshot to pending as fallback."""
+        callback.side_effect = Exception("DB connection error")
+
+        await engine_with_callback.start()
+        await engine_with_callback.process_candle(closed_candle)
+
+        # Callback was attempted
+        callback.assert_called_once()
+        # Should be in pending since callback failed
+        assert len(engine_with_callback.get_pending_snapshots()) == 1
+
+    @pytest.mark.asyncio
+    async def test_no_callback_adds_to_pending(self, engine, closed_candle):
+        """Test that without callback, snapshots go to pending (default behavior)."""
+        await engine.start()
+        await engine.process_candle(closed_candle)
+
+        # Default engine has no callback, so snapshot goes to pending
+        assert len(engine.get_pending_snapshots()) >= 1
+
+    def test_engine_init_with_callback(self, engine_with_callback, callback):
+        """Test that engine stores the callback."""
+        assert engine_with_callback._on_snapshot is callback
+
+    def test_engine_init_without_callback(self, engine):
+        """Test that engine defaults to no callback."""
+        assert engine._on_snapshot is None
+
+
+class TestResultCallback:
+    """Tests for on_result callback (synchronous result state persistence)."""
+
+    @pytest.fixture
+    def result_callback(self):
+        """Create a mock result persist callback."""
+        from unittest.mock import AsyncMock
+
+        return AsyncMock()
+
+    @pytest.fixture
+    def engine_with_result_callback(self, run_id, strategy, result_callback):
+        """Create engine with result callback."""
+        return PaperTradingEngine(
+            run_id=run_id,
+            strategy=strategy,
+            symbol="BTC/USDT",
+            timeframe="1m",
+            initial_capital=Decimal("10000"),
+            commission_rate=Decimal("0.001"),
+            slippage=Decimal("0"),
+            params={"threshold": Decimal("50000")},
+            on_result=result_callback,
+        )
+
+    @pytest.fixture
+    def closed_candle(self):
+        """Create a closed candle for testing."""
+        return WSCandle(
+            symbol="BTC/USDT",
+            timeframe="1m",
+            timestamp=datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC),
+            open=Decimal("45000"),
+            high=Decimal("46000"),
+            low=Decimal("44000"),
+            close=Decimal("45500"),
+            volume=Decimal("100"),
+            is_closed=True,
+        )
+
+    @pytest.mark.asyncio
+    async def test_result_callback_called_on_candle(
+        self, engine_with_result_callback, result_callback, closed_candle
+    ):
+        """Test that on_result callback is called after processing a candle."""
+        await engine_with_result_callback.start()
+        await engine_with_result_callback.process_candle(closed_candle)
+
+        result_callback.assert_called_once()
+        call_args = result_callback.call_args
+        assert call_args[0][0] == str(engine_with_result_callback.run_id)
+        # Second arg should be a dict with result data
+        result_data = call_args[0][1]
+        assert "cash" in result_data
+        assert "equity" in result_data
+        assert "positions" in result_data
+        assert "trades" in result_data
+        assert "unrealized_pnl" in result_data
+        assert "realized_pnl" in result_data
+        assert "logs" in result_data
+        assert "bar_count" in result_data
+
+    @pytest.mark.asyncio
+    async def test_result_callback_failure_does_not_crash(
+        self, engine_with_result_callback, result_callback, closed_candle
+    ):
+        """Test that failed result callback does not crash the engine."""
+        result_callback.side_effect = Exception("DB write failed")
+
+        await engine_with_result_callback.start()
+        await engine_with_result_callback.process_candle(closed_candle)
+
+        # Engine should still be running despite callback failure
+        assert engine_with_result_callback.is_running is True
+        assert engine_with_result_callback.bar_count == 1
+
+    @pytest.mark.asyncio
+    async def test_no_result_callback_by_default(self, engine, closed_candle):
+        """Test that engine without result callback still processes candles."""
+        assert engine._on_result is None
+
+        await engine.start()
+        await engine.process_candle(closed_candle)
+
+        assert engine.bar_count == 1
+
+    def test_engine_stores_result_callback(self, engine_with_result_callback, result_callback):
+        """Test that engine stores the result callback."""
+        assert engine_with_result_callback._on_result is result_callback
+
+    @pytest.mark.asyncio
+    async def test_result_callback_called_on_each_candle(
+        self, engine_with_result_callback, result_callback
+    ):
+        """Test that on_result is called once per candle."""
+        await engine_with_result_callback.start()
+
+        for i in range(3):
+            candle = WSCandle(
+                symbol="BTC/USDT",
+                timeframe="1m",
+                timestamp=datetime(2024, 1, 1, 12, i, 0, tzinfo=UTC),
+                open=Decimal("45000"),
+                high=Decimal("46000"),
+                low=Decimal("44000"),
+                close=Decimal("45500"),
+                volume=Decimal("100"),
+                is_closed=True,
+            )
+            await engine_with_result_callback.process_candle(candle)
+
+        assert result_callback.call_count == 3

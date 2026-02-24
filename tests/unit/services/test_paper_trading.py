@@ -16,6 +16,7 @@ from squant.services.paper_trading import (
     PaperTradingService,
     SessionAlreadyRunningError,
     SessionNotFoundError,
+    SessionNotResumableError,
     StrategyInstantiationError,
     StrategyRunRepository,
 )
@@ -63,6 +64,7 @@ def mock_run():
     run.slippage = Decimal("0")
     run.params = {}
     run.error_message = None
+    run.result = None
     run.started_at = datetime.now(UTC)
     run.stopped_at = None
     run.created_at = datetime.now(UTC)
@@ -104,6 +106,23 @@ def mock_engine():
             "bar_count": 100,
             "equity": "10500",
             "cash": "9000",
+            "total_fees": "15.5",
+            "realized_pnl": "500",
+            "unrealized_pnl": "200",
+            "positions": {"BTC/USDT": {"amount": "0.1", "avg_entry_price": "50000"}},
+            "trades": [
+                {
+                    "symbol": "BTC/USDT",
+                    "side": "buy",
+                    "entry_price": "50000",
+                    "exit_price": "51000",
+                    "amount": "0.1",
+                    "pnl": "100",
+                }
+            ],
+            "completed_orders_count": 5,
+            "trades_count": 3,
+            "logs": ["Log entry 1", "Log entry 2"],
         }
     )
     return engine
@@ -596,6 +615,207 @@ class TestPaperTradingService:
             assert mock_stop.call_count == 2
 
 
+    @pytest.mark.asyncio
+    async def test_stop_saves_result_to_db(self, mock_session, mock_run, mock_engine):
+        """Test that stop() captures engine state and saves to result JSONB field."""
+        run_id = uuid4()
+        mock_run.id = str(run_id)
+
+        with (
+            patch.object(StrategyRunRepository, "get", new_callable=AsyncMock) as mock_get,
+            patch.object(StrategyRunRepository, "update", new_callable=AsyncMock) as mock_update,
+            patch("squant.services.paper_trading.get_session_manager") as mock_get_manager,
+            patch("squant.services.paper_trading.get_stream_manager") as mock_get_stream,
+        ):
+            mock_get.return_value = mock_run
+            mock_update.return_value = mock_run
+
+            mock_manager = MagicMock()
+            mock_manager.get.return_value = mock_engine
+            mock_manager.unregister_and_check_subscription = AsyncMock(return_value=None)
+            mock_get_manager.return_value = mock_manager
+
+            mock_stream = MagicMock()
+            mock_stream.unsubscribe_candles = AsyncMock()
+            mock_get_stream.return_value = mock_stream
+
+            service = PaperTradingService(mock_session)
+            await service.stop(run_id)
+
+            # Verify update was called with result data
+            update_call = mock_update.call_args
+            assert update_call is not None
+            kwargs = update_call.kwargs if update_call.kwargs else {}
+            # Check positional + keyword args
+            if not kwargs:
+                # Args are positional: (run_id, status=..., result=..., ...)
+                kwargs = {k: v for k, v in zip(
+                    ["status", "result", "stopped_at", "error_message"],
+                    update_call.args[1:] if len(update_call.args) > 1 else [],
+                )}
+                kwargs.update(update_call.kwargs or {})
+
+            assert "result" in kwargs
+            result_data = kwargs["result"]
+            assert result_data is not None
+            assert result_data["cash"] == "9000"
+            assert result_data["equity"] == "10500"
+            assert result_data["trades_count"] == 3
+            assert result_data["completed_orders_count"] == 5
+            assert len(result_data["trades"]) == 1
+            assert len(result_data["logs"]) == 2
+
+    @pytest.mark.asyncio
+    async def test_get_status_restores_from_result(self, mock_session, mock_run):
+        """Test get_status() restores data from result JSONB when engine not in memory."""
+        run_id = uuid4()
+        mock_run.started_at = datetime.now(UTC)
+        mock_run.stopped_at = datetime.now(UTC)
+        mock_run.result = {
+            "bar_count": 50,
+            "cash": "8500",
+            "equity": "10200",
+            "total_fees": "12.5",
+            "unrealized_pnl": "150",
+            "realized_pnl": "350",
+            "positions": {"BTC/USDT": {"amount": "0.05"}},
+            "completed_orders_count": 4,
+            "trades_count": 2,
+            "trades": [{"symbol": "BTC/USDT", "pnl": "350"}],
+            "logs": ["trade executed"],
+        }
+
+        with (
+            patch.object(StrategyRunRepository, "get", new_callable=AsyncMock) as mock_get,
+            patch("squant.services.paper_trading.get_session_manager") as mock_get_manager,
+        ):
+            mock_get.return_value = mock_run
+            mock_manager = MagicMock()
+            mock_manager.get.return_value = None  # No active engine
+            mock_get_manager.return_value = mock_manager
+
+            service = PaperTradingService(mock_session)
+            status = await service.get_status(run_id)
+
+            assert status["is_running"] is False
+            assert status["bar_count"] == 50
+            assert status["cash"] == "8500"
+            assert status["equity"] == "10200"
+            assert status["total_fees"] == "12.5"
+            assert status["realized_pnl"] == "350"
+            assert status["unrealized_pnl"] == "150"
+            assert status["trades_count"] == 2
+            assert status["completed_orders_count"] == 4
+            assert len(status["trades"]) == 1
+            assert len(status["logs"]) == 1
+
+    @pytest.mark.asyncio
+    async def test_get_status_fallback_without_result(self, mock_session, mock_run):
+        """Test get_status() falls back to zero values when no result saved."""
+        run_id = uuid4()
+        mock_run.started_at = datetime.now(UTC)
+        mock_run.stopped_at = datetime.now(UTC)
+        mock_run.result = None
+
+        with (
+            patch.object(StrategyRunRepository, "get", new_callable=AsyncMock) as mock_get,
+            patch("squant.services.paper_trading.get_session_manager") as mock_get_manager,
+        ):
+            mock_get.return_value = mock_run
+            mock_manager = MagicMock()
+            mock_manager.get.return_value = None
+            mock_get_manager.return_value = mock_manager
+
+            service = PaperTradingService(mock_session)
+            status = await service.get_status(run_id)
+
+            assert status["is_running"] is False
+            assert status["bar_count"] == 0
+            assert status["cash"] == str(mock_run.initial_capital)
+            assert status["equity"] == str(mock_run.initial_capital)
+            assert status["positions"] == {}
+
+    @pytest.mark.asyncio
+    async def test_mark_orphaned_sessions_with_equity_recovery(self, mock_session):
+        """Test mark_orphaned_sessions recovers data from equity curve."""
+        run_id = str(uuid4())
+        mock_run = MagicMock()
+        mock_run.id = run_id
+
+        mock_equity = MagicMock()
+        mock_equity.equity = Decimal("10500")
+        mock_equity.cash = Decimal("9000")
+        mock_equity.unrealized_pnl = Decimal("200")
+
+        with (
+            patch.object(
+                StrategyRunRepository, "get_orphaned_sessions", new_callable=AsyncMock
+            ) as mock_get_orphaned,
+            patch.object(
+                EquityCurveRepository, "get_last_by_run", new_callable=AsyncMock
+            ) as mock_get_last,
+            patch.object(StrategyRunRepository, "update", new_callable=AsyncMock) as mock_update,
+        ):
+            mock_get_orphaned.return_value = [mock_run]
+            mock_get_last.return_value = mock_equity
+            mock_update.return_value = mock_run
+
+            service = PaperTradingService(mock_session)
+            count = await service.mark_orphaned_sessions()
+
+            assert count == 1
+            mock_session.commit.assert_called_once()
+
+            # Verify result data was passed to update
+            update_kwargs = mock_update.call_args.kwargs
+            assert update_kwargs["result"] is not None
+            assert update_kwargs["result"]["equity"] == "10500"
+            assert update_kwargs["result"]["cash"] == "9000"
+            assert update_kwargs["result"]["unrealized_pnl"] == "200"
+            assert update_kwargs["status"] == RunStatus.INTERRUPTED
+
+    @pytest.mark.asyncio
+    async def test_mark_orphaned_sessions_without_equity_curve(self, mock_session):
+        """Test mark_orphaned_sessions when no equity curve data exists."""
+        run_id = str(uuid4())
+        mock_run = MagicMock()
+        mock_run.id = run_id
+
+        with (
+            patch.object(
+                StrategyRunRepository, "get_orphaned_sessions", new_callable=AsyncMock
+            ) as mock_get_orphaned,
+            patch.object(
+                EquityCurveRepository, "get_last_by_run", new_callable=AsyncMock
+            ) as mock_get_last,
+            patch.object(StrategyRunRepository, "update", new_callable=AsyncMock) as mock_update,
+        ):
+            mock_get_orphaned.return_value = [mock_run]
+            mock_get_last.return_value = None  # No equity curve data
+            mock_update.return_value = mock_run
+
+            service = PaperTradingService(mock_session)
+            count = await service.mark_orphaned_sessions()
+
+            assert count == 1
+            update_kwargs = mock_update.call_args.kwargs
+            assert update_kwargs["result"] is None
+
+    @pytest.mark.asyncio
+    async def test_mark_orphaned_sessions_no_orphans(self, mock_session):
+        """Test mark_orphaned_sessions when no orphaned sessions exist."""
+        with patch.object(
+            StrategyRunRepository, "get_orphaned_sessions", new_callable=AsyncMock
+        ) as mock_get_orphaned:
+            mock_get_orphaned.return_value = []
+
+            service = PaperTradingService(mock_session)
+            count = await service.mark_orphaned_sessions()
+
+            assert count == 0
+            mock_session.commit.assert_not_called()
+
+
 class TestSessionNotFoundError:
     """Tests for SessionNotFoundError."""
 
@@ -638,3 +858,405 @@ class TestPaperTradingError:
         error = PaperTradingError("Something went wrong")
 
         assert "Something went wrong" in str(error)
+
+
+class TestSessionNotResumableError:
+    """Tests for SessionNotResumableError."""
+
+    def test_error_message(self):
+        """Test error message formatting."""
+        run_id = uuid4()
+        error = SessionNotResumableError(run_id, "status is running")
+
+        assert str(run_id) in str(error)
+        assert "status is running" in str(error)
+        assert error.run_id == str(run_id)
+
+
+class TestMarkSessionInterrupted:
+    """Tests for mark_session_interrupted with optional result parameter."""
+
+    @pytest.mark.asyncio
+    async def test_mark_interrupted_with_result(self, mock_session, mock_run):
+        """Test that result data is saved when marking session as interrupted."""
+        result_data = {"cash": "10000", "equity": "10500"}
+
+        with patch.object(
+            StrategyRunRepository, "get", new_callable=AsyncMock
+        ) as mock_get, patch.object(
+            StrategyRunRepository, "update", new_callable=AsyncMock
+        ) as mock_update:
+            mock_get.return_value = mock_run
+            mock_run.status = RunStatus.RUNNING
+
+            service = PaperTradingService(mock_session)
+            await service.mark_session_interrupted(
+                uuid4(), "timeout", result=result_data
+            )
+
+            mock_update.assert_called_once()
+            call_kwargs = mock_update.call_args.kwargs
+            assert call_kwargs["result"] == result_data
+            assert call_kwargs["status"] == RunStatus.INTERRUPTED
+
+    @pytest.mark.asyncio
+    async def test_mark_interrupted_without_result(self, mock_session, mock_run):
+        """Test that result is None when not provided."""
+        with patch.object(
+            StrategyRunRepository, "get", new_callable=AsyncMock
+        ) as mock_get, patch.object(
+            StrategyRunRepository, "update", new_callable=AsyncMock
+        ) as mock_update:
+            mock_get.return_value = mock_run
+            mock_run.status = RunStatus.RUNNING
+
+            service = PaperTradingService(mock_session)
+            await service.mark_session_interrupted(uuid4(), "timeout")
+
+            call_kwargs = mock_update.call_args.kwargs
+            assert call_kwargs["result"] is None
+
+
+class TestResumeSession:
+    """Tests for PaperTradingService.resume() (Phase 3)."""
+
+    @pytest.fixture
+    def resumable_run(self, mock_run):
+        """Create a run that is resumable (STOPPED with result)."""
+        mock_run.status = RunStatus.STOPPED
+        mock_run.result = {
+            "cash": "9500",
+            "total_fees": "50",
+            "positions": {},
+            "trades": [],
+        }
+        return mock_run
+
+    @pytest.mark.asyncio
+    async def test_resume_rejects_running_status(self, mock_session, mock_run):
+        """Test that resume rejects sessions with RUNNING status."""
+        mock_run.status = RunStatus.RUNNING
+
+        with patch.object(
+            StrategyRunRepository, "get", new_callable=AsyncMock
+        ) as mock_get:
+            mock_get.return_value = mock_run
+
+            service = PaperTradingService(mock_session)
+            with pytest.raises(SessionNotResumableError):
+                await service.resume(uuid4())
+
+    @pytest.mark.asyncio
+    async def test_resume_rejects_completed_status(self, mock_session, mock_run):
+        """Test that resume rejects sessions with COMPLETED status."""
+        mock_run.status = RunStatus.COMPLETED
+
+        with patch.object(
+            StrategyRunRepository, "get", new_callable=AsyncMock
+        ) as mock_get:
+            mock_get.return_value = mock_run
+
+            service = PaperTradingService(mock_session)
+            with pytest.raises(SessionNotResumableError):
+                await service.resume(uuid4())
+
+    @pytest.mark.asyncio
+    async def test_resume_accepts_error_status(
+        self, mock_session, resumable_run, mock_strategy
+    ):
+        """Test that resume accepts ERROR status sessions."""
+        resumable_run.status = RunStatus.ERROR
+
+        mock_settings = MagicMock()
+        mock_settings.paper.max_sessions = 10
+        mock_settings.paper.warmup_bars = 0
+
+        mock_manager = MagicMock()
+        mock_manager.session_count = 0
+        mock_manager.register = AsyncMock()
+        mock_manager.unregister_and_check_subscription = AsyncMock(return_value=None)
+
+        mock_stream = MagicMock()
+        mock_stream.subscribe_candles = AsyncMock()
+
+        mock_engine = MagicMock()
+        mock_engine.start = AsyncMock()
+        mock_engine.is_running = False
+        mock_engine.context = MagicMock()
+        mock_engine.run_id = uuid4()
+
+        with (
+            patch.object(StrategyRunRepository, "get", new_callable=AsyncMock, return_value=resumable_run),
+            patch.object(StrategyRunRepository, "has_running_session", new_callable=AsyncMock, return_value=False),
+            patch.object(StrategyRunRepository, "update", new_callable=AsyncMock, return_value=resumable_run),
+            patch("squant.config.get_settings", return_value=mock_settings),
+            patch("squant.services.paper_trading.get_session_manager", return_value=mock_manager),
+            patch("squant.services.paper_trading.get_stream_manager", return_value=mock_stream),
+            patch("squant.services.paper_trading.PaperTradingEngine", return_value=mock_engine),
+            patch("squant.services.strategy.StrategyRepository") as mock_strategy_repo_class,
+        ):
+            mock_strategy_repo = MagicMock()
+            mock_strategy_repo.get = AsyncMock(return_value=mock_strategy)
+            mock_strategy_repo_class.return_value = mock_strategy_repo
+
+            service = PaperTradingService(mock_session)
+            service._instantiate_strategy = MagicMock(return_value=MagicMock())
+
+            result = await service.resume(uuid4(), warmup_bars=0)
+            assert result is not None
+
+    @pytest.mark.asyncio
+    async def test_resume_accepts_interrupted_status(
+        self, mock_session, resumable_run, mock_strategy
+    ):
+        """Test that resume accepts INTERRUPTED status sessions."""
+        resumable_run.status = RunStatus.INTERRUPTED
+
+        mock_settings = MagicMock()
+        mock_settings.paper.max_sessions = 10
+        mock_settings.paper.warmup_bars = 0
+
+        mock_manager = MagicMock()
+        mock_manager.session_count = 0
+        mock_manager.register = AsyncMock()
+        mock_manager.unregister_and_check_subscription = AsyncMock(return_value=None)
+
+        mock_stream = MagicMock()
+        mock_stream.subscribe_candles = AsyncMock()
+
+        mock_engine = MagicMock()
+        mock_engine.start = AsyncMock()
+        mock_engine.is_running = False
+        mock_engine.context = MagicMock()
+        mock_engine.run_id = uuid4()
+
+        with (
+            patch.object(StrategyRunRepository, "get", new_callable=AsyncMock, return_value=resumable_run),
+            patch.object(StrategyRunRepository, "has_running_session", new_callable=AsyncMock, return_value=False),
+            patch.object(StrategyRunRepository, "update", new_callable=AsyncMock, return_value=resumable_run),
+            patch("squant.config.get_settings", return_value=mock_settings),
+            patch("squant.services.paper_trading.get_session_manager", return_value=mock_manager),
+            patch("squant.services.paper_trading.get_stream_manager", return_value=mock_stream),
+            patch("squant.services.paper_trading.PaperTradingEngine", return_value=mock_engine),
+            patch("squant.services.strategy.StrategyRepository") as mock_strategy_repo_class,
+        ):
+            mock_strategy_repo = MagicMock()
+            mock_strategy_repo.get = AsyncMock(return_value=mock_strategy)
+            mock_strategy_repo_class.return_value = mock_strategy_repo
+
+            service = PaperTradingService(mock_session)
+            service._instantiate_strategy = MagicMock(return_value=MagicMock())
+
+            result = await service.resume(uuid4(), warmup_bars=0)
+            assert result is not None
+
+    @pytest.mark.asyncio
+    async def test_resume_not_found(self, mock_session):
+        """Test that resume raises SessionNotFoundError for missing session."""
+        with patch.object(
+            StrategyRunRepository, "get", new_callable=AsyncMock
+        ) as mock_get:
+            mock_get.return_value = None
+
+            service = PaperTradingService(mock_session)
+            with pytest.raises(SessionNotFoundError):
+                await service.resume(uuid4())
+
+    @pytest.mark.asyncio
+    async def test_resume_accepts_stopped_status(
+        self, mock_session, resumable_run, mock_strategy
+    ):
+        """Test that resume accepts STOPPED status sessions."""
+        resumable_run.status = RunStatus.STOPPED
+
+        mock_settings = MagicMock()
+        mock_settings.paper.max_sessions = 10
+        mock_settings.paper.warmup_bars = 0
+
+        mock_manager = MagicMock()
+        mock_manager.session_count = 0
+        mock_manager.register = AsyncMock()
+        mock_manager.unregister_and_check_subscription = AsyncMock(return_value=None)
+
+        mock_stream = MagicMock()
+        mock_stream.subscribe_candles = AsyncMock()
+
+        mock_engine = MagicMock()
+        mock_engine.start = AsyncMock()
+        mock_engine.is_running = False
+        mock_engine.context = MagicMock()
+        mock_engine.run_id = uuid4()
+
+        with (
+            patch.object(StrategyRunRepository, "get", new_callable=AsyncMock, return_value=resumable_run),
+            patch.object(StrategyRunRepository, "has_running_session", new_callable=AsyncMock, return_value=False),
+            patch.object(StrategyRunRepository, "update", new_callable=AsyncMock, return_value=resumable_run),
+            patch("squant.config.get_settings", return_value=mock_settings),
+            patch("squant.services.paper_trading.get_session_manager", return_value=mock_manager),
+            patch("squant.services.paper_trading.get_stream_manager", return_value=mock_stream),
+            patch("squant.services.paper_trading.PaperTradingEngine", return_value=mock_engine),
+            patch("squant.services.strategy.StrategyRepository") as mock_strategy_repo_class,
+        ):
+            mock_strategy_repo = MagicMock()
+            mock_strategy_repo.get = AsyncMock(return_value=mock_strategy)
+            mock_strategy_repo_class.return_value = mock_strategy_repo
+
+            service = PaperTradingService(mock_session)
+            service._instantiate_strategy = MagicMock(return_value=MagicMock())
+
+            result = await service.resume(uuid4(), warmup_bars=0)
+            assert result is not None
+
+    @pytest.mark.asyncio
+    async def test_resume_restores_state(
+        self, mock_session, resumable_run, mock_strategy
+    ):
+        """Test that resume calls restore_state when result exists."""
+        resumable_run.status = RunStatus.STOPPED
+        resumable_run.result = {"cash": "5000", "positions": {}}
+
+        mock_settings = MagicMock()
+        mock_settings.paper.max_sessions = 10
+
+        mock_manager = MagicMock()
+        mock_manager.session_count = 0
+        mock_manager.register = AsyncMock()
+
+        mock_stream = MagicMock()
+        mock_stream.subscribe_candles = AsyncMock()
+
+        mock_context = MagicMock()
+        mock_engine = MagicMock()
+        mock_engine.start = AsyncMock()
+        mock_engine.is_running = False
+        mock_engine.context = mock_context
+        mock_engine.run_id = uuid4()
+
+        with (
+            patch.object(StrategyRunRepository, "get", new_callable=AsyncMock, return_value=resumable_run),
+            patch.object(StrategyRunRepository, "has_running_session", new_callable=AsyncMock, return_value=False),
+            patch.object(StrategyRunRepository, "update", new_callable=AsyncMock, return_value=resumable_run),
+            patch("squant.config.get_settings", return_value=mock_settings),
+            patch("squant.services.paper_trading.get_session_manager", return_value=mock_manager),
+            patch("squant.services.paper_trading.get_stream_manager", return_value=mock_stream),
+            patch("squant.services.paper_trading.PaperTradingEngine", return_value=mock_engine),
+            patch("squant.services.strategy.StrategyRepository") as mock_strategy_repo_class,
+        ):
+            mock_strategy_repo = MagicMock()
+            mock_strategy_repo.get = AsyncMock(return_value=mock_strategy)
+            mock_strategy_repo_class.return_value = mock_strategy_repo
+
+            service = PaperTradingService(mock_session)
+            service._instantiate_strategy = MagicMock(return_value=MagicMock())
+
+            await service.resume(uuid4(), warmup_bars=0)
+
+            # Verify restore_state was called with the result data
+            mock_context.restore_state.assert_called_once_with(resumable_run.result)
+
+
+class TestRecoverOrphanedSessions:
+    """Tests for recover_orphaned_sessions (Phase 4)."""
+
+    @pytest.mark.asyncio
+    async def test_recovery_disabled_falls_back(self, mock_session):
+        """Test that auto-recovery falls back to mark-as-error when disabled."""
+        mock_settings = MagicMock()
+        mock_settings.paper.auto_recovery = False
+
+        with (
+            patch("squant.config.get_settings", return_value=mock_settings),
+            patch.object(
+                PaperTradingService, "mark_orphaned_sessions",
+                new_callable=AsyncMock, return_value=3,
+            ) as mock_mark,
+        ):
+            service = PaperTradingService(mock_session)
+            recovered, failed = await service.recover_orphaned_sessions()
+
+            assert recovered == 0
+            assert failed == 3
+            mock_mark.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_no_orphaned_sessions(self, mock_session):
+        """Test recovery with no orphaned sessions returns (0, 0)."""
+        mock_settings = MagicMock()
+        mock_settings.paper.auto_recovery = True
+
+        with (
+            patch("squant.config.get_settings", return_value=mock_settings),
+            patch.object(
+                StrategyRunRepository, "get_orphaned_sessions",
+                new_callable=AsyncMock, return_value=[],
+            ),
+        ):
+            service = PaperTradingService(mock_session)
+            recovered, failed = await service.recover_orphaned_sessions()
+
+            assert recovered == 0
+            assert failed == 0
+
+    @pytest.mark.asyncio
+    async def test_recovery_with_no_result_marks_interrupted(self, mock_session, mock_run):
+        """Test that orphaned session without result is marked as INTERRUPTED."""
+        mock_run.status = RunStatus.RUNNING
+        mock_run.result = None  # No saved state
+
+        mock_settings = MagicMock()
+        mock_settings.paper.auto_recovery = True
+        mock_settings.paper.warmup_bars = 200
+
+        with (
+            patch("squant.config.get_settings", return_value=mock_settings),
+            patch.object(
+                StrategyRunRepository, "get_orphaned_sessions",
+                new_callable=AsyncMock, return_value=[mock_run],
+            ),
+            patch.object(
+                StrategyRunRepository, "update", new_callable=AsyncMock,
+            ),
+            patch.object(
+                EquityCurveRepository, "get_last_by_run",
+                new_callable=AsyncMock, return_value=None,
+            ),
+        ):
+            service = PaperTradingService(mock_session)
+            recovered, failed = await service.recover_orphaned_sessions()
+
+            assert recovered == 0
+            assert failed == 1
+
+    @pytest.mark.asyncio
+    async def test_recovery_resume_failure_marks_interrupted(self, mock_session, mock_run):
+        """Test that failed resume attempt falls back to marking as INTERRUPTED."""
+        mock_run.status = RunStatus.RUNNING
+        mock_run.result = {"cash": "10000"}
+
+        mock_settings = MagicMock()
+        mock_settings.paper.auto_recovery = True
+        mock_settings.paper.warmup_bars = 200
+
+        with (
+            patch("squant.config.get_settings", return_value=mock_settings),
+            patch.object(
+                StrategyRunRepository, "get_orphaned_sessions",
+                new_callable=AsyncMock, return_value=[mock_run],
+            ),
+            patch.object(
+                StrategyRunRepository, "update", new_callable=AsyncMock,
+            ),
+            patch.object(
+                PaperTradingService, "resume",
+                new_callable=AsyncMock, side_effect=Exception("resume failed"),
+            ),
+            patch.object(
+                EquityCurveRepository, "get_last_by_run",
+                new_callable=AsyncMock, return_value=None,
+            ),
+        ):
+            service = PaperTradingService(mock_session)
+            recovered, failed = await service.recover_orphaned_sessions()
+
+            assert recovered == 0
+            assert failed == 1

@@ -224,8 +224,8 @@ class TestHealthCheck:
     """Tests for _health_check method."""
 
     @pytest.mark.asyncio
-    async def test_health_check_calls_cleanup(self) -> None:
-        """Test that health_check calls cleanup_stale_sessions."""
+    async def test_health_check_skips_cleanup_when_no_unhealthy(self) -> None:
+        """Test that health_check skips cleanup when no unhealthy sessions."""
         manager = BackgroundTaskManager()
 
         mock_session_manager = AsyncMock()
@@ -243,6 +243,41 @@ class TestHealthCheck:
         ):
             await manager._health_check()
 
+        # No unhealthy sessions means cleanup is not called (early return)
+        mock_session_manager.cleanup_stale_sessions.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_health_check_calls_cleanup_for_unhealthy(self) -> None:
+        """Test that health_check calls cleanup when unhealthy sessions exist."""
+        manager = BackgroundTaskManager()
+
+        unhealthy_id = uuid4()
+        mock_session_manager = AsyncMock()
+        mock_session_manager.check_health = AsyncMock(return_value=[unhealthy_id])
+        mock_session_manager.cleanup_stale_sessions = AsyncMock(return_value=[unhealthy_id])
+        mock_session_manager.get = MagicMock(return_value=None)
+
+        mock_settings = MagicMock()
+        mock_settings.paper_session_timeout_seconds = 300
+
+        mock_service = AsyncMock()
+        mock_db_session = AsyncMock()
+
+        with (
+            patch(
+                "squant.engine.paper.manager.get_session_manager", return_value=mock_session_manager
+            ),
+            patch("squant.config.get_settings", return_value=mock_settings),
+            patch("squant.infra.database.get_session_context") as mock_ctx,
+            patch(
+                "squant.services.paper_trading.PaperTradingService",
+                return_value=mock_service,
+            ),
+        ):
+            mock_ctx.return_value.__aenter__ = AsyncMock(return_value=mock_db_session)
+            mock_ctx.return_value.__aexit__ = AsyncMock(return_value=False)
+            await manager._health_check()
+
         mock_session_manager.cleanup_stale_sessions.assert_called_once_with(300)
 
     @pytest.mark.asyncio
@@ -254,6 +289,7 @@ class TestHealthCheck:
         mock_session_manager = AsyncMock()
         mock_session_manager.check_health = AsyncMock(return_value=cleaned_ids)
         mock_session_manager.cleanup_stale_sessions = AsyncMock(return_value=cleaned_ids)
+        mock_session_manager.get = MagicMock(return_value=None)
 
         mock_settings = MagicMock()
         mock_settings.paper_session_timeout_seconds = 300
@@ -279,3 +315,57 @@ class TestHealthCheck:
 
                 mock_logger.warning.assert_called_once()
                 assert "2" in mock_logger.warning.call_args[0][0]
+
+    @pytest.mark.asyncio
+    async def test_health_check_captures_engine_state(self) -> None:
+        """Test that health_check captures engine state snapshots before cleanup."""
+        manager = BackgroundTaskManager()
+
+        unhealthy_id = uuid4()
+        mock_engine = MagicMock()
+        mock_engine.get_state_snapshot.return_value = {
+            "cash": "10000",
+            "equity": "10500",
+            "total_fees": "50",
+            "bar_count": 100,
+            "realized_pnl": "500",
+            "unrealized_pnl": "0",
+            "positions": {},
+            "trades": [],
+            "completed_orders_count": 5,
+            "trades_count": 3,
+            "logs": [],
+        }
+
+        mock_session_manager = AsyncMock()
+        mock_session_manager.check_health = AsyncMock(return_value=[unhealthy_id])
+        mock_session_manager.cleanup_stale_sessions = AsyncMock(return_value=[unhealthy_id])
+        mock_session_manager.get = MagicMock(return_value=mock_engine)
+
+        mock_settings = MagicMock()
+        mock_settings.paper_session_timeout_seconds = 300
+
+        mock_service = AsyncMock()
+        mock_db_session = AsyncMock()
+
+        with (
+            patch(
+                "squant.engine.paper.manager.get_session_manager", return_value=mock_session_manager
+            ),
+            patch("squant.config.get_settings", return_value=mock_settings),
+            patch("squant.infra.database.get_session_context") as mock_ctx,
+            patch(
+                "squant.services.paper_trading.PaperTradingService",
+                return_value=mock_service,
+            ),
+        ):
+            mock_ctx.return_value.__aenter__ = AsyncMock(return_value=mock_db_session)
+            mock_ctx.return_value.__aexit__ = AsyncMock(return_value=False)
+            await manager._health_check()
+
+        # Should have captured engine state
+        mock_engine.get_state_snapshot.assert_called_once()
+        # Should have passed result to mark_session_interrupted
+        mock_service.mark_session_interrupted.assert_called_once()
+        call_kwargs = mock_service.mark_session_interrupted.call_args
+        assert call_kwargs[1].get("result") or (len(call_kwargs[0]) > 2 and call_kwargs[0][2])

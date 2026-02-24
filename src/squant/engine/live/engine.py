@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any
@@ -23,6 +24,11 @@ from squant.models.enums import OrderSide, OrderStatus
 if TYPE_CHECKING:
     from squant.infra.exchange.base import ExchangeAdapter
     from squant.infra.exchange.okx.ws_types import WSCandle, WSOrderUpdate
+
+# Callback type for synchronous snapshot persistence
+SnapshotPersistCallback = Callable[[str, EquitySnapshot], Awaitable[None]]
+# Callback type for synchronous result state persistence
+ResultPersistCallback = Callable[[str, dict[str, Any]], Awaitable[None]]
 
 logger = logging.getLogger(__name__)
 
@@ -107,6 +113,8 @@ class LiveTradingEngine:
         risk_config: RiskConfig,
         initial_equity: Decimal,
         params: dict[str, Any] | None = None,
+        on_snapshot: SnapshotPersistCallback | None = None,
+        on_result: ResultPersistCallback | None = None,
     ):
         """Initialize live trading engine.
 
@@ -119,6 +127,8 @@ class LiveTradingEngine:
             risk_config: Risk management configuration.
             initial_equity: Initial account equity for risk calculations.
             params: Strategy parameters.
+            on_snapshot: Optional callback for synchronous snapshot persistence.
+            on_result: Optional callback for synchronous result state persistence.
         """
         self._run_id = run_id
         self._strategy = strategy
@@ -173,7 +183,11 @@ class LiveTradingEngine:
         # Current market price (updated from candles)
         self._current_price: Decimal | None = None
 
-        # Equity snapshots for persistence
+        # Synchronous persistence callbacks
+        self._on_snapshot = on_snapshot
+        self._on_result = on_result
+
+        # Equity snapshots for persistence (fallback when callback fails)
         self._pending_snapshots: list[EquitySnapshot] = []
         self._snapshot_batch_size = 10
 
@@ -607,9 +621,20 @@ class LiveTradingEngine:
                 # the portfolio state at bar close (C-DEFER-8)
                 self._context._record_equity_snapshot(bar.time)
 
-                # Track pending snapshot for persistence
+                # Persist snapshot: try synchronous callback first, fall back to batch
                 if self._context.equity_curve:
-                    self._pending_snapshots.append(self._context.equity_curve[-1])
+                    latest_snapshot = self._context.equity_curve[-1]
+                    persisted = False
+                    if self._on_snapshot:
+                        try:
+                            await self._on_snapshot(str(self._run_id), latest_snapshot)
+                            persisted = True
+                        except Exception as e:
+                            logger.warning(
+                                f"Snapshot persist callback failed for {self._run_id}: {e}"
+                            )
+                    if not persisted:
+                        self._pending_snapshots.append(latest_snapshot)
 
                 # Call strategy on_bar with resource limits (STR-013)
                 from squant.config import get_settings
@@ -630,6 +655,17 @@ class LiveTradingEngine:
                 await self._process_order_requests()
 
                 self._bar_count += 1
+
+                # Persist result state for crash recovery
+                if self._on_result:
+                    try:
+                        result_data = self._context.build_result_snapshot()
+                        result_data["bar_count"] = self._bar_count
+                        await self._on_result(str(self._run_id), result_data)
+                    except Exception as e:
+                        logger.warning(
+                            f"Result persist callback failed for {self._run_id}: {e}"
+                        )
 
                 logger.debug(
                     f"Processed bar {self._bar_count} at {bar.time}, equity={self._context.equity}"

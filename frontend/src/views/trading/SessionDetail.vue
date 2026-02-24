@@ -13,10 +13,13 @@
           <span v-if="runningDuration" class="running-duration">已运行 {{ runningDuration }}</span>
         </div>
       </div>
-      <div class="header-right" v-if="isRunning">
-        <el-button type="warning" @click="handleStop">停止</el-button>
-        <el-button v-if="isLive" type="danger" @click="handleEmergencyClose">
+      <div class="header-right">
+        <el-button v-if="isRunning" type="warning" @click="handleStop">停止</el-button>
+        <el-button v-if="isRunning && isLive" type="danger" @click="handleEmergencyClose">
           紧急平仓
+        </el-button>
+        <el-button v-if="canResume" type="primary" @click="handleResume" :loading="resuming">
+          恢复
         </el-button>
       </div>
     </div>
@@ -453,7 +456,7 @@ import PriceCell from '@/components/common/PriceCell.vue'
 import EquityCurve from '@/components/charts/EquityCurve.vue'
 import TradingKLineChart from '@/components/charts/TradingKLineChart.vue'
 import { formatNumber, formatPrice, formatOrderType, formatExchangeName, formatDuration } from '@/utils/format'
-import { getPaperSession, getPaperSessionStatus, stopPaperTrading, getPaperEquityCurve } from '@/api/paper'
+import { getPaperSession, getPaperSessionStatus, stopPaperTrading, getPaperEquityCurve, resumePaperTrading } from '@/api/paper'
 import {
   getLiveSession,
   getLiveSessionStatus,
@@ -499,6 +502,11 @@ let durationTimer: ReturnType<typeof setInterval> | null = null
 const isPaper = computed(() => props.type === 'paper')
 const isLive = computed(() => props.type === 'live')
 const isRunning = computed(() => session.value?.status === 'running')
+const canResume = computed(() => {
+  const status = session.value?.status
+  return isPaper.value && (status === 'error' || status === 'stopped' || status === 'interrupted')
+})
+const resuming = ref(false)
 
 // Tabs
 const activeTab = ref('positions')
@@ -727,6 +735,20 @@ async function handleStop() {
     } catch (error) {
       toastError('停止失败')
     }
+  }
+}
+
+async function handleResume() {
+  resuming.value = true
+  try {
+    await resumePaperTrading(props.id)
+    toastSuccess('已恢复')
+    await loadSession()
+    startPolling()
+  } catch (error: any) {
+    toastError(error?.response?.data?.message || '恢复失败')
+  } finally {
+    resuming.value = false
   }
 }
 
