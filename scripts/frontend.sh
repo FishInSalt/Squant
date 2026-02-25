@@ -23,10 +23,10 @@ PID_FILE="/tmp/squant_frontend.pid"
 PORT="5175"
 
 # Timeouts
-GRACEFUL_TIMEOUT=10
-READY_TIMEOUT=20      # seconds (0.5s per attempt)
+GRACEFUL_TIMEOUT=5
+READY_TIMEOUT=15      # seconds (0.5s per attempt)
 READY_INTERVAL=0.5
-PORT_RELEASE_TIMEOUT=5
+PORT_RELEASE_TIMEOUT=3
 
 # =============================================================================
 # Utility Functions
