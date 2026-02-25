@@ -70,6 +70,8 @@ class LoggingSettings(BaseSettings):
     )
     format: str = Field(default="text", description="Log format: json or text")
     file: str | None = Field(default=None, description="Log file path (optional)")
+    max_bytes: int = Field(default=10 * 1024 * 1024, description="Max log file size in bytes")
+    backup_count: int = Field(default=5, description="Number of rotated log files to keep")
 
     @field_validator("level")
     @classmethod

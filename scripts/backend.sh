@@ -13,9 +13,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 
 # Runtime files
-LOG_DIR="/tmp"
-LOG_FILE="${LOG_DIR}/squant_backend.log"
-LOG_FILE_PREV="${LOG_DIR}/squant_backend.log.1"
+LOG_DIR="$PROJECT_ROOT/logs"
+LOG_FILE="${LOG_DIR}/backend.out"
+LOG_FILE_PREV="${LOG_DIR}/backend.out.1"
 PID_FILE="/tmp/squant_backend.pid"
 
 # Server settings
@@ -168,6 +168,9 @@ cmd_start() {
         log_error "Run: ss -tlnp | grep :${PORT}  to see what's using it"
         exit 1
     fi
+
+    # Ensure log directory exists
+    mkdir -p "$LOG_DIR"
 
     # Rotate log before starting
     rotate_log

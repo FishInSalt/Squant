@@ -4,6 +4,8 @@ import asyncio
 import contextlib
 import logging
 from collections.abc import AsyncGenerator
+from logging.handlers import RotatingFileHandler
+from pathlib import Path
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, Request
@@ -28,12 +30,31 @@ def _configure_logging() -> None:
     """Configure logging from settings. Called once during create_app()."""
     settings = get_settings()
     log_level = getattr(logging, settings.log_level.upper(), logging.INFO)
+    log_format = "%(asctime)s %(levelname)s [%(name)s] %(message)s"
+    log_datefmt = "%Y-%m-%d %H:%M:%S"
+
     logging.basicConfig(
         level=log_level,
-        format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S",
+        format=log_format,
+        datefmt=log_datefmt,
         force=True,
     )
+
+    # Add rotating file handler when LOG_FILE is configured
+    log_cfg = settings.logging
+    if log_cfg.file:
+        log_path = Path(log_cfg.file)
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        file_handler = RotatingFileHandler(
+            log_path,
+            maxBytes=log_cfg.max_bytes,
+            backupCount=log_cfg.backup_count,
+            encoding="utf-8",
+        )
+        file_handler.setLevel(log_level)
+        file_handler.setFormatter(logging.Formatter(log_format, datefmt=log_datefmt))
+        logging.getLogger().addHandler(file_handler)
+
     logging.getLogger("squant").setLevel(log_level)
     # Suppress verbose third-party library logs (ccxt dumps full HTTP responses at DEBUG)
     logging.getLogger("ccxt").setLevel(logging.WARNING)

@@ -156,10 +156,14 @@ class TestLoggingSettings:
         monkeypatch.delenv("LOG_LEVEL", raising=False)
         monkeypatch.delenv("LOG_FORMAT", raising=False)
         monkeypatch.delenv("LOG_FILE", raising=False)
-        s = LoggingSettings()
+        monkeypatch.delenv("LOG_MAX_BYTES", raising=False)
+        monkeypatch.delenv("LOG_BACKUP_COUNT", raising=False)
+        s = LoggingSettings(_env_file=None)
         assert s.level == "INFO"
         assert s.format == "text"
         assert s.file is None
+        assert s.max_bytes == 10 * 1024 * 1024
+        assert s.backup_count == 5
 
 
 # ===========================================================================
