@@ -1694,6 +1694,29 @@ class TestStopAll:
 
             assert count == 2
             assert mock_stop.call_count == 2
+            for call in mock_stop.call_args_list:
+                assert call.kwargs.get("for_shutdown") is not True
+
+    @pytest.mark.asyncio
+    async def test_stop_all_for_shutdown(self, service: LiveTradingService) -> None:
+        """Test stop_all passes for_shutdown flag to stop()."""
+        run_id = uuid4()
+
+        with (
+            patch("squant.services.live_trading.get_live_session_manager") as mock_get_manager,
+            patch.object(LiveTradingService, "stop", new_callable=AsyncMock) as mock_stop,
+        ):
+            mock_manager = MagicMock()
+            mock_manager.list_sessions.return_value = [
+                {"run_id": str(run_id), "symbol": "BTC/USDT"},
+            ]
+            mock_get_manager.return_value = mock_manager
+            mock_stop.return_value = MagicMock()
+
+            count = await service.stop_all(for_shutdown=True)
+
+            assert count == 1
+            mock_stop.assert_called_once_with(run_id, for_shutdown=True)
 
     @pytest.mark.asyncio
     async def test_stop_all_empty(self, service: LiveTradingService) -> None:

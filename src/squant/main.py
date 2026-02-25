@@ -180,13 +180,13 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             from squant.services.paper_trading import PaperTradingService
 
             paper_service = PaperTradingService(db_session)
-            paper_stopped = await paper_service.stop_all()
+            paper_stopped = await paper_service.stop_all(for_shutdown=True)
             logger.info(f"Paper trading sessions stopped ({paper_stopped} sessions)")
 
             from squant.services.live_trading import LiveTradingService
 
             live_service = LiveTradingService(db_session)
-            live_stopped = await live_service.stop_all()
+            live_stopped = await live_service.stop_all(for_shutdown=True)
             logger.info(f"Live trading sessions stopped ({live_stopped} sessions)")
     except Exception:
         logger.exception("Error during graceful session shutdown, forcing stop")

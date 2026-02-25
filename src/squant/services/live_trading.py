@@ -166,14 +166,18 @@ class LiveStrategyRunRepository(BaseRepository[StrategyRun]):
         return await self.count(**filters)
 
     async def get_orphaned_sessions(self) -> list[StrategyRun]:
-        """Get all RUNNING live trading sessions (orphaned after restart).
+        """Get recoverable live trading sessions after restart.
+
+        Finds sessions that were either:
+        - RUNNING (force-killed, no graceful shutdown)
+        - INTERRUPTED (gracefully stopped during application shutdown)
 
         Returns:
-            List of orphaned StrategyRun records.
+            List of recoverable StrategyRun records.
         """
         stmt = select(StrategyRun).where(
             StrategyRun.mode == RunMode.LIVE,
-            StrategyRun.status == RunStatus.RUNNING,
+            StrategyRun.status.in_([RunStatus.RUNNING, RunStatus.INTERRUPTED]),
         )
         result = await self.session.execute(stmt)
         return list(result.scalars().all())
@@ -610,12 +614,16 @@ class LiveTradingService:
 
         return _persist_result
 
-    async def stop(self, run_id: UUID, cancel_orders: bool = True) -> StrategyRun:
+    async def stop(
+        self, run_id: UUID, cancel_orders: bool = True, *, for_shutdown: bool = False
+    ) -> StrategyRun:
         """Stop a live trading session.
 
         Args:
             run_id: Run ID.
             cancel_orders: Whether to cancel open orders on stop.
+            for_shutdown: If True, marks session as INTERRUPTED (application
+                shutdown) instead of STOPPED, and skips candle unsubscription.
 
         Returns:
             Updated StrategyRun.
@@ -662,26 +670,34 @@ class LiveTradingService:
             # Unregister from session manager
             await session_manager.unregister(run_id)
 
+        # Determine status based on stop reason
+        if for_shutdown:
+            status = RunStatus.INTERRUPTED
+            error_message = "Session interrupted by application shutdown"
+        else:
+            status = RunStatus.STOPPED
+            error_message = engine.error_message if engine else None
+
         # Update run status and commit BEFORE unsubscribing (Issue 021 fix)
         # This ensures database state is consistent even if unsubscribe fails
         run = await self.run_repo.update(
             run.id,
-            status=RunStatus.STOPPED,
+            status=status,
             result=result_data,
             stopped_at=datetime.now(UTC),
-            error_message=engine.error_message if engine else None,
+            error_message=error_message,
         )
         await self.session.commit()
 
-        # Now unsubscribe if needed (after database is consistent)
-        if engine:
+        # Skip unsubscription during shutdown (stream manager is about to close)
+        if engine and not for_shutdown:
             try:
                 await self._check_unsubscribe(engine.symbol, engine.timeframe)
             except Exception as e:
                 # Log but don't fail - database is already updated
                 logger.warning(f"Failed to unsubscribe from candles: {e}")
 
-        logger.info(f"Stopped live trading session {run_id}")
+        logger.info(f"{'Shutdown' if for_shutdown else 'Stopped'} live trading session {run_id}")
         return run
 
     async def emergency_close(self, run_id: UUID) -> dict[str, Any]:
@@ -861,8 +877,12 @@ class LiveTradingService:
         session_manager = get_live_session_manager()
         return session_manager.list_sessions()
 
-    async def stop_all(self) -> int:
+    async def stop_all(self, *, for_shutdown: bool = False) -> int:
         """Stop all active live trading sessions.
+
+        Args:
+            for_shutdown: If True, marks sessions as INTERRUPTED instead of
+                STOPPED, enabling auto-recovery on next startup.
 
         Returns:
             Number of sessions stopped.
@@ -874,7 +894,7 @@ class LiveTradingService:
         for sess in active:
             run_id = UUID(sess["run_id"])
             try:
-                await self.stop(run_id)
+                await self.stop(run_id, for_shutdown=for_shutdown)
                 stopped += 1
             except Exception as e:
                 logger.warning(f"Failed to stop live session {run_id}: {e}")

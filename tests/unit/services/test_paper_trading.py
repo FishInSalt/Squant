@@ -574,6 +574,31 @@ class TestPaperTradingService:
 
             assert count == 2
             assert mock_stop.call_count == 2
+            # Default: for_shutdown=False
+            for call in mock_stop.call_args_list:
+                assert call.kwargs.get("for_shutdown") is not True
+
+    @pytest.mark.asyncio
+    async def test_stop_all_for_shutdown(self, mock_session, mock_run):
+        """Test stop_all passes for_shutdown flag to stop()."""
+        run_id = uuid4()
+
+        with (
+            patch("squant.services.paper_trading.get_session_manager") as mock_get_manager,
+            patch.object(PaperTradingService, "stop", new_callable=AsyncMock) as mock_stop,
+        ):
+            mock_manager = MagicMock()
+            mock_manager.list_sessions.return_value = [
+                {"run_id": str(run_id), "symbol": "BTC/USDT", "is_running": True},
+            ]
+            mock_get_manager.return_value = mock_manager
+            mock_stop.return_value = mock_run
+
+            service = PaperTradingService(mock_session)
+            count = await service.stop_all(for_shutdown=True)
+
+            assert count == 1
+            mock_stop.assert_called_once_with(run_id, for_shutdown=True)
 
     @pytest.mark.asyncio
     async def test_stop_all_empty(self, mock_session):
@@ -664,6 +689,32 @@ class TestPaperTradingService:
             assert result_data["completed_orders_count"] == 5
             assert len(result_data["trades"]) == 1
             assert len(result_data["logs"]) == 2
+
+    @pytest.mark.asyncio
+    async def test_stop_for_shutdown_marks_interrupted(self, mock_session, mock_run, mock_engine):
+        """Test that stop(for_shutdown=True) marks session as INTERRUPTED."""
+        run_id = uuid4()
+        mock_run.id = str(run_id)
+
+        with (
+            patch.object(StrategyRunRepository, "get", new_callable=AsyncMock) as mock_get,
+            patch.object(StrategyRunRepository, "update", new_callable=AsyncMock) as mock_update,
+            patch("squant.services.paper_trading.get_session_manager") as mock_get_manager,
+        ):
+            mock_get.return_value = mock_run
+            mock_update.return_value = mock_run
+
+            mock_manager = MagicMock()
+            mock_manager.get.return_value = mock_engine
+            mock_manager.unregister_and_check_subscription = AsyncMock(return_value=None)
+            mock_get_manager.return_value = mock_manager
+
+            service = PaperTradingService(mock_session)
+            await service.stop(run_id, for_shutdown=True)
+
+            update_kwargs = mock_update.call_args.kwargs
+            assert update_kwargs["status"] == RunStatus.INTERRUPTED
+            assert "shutdown" in update_kwargs["error_message"]
 
     @pytest.mark.asyncio
     async def test_get_status_restores_from_result(self, mock_session, mock_run):

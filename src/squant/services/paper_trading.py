@@ -153,14 +153,18 @@ class StrategyRunRepository(BaseRepository[StrategyRun]):
         return result.scalar_one_or_none() is not None
 
     async def get_orphaned_sessions(self) -> list[StrategyRun]:
-        """Get all RUNNING paper trading sessions (orphaned after restart).
+        """Get recoverable paper trading sessions after restart.
+
+        Finds sessions that were either:
+        - RUNNING (force-killed, no graceful shutdown)
+        - INTERRUPTED (gracefully stopped during application shutdown)
 
         Returns:
-            List of orphaned StrategyRun records.
+            List of recoverable StrategyRun records.
         """
         stmt = select(StrategyRun).where(
             StrategyRun.mode == RunMode.PAPER,
-            StrategyRun.status == RunStatus.RUNNING,
+            StrategyRun.status.in_([RunStatus.RUNNING, RunStatus.INTERRUPTED]),
         )
         result = await self.session.execute(stmt)
         return list(result.scalars().all())
@@ -519,11 +523,13 @@ class PaperTradingService:
 
         return _persist_result
 
-    async def stop(self, run_id: UUID) -> StrategyRun:
+    async def stop(self, run_id: UUID, *, for_shutdown: bool = False) -> StrategyRun:
         """Stop a paper trading session.
 
         Args:
             run_id: Run ID.
+            for_shutdown: If True, marks session as INTERRUPTED (application
+                shutdown) instead of STOPPED, and skips candle unsubscription.
 
         Returns:
             Updated StrategyRun.
@@ -571,19 +577,26 @@ class PaperTradingService:
             # Unregister and atomically check subscription (Issue 019 fix)
             key_to_unsubscribe = await session_manager.unregister_and_check_subscription(run_id)
 
+        # Determine status based on stop reason
+        if for_shutdown:
+            status = RunStatus.INTERRUPTED
+            error_message = "Session interrupted by application shutdown"
+        else:
+            status = RunStatus.STOPPED
+
         # Update run status and commit BEFORE unsubscribing (Issue 021 fix)
         # This ensures database state is consistent even if unsubscribe fails
         run = await self.run_repo.update(
             run.id,
-            status=RunStatus.STOPPED,
+            status=status,
             result=result_data,
             stopped_at=datetime.now(UTC),
             error_message=error_message,
         )
         await self.session.commit()
 
-        # Now unsubscribe if needed (after database is consistent)
-        if key_to_unsubscribe:
+        # Skip unsubscription during shutdown (stream manager is about to close)
+        if key_to_unsubscribe and not for_shutdown:
             try:
                 stream_manager = get_stream_manager()
                 await stream_manager.unsubscribe_candles(*key_to_unsubscribe)
@@ -592,7 +605,7 @@ class PaperTradingService:
                 # Log but don't fail - database is already updated
                 logger.warning(f"Failed to unsubscribe from candles: {e}")
 
-        logger.info(f"Stopped paper trading session {run_id}")
+        logger.info(f"{'Shutdown' if for_shutdown else 'Stopped'} paper trading session {run_id}")
         return run
 
     async def _check_unsubscribe(self, symbol: str, timeframe: str) -> None:
@@ -744,8 +757,12 @@ class PaperTradingService:
         # The strategy_id will need to be added by the API layer if needed
         return sessions
 
-    async def stop_all(self) -> int:
+    async def stop_all(self, *, for_shutdown: bool = False) -> int:
         """Stop all active paper trading sessions.
+
+        Args:
+            for_shutdown: If True, marks sessions as INTERRUPTED instead of
+                STOPPED, enabling auto-recovery on next startup.
 
         Returns:
             Number of sessions stopped.
@@ -757,7 +774,7 @@ class PaperTradingService:
         for sess in active:
             run_id = UUID(sess["run_id"])
             try:
-                await self.stop(run_id)
+                await self.stop(run_id, for_shutdown=for_shutdown)
                 stopped += 1
             except Exception as e:
                 logger.warning(f"Failed to stop session {run_id}: {e}")
