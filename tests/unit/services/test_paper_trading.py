@@ -736,11 +736,55 @@ class TestPaperTradingService:
             assert status["positions"] == {}
 
     @pytest.mark.asyncio
-    async def test_mark_orphaned_sessions_with_equity_recovery(self, mock_session):
-        """Test mark_orphaned_sessions recovers data from equity curve."""
+    async def test_mark_orphaned_sessions_preserves_existing_result(self, mock_session):
+        """Test mark_orphaned_sessions preserves existing result from on_result callback."""
         run_id = str(uuid4())
         mock_run = MagicMock()
         mock_run.id = run_id
+        # Simulate a complete result saved by the on_result callback
+        mock_run.result = {
+            "cash": "9000",
+            "equity": "10500",
+            "total_fees": "50",
+            "unrealized_pnl": "200",
+            "realized_pnl": "300",
+            "positions": {"BTC/USDT": {"amount": "0.1", "avg_entry_price": "50000"}},
+            "trades": [{"symbol": "BTC/USDT", "pnl": "300"}],
+            "logs": ["[10:00] Buy BTC"],
+        }
+
+        with (
+            patch.object(
+                StrategyRunRepository, "get_orphaned_sessions", new_callable=AsyncMock
+            ) as mock_get_orphaned,
+            patch.object(
+                EquityCurveRepository, "get_last_by_run", new_callable=AsyncMock
+            ) as mock_get_last,
+            patch.object(StrategyRunRepository, "update", new_callable=AsyncMock) as mock_update,
+        ):
+            mock_get_orphaned.return_value = [mock_run]
+            mock_update.return_value = mock_run
+
+            service = PaperTradingService(mock_session)
+            count = await service.mark_orphaned_sessions()
+
+            assert count == 1
+            # Should NOT query equity curve since result already exists
+            mock_get_last.assert_not_called()
+            # Verify the complete result was preserved, not overwritten
+            update_kwargs = mock_update.call_args.kwargs
+            assert update_kwargs["result"]["realized_pnl"] == "300"
+            assert update_kwargs["result"]["trades"] == [{"symbol": "BTC/USDT", "pnl": "300"}]
+            assert update_kwargs["result"]["logs"] == ["[10:00] Buy BTC"]
+            assert update_kwargs["status"] == RunStatus.INTERRUPTED
+
+    @pytest.mark.asyncio
+    async def test_mark_orphaned_sessions_falls_back_to_equity_curve(self, mock_session):
+        """Test mark_orphaned_sessions falls back to equity curve when no result exists."""
+        run_id = str(uuid4())
+        mock_run = MagicMock()
+        mock_run.id = run_id
+        mock_run.result = None  # No result saved
 
         mock_equity = MagicMock()
         mock_equity.equity = Decimal("10500")
@@ -766,7 +810,7 @@ class TestPaperTradingService:
             assert count == 1
             mock_session.commit.assert_called_once()
 
-            # Verify result data was passed to update
+            # Verify fallback result data from equity curve
             update_kwargs = mock_update.call_args.kwargs
             assert update_kwargs["result"] is not None
             assert update_kwargs["result"]["equity"] == "10500"
@@ -776,10 +820,11 @@ class TestPaperTradingService:
 
     @pytest.mark.asyncio
     async def test_mark_orphaned_sessions_without_equity_curve(self, mock_session):
-        """Test mark_orphaned_sessions when no equity curve data exists."""
+        """Test mark_orphaned_sessions when no equity curve data and no result."""
         run_id = str(uuid4())
         mock_run = MagicMock()
         mock_run.id = run_id
+        mock_run.result = None
 
         with (
             patch.object(

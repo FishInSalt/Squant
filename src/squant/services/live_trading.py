@@ -1055,15 +1055,17 @@ class LiveTradingService:
             return 0
 
         for run in orphaned:
-            # Try to recover basic data from equity curve
-            result_data = None
-            last_point = await self.equity_repo.get_last_by_run(str(run.id))
-            if last_point:
-                result_data = {
-                    "equity": str(last_point.equity),
-                    "cash": str(last_point.cash),
-                    "unrealized_pnl": str(last_point.unrealized_pnl),
-                }
+            # Preserve existing result (saved by on_result callback per candle).
+            # Only fall back to equity curve when no result exists.
+            result_data = run.result
+            if not result_data:
+                last_point = await self.equity_repo.get_last_by_run(str(run.id))
+                if last_point:
+                    result_data = {
+                        "equity": str(last_point.equity),
+                        "cash": str(last_point.cash),
+                        "unrealized_pnl": str(last_point.unrealized_pnl),
+                    }
 
             await self.run_repo.update(
                 run.id,

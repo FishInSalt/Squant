@@ -1538,13 +1538,55 @@ class TestMarkOrphanedWithRecovery:
         return LiveTradingService(mock_session)
 
     @pytest.mark.asyncio
-    async def test_mark_orphaned_with_equity_recovery(
+    async def test_mark_orphaned_preserves_existing_result(
         self, service: LiveTradingService
     ) -> None:
-        """Test mark_orphaned_sessions recovers data from equity curve."""
+        """Test mark_orphaned_sessions preserves existing result from on_result callback."""
         run_id = str(uuid4())
         mock_run = MagicMock()
         mock_run.id = run_id
+        mock_run.result = {
+            "cash": "9000",
+            "equity": "10500",
+            "total_fees": "50",
+            "unrealized_pnl": "200",
+            "realized_pnl": "300",
+            "positions": {"BTC/USDT": {"amount": "0.1"}},
+            "trades": [{"symbol": "BTC/USDT", "pnl": "300"}],
+            "logs": ["[10:00] Buy BTC"],
+        }
+
+        with (
+            patch.object(
+                service.run_repo, "get_orphaned_sessions", new_callable=AsyncMock
+            ) as mock_get_orphaned,
+            patch.object(
+                service.equity_repo, "get_last_by_run", new_callable=AsyncMock
+            ) as mock_get_last,
+            patch.object(service.run_repo, "update", new_callable=AsyncMock) as mock_update,
+        ):
+            mock_get_orphaned.return_value = [mock_run]
+            mock_update.return_value = mock_run
+
+            count = await service.mark_orphaned_sessions()
+
+            assert count == 1
+            # Should NOT query equity curve since result already exists
+            mock_get_last.assert_not_called()
+            update_kwargs = mock_update.call_args.kwargs
+            assert update_kwargs["result"]["realized_pnl"] == "300"
+            assert update_kwargs["result"]["trades"] == [{"symbol": "BTC/USDT", "pnl": "300"}]
+            assert update_kwargs["status"] == RunStatus.INTERRUPTED
+
+    @pytest.mark.asyncio
+    async def test_mark_orphaned_falls_back_to_equity_curve(
+        self, service: LiveTradingService
+    ) -> None:
+        """Test mark_orphaned_sessions falls back to equity curve when no result exists."""
+        run_id = str(uuid4())
+        mock_run = MagicMock()
+        mock_run.id = run_id
+        mock_run.result = None
 
         mock_equity = MagicMock()
         mock_equity.equity = Decimal("10500")
@@ -1577,9 +1619,10 @@ class TestMarkOrphanedWithRecovery:
     async def test_mark_orphaned_without_equity_curve(
         self, service: LiveTradingService
     ) -> None:
-        """Test mark_orphaned_sessions when no equity curve data exists."""
+        """Test mark_orphaned_sessions when no result and no equity curve data."""
         mock_run = MagicMock()
         mock_run.id = str(uuid4())
+        mock_run.result = None
 
         with (
             patch.object(
