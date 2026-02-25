@@ -1324,14 +1324,16 @@ class TestRecoverOrphanedSessions:
             assert failed == 1
 
     @pytest.mark.asyncio
-    async def test_recovery_resume_failure_marks_interrupted(self, mock_session, mock_run):
-        """Test that failed resume attempt falls back to marking as INTERRUPTED."""
+    async def test_recovery_resume_failure_marks_error(self, mock_session, mock_run):
+        """Test that failed resume marks session as ERROR to prevent infinite retry."""
         mock_run.status = RunStatus.RUNNING
         mock_run.result = {"cash": "10000"}
 
         mock_settings = MagicMock()
         mock_settings.paper.auto_recovery = True
         mock_settings.paper.warmup_bars = 200
+
+        mock_update = AsyncMock()
 
         with (
             patch("squant.config.get_settings", return_value=mock_settings),
@@ -1340,7 +1342,7 @@ class TestRecoverOrphanedSessions:
                 new_callable=AsyncMock, return_value=[mock_run],
             ),
             patch.object(
-                StrategyRunRepository, "update", new_callable=AsyncMock,
+                StrategyRunRepository, "update", new=mock_update,
             ),
             patch.object(
                 PaperTradingService, "resume",
@@ -1356,3 +1358,7 @@ class TestRecoverOrphanedSessions:
 
             assert recovered == 0
             assert failed == 1
+            # Verify the second update call (after resume failure) sets ERROR status
+            error_call = mock_update.call_args_list[-1]
+            assert error_call.kwargs.get("status") == RunStatus.ERROR
+            assert "resume failed" in error_call.kwargs.get("error_message", "")

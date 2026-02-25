@@ -1179,9 +1179,10 @@ class PaperTradingService:
                     logger.warning(
                         f"Auto-recovery failed for session {run.id}: {e}"
                     )
-                    # Update error message with actual failure reason
+                    # Mark as ERROR to prevent infinite retry on next restart
                     await self.run_repo.update(
                         run.id,
+                        status=RunStatus.ERROR,
                         error_message=f"Auto-recovery failed: {e}",
                         stopped_at=datetime.now(UTC),
                     )
