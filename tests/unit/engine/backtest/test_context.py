@@ -1339,12 +1339,8 @@ class TestRestoreState:
         assert context._open_trade.entry_price == Decimal("45000")
         assert context._open_trade.amount == Decimal("0.5")
 
-    def test_restore_trades_only_contains_closed(self, context: BacktestContext) -> None:
-        """Test that trades list from snapshot only has closed trades.
-
-        open_trade is a separate field in the snapshot (not in trades list),
-        so restore_state receives only closed trades — no filtering needed.
-        """
+    def test_restore_open_trade_preserves_entry_time(self, context: BacktestContext) -> None:
+        """Test that open_trade field preserves original entry_time on restore."""
         state = {
             "positions": {
                 "BTC/USDT": {
@@ -1352,30 +1348,22 @@ class TestRestoreState:
                     "avg_entry_price": "45000",
                 },
             },
-            "trades": [
-                {
-                    "symbol": "ETH/USDT",
-                    "side": "buy",
-                    "entry_time": "2024-06-01T12:00:00+00:00",
-                    "entry_price": "2000",
-                    "exit_time": "2024-06-01T13:00:00+00:00",
-                    "exit_price": "2100",
-                    "amount": "1.0",
-                    "pnl": "100",
-                    "pnl_pct": "5.0",
-                    "fees": "4.1",
-                },
-            ],
+            "open_trade": {
+                "symbol": "BTC/USDT",
+                "side": "buy",
+                "entry_time": "2024-06-01T14:30:00+00:00",
+                "entry_price": "45000",
+                "amount": "0.5",
+                "fees": "4.5",
+            },
         }
         context.restore_state(state)
 
-        # Only the closed trade in _trades
-        assert len(context.trades) == 1
-        assert context.trades[0].symbol == "ETH/USDT"
-        assert context.trades[0].exit_time is not None
-        # Open trade reconstructed from positions (separate from trades)
         assert context._open_trade is not None
         assert context._open_trade.symbol == "BTC/USDT"
+        assert context._open_trade.entry_time == datetime(2024, 6, 1, 14, 30, tzinfo=UTC)
+        assert context._open_trade.entry_price == Decimal("45000")
+        assert context._open_trade.fees == Decimal("4.5")
 
     def test_restore_short_position_creates_sell_open_trade(self, context: BacktestContext) -> None:
         """Test that a short (negative amount) position creates a SELL open trade."""
@@ -1465,6 +1453,7 @@ class TestBuildResultSnapshot:
         assert result["realized_pnl"] == "0"
         assert result["positions"] == {}
         assert result["trades"] == []
+        assert result["open_trade"] is None
         assert result["trades_count"] == 0
         assert result["logs"] == []
 
@@ -1533,6 +1522,14 @@ class TestBuildResultSnapshot:
             avg_entry_price=Decimal("45000"),
         )
         context._last_prices["BTC/USDT"] = Decimal("46000")
+        context._open_trade = TradeRecord(
+            symbol="BTC/USDT",
+            side=OrderSide.BUY,
+            entry_time=datetime(2024, 6, 1, 10, 0, 0, tzinfo=UTC),
+            entry_price=Decimal("45000"),
+            amount=Decimal("0.2"),
+            fees=Decimal("9.0"),
+        )
         context._trades.append(TradeRecord(
             symbol="ETH/USDT",
             side=OrderSide.BUY,
@@ -1569,6 +1566,10 @@ class TestBuildResultSnapshot:
         assert new_ctx._last_prices["BTC/USDT"] == Decimal("46000")
         assert len(new_ctx.trades) == 1
         assert new_ctx.trades[0].pnl == Decimal("100")
+        # Open trade restored with original entry_time
+        assert new_ctx._open_trade is not None
+        assert new_ctx._open_trade.entry_time == datetime(2024, 6, 1, 10, 0, 0, tzinfo=UTC)
+        assert new_ctx._open_trade.fees == Decimal("9.0")
         # Logs restored
         assert len(new_ctx.logs) == 2
         assert "Test trade executed" in new_ctx.logs[0]

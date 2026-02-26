@@ -754,6 +754,18 @@ class BacktestContext:
 
         realized_pnl = sum((t.pnl for t in self._trades), Decimal("0"))
 
+        open_trade = None
+        if self._open_trade:
+            t = self._open_trade
+            open_trade = {
+                "symbol": t.symbol,
+                "side": t.side.value,
+                "entry_time": t.entry_time.isoformat(),
+                "entry_price": str(t.entry_price),
+                "amount": str(t.amount),
+                "fees": str(t.fees),
+            }
+
         return {
             "cash": str(self._cash),
             "equity": str(self.equity),
@@ -762,6 +774,7 @@ class BacktestContext:
             "realized_pnl": str(realized_pnl),
             "positions": positions,
             "trades": trades,
+            "open_trade": open_trade,
             "trades_count": len(self._trades),
             "completed_orders_count": len(self._completed_orders),
             "logs": list(self._logs),
@@ -827,17 +840,29 @@ class BacktestContext:
             for log_entry in state["logs"]:
                 self._logs.append(log_entry)
 
-        # Rebuild _open_trade if there's an open position
+        # Rebuild _open_trade from snapshot or positions
         self._open_trade = None
         self._partial_exit_pnl = Decimal("0")
-        for symbol, pos in self._positions.items():
-            if pos.is_open:
-                self._open_trade = TradeRecord(
-                    symbol=symbol,
-                    side=OrderSide.BUY if pos.amount > 0 else OrderSide.SELL,
-                    entry_time=datetime.now(UTC),
-                    entry_price=pos.avg_entry_price,
-                    amount=abs(pos.amount),
-                    fees=Decimal("0"),
-                )
-                break
+        if state.get("open_trade"):
+            ot = state["open_trade"]
+            self._open_trade = TradeRecord(
+                symbol=ot["symbol"],
+                side=OrderSide(ot["side"]),
+                entry_time=datetime.fromisoformat(ot["entry_time"]),
+                entry_price=Decimal(str(ot["entry_price"])),
+                amount=Decimal(str(ot["amount"])),
+                fees=Decimal(str(ot["fees"])),
+            )
+        else:
+            # Fallback: rebuild from positions (no entry_time available)
+            for symbol, pos in self._positions.items():
+                if pos.is_open:
+                    self._open_trade = TradeRecord(
+                        symbol=symbol,
+                        side=OrderSide.BUY if pos.amount > 0 else OrderSide.SELL,
+                        entry_time=datetime.now(UTC),
+                        entry_price=pos.avg_entry_price,
+                        amount=abs(pos.amount),
+                        fees=Decimal("0"),
+                    )
+                    break
