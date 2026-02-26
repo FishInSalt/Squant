@@ -266,6 +266,8 @@ async def get_live_trading_status(
             equity=Decimal(str(status.get("equity", 0))),
             initial_capital=Decimal(str(status.get("initial_capital", 0))),
             total_fees=Decimal(str(status.get("total_fees", 0))),
+            unrealized_pnl=Decimal(str(status.get("unrealized_pnl", 0))),
+            realized_pnl=Decimal(str(status.get("realized_pnl", 0))),
             positions=positions,
             pending_orders=status.get("pending_orders", []),
             live_orders=live_orders,

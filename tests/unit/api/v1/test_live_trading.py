@@ -304,6 +304,8 @@ class TestGetLiveTradingStatus:
             "equity": "10500",
             "initial_capital": "10000",
             "total_fees": "5.5",
+            "unrealized_pnl": "500",
+            "realized_pnl": "200",
             "positions": {"BTC/USDT": {"amount": "0.1", "avg_entry_price": "50000"}},
             "pending_orders": [],
             "live_orders": [],
@@ -331,6 +333,8 @@ class TestGetLiveTradingStatus:
             assert response.status_code == 200
             data = response.json()
             assert data["data"]["is_running"] is True
+            assert data["data"]["unrealized_pnl"] == 500.0
+            assert data["data"]["realized_pnl"] == 200.0
             assert data["data"]["risk_state"]["circuit_breaker_active"] is False
 
     @pytest.mark.asyncio

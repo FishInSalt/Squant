@@ -214,6 +214,8 @@ class TestGetPaperTradingStatus:
             "equity": "10500",
             "initial_capital": "10000",
             "total_fees": "5.5",
+            "unrealized_pnl": "500",
+            "realized_pnl": "200",
             "positions": {"BTC/USDT": {"amount": "0.1", "avg_entry_price": "50000"}},
             "pending_orders": [],
             "completed_orders_count": 5,
@@ -231,6 +233,8 @@ class TestGetPaperTradingStatus:
             data = response.json()
             assert data["data"]["is_running"] is True
             assert data["data"]["bar_count"] == 100
+            assert data["data"]["unrealized_pnl"] == 500.0
+            assert data["data"]["realized_pnl"] == 200.0
 
     @pytest.mark.asyncio
     async def test_get_status_not_found(self, client: AsyncClient) -> None:
@@ -510,6 +514,8 @@ class TestGetStatusWithTradesAndLogs:
             "equity": "10100",
             "initial_capital": "10000",
             "total_fees": "0.1",
+            "unrealized_pnl": "0",
+            "realized_pnl": "100",
             "positions": {},
             "pending_orders": [],
             "completed_orders_count": 1,
