@@ -46,6 +46,7 @@ services:
       dockerfile: Dockerfile
       target: production
     container_name: squant-backend
+    init: true
     restart: unless-stopped
     env_file:
       - .env

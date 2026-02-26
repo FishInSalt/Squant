@@ -45,6 +45,7 @@ services:
       context: .
       dockerfile: Dockerfile
     container_name: squant-app-test
+    init: true
     environment:
       # 数据库配置
       DATABASE_URL: postgresql+asyncpg://squant_test:squant_test@postgres-test:5432/squant_test
