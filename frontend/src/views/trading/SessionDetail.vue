@@ -684,17 +684,47 @@ async function loadStatus() {
 
     if (!status.value.is_running) {
       stopPolling()
+      // Reload session to get latest DB status
       try {
         const sessionResp = isPaper.value
           ? await getPaperSession(props.id)
           : await getLiveSession(props.id)
         session.value = sessionResp.data
       } catch { /* ignore refresh failure */ }
+
+      // If session is in a recoverable state (interrupted), keep checking
+      // at a lower frequency so we detect auto-recovery without page refresh
+      if (session.value?.status === 'interrupted') {
+        startRecoveryPolling()
+      }
     }
   } catch (error) {
     console.error('Failed to load status:', error)
   }
 }
+
+async function checkRecovery() {
+  try {
+    const sessionResp = isPaper.value
+      ? await getPaperSession(props.id)
+      : await getLiveSession(props.id)
+    session.value = sessionResp.data
+
+    if (session.value?.status === 'running') {
+      // Session recovered — switch back to normal status polling
+      stopRecoveryPolling()
+      await loadStatus()
+      startPolling()
+    } else if (session.value?.status !== 'interrupted') {
+      // Terminal state (error/stopped) — stop checking
+      stopRecoveryPolling()
+    }
+  } catch {
+    // Backend may still be restarting, keep trying
+  }
+}
+
+let recoveryTimer: ReturnType<typeof setInterval> | null = null
 
 function startPolling() {
   if (refreshTimer) return
@@ -705,6 +735,18 @@ function stopPolling() {
   if (refreshTimer) {
     clearInterval(refreshTimer)
     refreshTimer = null
+  }
+}
+
+function startRecoveryPolling() {
+  if (recoveryTimer) return
+  recoveryTimer = setInterval(checkRecovery, 5000)
+}
+
+function stopRecoveryPolling() {
+  if (recoveryTimer) {
+    clearInterval(recoveryTimer)
+    recoveryTimer = null
   }
 }
 
@@ -782,6 +824,9 @@ onMounted(async () => {
     if (status.value?.is_running) {
       startPolling()
     }
+  } else if (session.value?.status === 'interrupted') {
+    // Session interrupted (e.g. backend restarting) — poll for recovery
+    startRecoveryPolling()
   }
   // Start duration timer
   durationTimer = setInterval(() => {
@@ -791,6 +836,7 @@ onMounted(async () => {
 
 onUnmounted(() => {
   stopPolling()
+  stopRecoveryPolling()
   if (durationTimer) {
     clearInterval(durationTimer)
     durationTimer = null
