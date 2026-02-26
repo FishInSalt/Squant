@@ -13,6 +13,7 @@ from squant.infra.database import get_session
 from squant.models.enums import RunStatus
 from squant.schemas.backtest import EquityCurvePoint, TradeRecordResponse
 from squant.schemas.paper_trading import (
+    OpenTradeInfo,
     PaperTradingListItem,
     PaperTradingRunResponse,
     PaperTradingStatusResponse,
@@ -210,6 +211,20 @@ async def get_paper_trading_status(
             for t in status.get("trades", [])
         ]
 
+        open_trade_data = status.get("open_trade")
+        open_trade = (
+            OpenTradeInfo(
+                symbol=open_trade_data["symbol"],
+                side=open_trade_data["side"],
+                entry_time=open_trade_data["entry_time"],
+                entry_price=Decimal(open_trade_data["entry_price"]),
+                amount=Decimal(open_trade_data["amount"]),
+                fees=Decimal(open_trade_data["fees"]),
+            )
+            if open_trade_data
+            else None
+        )
+
         response = PaperTradingStatusResponse(
             run_id=UUID(status["run_id"]),
             symbol=status["symbol"],
@@ -230,6 +245,7 @@ async def get_paper_trading_status(
             completed_orders_count=status["completed_orders_count"],
             trades_count=status["trades_count"],
             trades=trades,
+            open_trade=open_trade,
             logs=status.get("logs", []),
         )
 

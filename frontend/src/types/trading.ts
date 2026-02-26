@@ -197,6 +197,16 @@ export interface PendingOrderInfo {
   created_at?: string
 }
 
+// 当前持仓入场信息（匹配后端 OpenTradeInfo）
+export interface OpenTrade {
+  symbol: string
+  side: 'buy' | 'sell'
+  entry_time: string
+  entry_price: number
+  amount: number
+  fees: number
+}
+
 // 模拟交易实时状态（匹配后端 PaperTradingStatusResponse）
 export interface PaperTradingStatus {
   run_id: string
@@ -218,6 +228,7 @@ export interface PaperTradingStatus {
   completed_orders_count: number
   trades_count: number
   trades: Trade[]
+  open_trade?: OpenTrade
   logs: string[]
 }
 

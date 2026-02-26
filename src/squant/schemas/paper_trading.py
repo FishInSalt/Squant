@@ -95,6 +95,17 @@ class PendingOrderInfo(BaseModel):
     created_at: datetime | None
 
 
+class OpenTradeInfo(BaseModel):
+    """Currently open trade (position entry info for chart markers)."""
+
+    symbol: str
+    side: str
+    entry_time: str
+    entry_price: NumberDecimal
+    amount: NumberDecimal
+    fees: NumberDecimal
+
+
 class PaperTradingStatusResponse(BaseModel):
     """Paper trading status response."""
 
@@ -117,6 +128,7 @@ class PaperTradingStatusResponse(BaseModel):
     completed_orders_count: int
     trades_count: int
     trades: list[TradeRecordResponse] = Field(default_factory=list)
+    open_trade: OpenTradeInfo | None = None
     logs: list[str] = Field(default_factory=list)
 
 

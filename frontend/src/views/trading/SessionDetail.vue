@@ -146,6 +146,7 @@
           :symbol="session.symbol"
           :timeframe="session.timeframe"
           :trades="isPaper ? paperTrades : undefined"
+          :open-trade="isPaper ? paperOpenTrade : undefined"
           :realtime="isRunning && !!status?.is_running"
           height="500px"
         />
@@ -594,6 +595,11 @@ const pendingCount = computed(() => {
 const paperTrades = computed<Trade[]>(() => {
   if (!status.value || !isPaper.value) return []
   return (status.value as PaperTradingStatus).trades || []
+})
+
+const paperOpenTrade = computed(() => {
+  if (!status.value || !isPaper.value) return null
+  return (status.value as PaperTradingStatus).open_trade ?? null
 })
 
 const paperLogs = computed<string[]>(() => {

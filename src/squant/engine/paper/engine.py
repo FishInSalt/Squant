@@ -495,6 +495,18 @@ class PaperTradingEngine:
             for t in self._context.trades
         ]
 
+        open_trade = None
+        if self._context._open_trade:
+            t = self._context._open_trade
+            open_trade = {
+                "symbol": t.symbol,
+                "side": t.side.value,
+                "entry_time": t.entry_time.isoformat(),
+                "entry_price": str(t.entry_price),
+                "amount": str(t.amount),
+                "fees": str(t.fees),
+            }
+
         return {
             "run_id": str(self._run_id),
             "symbol": self._symbol,
@@ -515,5 +527,6 @@ class PaperTradingEngine:
             "completed_orders_count": len(self._context.completed_orders),
             "trades_count": len(self._context.trades),
             "trades": trades,
+            "open_trade": open_trade,
             "logs": self._context.logs,
         }

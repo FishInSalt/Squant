@@ -119,6 +119,7 @@ interface Props {
   symbol: string
   timeframe: string
   trades?: Trade[]
+  openTrade?: { entry_time: string; entry_price: number; amount: number } | null
   realtime?: boolean
   height?: string
 }
@@ -505,7 +506,9 @@ function resetParams(name: string) {
 
 // Trade markers
 function rebuildTradeMarkers() {
-  if (!chart || !props.trades || props.trades.length === 0) {
+  const hasTrades = props.trades && props.trades.length > 0
+  const hasOpenTrade = !!props.openTrade
+  if (!chart || (!hasTrades && !hasOpenTrade)) {
     tradeInfoMap.value = new Map()
     hoveredTrades.value = []
     return
@@ -558,7 +561,7 @@ function rebuildTradeMarkers() {
     newTradeMap.get(candleTs)!.push(info)
   }
 
-  for (const trade of props.trades) {
+  for (const trade of (props.trades ?? [])) {
     const entryTs = new Date(trade.entry_time).getTime()
     if (entryTs >= minTs && entryTs <= maxTs) {
       const snapped = snapTs(entryTs)
@@ -593,6 +596,25 @@ function rebuildTradeMarkers() {
           pnlPct: trade.pnl_pct,
         })
       }
+    }
+  }
+
+  // Open trade: draw buy marker for current position entry
+  if (props.openTrade) {
+    const entryTs = new Date(props.openTrade.entry_time).getTime()
+    if (entryTs >= minTs && entryTs <= maxTs) {
+      const snapped = snapTs(entryTs)
+      overlays.push({
+        name: 'buyMarker',
+        lock: true,
+        points: [{ timestamp: entryTs, value: lowMap.get(snapped) ?? 0 }],
+      })
+      addToMap(snapped, {
+        type: 'buy',
+        price: props.openTrade.entry_price,
+        amount: props.openTrade.amount,
+        time: props.openTrade.entry_time,
+      })
     }
   }
 
@@ -665,13 +687,14 @@ watch(() => props.realtime, (newVal) => {
   }
 })
 
-// Watch trades (only rebuild when length changes)
-watch(() => props.trades?.length, (newLen) => {
-  if (newLen !== lastTradesLength) {
-    lastTradesLength = newLen ?? 0
+// Watch trades count and open trade to rebuild chart markers
+watch(
+  () => [props.trades?.length ?? 0, props.openTrade?.entry_time ?? null] as const,
+  () => {
+    lastTradesLength = props.trades?.length ?? 0
     if (chart) rebuildTradeMarkers()
-  }
-})
+  },
+)
 
 // Resize on sub-pane count change
 watch(computedHeight, () => {

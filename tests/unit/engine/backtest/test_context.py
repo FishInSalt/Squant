@@ -1339,6 +1339,44 @@ class TestRestoreState:
         assert context._open_trade.entry_price == Decimal("45000")
         assert context._open_trade.amount == Decimal("0.5")
 
+    def test_restore_trades_only_contains_closed(self, context: BacktestContext) -> None:
+        """Test that trades list from snapshot only has closed trades.
+
+        open_trade is a separate field in the snapshot (not in trades list),
+        so restore_state receives only closed trades — no filtering needed.
+        """
+        state = {
+            "positions": {
+                "BTC/USDT": {
+                    "amount": "0.5",
+                    "avg_entry_price": "45000",
+                },
+            },
+            "trades": [
+                {
+                    "symbol": "ETH/USDT",
+                    "side": "buy",
+                    "entry_time": "2024-06-01T12:00:00+00:00",
+                    "entry_price": "2000",
+                    "exit_time": "2024-06-01T13:00:00+00:00",
+                    "exit_price": "2100",
+                    "amount": "1.0",
+                    "pnl": "100",
+                    "pnl_pct": "5.0",
+                    "fees": "4.1",
+                },
+            ],
+        }
+        context.restore_state(state)
+
+        # Only the closed trade in _trades
+        assert len(context.trades) == 1
+        assert context.trades[0].symbol == "ETH/USDT"
+        assert context.trades[0].exit_time is not None
+        # Open trade reconstructed from positions (separate from trades)
+        assert context._open_trade is not None
+        assert context._open_trade.symbol == "BTC/USDT"
+
     def test_restore_short_position_creates_sell_open_trade(self, context: BacktestContext) -> None:
         """Test that a short (negative amount) position creates a SELL open trade."""
         state = {

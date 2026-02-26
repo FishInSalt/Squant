@@ -301,6 +301,13 @@ class TestStateSnapshot:
         assert "BTC/USDT" in snapshot["positions"]
         assert Decimal(snapshot["positions"]["BTC/USDT"]["amount"]) == Decimal("0.1")
 
+        # Closed trades list should be empty (position still open)
+        assert len(snapshot["trades"]) == 0
+        # Open trade exposed as separate field for chart buy marker
+        assert snapshot["open_trade"] is not None
+        assert snapshot["open_trade"]["entry_time"] is not None
+        assert snapshot["open_trade"]["entry_price"] is not None
+        assert snapshot["open_trade"]["symbol"] == "BTC/USDT"
 
     @pytest.mark.asyncio
     async def test_state_snapshot_includes_trades_and_logs(self, engine, strategy):

@@ -534,6 +534,7 @@ class TestGetStatusWithTradesAndLogs:
                     "fees": "0.1",
                 }
             ],
+            "open_trade": None,
             "logs": ["[2024-01-01] Buy triggered", "[2024-01-01] Order filled"],
         }
 
