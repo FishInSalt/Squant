@@ -150,26 +150,13 @@ class BackgroundTaskManager:
         if not unhealthy_ids:
             return
 
-        # Capture engine state snapshots BEFORE cleanup so result data is preserved
+        # Capture engine result snapshots BEFORE cleanup so result data is preserved
         engine_states: dict[str, dict] = {}
         for run_id in unhealthy_ids:
             engine = session_manager.get(run_id)
             if engine:
                 try:
-                    state = engine.get_state_snapshot()
-                    engine_states[str(run_id)] = {
-                        "cash": state["cash"],
-                        "equity": state["equity"],
-                        "total_fees": state["total_fees"],
-                        "bar_count": state["bar_count"],
-                        "realized_pnl": state["realized_pnl"],
-                        "unrealized_pnl": state["unrealized_pnl"],
-                        "positions": state["positions"],
-                        "trades": state.get("trades", []),
-                        "completed_orders_count": state["completed_orders_count"],
-                        "trades_count": state["trades_count"],
-                        "logs": list(state.get("logs", [])),
-                    }
+                    engine_states[str(run_id)] = engine.build_result_for_persistence()
                 except Exception as e:
                     logger.error(f"Failed to capture state for session {run_id}: {e}")
 

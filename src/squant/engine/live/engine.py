@@ -659,13 +659,10 @@ class LiveTradingEngine:
                 # Persist result state for crash recovery
                 if self._on_result:
                     try:
-                        result_data = self._context.build_result_snapshot()
-                        result_data["bar_count"] = self._bar_count
+                        result_data = self.build_result_for_persistence()
                         await self._on_result(str(self._run_id), result_data)
                     except Exception as e:
-                        logger.warning(
-                            f"Result persist callback failed for {self._run_id}: {e}"
-                        )
+                        logger.warning(f"Result persist callback failed for {self._run_id}: {e}")
 
                 logger.debug(
                     f"Processed bar {self._bar_count} at {bar.time}, equity={self._context.equity}"
@@ -1280,78 +1277,62 @@ class LiveTradingEngine:
         return len(self._pending_risk_triggers) > 0
 
     def get_state_snapshot(self) -> dict[str, Any]:
-        """Get current engine state snapshot."""
-        positions = {}
-        unrealized_pnl_total = Decimal("0")
-        for symbol, pos in self._context.positions.items():
-            if pos.is_open:
-                price = self._context._last_prices.get(symbol)
-                pos_pnl = None
-                if price is not None:
-                    if pos.amount > 0:
-                        pos_pnl = (price - pos.avg_entry_price) * pos.amount
-                    else:
-                        pos_pnl = (pos.avg_entry_price - price) * abs(pos.amount)
-                    unrealized_pnl_total += pos_pnl
-                positions[symbol] = {
-                    "amount": str(pos.amount),
-                    "avg_entry_price": str(pos.avg_entry_price),
-                    "current_price": str(price) if price is not None else None,
-                    "unrealized_pnl": str(pos_pnl) if pos_pnl is not None else None,
-                }
+        """Get current engine state snapshot for API responses.
 
-        pending_orders = []
-        for order in self._context.pending_orders:
-            pending_orders.append(
-                {
-                    "id": order.id,
-                    "symbol": order.symbol,
-                    "side": order.side.value,
-                    "type": order.type.value,
-                    "amount": str(order.amount),
-                    "price": str(order.price) if order.price else None,
-                    "status": order.status.value,
-                    "created_at": order.created_at.isoformat() if order.created_at else None,
-                }
-            )
+        Extends build_result_for_persistence() with API-only fields
+        (run metadata, pending orders, live orders) that are not stored in DB.
+        """
+        result = self.build_result_for_persistence()
 
-        # Get live order details
-        live_orders = []
-        for _oid, lo in self._live_orders.items():
-            if not lo.is_complete:
-                live_orders.append(
-                    {
-                        "internal_id": lo.internal_id,
-                        "exchange_id": lo.exchange_order_id,
-                        "symbol": lo.symbol,
-                        "side": lo.side.value,
-                        "amount": str(lo.amount),
-                        "filled": str(lo.filled_amount),
-                        "status": lo.status.value,
-                    }
-                )
+        # API-only: run metadata
+        result["run_id"] = str(self._run_id)
+        result["symbol"] = self._symbol
+        result["timeframe"] = self._timeframe
+        result["is_running"] = self._is_running
+        result["started_at"] = self._started_at.isoformat() if self._started_at else None
+        result["stopped_at"] = self._stopped_at.isoformat() if self._stopped_at else None
+        result["error_message"] = self._error_message
+        result["initial_capital"] = str(self._context.initial_capital)
 
-        realized_pnl = sum((t.pnl for t in self._context.trades), Decimal("0"))
+        # API-only: pending orders (transient, not persisted)
+        result["pending_orders"] = [
+            {
+                "id": order.id,
+                "symbol": order.symbol,
+                "side": order.side.value,
+                "type": order.type.value,
+                "amount": str(order.amount),
+                "price": str(order.price) if order.price else None,
+                "status": order.status.value,
+                "created_at": order.created_at.isoformat() if order.created_at else None,
+            }
+            for order in self._context.pending_orders
+        ]
 
-        return {
-            "run_id": str(self._run_id),
-            "symbol": self._symbol,
-            "timeframe": self._timeframe,
-            "is_running": self._is_running,
-            "started_at": self._started_at.isoformat() if self._started_at else None,
-            "stopped_at": self._stopped_at.isoformat() if self._stopped_at else None,
-            "error_message": self._error_message,
-            "bar_count": self._bar_count,
-            "cash": str(self._context.cash),
-            "equity": str(self._context.equity),
-            "initial_capital": str(self._context.initial_capital),
-            "total_fees": str(self._context.total_fees),
-            "unrealized_pnl": str(unrealized_pnl_total),
-            "realized_pnl": str(realized_pnl),
-            "positions": positions,
-            "pending_orders": pending_orders,
-            "live_orders": live_orders,
-            "completed_orders_count": len(self._context.completed_orders),
-            "trades_count": len(self._context.trades),
-            "risk_state": self._risk_manager.get_state_summary(),
-        }
+        # API-only: live exchange orders (transient, not persisted)
+        result["live_orders"] = [
+            {
+                "internal_id": lo.internal_id,
+                "exchange_id": lo.exchange_order_id,
+                "symbol": lo.symbol,
+                "side": lo.side.value,
+                "amount": str(lo.amount),
+                "filled": str(lo.filled_amount),
+                "status": lo.status.value,
+            }
+            for _oid, lo in self._live_orders.items()
+            if not lo.is_complete
+        ]
+
+        return result
+
+    def build_result_for_persistence(self) -> dict[str, Any]:
+        """Build result dict for DB persistence (StrategyRun.result JSONB).
+
+        Single source of truth for result snapshots. Uses context.build_result_snapshot()
+        and supplements with engine-level fields.
+        """
+        result = self._context.build_result_snapshot()
+        result["bar_count"] = self._bar_count
+        result["risk_state"] = self._risk_manager.get_state_summary()
+        return result

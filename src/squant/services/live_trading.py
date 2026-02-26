@@ -643,20 +643,8 @@ class LiveTradingService:
         result_data = None
 
         if engine:
-            # Capture final state before stopping
-            final_state = engine.get_state_snapshot()
-            result_data = {
-                "cash": final_state["cash"],
-                "equity": final_state["equity"],
-                "total_fees": final_state["total_fees"],
-                "bar_count": final_state["bar_count"],
-                "realized_pnl": final_state["realized_pnl"],
-                "unrealized_pnl": final_state["unrealized_pnl"],
-                "positions": final_state["positions"],
-                "completed_orders_count": final_state["completed_orders_count"],
-                "trades_count": final_state["trades_count"],
-                "risk_state": final_state.get("risk_state"),
-            }
+            # Capture final result using single source of truth
+            result_data = engine.build_result_for_persistence()
 
             # Persist any pending snapshots
             await self._persist_snapshots(str(run_id), engine.get_pending_snapshots())
@@ -844,6 +832,9 @@ class LiveTradingService:
                     "live_orders": [],
                     "completed_orders_count": run.result.get("completed_orders_count", 0),
                     "trades_count": run.result.get("trades_count", 0),
+                    "trades": run.result.get("trades", []),
+                    "open_trade": run.result.get("open_trade"),
+                    "logs": run.result.get("logs", []),
                     "risk_state": run.result.get("risk_state"),
                 }
             )

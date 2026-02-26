@@ -323,7 +323,7 @@ class TestHealthCheck:
 
         unhealthy_id = uuid4()
         mock_engine = MagicMock()
-        mock_engine.get_state_snapshot.return_value = {
+        mock_engine.build_result_for_persistence.return_value = {
             "cash": "10000",
             "equity": "10500",
             "total_fees": "50",
@@ -332,6 +332,15 @@ class TestHealthCheck:
             "unrealized_pnl": "0",
             "positions": {},
             "trades": [],
+            "open_trade": {
+                "symbol": "BTC/USDT",
+                "side": "buy",
+                "entry_time": "2024-06-01T10:00:00+00:00",
+                "entry_price": "50000",
+                "amount": "0.1",
+                "fees": "5.0",
+                "partial_exit_pnl": "0",
+            },
             "completed_orders_count": 5,
             "trades_count": 3,
             "logs": [],
@@ -363,9 +372,13 @@ class TestHealthCheck:
             mock_ctx.return_value.__aexit__ = AsyncMock(return_value=False)
             await manager._health_check()
 
-        # Should have captured engine state
-        mock_engine.get_state_snapshot.assert_called_once()
+        # Should have captured engine state via build_result_for_persistence
+        mock_engine.build_result_for_persistence.assert_called_once()
         # Should have passed result to mark_session_interrupted
         mock_service.mark_session_interrupted.assert_called_once()
         call_kwargs = mock_service.mark_session_interrupted.call_args
-        assert call_kwargs[1].get("result") or (len(call_kwargs[0]) > 2 and call_kwargs[0][2])
+        result = call_kwargs[1].get("result") or (call_kwargs[0][2] if len(call_kwargs[0]) > 2 else None)
+        assert result is not None
+        # Verify open_trade is included in the captured state
+        assert result["open_trade"] is not None
+        assert result["open_trade"]["entry_time"] == "2024-06-01T10:00:00+00:00"

@@ -1041,6 +1041,9 @@ class TestStateSnapshot:
         assert Decimal(snapshot["equity"]) == Decimal("10000")
         assert snapshot["positions"] == {}
         assert snapshot["pending_orders"] == []
+        assert snapshot["trades"] == []
+        assert snapshot["open_trade"] is None
+        assert "logs" in snapshot
         assert "risk_state" in snapshot
 
     @pytest.mark.asyncio

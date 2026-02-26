@@ -97,32 +97,48 @@ def mock_engine():
     engine.start = AsyncMock()
     engine.stop = AsyncMock()
     engine.get_pending_snapshots = MagicMock(return_value=[])
+    # Result data for DB persistence (used by stop() and health check)
+    result_data = {
+        "cash": "9000",
+        "equity": "10500",
+        "total_fees": "15.5",
+        "bar_count": 100,
+        "realized_pnl": "500",
+        "unrealized_pnl": "200",
+        "positions": {"BTC/USDT": {"amount": "0.1", "avg_entry_price": "50000"}},
+        "trades": [
+            {
+                "symbol": "BTC/USDT",
+                "side": "buy",
+                "entry_price": "50000",
+                "exit_price": "51000",
+                "amount": "0.1",
+                "pnl": "100",
+            }
+        ],
+        "open_trade": {
+            "symbol": "BTC/USDT",
+            "side": "buy",
+            "entry_time": "2024-06-01T10:00:00+00:00",
+            "entry_price": "50000",
+            "amount": "0.1",
+            "fees": "5.0",
+            "partial_exit_pnl": "0",
+        },
+        "completed_orders_count": 5,
+        "trades_count": 3,
+        "logs": ["Log entry 1", "Log entry 2"],
+    }
+    engine.build_result_for_persistence = MagicMock(return_value=result_data)
+    # API response snapshot (superset of result_data with extra fields)
     engine.get_state_snapshot = MagicMock(
         return_value={
             "run_id": str(engine.run_id),
             "symbol": "BTC/USDT",
             "timeframe": "1m",
             "is_running": True,
-            "bar_count": 100,
-            "equity": "10500",
-            "cash": "9000",
-            "total_fees": "15.5",
-            "realized_pnl": "500",
-            "unrealized_pnl": "200",
-            "positions": {"BTC/USDT": {"amount": "0.1", "avg_entry_price": "50000"}},
-            "trades": [
-                {
-                    "symbol": "BTC/USDT",
-                    "side": "buy",
-                    "entry_price": "50000",
-                    "exit_price": "51000",
-                    "amount": "0.1",
-                    "pnl": "100",
-                }
-            ],
-            "completed_orders_count": 5,
-            "trades_count": 3,
-            "logs": ["Log entry 1", "Log entry 2"],
+            "initial_capital": "10000",
+            **result_data,
         }
     )
     return engine
@@ -689,6 +705,10 @@ class TestPaperTradingService:
             assert result_data["completed_orders_count"] == 5
             assert len(result_data["trades"]) == 1
             assert len(result_data["logs"]) == 2
+            # Verify open_trade is preserved in result snapshot
+            assert result_data["open_trade"] is not None
+            assert result_data["open_trade"]["entry_time"] == "2024-06-01T10:00:00+00:00"
+            assert result_data["open_trade"]["entry_price"] == "50000"
 
     @pytest.mark.asyncio
     async def test_stop_for_shutdown_marks_interrupted(self, mock_session, mock_run, mock_engine):

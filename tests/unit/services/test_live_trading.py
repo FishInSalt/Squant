@@ -1382,20 +1382,36 @@ class TestStopSavesResult:
         mock_engine.error_message = None
         mock_engine.get_pending_snapshots.return_value = []
         mock_engine.stop = AsyncMock()
-        mock_engine.get_state_snapshot.return_value = {
-            "run_id": str(run_id),
-            "symbol": "BTC/USDT",
-            "timeframe": "1m",
-            "is_running": True,
-            "bar_count": 50,
+        mock_engine.build_result_for_persistence.return_value = {
             "cash": "8500",
             "equity": "10200",
             "total_fees": "25.0",
+            "bar_count": 50,
             "realized_pnl": "400",
             "unrealized_pnl": "100",
             "positions": {"BTC/USDT": {"amount": "0.1"}},
+            "trades": [
+                {
+                    "symbol": "BTC/USDT",
+                    "side": "buy",
+                    "entry_price": "50000",
+                    "exit_price": "51000",
+                    "amount": "0.1",
+                    "pnl": "100",
+                }
+            ],
+            "open_trade": {
+                "symbol": "BTC/USDT",
+                "side": "buy",
+                "entry_time": "2024-06-01T10:00:00+00:00",
+                "entry_price": "50000",
+                "amount": "0.1",
+                "fees": "5.0",
+                "partial_exit_pnl": "0",
+            },
             "completed_orders_count": 8,
             "trades_count": 4,
+            "logs": ["Live log entry"],
             "risk_state": {"is_halted": False},
         }
 
@@ -1432,6 +1448,11 @@ class TestStopSavesResult:
                         assert result["equity"] == "10200"
                         assert result["trades_count"] == 4
                         assert result["risk_state"] == {"is_halted": False}
+                        # Verify open_trade, trades, and logs are preserved
+                        assert result["open_trade"] is not None
+                        assert result["open_trade"]["entry_time"] == "2024-06-01T10:00:00+00:00"
+                        assert len(result["trades"]) == 1
+                        assert len(result["logs"]) == 1
 
 
 class TestGetStatusFromResult:
