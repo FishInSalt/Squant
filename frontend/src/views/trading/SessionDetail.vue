@@ -465,6 +465,7 @@ import {
   emergencyClosePositions,
   getLiveEquityCurve,
 } from '@/api/live'
+import { useWebSocketStore } from '@/stores/websocket'
 import { useNotification } from '@/composables/useNotification'
 import { confirmStopLive, confirmEmergencyClose, type PositionRow } from '@/composables/useTradingConfirm'
 import type {
@@ -486,6 +487,7 @@ const props = defineProps<{
 }>()
 
 const router = useRouter()
+const wsStore = useWebSocketStore()
 const { toastSuccess, toastError, confirmDanger } = useNotification()
 
 const loading = ref(true)
@@ -703,6 +705,11 @@ async function loadStatus() {
       if (session.value?.status === 'interrupted') {
         startRecoveryPolling()
       }
+    } else if (!wsStore.connected) {
+      // Defense-in-depth: session is running but WebSocket disconnected
+      // (e.g., after backend restart with graceful close code).
+      // Trigger immediate reconnect so real-time data resumes promptly.
+      wsStore.reconnectNow()
     }
   } catch (error) {
     console.error('Failed to load status:', error)

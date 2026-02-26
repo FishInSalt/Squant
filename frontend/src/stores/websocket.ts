@@ -179,12 +179,9 @@ export const useWebSocketStore = defineStore('websocket', () => {
       connecting.value = false
       stopHeartbeat()
 
-      // 1000 是正常关闭，1001 是页面离开
-      if (event.code === 1000 || event.code === 1001) {
-        console.info(`WebSocket closed normally (code ${event.code})`)
-        return
-      }
-
+      // Always reconnect on server-initiated close.
+      // User-initiated disconnect() nulls onclose before calling socket.close(),
+      // so this handler only fires for server-side closures (restarts, errors, etc).
       scheduleReconnect()
     }
 
