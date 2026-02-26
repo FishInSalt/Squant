@@ -1340,7 +1340,7 @@ class TestRestoreState:
         assert context._open_trade.amount == Decimal("0.5")
 
     def test_restore_open_trade_preserves_entry_time(self, context: BacktestContext) -> None:
-        """Test that open_trade field preserves original entry_time on restore."""
+        """Test that open_trade field preserves entry_time and partial_exit_pnl."""
         state = {
             "positions": {
                 "BTC/USDT": {
@@ -1355,6 +1355,7 @@ class TestRestoreState:
                 "entry_price": "45000",
                 "amount": "0.5",
                 "fees": "4.5",
+                "partial_exit_pnl": "75.25",
             },
         }
         context.restore_state(state)
@@ -1364,6 +1365,7 @@ class TestRestoreState:
         assert context._open_trade.entry_time == datetime(2024, 6, 1, 14, 30, tzinfo=UTC)
         assert context._open_trade.entry_price == Decimal("45000")
         assert context._open_trade.fees == Decimal("4.5")
+        assert context._partial_exit_pnl == Decimal("75.25")
 
     def test_restore_short_position_creates_sell_open_trade(self, context: BacktestContext) -> None:
         """Test that a short (negative amount) position creates a SELL open trade."""
@@ -1530,6 +1532,7 @@ class TestBuildResultSnapshot:
             amount=Decimal("0.2"),
             fees=Decimal("9.0"),
         )
+        context._partial_exit_pnl = Decimal("150.5")  # from a prior partial exit
         context._trades.append(TradeRecord(
             symbol="ETH/USDT",
             side=OrderSide.BUY,
@@ -1566,10 +1569,11 @@ class TestBuildResultSnapshot:
         assert new_ctx._last_prices["BTC/USDT"] == Decimal("46000")
         assert len(new_ctx.trades) == 1
         assert new_ctx.trades[0].pnl == Decimal("100")
-        # Open trade restored with original entry_time
+        # Open trade restored with original entry_time and partial exit PnL
         assert new_ctx._open_trade is not None
         assert new_ctx._open_trade.entry_time == datetime(2024, 6, 1, 10, 0, 0, tzinfo=UTC)
         assert new_ctx._open_trade.fees == Decimal("9.0")
+        assert new_ctx._partial_exit_pnl == Decimal("150.5")
         # Logs restored
         assert len(new_ctx.logs) == 2
         assert "Test trade executed" in new_ctx.logs[0]

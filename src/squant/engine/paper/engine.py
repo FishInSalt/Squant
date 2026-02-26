@@ -505,6 +505,7 @@ class PaperTradingEngine:
                 "entry_price": str(t.entry_price),
                 "amount": str(t.amount),
                 "fees": str(t.fees),
+                "partial_exit_pnl": str(self._context._partial_exit_pnl),
             }
 
         return {

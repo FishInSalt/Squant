@@ -764,6 +764,7 @@ class BacktestContext:
                 "entry_price": str(t.entry_price),
                 "amount": str(t.amount),
                 "fees": str(t.fees),
+                "partial_exit_pnl": str(self._partial_exit_pnl),
             }
 
         return {
@@ -853,6 +854,8 @@ class BacktestContext:
                 amount=Decimal(str(ot["amount"])),
                 fees=Decimal(str(ot["fees"])),
             )
+            if ot.get("partial_exit_pnl"):
+                self._partial_exit_pnl = Decimal(str(ot["partial_exit_pnl"]))
         else:
             # Fallback: rebuild from positions (no entry_time available)
             for symbol, pos in self._positions.items():
