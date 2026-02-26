@@ -109,6 +109,15 @@ kill_process_group() {
     kill -"$signal" -- -"$pgid" 2>/dev/null || true
 }
 
+# Check if process group has any non-zombie processes alive
+is_group_alive() {
+    local pgid="$1"
+    # Get process states for the group; filter out zombies (Z)
+    local alive
+    alive=$(ps -o stat= -g "$pgid" 2>/dev/null | grep -v '^Z' || true)
+    [ -n "$alive" ]
+}
+
 # Wait for service to be ready via health check
 wait_for_ready() {
     local max_attempts=$(( READY_TIMEOUT * 2 ))  # 0.5s intervals
@@ -184,7 +193,7 @@ cmd_start() {
         --host "$HOST" \
         --port "$PORT" \
         --reload \
-        >> "$LOG_FILE" 2>&1 &
+        < /dev/null >> "$LOG_FILE" 2>&1 &
 
     local new_pid=$!
     # With setsid, the new PID is also the PGID
@@ -236,10 +245,10 @@ cmd_stop() {
     log_info "Sending SIGTERM to process group $pgid..."
     kill_process_group "$pgid" TERM
 
-    # Wait for graceful shutdown
+    # Wait for graceful shutdown (ignore zombie processes)
     local timeout=$GRACEFUL_TIMEOUT
     while [ $timeout -gt 0 ]; do
-        if ! kill -0 -- -"$pgid" 2>/dev/null; then
+        if ! is_group_alive "$pgid"; then
             break
         fi
         sleep 1
@@ -247,7 +256,7 @@ cmd_stop() {
     done
 
     # Phase 2: Force kill if still running
-    if kill -0 -- -"$pgid" 2>/dev/null; then
+    if is_group_alive "$pgid"; then
         log_warn "Process group did not stop within ${GRACEFUL_TIMEOUT}s, force killing..."
         kill_process_group "$pgid" 9
         sleep 1
