@@ -14,9 +14,9 @@ from typing import Any
 from uuid import UUID
 
 from squant.engine.backtest.context import BacktestContext
-from squant.engine.backtest.matching import MatchingEngine
 from squant.engine.backtest.strategy_base import Strategy
-from squant.engine.backtest.types import Bar, EquitySnapshot
+from squant.engine.backtest.types import Bar, EquitySnapshot, OrderType
+from squant.engine.paper.matching import PaperMatchingEngine
 from squant.engine.resource_limits import ResourceLimitExceededError, resource_limiter
 from squant.infra.exchange.okx.ws_types import WSCandle
 
@@ -95,8 +95,8 @@ class PaperTradingEngine:
             max_logs=settings.paper_max_logs,
         )
 
-        # Initialize matching engine (reused from backtest)
-        self._matching_engine = MatchingEngine(
+        # Tick-level matching engine (paper-specific, not bar-level backtest engine)
+        self._matching_engine = PaperMatchingEngine(
             commission_rate=commission_rate,
             slippage=slippage,
         )
@@ -269,24 +269,27 @@ class PaperTradingEngine:
         self._stopped_at = datetime.now(UTC)
 
     async def process_candle(self, candle: WSCandle) -> None:
-        """Process a WebSocket candle update.
+        """Process a WebSocket candle update (tick-level matching).
 
-        Only processes closed candles. Execution flow:
-        1. Match pending orders against new bar
-        2. Process fills
-        3. Update current bar
-        4. Add to history
-        5. Call strategy.on_bar()
-        6. Record equity snapshot
+        Every candle update (closed or not) triggers order matching against
+        the current price. Strategy on_bar() is only called on closed candles.
+
+        For each candle update (closed or unclosed):
+          1. Fill new market orders immediately at candle.close
+          2. Check pending limit orders against candle.close
+          3. Move completed orders
+
+        Additionally, when is_closed=True (completed bar):
+          4. Set current bar and add to history
+          5. Record equity snapshot
+          6. Persist snapshot
+          7. Call strategy.on_bar()
+          8. Persist result state
 
         Args:
             candle: WebSocket candle data.
         """
         if not self._is_running:
-            return
-
-        # Only process closed candles
-        if not candle.is_closed:
             return
 
         # Verify symbol matches
@@ -300,34 +303,30 @@ class PaperTradingEngine:
                 # Update last activity timestamp
                 self._last_active_at = datetime.now(UTC)
 
-                # Convert WSCandle to Bar
-                bar = self._candle_to_bar(candle)
+                current_price = candle.close
+                timestamp = candle.timestamp
 
-                # 1. Match pending orders
-                pending = self._context._get_pending_orders()
-                fills = self._matching_engine.process_bar(bar, pending)
-
-                # 2. Process fills (TRD-025#3: insufficient cash → log, don't crash)
-                for fill in fills:
-                    try:
-                        self._context._process_fill(fill)
-                    except ValueError as e:
-                        logger.warning(f"Fill rejected in engine {self._run_id}: {e}")
-                        self._context.log(f"Order fill rejected: {e}")
+                # 1-2. Fill new orders and match pending limits at current price
+                self._fill_new_orders(current_price, timestamp)
 
                 # 3. Move completed orders
                 self._context._move_completed_orders()
 
-                # 4. Update current bar
-                self._context._set_current_bar(bar)
+                # Only process bar-level events on closed candles
+                if not candle.is_closed:
+                    return
 
-                # 5. Add to history (for strategy lookback)
+                # Convert WSCandle to Bar
+                bar = self._candle_to_bar(candle)
+
+                # 4. Update current bar and add to history
+                self._context._set_current_bar(bar)
                 self._context._add_bar_to_history(bar)
 
-                # 6. Record equity snapshot (before strategy, consistent with live engine P0-1)
+                # 5. Record equity snapshot (before strategy, consistent with live engine P0-1)
                 self._context._record_equity_snapshot(bar.time)
 
-                # Persist snapshot: try synchronous callback first, fall back to batch
+                # 6. Persist snapshot: try synchronous callback first, fall back to batch
                 if self._context.equity_curve:
                     latest_snapshot = self._context.equity_curve[-1]
                     persisted = False
@@ -365,7 +364,7 @@ class PaperTradingEngine:
 
                 self._bar_count += 1
 
-                # Persist result state for crash recovery
+                # 8. Persist result state for crash recovery
                 if self._on_result:
                     try:
                         result_data = self.build_result_for_persistence()
@@ -390,6 +389,47 @@ class PaperTradingEngine:
                 if self._is_running:
                     self._stop_impl()
                 raise
+
+    def _fill_new_orders(self, current_price: Decimal, timestamp: datetime) -> None:
+        """Fill new market orders immediately and check limit orders.
+
+        Iterates over all pending orders:
+        - Market orders are filled immediately at current_price (with slippage)
+        - Limit orders are checked against current_price for triggering
+
+        Args:
+            current_price: Current market price (candle close).
+            timestamp: Current timestamp for fills.
+        """
+        pending = self._context._get_pending_orders()
+        if not pending:
+            return
+
+        # Separate market and limit orders for processing
+        limit_orders = []
+        for order in pending:
+            if order.type == OrderType.MARKET:
+                fill = self._matching_engine.fill_market_order(order, current_price, timestamp)
+                if fill:
+                    try:
+                        self._context._process_fill(fill)
+                    except ValueError as e:
+                        logger.warning(f"Fill rejected in engine {self._run_id}: {e}")
+                        self._context.log(f"Order fill rejected: {e}")
+            elif order.type == OrderType.LIMIT:
+                limit_orders.append(order)
+
+        # Match limit orders
+        if limit_orders:
+            fills = self._matching_engine.match_pending_limits(
+                limit_orders, current_price, timestamp
+            )
+            for fill in fills:
+                try:
+                    self._context._process_fill(fill)
+                except ValueError as e:
+                    logger.warning(f"Fill rejected in engine {self._run_id}: {e}")
+                    self._context.log(f"Order fill rejected: {e}")
 
     def _candle_to_bar(self, candle: WSCandle) -> Bar:
         """Convert WSCandle to Bar.
