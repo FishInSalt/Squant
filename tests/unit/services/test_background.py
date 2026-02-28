@@ -254,7 +254,7 @@ class TestHealthCheck:
         unhealthy_id = uuid4()
         mock_session_manager = AsyncMock()
         mock_session_manager.check_health = AsyncMock(return_value=[unhealthy_id])
-        mock_session_manager.cleanup_stale_sessions = AsyncMock(return_value=[unhealthy_id])
+        mock_session_manager.cleanup_stale_sessions = AsyncMock(return_value=([unhealthy_id], []))
         mock_session_manager.get = MagicMock(return_value=None)
 
         mock_settings = MagicMock()
@@ -288,7 +288,7 @@ class TestHealthCheck:
         cleaned_ids = [uuid4(), uuid4()]
         mock_session_manager = AsyncMock()
         mock_session_manager.check_health = AsyncMock(return_value=cleaned_ids)
-        mock_session_manager.cleanup_stale_sessions = AsyncMock(return_value=cleaned_ids)
+        mock_session_manager.cleanup_stale_sessions = AsyncMock(return_value=(cleaned_ids, []))
         mock_session_manager.get = MagicMock(return_value=None)
 
         mock_settings = MagicMock()
@@ -348,7 +348,7 @@ class TestHealthCheck:
 
         mock_session_manager = AsyncMock()
         mock_session_manager.check_health = AsyncMock(return_value=[unhealthy_id])
-        mock_session_manager.cleanup_stale_sessions = AsyncMock(return_value=[unhealthy_id])
+        mock_session_manager.cleanup_stale_sessions = AsyncMock(return_value=([unhealthy_id], []))
         mock_session_manager.get = MagicMock(return_value=mock_engine)
 
         mock_settings = MagicMock()

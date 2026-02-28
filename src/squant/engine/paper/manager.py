@@ -222,18 +222,56 @@ class SessionManager:
                         f"Engine {run_id} reached {error_count} consecutive dispatch errors, "
                         f"stopping automatically"
                     )
+                    error_msg = f"Auto-stopped: {error_count} consecutive dispatch errors"
                     engine = self._sessions.get(run_id)
+                    result_data = None
+                    pending_snapshots: list = []
                     if engine:
                         try:
-                            await engine.stop(
-                                error=f"Auto-stopped: {error_count} consecutive dispatch errors"
-                            )
+                            await engine.stop(error=error_msg)
                         except Exception as stop_error:
                             logger.exception(f"Error auto-stopping engine {run_id}: {stop_error}")
+                        # Capture state before unregistration
+                        try:
+                            result_data = engine.build_result_for_persistence()
+                            pending_snapshots = engine.get_pending_snapshots()
+                        except Exception:
+                            logger.exception(f"Failed to capture state for {run_id}")
+
                     # Unregister stopped engine to prevent resource leak.
                     # unregister_and_check_subscription acquires its own lock.
-                    await self.unregister_and_check_subscription(run_id)
+                    key_to_unsub = await self.unregister_and_check_subscription(run_id)
                     self._consecutive_errors.pop(run_id, None)
+
+                    # Persist state and update DB (same pattern as _health_check)
+                    try:
+                        from squant.infra.database import get_session_context
+                        from squant.services.paper_trading import PaperTradingService
+
+                        async with get_session_context() as db_session:
+                            service = PaperTradingService(db_session)
+                            if pending_snapshots:
+                                await service._persist_snapshots(str(run_id), pending_snapshots)
+                            await service.mark_session_interrupted(
+                                run_id,
+                                error_message=error_msg,
+                                result=result_data,
+                            )
+                    except Exception as db_err:
+                        logger.error(
+                            f"Failed to update DB for auto-stopped session {run_id}: {db_err}"
+                        )
+
+                    # Unsubscribe if this was the last session for the key
+                    if key_to_unsub:
+                        try:
+                            from squant.websocket.manager import get_stream_manager
+
+                            stream_manager = get_stream_manager()
+                            await stream_manager.unsubscribe_candles(*key_to_unsub)
+                            logger.info(f"Unsubscribed from candles {key_to_unsub} after auto-stop")
+                        except Exception as unsub_err:
+                            logger.warning(f"Failed to unsubscribe after auto-stop: {unsub_err}")
 
     async def stop_all(self, reason: str = "shutdown") -> None:
         """Stop all active sessions.
@@ -293,25 +331,30 @@ class SessionManager:
                     unhealthy.append(run_id)
         return unhealthy
 
-    async def cleanup_stale_sessions(self, timeout_seconds: int = 300) -> list[UUID]:
+    async def cleanup_stale_sessions(
+        self, timeout_seconds: int = 300
+    ) -> tuple[list[UUID], list[tuple[str, str]]]:
         """Stop and unregister stale sessions.
 
         Args:
             timeout_seconds: Maximum seconds since last activity.
 
         Returns:
-            List of run_ids that were actually cleaned up.
+            Tuple of (cleaned run_ids, subscription keys to unsubscribe).
         """
         unhealthy = await self.check_health(timeout_seconds)
         cleaned: list[UUID] = []
+        keys_to_unsub: list[tuple[str, str]] = []
         for run_id in unhealthy:
             engine = self._sessions.get(run_id)
             if engine:
                 logger.warning(f"Cleaning up stale session {run_id}")
                 await engine.stop(error="Session timeout: no activity detected")
-                await self.unregister(run_id)
+                key = await self.unregister_and_check_subscription(run_id)
+                if key:
+                    keys_to_unsub.append(key)
                 cleaned.append(run_id)
-        return cleaned
+        return cleaned, keys_to_unsub
 
 
 # Global session manager instance

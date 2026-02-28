@@ -224,9 +224,7 @@ class LiveEquityCurveRepository:
         self.session.add_all(instances)
         await self.session.flush()
 
-    async def get_by_run(
-        self, run_id: str, since: datetime | None = None
-    ) -> list[EquityCurve]:
+    async def get_by_run(self, run_id: str, since: datetime | None = None) -> list[EquityCurve]:
         """Get equity curve for a run.
 
         Args:
@@ -944,9 +942,7 @@ class LiveTradingService:
             raise SessionNotFoundError(run_id)
         return run
 
-    async def get_equity_curve(
-        self, run_id: UUID, since: datetime | None = None
-    ) -> list:
+    async def get_equity_curve(self, run_id: UUID, since: datetime | None = None) -> list:
         """Get equity curve for a live trading run.
 
         Merges persisted snapshots from DB with pending (not-yet-persisted)
@@ -1025,6 +1021,7 @@ class LiveTradingService:
                 "cash": snapshot.cash,
                 "position_value": snapshot.position_value,
                 "unrealized_pnl": snapshot.unrealized_pnl,
+                "benchmark_equity": snapshot.benchmark_equity,
             }
             for snapshot in snapshots
         ]

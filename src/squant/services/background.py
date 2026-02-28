@@ -173,14 +173,12 @@ class BackgroundTaskManager:
                                 f"before cleanup"
                             )
                     except Exception as e:
-                        logger.error(
-                            f"Failed to persist snapshots for stale session {run_id}: {e}"
-                        )
+                        logger.error(f"Failed to persist snapshots for stale session {run_id}: {e}")
         except Exception as e:
             logger.error(f"Failed to open DB session for pre-cleanup persistence: {e}")
 
-        # cleanup_stale_sessions returns actual cleaned IDs (avoids double check_health race)
-        cleaned_ids = await session_manager.cleanup_stale_sessions(
+        # cleanup_stale_sessions returns actual cleaned IDs and subscription keys to release
+        cleaned_ids, keys_to_unsub = await session_manager.cleanup_stale_sessions(
             settings.paper_session_timeout_seconds
         )
         if cleaned_ids:
@@ -197,11 +195,20 @@ class BackgroundTaskManager:
                                 result=engine_states.get(str(run_id)),
                             )
                         except Exception as e:
-                            logger.error(
-                                f"Failed to update DB for stale session {run_id}: {e}"
-                            )
+                            logger.error(f"Failed to update DB for stale session {run_id}: {e}")
             except Exception as e:
                 logger.error(f"Failed to open DB session for stale session DB update: {e}")
+
+            # Unsubscribe from candles for keys with no remaining sessions
+            for key in keys_to_unsub:
+                try:
+                    from squant.websocket.manager import get_stream_manager
+
+                    stream_manager = get_stream_manager()
+                    await stream_manager.unsubscribe_candles(*key)
+                    logger.info(f"Unsubscribed from candles {key} after stale session cleanup")
+                except Exception as e:
+                    logger.warning(f"Failed to unsubscribe candles {key}: {e}")
 
 
 # Global instance

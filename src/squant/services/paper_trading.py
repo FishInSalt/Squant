@@ -522,6 +522,7 @@ class PaperTradingService:
                             "cash": snapshot.cash,
                             "position_value": snapshot.position_value,
                             "unrealized_pnl": snapshot.unrealized_pnl,
+                            "benchmark_equity": snapshot.benchmark_equity,
                         }
                     ]
                 )
@@ -1238,6 +1239,7 @@ class PaperTradingService:
                 "cash": snapshot.cash,
                 "position_value": snapshot.position_value,
                 "unrealized_pnl": snapshot.unrealized_pnl,
+                "benchmark_equity": snapshot.benchmark_equity,
             }
             for snapshot in snapshots
         ]

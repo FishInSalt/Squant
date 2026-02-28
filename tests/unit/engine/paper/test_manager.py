@@ -324,9 +324,10 @@ class TestHealthCheck:
         await session_manager.register(healthy_engine)
         await session_manager.register(stale_engine)
 
-        cleaned = await session_manager.cleanup_stale_sessions(timeout_seconds=300)
+        cleaned, keys_to_unsub = await session_manager.cleanup_stale_sessions(timeout_seconds=300)
 
         assert cleaned == [stale_engine.run_id]
+        assert keys_to_unsub == [("ETH/USDT", "1m")]
         assert session_manager.session_count == 1
         assert session_manager.get(healthy_engine.run_id) is not None
         assert session_manager.get(stale_engine.run_id) is None
@@ -343,9 +344,10 @@ class TestHealthCheck:
 
         await session_manager.register(engine)
 
-        cleaned = await session_manager.cleanup_stale_sessions(timeout_seconds=300)
+        cleaned, keys_to_unsub = await session_manager.cleanup_stale_sessions(timeout_seconds=300)
 
         assert cleaned == []
+        assert keys_to_unsub == []
         assert session_manager.session_count == 1
 
 
