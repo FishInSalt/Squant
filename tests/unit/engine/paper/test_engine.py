@@ -1437,9 +1437,7 @@ class TestOrderExpiration:
         await engine.process_candle(self._make_candle(2))
         assert len(engine.context.pending_orders) == 0
         # Should be in completed orders as CANCELLED
-        cancelled = [
-            o for o in engine.context.completed_orders if o.status.value == "cancelled"
-        ]
+        cancelled = [o for o in engine.context.completed_orders if o.status.value == "cancelled"]
         assert len(cancelled) == 1
 
     @pytest.mark.asyncio
@@ -1490,3 +1488,238 @@ class TestOrderExpiration:
         # Bar 1: order expires
         await engine.process_candle(self._make_candle(1))
         assert len(engine.context.pending_orders) == 0
+
+
+class TestRejectedFillCancelsOrder:
+    """P0: Rejected fills should cancel the order to prevent infinite retry."""
+
+    @staticmethod
+    def _make_candle(
+        bar_idx: int, close: Decimal = Decimal("50000"), is_closed: bool = True
+    ) -> WSCandle:
+        return WSCandle(
+            symbol="BTC/USDT",
+            timeframe="1m",
+            timestamp=datetime(2024, 1, 1, 12, bar_idx, 0, tzinfo=UTC),
+            open=close - Decimal("100"),
+            high=close + Decimal("200"),
+            low=close - Decimal("200"),
+            close=close,
+            volume=Decimal("100"),
+            is_closed=is_closed,
+        )
+
+    @pytest.mark.asyncio
+    async def test_rejected_fill_cancels_market_order(self):
+        """Market order fill rejected due to insufficient cash is cancelled."""
+
+        class NearFullBuyStrategy(Strategy):
+            def on_init(self):
+                self.bought = False
+
+            def on_bar(self, bar):
+                if not self.bought:
+                    # Spend nearly all cash — leaves very little room for price increase
+                    self.ctx.buy(bar.symbol, Decimal("0.199"))
+                    self.bought = True
+
+            def on_stop(self):
+                pass
+
+        strategy = NearFullBuyStrategy()
+        engine = PaperTradingEngine(
+            run_id=uuid4(),
+            strategy=strategy,
+            symbol="BTC/USDT",
+            timeframe="1m",
+            initial_capital=Decimal("10000"),
+            commission_rate=Decimal("0.001"),
+            slippage=Decimal("0"),
+        )
+        await engine.start()
+
+        # Bar 0: strategy places market buy
+        await engine.process_candle(self._make_candle(0, close=Decimal("50000")))
+        # Market order placed, pending
+        assert len(engine.context.pending_orders) == 1
+
+        # Bar 1 (unclosed): price jumps to $60000, fill cost would be
+        # 0.199 * 60000 * 1.001 = $11,951.94 > $10,000 cash → fill rejected
+        await engine.process_candle(self._make_candle(1, close=Decimal("60000"), is_closed=False))
+        # Order should be CANCELLED, not left pending
+        assert len(engine.context.pending_orders) == 0
+        assert len(engine.context.completed_orders) == 1
+        assert engine.context.completed_orders[0].status.value == "cancelled"
+
+    @pytest.mark.asyncio
+    async def test_rejected_fill_does_not_retry(self):
+        """After fill rejection and cancellation, no further retry occurs."""
+
+        class OneBuyStrategy(Strategy):
+            def on_init(self):
+                self.bought = False
+
+            def on_bar(self, bar):
+                if not self.bought:
+                    self.ctx.buy(bar.symbol, Decimal("0.199"))
+                    self.bought = True
+
+            def on_stop(self):
+                pass
+
+        strategy = OneBuyStrategy()
+        engine = PaperTradingEngine(
+            run_id=uuid4(),
+            strategy=strategy,
+            symbol="BTC/USDT",
+            timeframe="1m",
+            initial_capital=Decimal("10000"),
+            commission_rate=Decimal("0.001"),
+            slippage=Decimal("0"),
+        )
+        await engine.start()
+
+        # Bar 0: strategy places market buy
+        await engine.process_candle(self._make_candle(0, close=Decimal("50000")))
+
+        # Bar 1: price gap up → fill rejected → order cancelled
+        await engine.process_candle(self._make_candle(1, close=Decimal("60000"), is_closed=False))
+        cancelled_count = len(engine.context.completed_orders)
+
+        # Bar 2: another unclosed tick — no new cancellations (order already gone)
+        await engine.process_candle(self._make_candle(2, close=Decimal("60000"), is_closed=False))
+        assert len(engine.context.completed_orders) == cancelled_count
+
+
+class TestUnclosedCandleHighLowMatching:
+    """P1-1: Unclosed candles should pass high/low for limit order matching."""
+
+    @staticmethod
+    def _make_candle(
+        bar_idx: int,
+        close: Decimal,
+        high: Decimal,
+        low: Decimal,
+        is_closed: bool = True,
+    ) -> WSCandle:
+        return WSCandle(
+            symbol="BTC/USDT",
+            timeframe="1m",
+            timestamp=datetime(2024, 1, 1, 12, bar_idx, 0, tzinfo=UTC),
+            open=close,
+            high=high,
+            low=low,
+            close=close,
+            volume=Decimal("100"),
+            is_closed=is_closed,
+        )
+
+    @pytest.mark.asyncio
+    async def test_limit_buy_triggers_on_unclosed_low(self):
+        """BUY LIMIT should trigger on unclosed candle's low, not just close."""
+
+        class LimitBuyStrategy(Strategy):
+            def on_init(self):
+                self.placed = False
+
+            def on_bar(self, bar):
+                if not self.placed:
+                    self.ctx.buy(bar.symbol, Decimal("0.1"), price=Decimal("49000"))
+                    self.placed = True
+
+            def on_stop(self):
+                pass
+
+        strategy = LimitBuyStrategy()
+        engine = PaperTradingEngine(
+            run_id=uuid4(),
+            strategy=strategy,
+            symbol="BTC/USDT",
+            timeframe="1m",
+            initial_capital=Decimal("100000"),
+            commission_rate=Decimal("0.001"),
+            slippage=Decimal("0"),
+        )
+        await engine.start()
+
+        # Bar 0: strategy places BUY LIMIT at $49,000
+        await engine.process_candle(
+            self._make_candle(
+                0, close=Decimal("50000"), high=Decimal("51000"), low=Decimal("49500")
+            )
+        )
+        assert len(engine.context.pending_orders) == 1
+
+        # Bar 1 (unclosed): close=$50000 (above limit), but low=$48500 (below limit)
+        # With the fix, this should trigger the limit order
+        await engine.process_candle(
+            self._make_candle(
+                1,
+                close=Decimal("50000"),
+                high=Decimal("51000"),
+                low=Decimal("48500"),
+                is_closed=False,
+            )
+        )
+        assert len(engine.context.pending_orders) == 0
+        assert engine.context.has_position("BTC/USDT")
+
+    @pytest.mark.asyncio
+    async def test_limit_sell_triggers_on_unclosed_high(self):
+        """SELL LIMIT should trigger on unclosed candle's high."""
+
+        class LimitSellStrategy(Strategy):
+            def on_init(self):
+                self.state = "buy"
+
+            def on_bar(self, bar):
+                if self.state == "buy":
+                    self.ctx.buy(bar.symbol, Decimal("0.1"))
+                    self.state = "wait_fill"
+                elif self.state == "wait_fill" and self.ctx.has_position(bar.symbol):
+                    self.ctx.sell(bar.symbol, Decimal("0.1"), price=Decimal("52000"))
+                    self.state = "done"
+
+            def on_stop(self):
+                pass
+
+        strategy = LimitSellStrategy()
+        engine = PaperTradingEngine(
+            run_id=uuid4(),
+            strategy=strategy,
+            symbol="BTC/USDT",
+            timeframe="1m",
+            initial_capital=Decimal("100000"),
+            commission_rate=Decimal("0.001"),
+            slippage=Decimal("0"),
+        )
+        await engine.start()
+
+        # Bar 0: strategy places market buy (not yet filled)
+        await engine.process_candle(
+            self._make_candle(
+                0, close=Decimal("50000"), high=Decimal("51000"), low=Decimal("49000")
+            )
+        )
+
+        # Bar 1: market buy fills, strategy sees position → places SELL LIMIT at $52,000
+        await engine.process_candle(
+            self._make_candle(
+                1, close=Decimal("51000"), high=Decimal("51500"), low=Decimal("50000")
+            )
+        )
+        assert engine.context.has_position("BTC/USDT")
+        assert len(engine.context.pending_orders) == 1
+
+        # Bar 2 (unclosed): close=$51000 (below limit), but high=$52500 (above limit)
+        await engine.process_candle(
+            self._make_candle(
+                2,
+                close=Decimal("51000"),
+                high=Decimal("52500"),
+                low=Decimal("50500"),
+                is_closed=False,
+            )
+        )
+        assert len(engine.context.pending_orders) == 0
+        assert not engine.context.has_position("BTC/USDT")

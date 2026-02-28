@@ -618,32 +618,6 @@ class PaperTradingService:
         logger.info(f"{'Shutdown' if for_shutdown else 'Stopped'} paper trading session {run_id}")
         return run
 
-    async def _check_unsubscribe(self, symbol: str, timeframe: str) -> None:
-        """Check if we should unsubscribe from candles.
-
-        Only unsubscribes if no other sessions (paper or live) need this
-        symbol/timeframe (R3-006: cross-manager check).
-
-        Args:
-            symbol: Trading symbol.
-            timeframe: Candle timeframe.
-        """
-        from squant.engine.live.manager import get_live_session_manager
-
-        paper_manager = get_session_manager()
-        live_manager = get_live_session_manager()
-
-        paper_subscribed = paper_manager.get_subscribed_symbols()
-        live_subscribed = live_manager.get_subscribed_symbols()
-
-        if (symbol, timeframe) not in paper_subscribed and (
-            symbol,
-            timeframe,
-        ) not in live_subscribed:
-            stream_manager = get_stream_manager()
-            await stream_manager.unsubscribe_candles(symbol, timeframe)
-            logger.info(f"Unsubscribed from candles: {symbol}:{timeframe}")
-
     async def get_status(self, run_id: UUID) -> dict[str, Any]:
         """Get real-time status of a paper trading session.
 
@@ -979,8 +953,10 @@ class PaperTradingService:
         loader = DataLoader(self.session)
         bar_count = 0
 
-        # Save log count before warmup so we can trim warmup-generated entries
-        log_count_before = len(engine.context._logs)
+        # Save a snapshot of logs before warmup so we can restore them afterward.
+        # Using a snapshot instead of count-based pop() avoids deque overflow issues
+        # when the log deque is near maxlen (warmup entries evict restored entries).
+        logs_snapshot = list(engine.context._logs)
 
         async for bar in loader.load_bars(
             exchange=run.exchange,
@@ -1009,10 +985,11 @@ class PaperTradingService:
         # real candle and produce phantom trades.
         engine.context._pending_orders.clear()
 
-        # F2: Trim log entries generated during warmup (auto trade logs
-        # from ctx.buy/sell would pollute the restored log list).
-        while len(engine.context._logs) > log_count_before:
-            engine.context._logs.pop()
+        # F2: Restore pre-warmup logs (warmup generates trade logs from
+        # ctx.buy/sell that would pollute the restored log list).
+        engine.context._logs.clear()
+        for entry in logs_snapshot:
+            engine.context._logs.append(entry)
 
         logger.info(
             f"Warmup completed for session {engine.run_id}: {bar_count}/{warmup_bars} bars replayed"

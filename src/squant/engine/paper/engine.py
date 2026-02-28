@@ -327,7 +327,11 @@ class PaperTradingEngine:
                 timestamp = candle.timestamp
 
                 # 1-2. Fill new orders and match pending limits at current price
-                # For unclosed candles, only use close; for closed, also pass high/low
+                # Pass high/low for both closed and unclosed candles so that
+                # carried-over limit orders can trigger on intrabar price extremes.
+                # All pending limits were placed in a previous bar's on_bar(),
+                # so using unclosed high/low does not introduce look-ahead bias.
+                # Volume is only passed for closed candles (complete bar volume).
                 if candle.is_closed:
                     self._fill_new_orders(
                         current_price,
@@ -337,7 +341,12 @@ class PaperTradingEngine:
                         volume=candle.volume,
                     )
                 else:
-                    self._fill_new_orders(current_price, timestamp)
+                    self._fill_new_orders(
+                        current_price,
+                        timestamp,
+                        high=candle.high,
+                        low=candle.low,
+                    )
 
                 # 3. Move completed orders
                 self._context._move_completed_orders()
@@ -363,9 +372,7 @@ class PaperTradingEngine:
                 if self._risk_manager:
                     self._risk_manager.update_equity(self._context.equity)
                     # 5b. Update unrealized PnL so daily loss limit includes open positions
-                    self._risk_manager.update_unrealized_pnl(
-                        self._context._get_unrealized_pnl()
-                    )
+                    self._risk_manager.update_unrealized_pnl(self._context._get_unrealized_pnl())
 
                 # 6. Persist snapshot: try synchronous callback first, fall back to batch
                 if self._context.equity_curve:
@@ -543,7 +550,9 @@ class PaperTradingEngine:
                     order.status = OrderStatus.CANCELLED
                     self._context._completed_orders.append(order)
                     logger.debug(f"Limit order {order.id} expired (TTL reached)")
-                    self._context.log(f"限价单过期: {order.side.value} {order.symbol} {order.amount}@{order.price}")
+                    self._context.log(
+                        f"限价单过期: {order.side.value} {order.symbol} {order.amount}@{order.price}"
+                    )
                     expired.append(order)
                     continue
             remaining.append(order)
@@ -553,6 +562,10 @@ class PaperTradingEngine:
 
     def _process_fill_safe(self, fill: Any) -> None:
         """Process a fill with error handling and trade result tracking.
+
+        Mirrors backtest runner behavior: if a fill is rejected (e.g., insufficient
+        cash after price gap), the originating order is cancelled to prevent an
+        infinite retry loop on every subsequent tick.
 
         Args:
             fill: Fill to process.
@@ -565,6 +578,8 @@ class PaperTradingEngine:
         except ValueError as e:
             logger.warning(f"Fill rejected in engine {self._run_id}: {e}")
             self._context.log(f"Order fill rejected: {e}")
+            # Cancel the order to prevent infinite retry (consistent with backtest runner)
+            self._context.cancel_order(fill.order_id)
             return
 
         # Check if a trade was completed (closed) by this fill

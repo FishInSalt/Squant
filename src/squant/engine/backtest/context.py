@@ -86,6 +86,8 @@ class BacktestContext:
         self._trades: deque[TradeRecord] = deque(maxlen=max_trades)
         self._open_trade: TradeRecord | None = None
         self._partial_exit_pnl: Decimal = Decimal("0")  # accumulated PnL from partial exits
+        self._exit_fill_notional: Decimal = Decimal("0")  # accumulated exit price * amount
+        self._exit_fill_amount: Decimal = Decimal("0")  # accumulated exit fill amount
 
         # Bar history (deque for efficient append/pop)
         self._bar_history: deque[Bar] = deque(maxlen=max_bar_history)
@@ -583,6 +585,8 @@ class BacktestContext:
         # Position opened
         if prev_amount == Decimal("0") and new_amount != Decimal("0"):
             self._partial_exit_pnl = Decimal("0")
+            self._exit_fill_notional = Decimal("0")
+            self._exit_fill_amount = Decimal("0")
             self._open_trade = TradeRecord(
                 symbol=fill.symbol,
                 side=fill.side,
@@ -623,10 +627,18 @@ class BacktestContext:
                 fill_pnl = (self._open_trade.entry_price - fill.price) * fill_amount
             self._partial_exit_pnl += fill_pnl
 
+            # Accumulate exit fill data for weighted average exit price
+            self._exit_fill_notional += fill.price * fill_amount
+            self._exit_fill_amount += fill_amount
+
             # Position closed
             if new_amount == Decimal("0"):
                 self._open_trade.exit_time = fill.timestamp
-                self._open_trade.exit_price = fill.price
+                # Weighted average exit price across all partial exits
+                if self._exit_fill_amount > 0:
+                    self._open_trade.exit_price = self._exit_fill_notional / self._exit_fill_amount
+                else:
+                    self._open_trade.exit_price = fill.price
 
                 # Total PnL = sum of all partial exit PnLs - total fees
                 pnl = self._partial_exit_pnl - self._open_trade.fees
@@ -772,7 +784,22 @@ class BacktestContext:
                 "amount": str(t.amount),
                 "fees": str(t.fees),
                 "partial_exit_pnl": str(self._partial_exit_pnl),
+                "exit_fill_notional": str(self._exit_fill_notional),
+                "exit_fill_amount": str(self._exit_fill_amount),
             }
+
+        fills = [
+            {
+                "order_id": f.order_id,
+                "symbol": f.symbol,
+                "side": f.side.value,
+                "price": str(f.price),
+                "amount": str(f.amount),
+                "fee": str(f.fee),
+                "timestamp": f.timestamp.isoformat(),
+            }
+            for f in self._fills
+        ]
 
         return {
             "cash": str(self._cash),
@@ -783,6 +810,7 @@ class BacktestContext:
             "positions": positions,
             "trades": trades,
             "open_trade": open_trade,
+            "fills": fills,
             "trades_count": len(self._trades),
             "completed_orders_count": len(self._completed_orders),
             "logs": list(self._logs),
@@ -847,6 +875,21 @@ class BacktestContext:
                 )
                 self._trades.append(trade)
 
+        # Restore fills (for display and strategy access after resume)
+        if "fills" in state:
+            self._fills.clear()
+            for f in state["fills"]:
+                fill = Fill(
+                    order_id=f["order_id"],
+                    symbol=f["symbol"],
+                    side=OrderSide(f["side"]),
+                    price=Decimal(str(f["price"])),
+                    amount=Decimal(str(f["amount"])),
+                    fee=Decimal(str(f["fee"])),
+                    timestamp=datetime.fromisoformat(f["timestamp"]),
+                )
+                self._fills.append(fill)
+
         # Restore logs
         if "logs" in state:
             self._logs.clear()
@@ -861,6 +904,8 @@ class BacktestContext:
         # Rebuild _open_trade from snapshot or positions
         self._open_trade = None
         self._partial_exit_pnl = Decimal("0")
+        self._exit_fill_notional = Decimal("0")
+        self._exit_fill_amount = Decimal("0")
         if state.get("open_trade"):
             ot = state["open_trade"]
             self._open_trade = TradeRecord(
@@ -873,6 +918,10 @@ class BacktestContext:
             )
             if ot.get("partial_exit_pnl"):
                 self._partial_exit_pnl = Decimal(str(ot["partial_exit_pnl"]))
+            if ot.get("exit_fill_notional"):
+                self._exit_fill_notional = Decimal(str(ot["exit_fill_notional"]))
+            if ot.get("exit_fill_amount"):
+                self._exit_fill_amount = Decimal(str(ot["exit_fill_amount"]))
         else:
             # Fallback: rebuild from positions (no entry_time available)
             for symbol, pos in self._positions.items():
