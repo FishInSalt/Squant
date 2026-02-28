@@ -678,6 +678,78 @@ class TestTotalLossLimitValidation:
         assert risk_manager.state.total_pnl == Decimal("-1000")
 
 
+class TestTotalLossWithUnrealized:
+    """Tests for total loss limit including unrealized PnL."""
+
+    def test_unrealized_loss_triggers_total_limit(self):
+        """Unrealized loss alone can trigger total loss limit."""
+        config = RiskConfig(
+            total_loss_limit=Decimal("0.20"),
+            daily_loss_limit=Decimal("0.5"),
+        )
+        rm = RiskManager(config=config, initial_equity=Decimal("10000"))
+
+        # No realized losses, but unrealized = -$2500 (25% > 20%)
+        rm.state.total_pnl = Decimal("0")
+        rm.update_unrealized_pnl(Decimal("-2500"))
+
+        order = OrderRequest(
+            symbol="BTC/USDT",
+            side=OrderSide.BUY,
+            type=OrderType.MARKET,
+            amount=Decimal("0.001"),
+        )
+        result = rm.validate_order(order, Decimal("50000"))
+
+        assert result.passed is False
+        assert result.rule_type == RiskRuleType.TOTAL_LOSS_LIMIT
+
+    def test_realized_plus_unrealized_triggers_total_limit(self):
+        """Combined realized + unrealized loss triggers total limit."""
+        config = RiskConfig(
+            total_loss_limit=Decimal("0.20"),
+            daily_loss_limit=Decimal("0.5"),
+        )
+        rm = RiskManager(config=config, initial_equity=Decimal("10000"))
+
+        # Realized = -$1000, unrealized = -$1200, total = -$2200 (22% > 20%)
+        rm.record_trade_result(Decimal("-1000"))
+        rm.update_unrealized_pnl(Decimal("-1200"))
+
+        order = OrderRequest(
+            symbol="BTC/USDT",
+            side=OrderSide.BUY,
+            type=OrderType.MARKET,
+            amount=Decimal("0.001"),
+        )
+        result = rm.validate_order(order, Decimal("50000"))
+
+        assert result.passed is False
+        assert result.rule_type == RiskRuleType.TOTAL_LOSS_LIMIT
+
+    def test_unrealized_profit_offsets_realized_loss(self):
+        """Unrealized profit can offset realized loss, keeping within limit."""
+        config = RiskConfig(
+            total_loss_limit=Decimal("0.20"),
+            daily_loss_limit=Decimal("0.5"),
+        )
+        rm = RiskManager(config=config, initial_equity=Decimal("10000"))
+
+        # Realized = -$1800 (18%), unrealized = +$500 → effective = -$1300 (13%)
+        rm.record_trade_result(Decimal("-1800"))
+        rm.update_unrealized_pnl(Decimal("500"))
+
+        order = OrderRequest(
+            symbol="BTC/USDT",
+            side=OrderSide.BUY,
+            type=OrderType.MARKET,
+            amount=Decimal("0.001"),
+        )
+        result = rm.validate_order(order, Decimal("50000"))
+
+        assert result.passed is True  # 13% < 20% → allowed
+
+
 class TestNegativePositionRejection:
     """Tests for negative position rejection (spot trading - no short selling).
 

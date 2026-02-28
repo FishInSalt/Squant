@@ -330,6 +330,8 @@ class RiskManager:
 
         This check ensures the strategy stops when cumulative losses
         reach the configured threshold (e.g., 20% of initial equity).
+        Includes unrealized PnL (mark-to-market) so holding a losing
+        position without closing it cannot bypass the total loss limit.
 
         Returns:
             RiskCheckResult for total loss limit check.
@@ -342,9 +344,12 @@ class RiskManager:
                 total_pnl=float(self.state.total_pnl),
             )
 
+        # Effective PnL = realized + unrealized (mark-to-market)
+        effective_total_pnl = self.state.total_pnl + self.state.unrealized_pnl
+
         # Check relative limit against initial equity
         if self._initial_equity > 0:
-            loss_pct = -self.state.total_pnl / self._initial_equity
+            loss_pct = -effective_total_pnl / self._initial_equity
             if loss_pct >= self.config.total_loss_limit:
                 self.state.total_loss_limit_triggered = True
                 logger.critical(
@@ -359,25 +364,27 @@ class RiskManager:
                     current_loss_pct=float(loss_pct),
                     limit_pct=float(self.config.total_loss_limit),
                     total_pnl=float(self.state.total_pnl),
+                    unrealized_pnl=float(self.state.unrealized_pnl),
                     initial_equity=float(self._initial_equity),
                 )
 
         # Check absolute limit if configured
         if self.config.total_loss_limit_absolute is not None:
-            if -self.state.total_pnl >= self.config.total_loss_limit_absolute:
+            if -effective_total_pnl >= self.config.total_loss_limit_absolute:
                 self.state.total_loss_limit_triggered = True
                 logger.critical(
-                    f"TOTAL LOSS LIMIT TRIGGERED: {-self.state.total_pnl} loss "
+                    f"TOTAL LOSS LIMIT TRIGGERED: {-effective_total_pnl} loss "
                     f"(limit: {self.config.total_loss_limit_absolute}). "
                     f"Strategy should be stopped."
                 )
                 return RiskCheckResult.reject(
                     rule_type=RiskRuleType.TOTAL_LOSS_LIMIT,
-                    reason=f"Total loss limit reached: {-self.state.total_pnl} "
+                    reason=f"Total loss limit reached: {-effective_total_pnl} "
                     f"(limit: {self.config.total_loss_limit_absolute}). Strategy stopped.",
-                    current_loss=float(-self.state.total_pnl),
+                    current_loss=float(-effective_total_pnl),
                     limit=float(self.config.total_loss_limit_absolute),
                     total_pnl=float(self.state.total_pnl),
+                    unrealized_pnl=float(self.state.unrealized_pnl),
                 )
 
         return RiskCheckResult.ok()

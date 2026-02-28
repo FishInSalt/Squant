@@ -507,6 +507,10 @@ class TestDispatchConsecutiveErrors:
         call_kwargs = engine.stop.call_args.kwargs
         assert "consecutive dispatch errors" in call_kwargs.get("error", "")
 
+        # Engine should be unregistered from session manager
+        assert session_manager.session_count == 0
+        assert session_manager.get(engine.run_id) is None
+
     @pytest.mark.asyncio
     async def test_success_resets_error_counter(self, session_manager, sample_candle):
         """Test successful dispatch resets the consecutive error counter."""

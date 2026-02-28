@@ -230,6 +230,9 @@ class SessionManager:
                             )
                         except Exception as stop_error:
                             logger.exception(f"Error auto-stopping engine {run_id}: {stop_error}")
+                    # Unregister stopped engine to prevent resource leak.
+                    # unregister_and_check_subscription acquires its own lock.
+                    await self.unregister_and_check_subscription(run_id)
                     self._consecutive_errors.pop(run_id, None)
 
     async def stop_all(self, reason: str = "shutdown") -> None:

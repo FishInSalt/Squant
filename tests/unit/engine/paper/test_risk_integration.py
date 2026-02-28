@@ -217,3 +217,86 @@ class TestRiskManagerIntegration:
 
         # Should be rejected
         assert engine.context.cash == Decimal("100000")
+
+    async def test_partial_fill_risk_uses_remaining(self):
+        """Risk check after partial fill uses order.remaining, not full amount.
+
+        Scenario: order for 0.1 BTC gets partially filled (0.05 BTC) due to
+        volume participation limits. On the next candle, the risk check should
+        use remaining=0.05, not amount=0.1, so position check calculates
+        position + 0.05 (correct) instead of position + 0.1 (double-count).
+        """
+        config = RiskConfig(
+            max_position_size=Decimal("0.08"),  # 8% of equity = 8000 USDT
+            max_order_size=Decimal("0.9"),
+        )
+        engine = _create_engine(risk_config=config, initial_capital=Decimal("100000"))
+        await engine.start()
+
+        # Place market order for 0.1 BTC at $50000 = $5000 (5% < 8% → allowed)
+        engine.context.buy("BTC/USDT", Decimal("0.1"))
+
+        # First candle: low volume → partial fill via volume participation
+        # With volume=1 and participation=0.1 → max 0.1 BTC fill
+        # But engine uses default matching engine without volume participation.
+        # Instead, directly test by simulating partial fill state:
+        # Manually set up a partially filled order scenario
+        from squant.engine.backtest.types import (
+            OrderSide,
+            OrderStatus,
+            OrderType,
+            SimulatedOrder,
+        )
+
+        order = SimulatedOrder.create(
+            symbol="BTC/USDT",
+            side=OrderSide.BUY,
+            order_type=OrderType.MARKET,
+            amount=Decimal("0.1"),
+        )
+        order.filled = Decimal("0.05")  # 50% filled
+        order.status = OrderStatus.PARTIAL
+
+        # Verify order.remaining is 0.05
+        assert order.remaining == Decimal("0.05")
+
+        # Risk check should use remaining (0.05), not amount (0.1)
+        # With position=0.05 BTC from partial fill:
+        # If risk uses order.amount: new_pos = 0.05 + 0.1 = 0.15 * 50000 = 7500 → 7.5% < 8% → pass
+        # If risk uses order.remaining: new_pos = 0.05 + 0.05 = 0.1 * 50000 = 5000 → 5% < 8% → pass
+        # Both pass for this case, so let's test a tighter scenario:
+
+        # Position = 0.12 BTC already, order.amount=0.1, order.remaining=0.05
+        # If uses amount: 0.12+0.1=0.22 * 50000 = 11000 → 11% > 8% → REJECTED (wrong!)
+        # If uses remaining: 0.12+0.05=0.17 * 50000 = 8500 → 8.5% > 8% → still rejected
+        # Use 6% limit:
+        config2 = RiskConfig(
+            max_position_size=Decimal("0.09"),  # 9% of equity = 9000
+            max_order_size=Decimal("0.9"),
+        )
+        engine2 = _create_engine(risk_config=config2, initial_capital=Decimal("100000"))
+        await engine2.start()
+
+        # Simulate position of 0.12 BTC
+        from squant.engine.backtest.types import Position
+
+        engine2._context._positions["BTC/USDT"] = Position(
+            symbol="BTC/USDT",
+            amount=Decimal("0.12"),
+            avg_entry_price=Decimal("50000"),
+        )
+
+        # Partially filled order: amount=0.1, filled=0.05, remaining=0.05
+        order2 = SimulatedOrder.create(
+            symbol="BTC/USDT",
+            side=OrderSide.BUY,
+            order_type=OrderType.MARKET,
+            amount=Decimal("0.1"),
+        )
+        order2.filled = Decimal("0.05")
+        order2.status = OrderStatus.PARTIAL
+
+        # With remaining: pos = 0.12+0.05 = 0.17 * 50000 = 8500 → 8.5% < 9% → PASS
+        # With amount:    pos = 0.12+0.10 = 0.22 * 50000 = 11000 → 11% > 9% → REJECT
+        result = engine2._validate_order_risk(order2, Decimal("50000"))
+        assert result is True, "Partial fill should use remaining, not full amount"

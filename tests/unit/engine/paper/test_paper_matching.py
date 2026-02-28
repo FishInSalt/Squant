@@ -499,3 +499,82 @@ class TestZeroVolumeBarBlocking:
 
         assert fill is not None
         assert fill.amount == Decimal("0.1")
+
+
+class TestSharedVolumeBudget:
+    """Tests for shared volume budget across market and limit orders."""
+
+    def test_two_limits_share_budget(self):
+        """Two limit orders on same candle share the volume budget."""
+        engine = PaperMatchingEngine(
+            commission_rate=Decimal("0.001"),
+            max_volume_participation=Decimal("0.1"),
+        )
+        # Budget = 100 * 0.1 = 10 BTC
+        budget = engine.compute_volume_budget(Decimal("100"))
+        assert budget == Decimal("10")
+
+        # Two buy limits, each wanting 8 BTC
+        order1 = _limit_order(OrderSide.BUY, "50000", "8")
+        order2 = _limit_order(OrderSide.BUY, "49000", "8")
+
+        fills = engine.match_pending_limits(
+            [order1, order2],
+            Decimal("48000"),
+            TS,
+            volume_budget=budget,
+        )
+
+        # First order gets 8 BTC, second gets only 2 BTC (remaining budget)
+        assert len(fills) == 2
+        assert fills[0].amount == Decimal("8")
+        assert fills[1].amount == Decimal("2")
+        total_filled = sum(f.amount for f in fills)
+        assert total_filled == Decimal("10")  # Exactly the budget
+
+    def test_market_and_limit_share_budget(self):
+        """Market order consumes from budget, leaving less for limit orders."""
+        engine = PaperMatchingEngine(
+            commission_rate=Decimal("0.001"),
+            max_volume_participation=Decimal("0.1"),
+        )
+        # Budget = 50 * 0.1 = 5 BTC
+        budget = engine.compute_volume_budget(Decimal("50"))
+
+        # Market order takes 3 BTC from budget
+        market = _market_order(OrderSide.BUY, "3")
+        fill = engine.fill_market_order(market, Decimal("50000"), TS, volume_budget=budget)
+        assert fill is not None
+        assert fill.amount == Decimal("3")
+
+        # Remaining budget = 5 - 3 = 2 BTC
+        remaining = budget - fill.amount
+
+        # Limit order wants 4 BTC but only 2 BTC budget remains
+        limit = _limit_order(OrderSide.BUY, "50000", "4")
+        fills = engine.match_pending_limits(
+            [limit],
+            Decimal("49000"),
+            TS,
+            volume_budget=remaining,
+        )
+        assert len(fills) == 1
+        assert fills[0].amount == Decimal("2")
+
+    def test_no_participation_limit_no_budget(self):
+        """Without max_volume_participation, compute_volume_budget returns None."""
+        engine = PaperMatchingEngine(commission_rate=Decimal("0.001"))
+        assert engine.compute_volume_budget(Decimal("100")) is None
+
+    def test_zero_volume_gives_zero_budget(self):
+        """Zero volume produces zero budget, blocking all fills."""
+        engine = PaperMatchingEngine(
+            commission_rate=Decimal("0.001"),
+            max_volume_participation=Decimal("0.1"),
+        )
+        budget = engine.compute_volume_budget(Decimal("0"))
+        assert budget == Decimal("0")
+
+        order = _limit_order(OrderSide.BUY, "50000", "1")
+        fills = engine.match_pending_limits([order], Decimal("49000"), TS, volume_budget=budget)
+        assert len(fills) == 0

@@ -331,7 +331,9 @@ class PaperTradingEngine:
                 # carried-over limit orders can trigger on intrabar price extremes.
                 # All pending limits were placed in a previous bar's on_bar(),
                 # so using unclosed high/low does not introduce look-ahead bias.
-                # Volume is only passed for closed candles (complete bar volume).
+                # Volume is passed for both closed and unclosed candles.
+                # Closed: final bar volume. Unclosed: cumulative volume so far.
+                # Both are valid for volume participation rate enforcement.
                 if candle.is_closed:
                     self._fill_new_orders(
                         current_price,
@@ -347,6 +349,7 @@ class PaperTradingEngine:
                         timestamp,
                         high=candle.high,
                         low=candle.low,
+                        volume=candle.volume,
                         open_price=candle.open,
                     )
 
@@ -449,9 +452,8 @@ class PaperTradingEngine:
     ) -> None:
         """Fill new market orders immediately and check limit orders.
 
-        Iterates over all pending orders:
-        - Market orders are filled immediately at current_price (with slippage)
-        - Limit orders are checked against current_price (and high/low if available)
+        Market and limit orders share a single volume budget per candle,
+        preventing total filled volume from exceeding the participation rate.
 
         Args:
             current_price: Current market price (candle close).
@@ -465,6 +467,9 @@ class PaperTradingEngine:
         if not pending:
             return
 
+        # Compute shared volume budget for this candle (market + limit share it)
+        volume_budget = self._matching_engine.compute_volume_budget(volume)
+
         # Separate market and limit orders for processing
         limit_orders = []
         for order in pending:
@@ -473,14 +478,19 @@ class PaperTradingEngine:
                 if not self._validate_order_risk(order, current_price):
                     continue
                 fill = self._matching_engine.fill_market_order(
-                    order, current_price, timestamp, volume=volume
+                    order, current_price, timestamp, volume_budget=volume_budget
                 )
                 if fill:
                     self._process_fill_safe(fill)
+                    # Deduct from shared budget
+                    if volume_budget is not None:
+                        volume_budget -= fill.amount
+                        if volume_budget < Decimal("0"):
+                            volume_budget = Decimal("0")
             elif order.type == OrderType.LIMIT:
                 limit_orders.append(order)
 
-        # Match limit orders
+        # Match limit orders (pass remaining budget)
         if limit_orders:
             fills = self._matching_engine.match_pending_limits(
                 limit_orders,
@@ -488,8 +498,8 @@ class PaperTradingEngine:
                 timestamp,
                 high=high,
                 low=low,
-                volume=volume,
                 open_price=open_price,
+                volume_budget=volume_budget,
             )
             for fill in fills:
                 # Risk check before processing limit fill
@@ -524,7 +534,7 @@ class PaperTradingEngine:
             symbol=order.symbol,
             side=exchange_side,
             type=exchange_type,
-            amount=order.amount,
+            amount=order.remaining,  # Use remaining (not full) to avoid double-counting
             price=order.price,
         )
 

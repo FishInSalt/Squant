@@ -38,27 +38,45 @@ class PaperMatchingEngine:
         self.slippage = slippage
         self.max_volume_participation = max_volume_participation
 
+    def compute_volume_budget(self, volume: Decimal | None) -> Decimal | None:
+        """Compute the shared volume budget for a single candle.
+
+        All orders (market + limit) on the same candle share this budget.
+
+        Args:
+            volume: Bar volume (or cumulative volume for unclosed candles).
+
+        Returns:
+            Volume budget in base currency, or None if no participation limit.
+        """
+        if self.max_volume_participation is None or volume is None:
+            return None
+        if volume <= 0:
+            return Decimal("0")
+        return volume * self.max_volume_participation
+
     def fill_market_order(
         self,
         order: SimulatedOrder,
         current_price: Decimal,
         timestamp: datetime,
         volume: Decimal | None = None,
+        volume_budget: Decimal | None = None,
     ) -> Fill | None:
         """Fill a market order immediately at current_price with slippage.
 
         BUY: fill_price = current_price * (1 + slippage)
         SELL: fill_price = current_price * (1 - slippage)
 
-        When max_volume_participation is set, the fill amount is capped at
-        volume * max_volume_participation to prevent unrealistic fills on
-        low-volume bars.
+        When volume_budget is provided, it is used directly as the fill cap.
+        Otherwise, falls back to computing from volume * max_volume_participation.
 
         Args:
             order: Market order to fill.
             current_price: Current market price.
             timestamp: Fill timestamp.
-            volume: Bar volume (optional, used for volume participation check).
+            volume: Bar volume (legacy, used when volume_budget not provided).
+            volume_budget: Pre-computed shared volume budget (takes priority).
 
         Returns:
             Fill if order is a valid pending market order, None otherwise.
@@ -78,10 +96,13 @@ class PaperMatchingEngine:
 
         fill_amount = order.remaining
 
-        # Cap fill amount by volume participation limit
-        if self.max_volume_participation is not None and volume is not None:
+        # Cap fill amount by volume budget (shared) or volume (legacy)
+        if volume_budget is not None:
+            if volume_budget <= 0:
+                return None
+            fill_amount = min(fill_amount, volume_budget)
+        elif self.max_volume_participation is not None and volume is not None:
             if volume <= 0:
-                # Zero-volume bar: no trades occurred, order cannot fill
                 return None
             max_amount = volume * self.max_volume_participation
             fill_amount = min(fill_amount, max_amount)
@@ -108,6 +129,7 @@ class PaperMatchingEngine:
         low: Decimal | None = None,
         volume: Decimal | None = None,
         open_price: Decimal | None = None,
+        volume_budget: Decimal | None = None,
     ) -> list[Fill]:
         """Check pending limit orders against current price (and high/low range).
 
@@ -124,7 +146,9 @@ class PaperMatchingEngine:
         limit price, the fill price improves to the open price — consistent
         with the backtest matching engine.
 
-        When max_volume_participation is set, the fill amount is capped.
+        Volume participation: when volume_budget is provided, it is used as a
+        shared pool across all limit orders. Otherwise, falls back to computing
+        independently from volume * max_volume_participation per order.
 
         Args:
             orders: List of pending limit orders to check.
@@ -132,13 +156,17 @@ class PaperMatchingEngine:
             timestamp: Fill timestamp.
             high: Candle high price (optional, for closed candles).
             low: Candle low price (optional, for closed candles).
-            volume: Bar volume (optional, used for volume participation check).
+            volume: Bar volume (legacy, used when volume_budget not provided).
             open_price: Candle open price (optional, for gap-open price improvement).
+            volume_budget: Pre-computed shared volume budget (takes priority).
 
         Returns:
             List of fills for triggered orders.
         """
         fills: list[Fill] = []
+
+        # Track remaining budget when using shared volume pool
+        remaining_budget = volume_budget
 
         for order in orders:
             if order.type != OrderType.LIMIT:
@@ -178,10 +206,13 @@ class PaperMatchingEngine:
 
             fill_amount = order.remaining
 
-            # Cap fill amount by volume participation limit
-            if self.max_volume_participation is not None and volume is not None:
+            # Cap fill amount by volume budget (shared) or volume (legacy)
+            if remaining_budget is not None:
+                if remaining_budget <= 0:
+                    continue  # Budget exhausted
+                fill_amount = min(fill_amount, remaining_budget)
+            elif self.max_volume_participation is not None and volume is not None:
                 if volume <= 0:
-                    # Zero-volume bar: no trades occurred, order cannot fill
                     continue
                 max_amount = volume * self.max_volume_participation
                 fill_amount = min(fill_amount, max_amount)
@@ -200,5 +231,9 @@ class PaperMatchingEngine:
                     timestamp=timestamp,
                 )
             )
+
+            # Deduct from shared budget
+            if remaining_budget is not None:
+                remaining_budget -= fill_amount
 
         return fills
