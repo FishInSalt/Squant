@@ -1422,11 +1422,13 @@ class TestCircuitBreakerIntegration:
         )
         engine._exchange_order_map[exchange_id] = internal_id
 
-        # Simulate trades list growing (indicating new trade completed)
+        # Simulate a trade completion: _open_trade goes from non-None to None
         mock_trade = MagicMock()
         mock_trade.pnl = Decimal("-100")  # Loss
 
         engine._context._trades = []  # Before: 0 trades
+        # Set _open_trade to simulate an open position (will be cleared by fill)
+        engine._context._open_trade = MagicMock()
 
         # Create order update
         update = WSOrderUpdate(
@@ -1445,9 +1447,10 @@ class TestCircuitBreakerIntegration:
             timestamp=datetime.now(UTC),
         )
 
-        # Patch trades to return mock trade after processing
+        # Mock _process_fill to close the trade (_open_trade → None, trade added)
         def mock_process_fill(*args, **kwargs):
             engine._context._trades = [mock_trade]
+            engine._context._open_trade = None
 
         with (
             patch.object(engine._context, "_process_fill", side_effect=mock_process_fill),
@@ -2102,9 +2105,11 @@ class TestIncrementalFillProcessing:
         mock_trade.pnl = Decimal("-100")
 
         engine._context._trades = []  # Before: 0 trades
+        engine._context._open_trade = MagicMock()  # Simulate open position
 
         def mock_process_fill(*args, **kwargs):
             engine._context._trades = [mock_trade]
+            engine._context._open_trade = None  # Trade closed
 
         with (
             patch.object(engine._context, "_process_fill", side_effect=mock_process_fill),
@@ -2151,9 +2156,11 @@ class TestIncrementalFillProcessing:
         mock_trade.pnl = Decimal("-200")
 
         engine._context._trades = []
+        engine._context._open_trade = MagicMock()  # Simulate open position
 
         def mock_process_fill(*args, **kwargs):
             engine._context._trades = [mock_trade]
+            engine._context._open_trade = None  # Trade closed
 
         with (
             patch.object(engine._context, "_process_fill", side_effect=mock_process_fill),

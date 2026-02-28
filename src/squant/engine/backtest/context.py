@@ -79,6 +79,7 @@ class BacktestContext:
         # Order management
         self._pending_orders: list[SimulatedOrder] = []
         self._completed_orders: deque[SimulatedOrder] = deque(maxlen=max_completed_orders)
+        self._restored_completed_orders_count: int = 0  # base count from session restore
         self._order_counter = 0
 
         # Fill and trade tracking
@@ -225,8 +226,10 @@ class BacktestContext:
             # Limit order: use limit price
             estimated_cost = Decimal(str(price)) * amount * (1 + self._commission_rate)
         elif self._current_bar:
-            # Market order: estimate using current bar's close price
-            estimated_cost = self._current_bar.close * amount * (1 + self._commission_rate)
+            # Market order: estimate using current bar's close price + slippage
+            estimated_cost = (
+                self._current_bar.close * amount * (1 + self._slippage) * (1 + self._commission_rate)
+            )
         else:
             # No bar yet, skip validation (will be caught at fill time)
             estimated_cost = Decimal("0")
@@ -239,7 +242,10 @@ class BacktestContext:
                     pending_buy_cost += order.price * order.remaining * (1 + self._commission_rate)
                 elif self._current_bar:
                     pending_buy_cost += (
-                        self._current_bar.close * order.remaining * (1 + self._commission_rate)
+                        self._current_bar.close
+                        * order.remaining
+                        * (1 + self._slippage)
+                        * (1 + self._commission_rate)
                     )
 
         available_cash = self._cash - pending_buy_cost
@@ -812,7 +818,7 @@ class BacktestContext:
             "open_trade": open_trade,
             "fills": fills,
             "trades_count": len(self._trades),
-            "completed_orders_count": len(self._completed_orders),
+            "completed_orders_count": self._restored_completed_orders_count + len(self._completed_orders),
             "logs": list(self._logs),
             "benchmark_initial_price": (
                 str(self._benchmark_initial_price)
@@ -889,6 +895,9 @@ class BacktestContext:
                     timestamp=datetime.fromisoformat(f["timestamp"]),
                 )
                 self._fills.append(fill)
+
+        # Restore completed orders count (content not serialized, only count)
+        self._restored_completed_orders_count = state.get("completed_orders_count", 0)
 
         # Restore logs
         if "logs" in state:

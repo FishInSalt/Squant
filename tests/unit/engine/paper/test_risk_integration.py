@@ -462,3 +462,103 @@ class TestVolumeBudgetIntegration:
         assert fill_after_3 == Decimal("25"), (
             f"Total fills across 3 updates should be 25 (= 250 * 0.10), got {fill_after_3}"
         )
+
+
+class TestTradeCompletionDetection:
+    """Tests that trade completion is detected even when _trades deque is full."""
+
+    async def test_trade_completion_detected_when_deque_full(self):
+        """Risk manager records trade PnL even after _trades deque reaches maxlen.
+
+        Regression test for R7-001: the old len(_trades) > before pattern fails
+        when deque is at capacity because append doesn't increase len.
+        """
+        config = RiskConfig(max_daily_loss=Decimal("999999"))
+        # Create engine with small max_trades to trigger the deque-full condition
+        with patch("squant.config.get_settings") as mock_settings:
+            settings = MagicMock()
+            settings.paper_max_equity_curve_size = 10000
+            settings.paper_max_completed_orders = 1000
+            settings.paper_max_fills = 5000
+            settings.paper_max_trades = 3  # Very small to trigger maxlen quickly
+            settings.paper_max_logs = 500
+            mock_settings.return_value = settings
+
+            engine = PaperTradingEngine(
+                run_id=uuid4(),
+                strategy=DummyStrategy(),
+                symbol="BTC/USDT",
+                timeframe="1m",
+                initial_capital=Decimal("1000000"),
+                commission_rate=Decimal("0"),
+                slippage=Decimal("0"),
+                risk_config=config,
+            )
+        await engine.start()
+
+        base_time = datetime(2024, 1, 1, 0, 0, tzinfo=UTC)
+        record_calls = []
+        original_record = engine._risk_manager.record_trade_result
+
+        def tracking_record(pnl):
+            record_calls.append(pnl)
+            return original_record(pnl)
+
+        engine._risk_manager.record_trade_result = tracking_record
+
+        # Execute 5 round-trip trades (buy then sell), deque maxlen=3 overflows at trade 4
+        for i in range(5):
+            buy_price = Decimal("50000")
+            sell_price = Decimal("50100")  # Small profit each trade
+            buy_ts = base_time.replace(minute=i * 2)
+            sell_ts = base_time.replace(minute=i * 2 + 1)
+
+            # Buy
+            engine.context.buy("BTC/USDT", Decimal("0.1"))
+            candle_buy = WSCandle(
+                symbol="BTC/USDT",
+                timeframe="1m",
+                timestamp=buy_ts,
+                open=buy_price,
+                high=buy_price + Decimal("50"),
+                low=buy_price - Decimal("50"),
+                close=buy_price,
+                volume=Decimal("100"),
+                is_closed=True,
+            )
+            with patch("squant.config.get_settings") as mock_s:
+                s = MagicMock()
+                s.strategy.cpu_limit_seconds = 5
+                s.strategy.memory_limit_mb = 256
+                mock_s.return_value = s
+                await engine.process_candle(candle_buy)
+
+            # Sell (closes position)
+            engine.context.sell("BTC/USDT", Decimal("0.1"))
+            candle_sell = WSCandle(
+                symbol="BTC/USDT",
+                timeframe="1m",
+                timestamp=sell_ts,
+                open=sell_price,
+                high=sell_price + Decimal("50"),
+                low=sell_price - Decimal("50"),
+                close=sell_price,
+                volume=Decimal("100"),
+                is_closed=True,
+            )
+            with patch("squant.config.get_settings") as mock_s:
+                s = MagicMock()
+                s.strategy.cpu_limit_seconds = 5
+                s.strategy.memory_limit_mb = 256
+                mock_s.return_value = s
+                await engine.process_candle(candle_sell)
+
+        # All 5 trades should have been recorded, including trades 4 and 5
+        # which overflow the deque (maxlen=3)
+        assert len(record_calls) == 5, (
+            f"Expected 5 record_trade_result calls, got {len(record_calls)}. "
+            f"Trades 4+ may have been missed due to deque maxlen."
+        )
+        # Each trade should have positive PnL
+        for i, pnl in enumerate(record_calls):
+            assert pnl > 0, f"Trade {i + 1} PnL should be positive, got {pnl}"

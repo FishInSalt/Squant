@@ -747,8 +747,9 @@ class LiveTradingEngine:
         # Only process if there's new fill amount (incremental delta)
         fill_delta = update.filled_size - old_filled
         if new_status in (OrderStatus.PARTIAL, OrderStatus.FILLED) and fill_delta > 0:
-            # Record trade count before processing to detect new completed trades
-            trades_before = len(self._context.trades)
+            # Detect trade completion via _open_trade state change (not deque length,
+            # which fails when _trades deque is at maxlen).
+            had_open_trade = self._context._open_trade is not None
             circuit_breaker_before = self._risk_manager.state.circuit_breaker_triggered
 
             # Calculate incremental fee (not cumulative)
@@ -762,8 +763,7 @@ class LiveTradingEngine:
             self._process_order_fill(live_order, update, fill_delta, fee_delta)
 
             # Check if a trade was completed and record its PnL
-            trades_after = len(self._context.trades)
-            if trades_after > trades_before:
+            if had_open_trade and self._context._open_trade is None:
                 # A new trade was completed - get its PnL
                 completed_trade = self._context.trades[-1]
                 if completed_trade.pnl is not None:
@@ -951,15 +951,15 @@ class LiveTradingEngine:
                 if fee_delta < 0:
                     fee_delta = Decimal("0")  # Fee went backwards; skip this increment
 
-            # Track trade count and circuit breaker state before processing
-            trades_before = len(self._context.trades)
+            # Detect trade completion via _open_trade state change (not deque length,
+            # which fails when _trades deque is at maxlen).
+            had_open_trade = self._context._open_trade is not None
             circuit_breaker_before = self._risk_manager.state.circuit_breaker_triggered
 
             self._process_incremental_fill(live_order, fill_amount, response, fee_delta)
 
             # Check if a trade was completed and record its PnL for risk management
-            trades_after = len(self._context.trades)
-            if trades_after > trades_before:
+            if had_open_trade and self._context._open_trade is None:
                 completed_trade = self._context.trades[-1]
                 if completed_trade.pnl is not None:
                     self._risk_manager.record_trade_result(completed_trade.pnl)

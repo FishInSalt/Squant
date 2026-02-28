@@ -62,11 +62,17 @@ class PaperMatchingEngine:
         timestamp: datetime,
         volume: Decimal | None = None,
         volume_budget: Decimal | None = None,
+        high: Decimal | None = None,
+        low: Decimal | None = None,
     ) -> Fill | None:
         """Fill a market order immediately at current_price with slippage.
 
         BUY: fill_price = current_price * (1 + slippage)
         SELL: fill_price = current_price * (1 - slippage)
+
+        When high/low are provided, the slippage-adjusted price is clamped to
+        [low, high] to ensure the fill price stays within the bar's traded range
+        (consistent with the backtest matching engine).
 
         When volume_budget is provided, it is used directly as the fill cap.
         Otherwise, falls back to computing from volume * max_volume_participation.
@@ -77,6 +83,8 @@ class PaperMatchingEngine:
             timestamp: Fill timestamp.
             volume: Bar volume (legacy, used when volume_budget not provided).
             volume_budget: Pre-computed shared volume budget (takes priority).
+            high: Candle high price (optional, for clamping slippage).
+            low: Candle low price (optional, for clamping slippage).
 
         Returns:
             Fill if order is a valid pending market order, None otherwise.
@@ -93,6 +101,10 @@ class PaperMatchingEngine:
                 fill_price = current_price * (1 - self.slippage)
         else:
             fill_price = current_price
+
+        # Clamp to bar range (consistent with backtest matching engine)
+        if high is not None and low is not None:
+            fill_price = max(low, min(high, fill_price))
 
         fill_amount = order.remaining
 

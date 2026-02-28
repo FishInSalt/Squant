@@ -480,12 +480,16 @@ class PaperTradingEngine:
         # Separate market and limit orders for processing
         limit_orders = []
         for order in pending:
+            # Skip orders for wrong symbol (defensive, consistent with backtest matching)
+            if order.symbol != self._symbol:
+                continue
             if order.type == OrderType.MARKET:
                 # Risk check before filling market order
                 if not self._validate_order_risk(order, current_price):
                     continue
                 fill = self._matching_engine.fill_market_order(
-                    order, current_price, timestamp, volume_budget=volume_budget
+                    order, current_price, timestamp,
+                    volume_budget=volume_budget, high=high, low=low,
                 )
                 if fill:
                     self._process_fill_safe(fill)
@@ -610,8 +614,9 @@ class PaperTradingEngine:
         Args:
             fill: Fill to process.
         """
-        # Track trades count before fill for detecting trade completion
-        trades_count_before = len(self._context._trades)
+        # Detect trade completion via _open_trade state change (not deque length,
+        # which fails when _trades deque is at maxlen — append doesn't increase len).
+        had_open_trade = self._context._open_trade is not None
 
         try:
             self._context._process_fill(fill)
@@ -627,8 +632,8 @@ class PaperTradingEngine:
             self._risk_manager.record_order_fill()
 
         # Check if a trade was completed (closed) by this fill
-        if self._risk_manager and len(self._context._trades) > trades_count_before:
-            # A new trade was added to _trades — it just closed
+        if self._risk_manager and had_open_trade and self._context._open_trade is None:
+            # _open_trade went from non-None to None — a trade just closed
             completed_trade = self._context._trades[-1]
             self._risk_manager.record_trade_result(completed_trade.pnl)
 

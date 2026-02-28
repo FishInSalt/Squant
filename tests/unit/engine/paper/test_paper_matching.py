@@ -67,6 +67,48 @@ class TestFillMarketOrder:
         assert fill.amount == Decimal("0.1")
         assert fill.side == OrderSide.SELL
 
+    def test_fill_market_clamps_slippage_to_bar_range_buy(self):
+        """BUY slippage-adjusted price is clamped to bar high."""
+        engine = PaperMatchingEngine(
+            commission_rate=Decimal("0.001"),
+            slippage=Decimal("0.01"),  # 1% slippage
+        )
+        order = _market_order(OrderSide.BUY)
+        # Close=50000, slippage would make fill_price=50500, but high=50200
+        fill = engine.fill_market_order(
+            order, Decimal("50000"), TS,
+            high=Decimal("50200"), low=Decimal("49800"),
+        )
+        assert fill is not None
+        assert fill.price == Decimal("50200")  # Clamped to high
+
+    def test_fill_market_clamps_slippage_to_bar_range_sell(self):
+        """SELL slippage-adjusted price is clamped to bar low."""
+        engine = PaperMatchingEngine(
+            commission_rate=Decimal("0.001"),
+            slippage=Decimal("0.01"),  # 1% slippage
+        )
+        order = _market_order(OrderSide.SELL)
+        # Close=50000, slippage would make fill_price=49500, but low=49800
+        fill = engine.fill_market_order(
+            order, Decimal("50000"), TS,
+            high=Decimal("50200"), low=Decimal("49800"),
+        )
+        assert fill is not None
+        assert fill.price == Decimal("49800")  # Clamped to low
+
+    def test_fill_market_no_clamp_without_high_low(self):
+        """Without high/low, slippage is not clamped (unclosed candles)."""
+        engine = PaperMatchingEngine(
+            commission_rate=Decimal("0.001"),
+            slippage=Decimal("0.01"),
+        )
+        order = _market_order(OrderSide.BUY)
+        fill = engine.fill_market_order(order, Decimal("50000"), TS)
+        assert fill is not None
+        # No clamping: 50000 * 1.01 = 50500
+        assert fill.price == Decimal("50000") * (1 + Decimal("0.01"))
+
     def test_fill_market_zero_slippage(self):
         engine = PaperMatchingEngine(
             commission_rate=Decimal("0.001"),
