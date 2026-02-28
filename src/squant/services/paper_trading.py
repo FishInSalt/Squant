@@ -211,9 +211,7 @@ class EquityCurveRepository:
         self.session.add_all(instances)
         await self.session.flush()
 
-    async def get_by_run(
-        self, run_id: str, since: datetime | None = None
-    ) -> list[EquityCurve]:
+    async def get_by_run(self, run_id: str, since: datetime | None = None) -> list[EquityCurve]:
         """Get equity curve for a run.
 
         Args:
@@ -262,9 +260,10 @@ class PaperTradingService:
         timeframe: str,
         initial_capital: Decimal,
         commission_rate: Decimal = Decimal("0.001"),
-        slippage: Decimal = Decimal("0"),
+        slippage: Decimal = Decimal("0.0005"),
         params: dict[str, Any] | None = None,
         redis: Any | None = None,
+        risk_config: Any | None = None,
     ) -> StrategyRun:
         """Start a paper trading session.
 
@@ -278,6 +277,7 @@ class PaperTradingService:
             slippage: Slippage rate.
             params: Strategy parameters.
             redis: Redis client for circuit breaker check (optional).
+            risk_config: Optional RiskConfigRequest for risk management.
 
         Returns:
             Created StrategyRun.
@@ -342,6 +342,20 @@ class PaperTradingService:
             # Instantiate strategy
             strategy_instance = self._instantiate_strategy(strategy.code)
 
+            # Convert risk config request to RiskConfig model (if provided)
+            engine_risk_config = None
+            if risk_config:
+                from squant.engine.risk.models import RiskConfig
+
+                engine_risk_config = RiskConfig(
+                    max_position_size=risk_config.max_position_size,
+                    max_order_size=risk_config.max_order_size,
+                    daily_trade_limit=risk_config.daily_trade_limit,
+                    daily_loss_limit=risk_config.daily_loss_limit,
+                    max_price_deviation=risk_config.price_deviation_limit,
+                    circuit_breaker_loss_count=risk_config.circuit_breaker_threshold,
+                )
+
             # Create engine with synchronous persistence callbacks
             engine = PaperTradingEngine(
                 run_id=UUID(run.id),
@@ -354,6 +368,7 @@ class PaperTradingService:
                 params=params,
                 on_snapshot=self._create_snapshot_callback(),
                 on_result=self._create_result_callback(),
+                risk_config=engine_risk_config,
             )
 
             # Register with session manager
@@ -937,8 +952,14 @@ class PaperTradingService:
         settings = get_settings()
 
         tf_durations = {
-            "1m": 60, "5m": 300, "15m": 900, "30m": 1800,
-            "1h": 3600, "4h": 14400, "1d": 86400, "1w": 604800,
+            "1m": 60,
+            "5m": 300,
+            "15m": 900,
+            "30m": 1800,
+            "1h": 3600,
+            "4h": 14400,
+            "1d": 86400,
+            "1w": 604800,
         }
         tf_seconds = tf_durations.get(run.timeframe, 60)
         end_time = datetime.now(UTC)
@@ -983,8 +1004,7 @@ class PaperTradingService:
             engine.context._logs.pop()
 
         logger.info(
-            f"Warmup completed for session {engine.run_id}: "
-            f"{bar_count}/{warmup_bars} bars replayed"
+            f"Warmup completed for session {engine.run_id}: {bar_count}/{warmup_bars} bars replayed"
         )
 
     async def list_runs(
@@ -1030,9 +1050,7 @@ class PaperTradingService:
             raise SessionNotFoundError(run_id)
         return run
 
-    async def get_equity_curve(
-        self, run_id: UUID, since: datetime | None = None
-    ) -> list:
+    async def get_equity_curve(self, run_id: UUID, since: datetime | None = None) -> list:
         """Get equity curve for a paper trading run.
 
         Merges persisted snapshots from DB with pending (not-yet-persisted)
@@ -1177,9 +1195,7 @@ class PaperTradingService:
                     logger.info(f"Auto-recovered orphaned session {run.id}")
                     continue
                 except Exception as e:
-                    logger.warning(
-                        f"Auto-recovery failed for session {run.id}: {e}"
-                    )
+                    logger.warning(f"Auto-recovery failed for session {run.id}: {e}")
                     # Mark as ERROR to prevent infinite retry on next restart
                     await self.run_repo.update(
                         run.id,

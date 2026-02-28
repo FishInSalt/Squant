@@ -9009,6 +9009,18 @@
             },
             "type": "array",
             "title": "Logs"
+          },
+          "risk_state": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Risk State"
           }
         },
         "type": "object",
@@ -9886,8 +9898,8 @@
               }
             ],
             "title": "Slippage",
-            "description": "Slippage rate for market orders",
-            "default": "0"
+            "description": "Slippage rate for market orders (default 5bps covers typical spread)",
+            "default": "0.0005"
           },
           "params": {
             "anyOf": [
@@ -9901,6 +9913,17 @@
             ],
             "title": "Params",
             "description": "Strategy parameters"
+          },
+          "risk_config": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RiskConfigRequest"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Optional risk management configuration"
           }
         },
         "type": "object",

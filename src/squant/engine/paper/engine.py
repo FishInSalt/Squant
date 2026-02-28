@@ -18,7 +18,12 @@ from squant.engine.backtest.strategy_base import Strategy
 from squant.engine.backtest.types import Bar, EquitySnapshot, OrderType
 from squant.engine.paper.matching import PaperMatchingEngine
 from squant.engine.resource_limits import ResourceLimitExceededError, resource_limiter
+from squant.engine.risk.manager import RiskManager
+from squant.engine.risk.models import RiskConfig
 from squant.infra.exchange.okx.ws_types import WSCandle
+from squant.infra.exchange.types import OrderRequest
+from squant.models.enums import OrderSide as ExchangeOrderSide
+from squant.models.enums import OrderType as ExchangeOrderType
 
 # Callback type for synchronous snapshot persistence
 SnapshotPersistCallback = Callable[[str, EquitySnapshot], Awaitable[None]]
@@ -49,10 +54,11 @@ class PaperTradingEngine:
         timeframe: str,
         initial_capital: Decimal,
         commission_rate: Decimal = Decimal("0.001"),
-        slippage: Decimal = Decimal("0"),
+        slippage: Decimal = Decimal("0.0005"),
         params: dict[str, Any] | None = None,
         on_snapshot: SnapshotPersistCallback | None = None,
         on_result: ResultPersistCallback | None = None,
+        risk_config: RiskConfig | None = None,
     ):
         """Initialize paper trading engine.
 
@@ -63,7 +69,7 @@ class PaperTradingEngine:
             timeframe: Candle timeframe (e.g., "1m").
             initial_capital: Starting capital.
             commission_rate: Commission rate.
-            slippage: Slippage rate.
+            slippage: Slippage rate (default 5bps to cover typical spread).
             params: Strategy parameters.
             on_snapshot: Optional callback for synchronous snapshot persistence.
                 Called after each equity snapshot is recorded. If the callback
@@ -71,6 +77,8 @@ class PaperTradingEngine:
             on_result: Optional callback for synchronous result state persistence.
                 Called after each bar is fully processed (including strategy on_bar).
                 Persists the trading state needed for crash recovery.
+            risk_config: Optional risk management configuration. When provided,
+                orders are validated against risk rules before execution.
         """
         self._run_id = run_id
         self._strategy = strategy
@@ -100,6 +108,14 @@ class PaperTradingEngine:
             commission_rate=commission_rate,
             slippage=slippage,
         )
+
+        # Risk manager (optional, mirrors live trading pattern)
+        self._risk_manager: RiskManager | None = None
+        if risk_config:
+            self._risk_manager = RiskManager(
+                config=risk_config,
+                initial_equity=initial_capital,
+            )
 
         # Inject context into strategy
         self._strategy.ctx = self._context
@@ -307,7 +323,16 @@ class PaperTradingEngine:
                 timestamp = candle.timestamp
 
                 # 1-2. Fill new orders and match pending limits at current price
-                self._fill_new_orders(current_price, timestamp)
+                # For unclosed candles, only use close; for closed, also pass high/low
+                if candle.is_closed:
+                    self._fill_new_orders(
+                        current_price,
+                        timestamp,
+                        high=candle.high,
+                        low=candle.low,
+                    )
+                else:
+                    self._fill_new_orders(current_price, timestamp)
 
                 # 3. Move completed orders
                 self._context._move_completed_orders()
@@ -325,6 +350,10 @@ class PaperTradingEngine:
 
                 # 5. Record equity snapshot (before strategy, consistent with live engine P0-1)
                 self._context._record_equity_snapshot(bar.time)
+
+                # 5a. Update risk manager equity (after snapshot, mirrors live engine)
+                if self._risk_manager:
+                    self._risk_manager.update_equity(self._context.equity)
 
                 # 6. Persist snapshot: try synchronous callback first, fall back to batch
                 if self._context.equity_curve:
@@ -370,9 +399,7 @@ class PaperTradingEngine:
                         result_data = self.build_result_for_persistence()
                         await self._on_result(str(self._run_id), result_data)
                     except Exception as e:
-                        logger.warning(
-                            f"Result persist callback failed for {self._run_id}: {e}"
-                        )
+                        logger.warning(f"Result persist callback failed for {self._run_id}: {e}")
 
                 logger.debug(
                     f"Processed bar {self._bar_count} at {bar.time}, equity={self._context.equity}"
@@ -390,16 +417,24 @@ class PaperTradingEngine:
                     self._stop_impl()
                 raise
 
-    def _fill_new_orders(self, current_price: Decimal, timestamp: datetime) -> None:
+    def _fill_new_orders(
+        self,
+        current_price: Decimal,
+        timestamp: datetime,
+        high: Decimal | None = None,
+        low: Decimal | None = None,
+    ) -> None:
         """Fill new market orders immediately and check limit orders.
 
         Iterates over all pending orders:
         - Market orders are filled immediately at current_price (with slippage)
-        - Limit orders are checked against current_price for triggering
+        - Limit orders are checked against current_price (and high/low if available)
 
         Args:
             current_price: Current market price (candle close).
             timestamp: Current timestamp for fills.
+            high: Candle high price (for closed candles, improves limit trigger accuracy).
+            low: Candle low price (for closed candles, improves limit trigger accuracy).
         """
         pending = self._context._get_pending_orders()
         if not pending:
@@ -409,27 +444,93 @@ class PaperTradingEngine:
         limit_orders = []
         for order in pending:
             if order.type == OrderType.MARKET:
+                # Risk check before filling market order
+                if not self._validate_order_risk(order, current_price):
+                    continue
                 fill = self._matching_engine.fill_market_order(order, current_price, timestamp)
                 if fill:
-                    try:
-                        self._context._process_fill(fill)
-                    except ValueError as e:
-                        logger.warning(f"Fill rejected in engine {self._run_id}: {e}")
-                        self._context.log(f"Order fill rejected: {e}")
+                    self._process_fill_safe(fill)
             elif order.type == OrderType.LIMIT:
                 limit_orders.append(order)
 
         # Match limit orders
         if limit_orders:
             fills = self._matching_engine.match_pending_limits(
-                limit_orders, current_price, timestamp
+                limit_orders, current_price, timestamp, high=high, low=low
             )
             for fill in fills:
-                try:
-                    self._context._process_fill(fill)
-                except ValueError as e:
-                    logger.warning(f"Fill rejected in engine {self._run_id}: {e}")
-                    self._context.log(f"Order fill rejected: {e}")
+                # Risk check before processing limit fill
+                # Find the original order for validation
+                order = next((o for o in limit_orders if o.id == fill.order_id), None)
+                if order and not self._validate_order_risk(order, current_price):
+                    continue
+                self._process_fill_safe(fill)
+
+    def _validate_order_risk(self, order: Any, current_price: Decimal) -> bool:
+        """Validate an order against risk rules.
+
+        Args:
+            order: SimulatedOrder to validate.
+            current_price: Current market price.
+
+        Returns:
+            True if order passes risk checks (or no risk manager), False if rejected.
+        """
+        if not self._risk_manager:
+            return True
+
+        # Convert backtest enums to exchange enums (same string values)
+        exchange_side = ExchangeOrderSide(order.side.value)
+        exchange_type = ExchangeOrderType(order.type.value)
+
+        # Get current position amount for position size check
+        position = self._context._positions.get(self._symbol)
+        current_position_amount = position.amount if position and position.is_open else Decimal("0")
+
+        order_request = OrderRequest(
+            symbol=order.symbol,
+            side=exchange_side,
+            type=exchange_type,
+            amount=order.amount,
+            price=order.price,
+        )
+
+        result = self._risk_manager.validate_order(
+            order_request, current_price, current_position_amount
+        )
+
+        if not result.passed:
+            from squant.engine.backtest.types import OrderStatus
+
+            order.status = OrderStatus.CANCELLED
+            reason = result.reason or "Risk check failed"
+            logger.warning(f"Order rejected by risk manager in {self._run_id}: {reason}")
+            self._context.log(f"Order rejected (risk): {reason}")
+            return False
+
+        return True
+
+    def _process_fill_safe(self, fill: Any) -> None:
+        """Process a fill with error handling and trade result tracking.
+
+        Args:
+            fill: Fill to process.
+        """
+        # Track trades count before fill for detecting trade completion
+        trades_count_before = len(self._context._trades)
+
+        try:
+            self._context._process_fill(fill)
+        except ValueError as e:
+            logger.warning(f"Fill rejected in engine {self._run_id}: {e}")
+            self._context.log(f"Order fill rejected: {e}")
+            return
+
+        # Check if a trade was completed (closed) by this fill
+        if self._risk_manager and len(self._context._trades) > trades_count_before:
+            # A new trade was added to _trades — it just closed
+            completed_trade = self._context._trades[-1]
+            self._risk_manager.record_trade_result(completed_trade.pnl)
 
     def _candle_to_bar(self, candle: WSCandle) -> Bar:
         """Convert WSCandle to Bar.
@@ -509,6 +610,11 @@ class PaperTradingEngine:
             for order in self._context.pending_orders
         ]
 
+        # API-only: risk state (transient summary for display)
+        result["risk_state"] = (
+            self._risk_manager.get_state_summary() if self._risk_manager else None
+        )
+
         return result
 
     def build_result_for_persistence(self) -> dict[str, Any]:
@@ -519,4 +625,6 @@ class PaperTradingEngine:
         """
         result = self._context.build_result_snapshot()
         result["bar_count"] = self._bar_count
+        if self._risk_manager:
+            result["risk_state"] = self._risk_manager.get_state_summary()
         return result

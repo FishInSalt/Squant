@@ -37,7 +37,7 @@ class TestStartPaperTradingRequest:
         assert request.timeframe == "1m"
         assert request.initial_capital == Decimal("10000")
         assert request.commission_rate == Decimal("0.001")
-        assert request.slippage == Decimal("0")
+        assert request.slippage == Decimal("0.0005")
 
     def test_full_request(self):
         """Test creating request with all fields."""

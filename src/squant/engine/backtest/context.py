@@ -637,10 +637,7 @@ class BacktestContext:
                 self._trades.append(self._open_trade)
                 self._open_trade = None
             else:
-                self.log(
-                    f"减仓 {fill.symbol} -{fill_amount}@{fill.price} "
-                    f"剩余={abs(new_amount)}"
-                )
+                self.log(f"减仓 {fill.symbol} -{fill_amount}@{fill.price} 剩余={abs(new_amount)}")
 
             # Note: Position reversal (long→short or short→long) is not supported
             # in spot trading. sell() validation prevents negative positions.
@@ -661,7 +658,9 @@ class BacktestContext:
             if self._benchmark_initial_price is None:
                 self._benchmark_initial_price = current_price
             if self._benchmark_initial_price > 0:
-                benchmark_equity = self._initial_capital * current_price / self._benchmark_initial_price
+                benchmark_equity = (
+                    self._initial_capital * current_price / self._benchmark_initial_price
+                )
 
         snapshot = EquitySnapshot(
             time=time,
@@ -779,6 +778,11 @@ class BacktestContext:
             "trades_count": len(self._trades),
             "completed_orders_count": len(self._completed_orders),
             "logs": list(self._logs),
+            "benchmark_initial_price": (
+                str(self._benchmark_initial_price)
+                if self._benchmark_initial_price is not None
+                else None
+            ),
         }
 
     def restore_state(self, state: dict[str, Any]) -> None:
@@ -840,6 +844,11 @@ class BacktestContext:
             self._logs.clear()
             for log_entry in state["logs"]:
                 self._logs.append(log_entry)
+
+        # Restore benchmark initial price for buy-and-hold comparison
+        bip = state.get("benchmark_initial_price")
+        if bip is not None:
+            self._benchmark_initial_price = Decimal(str(bip))
 
         # Rebuild _open_trade from snapshot or positions
         self._open_trade = None

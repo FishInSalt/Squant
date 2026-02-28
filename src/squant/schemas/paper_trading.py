@@ -8,6 +8,7 @@ from uuid import UUID
 from pydantic import BaseModel, Field
 
 from squant.schemas.backtest import TradeRecordResponse
+from squant.schemas.live_trading import RiskConfigRequest
 from squant.schemas.types import NumberDecimal
 
 
@@ -30,12 +31,15 @@ class StartPaperTradingRequest(BaseModel):
         description="Commission rate (e.g., 0.001 = 0.1%)",
     )
     slippage: Decimal = Field(
-        default=Decimal("0"),
+        default=Decimal("0.0005"),
         ge=0,
         le=1,
-        description="Slippage rate for market orders",
+        description="Slippage rate for market orders (default 5bps covers typical spread)",
     )
     params: dict[str, Any] | None = Field(None, description="Strategy parameters")
+    risk_config: RiskConfigRequest | None = Field(
+        None, description="Optional risk management configuration"
+    )
 
 
 class ResumePaperTradingRequest(BaseModel):
@@ -130,6 +134,7 @@ class PaperTradingStatusResponse(BaseModel):
     trades: list[TradeRecordResponse] = Field(default_factory=list)
     open_trade: OpenTradeInfo | None = None
     logs: list[str] = Field(default_factory=list)
+    risk_state: dict[str, Any] | None = None
 
 
 class PaperTradingListItem(BaseModel):

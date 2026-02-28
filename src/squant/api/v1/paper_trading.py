@@ -72,6 +72,7 @@ async def start_paper_trading(
             slippage=request.slippage,
             params=request.params,
             redis=redis,
+            risk_config=request.risk_config,
         )
         return ApiResponse(data=PaperTradingRunResponse.model_validate(run))
     except StrategyNotFoundError as e:
@@ -248,6 +249,7 @@ async def get_paper_trading_status(
             trades=trades,
             open_trade=open_trade,
             logs=status.get("logs", []),
+            risk_state=status.get("risk_state"),
         )
 
         return ApiResponse(data=response)
@@ -397,7 +399,9 @@ async def get_paper_trading_run(
 async def get_equity_curve(
     run_id: UUID,
     session: AsyncSession = Depends(get_session),
-    since: datetime | None = Query(None, description="Only return records after this time (ISO 8601)"),
+    since: datetime | None = Query(
+        None, description="Only return records after this time (ISO 8601)"
+    ),
 ) -> ApiResponse[list[EquityCurvePoint]]:
     """Get equity curve for a paper trading run.
 

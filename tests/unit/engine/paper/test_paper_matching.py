@@ -224,3 +224,85 @@ class TestMatchPendingLimits:
         engine = PaperMatchingEngine()
         fills = engine.match_pending_limits([], Decimal("50000"), TS)
         assert fills == []
+
+
+class TestMatchPendingLimitsHighLow:
+    """Tests for match_pending_limits() with high/low range matching."""
+
+    def test_limit_buy_triggers_with_low(self):
+        """BUY LIMIT triggers when low <= limit_price (even if close > limit)."""
+        engine = PaperMatchingEngine(commission_rate=Decimal("0.001"))
+        order = _limit_order(OrderSide.BUY, "49000")
+        # close=50000 (above limit), but low=48500 (below limit) → triggers
+        fills = engine.match_pending_limits(
+            [order], Decimal("50000"), TS, high=Decimal("51000"), low=Decimal("48500")
+        )
+
+        assert len(fills) == 1
+        assert fills[0].price == Decimal("49000")
+
+    def test_limit_buy_not_triggered_with_low(self):
+        """BUY LIMIT does not trigger when low > limit_price."""
+        engine = PaperMatchingEngine()
+        order = _limit_order(OrderSide.BUY, "49000")
+        # low=49500 > limit=49000 → no fill
+        fills = engine.match_pending_limits(
+            [order], Decimal("50000"), TS, high=Decimal("51000"), low=Decimal("49500")
+        )
+
+        assert len(fills) == 0
+
+    def test_limit_sell_triggers_with_high(self):
+        """SELL LIMIT triggers when high >= limit_price (even if close < limit)."""
+        engine = PaperMatchingEngine(commission_rate=Decimal("0.001"))
+        order = _limit_order(OrderSide.SELL, "51000")
+        # close=50000 (below limit), but high=51500 (above limit) → triggers
+        fills = engine.match_pending_limits(
+            [order], Decimal("50000"), TS, high=Decimal("51500"), low=Decimal("49000")
+        )
+
+        assert len(fills) == 1
+        assert fills[0].price == Decimal("51000")
+
+    def test_limit_sell_not_triggered_with_high(self):
+        """SELL LIMIT does not trigger when high < limit_price."""
+        engine = PaperMatchingEngine()
+        order = _limit_order(OrderSide.SELL, "51000")
+        # high=50500 < limit=51000 → no fill
+        fills = engine.match_pending_limits(
+            [order], Decimal("50000"), TS, high=Decimal("50500"), low=Decimal("49000")
+        )
+
+        assert len(fills) == 0
+
+    def test_fallback_to_close_when_no_highlow(self):
+        """When high/low are None, falls back to close price for triggering."""
+        engine = PaperMatchingEngine(commission_rate=Decimal("0.001"))
+        order = _limit_order(OrderSide.BUY, "49000")
+        # No high/low → uses close=48000 <= 49000 → triggers
+        fills = engine.match_pending_limits([order], Decimal("48000"), TS)
+
+        assert len(fills) == 1
+        assert fills[0].price == Decimal("49000")
+
+    def test_buy_limit_exact_low(self):
+        """BUY LIMIT triggers when low == limit_price exactly."""
+        engine = PaperMatchingEngine(commission_rate=Decimal("0.001"))
+        order = _limit_order(OrderSide.BUY, "49000")
+        fills = engine.match_pending_limits(
+            [order], Decimal("50000"), TS, high=Decimal("51000"), low=Decimal("49000")
+        )
+
+        assert len(fills) == 1
+        assert fills[0].price == Decimal("49000")
+
+    def test_sell_limit_exact_high(self):
+        """SELL LIMIT triggers when high == limit_price exactly."""
+        engine = PaperMatchingEngine(commission_rate=Decimal("0.001"))
+        order = _limit_order(OrderSide.SELL, "51000")
+        fills = engine.match_pending_limits(
+            [order], Decimal("50000"), TS, high=Decimal("51000"), low=Decimal("49000")
+        )
+
+        assert len(fills) == 1
+        assert fills[0].price == Decimal("51000")

@@ -4694,6 +4694,10 @@ export interface components {
             open_trade?: components["schemas"]["OpenTradeInfo"] | null;
             /** Logs */
             logs?: string[];
+            /** Risk State */
+            risk_state?: {
+                [key: string]: unknown;
+            } | null;
         };
         /**
          * PendingOrderInfo
@@ -5104,8 +5108,8 @@ export interface components {
             commission_rate: number | string;
             /**
              * Slippage
-             * @description Slippage rate for market orders
-             * @default 0
+             * @description Slippage rate for market orders (default 5bps covers typical spread)
+             * @default 0.0005
              */
             slippage: number | string;
             /**
@@ -5115,6 +5119,8 @@ export interface components {
             params?: {
                 [key: string]: unknown;
             } | null;
+            /** @description Optional risk management configuration */
+            risk_config?: components["schemas"]["RiskConfigRequest"] | null;
         };
         /**
          * StopLiveTradingRequest

@@ -267,7 +267,6 @@ class TestOrderMatching:
         assert len(engine.context.completed_orders) == 1
         assert engine.context.has_position("BTC/USDT")
 
-
     @pytest.mark.asyncio
     async def test_limit_order_fills_on_interim_update(self, run_id):
         """Test that limit orders trigger on unclosed candle price updates."""
@@ -299,22 +298,30 @@ class TestOrderMatching:
 
         # Bar 1: strategy places limit buy at 44000
         candle1 = WSCandle(
-            symbol="BTC/USDT", timeframe="1m",
+            symbol="BTC/USDT",
+            timeframe="1m",
             timestamp=datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC),
-            open=Decimal("45000"), high=Decimal("46000"),
-            low=Decimal("44500"), close=Decimal("45500"),
-            volume=Decimal("100"), is_closed=True,
+            open=Decimal("45000"),
+            high=Decimal("46000"),
+            low=Decimal("44500"),
+            close=Decimal("45500"),
+            volume=Decimal("100"),
+            is_closed=True,
         )
         await engine.process_candle(candle1)
         assert len(engine.context.pending_orders) == 1
 
         # Unclosed candle: price drops to 43500, should trigger limit buy
         interim = WSCandle(
-            symbol="BTC/USDT", timeframe="1m",
+            symbol="BTC/USDT",
+            timeframe="1m",
             timestamp=datetime(2024, 1, 1, 12, 1, 0, tzinfo=UTC),
-            open=Decimal("45500"), high=Decimal("45500"),
-            low=Decimal("43000"), close=Decimal("43500"),
-            volume=Decimal("50"), is_closed=False,
+            open=Decimal("45500"),
+            high=Decimal("45500"),
+            low=Decimal("43000"),
+            close=Decimal("43500"),
+            volume=Decimal("50"),
+            is_closed=False,
         )
         await engine.process_candle(interim)
 
@@ -346,6 +353,7 @@ class TestOrderMatching:
             symbol="BTC/USDT",
             timeframe="1m",
             initial_capital=Decimal("10000"),
+            slippage=Decimal("0"),
         )
         await engine.start()
 
@@ -354,11 +362,15 @@ class TestOrderMatching:
         # Send 3 unclosed updates
         for i in range(3):
             candle = WSCandle(
-                symbol="BTC/USDT", timeframe="1m",
+                symbol="BTC/USDT",
+                timeframe="1m",
                 timestamp=ts,
-                open=Decimal("45000"), high=Decimal("46000"),
-                low=Decimal("44000"), close=Decimal("45500"),
-                volume=Decimal("50"), is_closed=False,
+                open=Decimal("45000"),
+                high=Decimal("46000"),
+                low=Decimal("44000"),
+                close=Decimal("45500"),
+                volume=Decimal("50"),
+                is_closed=False,
             )
             await engine.process_candle(candle)
 
@@ -366,11 +378,15 @@ class TestOrderMatching:
 
         # Send 1 closed candle
         closed = WSCandle(
-            symbol="BTC/USDT", timeframe="1m",
+            symbol="BTC/USDT",
+            timeframe="1m",
             timestamp=ts,
-            open=Decimal("45000"), high=Decimal("46000"),
-            low=Decimal("44000"), close=Decimal("45500"),
-            volume=Decimal("100"), is_closed=True,
+            open=Decimal("45000"),
+            high=Decimal("46000"),
+            low=Decimal("44000"),
+            close=Decimal("45500"),
+            volume=Decimal("100"),
+            is_closed=True,
         )
         await engine.process_candle(closed)
 
@@ -501,31 +517,43 @@ class TestStateSnapshot:
 
         # Bar 1: strategy places buy order
         candle1 = WSCandle(
-            symbol="BTC/USDT", timeframe="1m",
+            symbol="BTC/USDT",
+            timeframe="1m",
             timestamp=datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC),
-            open=Decimal("40000"), high=Decimal("41000"),
-            low=Decimal("39000"), close=Decimal("40500"),
-            volume=Decimal("100"), is_closed=True,
+            open=Decimal("40000"),
+            high=Decimal("41000"),
+            low=Decimal("39000"),
+            close=Decimal("40500"),
+            volume=Decimal("100"),
+            is_closed=True,
         )
         await engine.process_candle(candle1)
 
         # Bar 2: buy fills at close, then on_bar places sell
         candle2 = WSCandle(
-            symbol="BTC/USDT", timeframe="1m",
+            symbol="BTC/USDT",
+            timeframe="1m",
             timestamp=datetime(2024, 1, 1, 12, 1, 0, tzinfo=UTC),
-            open=Decimal("40500"), high=Decimal("41500"),
-            low=Decimal("40000"), close=Decimal("41000"),
-            volume=Decimal("100"), is_closed=True,
+            open=Decimal("40500"),
+            high=Decimal("41500"),
+            low=Decimal("40000"),
+            close=Decimal("41000"),
+            volume=Decimal("100"),
+            is_closed=True,
         )
         await engine.process_candle(candle2)
 
         # Bar 3: sell fills at close, completing the trade
         candle3 = WSCandle(
-            symbol="BTC/USDT", timeframe="1m",
+            symbol="BTC/USDT",
+            timeframe="1m",
             timestamp=datetime(2024, 1, 1, 12, 2, 0, tzinfo=UTC),
-            open=Decimal("41000"), high=Decimal("42000"),
-            low=Decimal("40500"), close=Decimal("41500"),
-            volume=Decimal("100"), is_closed=True,
+            open=Decimal("41000"),
+            high=Decimal("42000"),
+            low=Decimal("40500"),
+            close=Decimal("41500"),
+            volume=Decimal("100"),
+            is_closed=True,
         )
         await engine.process_candle(candle3)
 
@@ -784,6 +812,7 @@ class TestStrategyExceptionHandling:
             symbol="BTC/USDT",
             timeframe="1m",
             initial_capital=Decimal("10000"),
+            slippage=Decimal("0"),
         )
         with pytest.raises(ValueError, match="Strategy init failed"):
             await engine.start()
@@ -804,6 +833,7 @@ class TestStrategyExceptionHandling:
             symbol="BTC/USDT",
             timeframe="1m",
             initial_capital=Decimal("10000"),
+            slippage=Decimal("0"),
         )
         await engine.start()
         assert engine.is_running is True
@@ -825,6 +855,7 @@ class TestStrategyExceptionHandling:
             symbol="BTC/USDT",
             timeframe="1m",
             initial_capital=Decimal("10000"),
+            slippage=Decimal("0"),
         )
         await engine.start()
         await engine.stop()
@@ -842,6 +873,7 @@ class TestStrategyExceptionHandling:
             symbol="BTC/USDT",
             timeframe="1m",
             initial_capital=Decimal("10000"),
+            slippage=Decimal("0"),
         )
         await engine.start()
         await engine.stop(error="Original error")
@@ -880,6 +912,7 @@ class TestResourceLimitExceeded:
             symbol="BTC/USDT",
             timeframe="1m",
             initial_capital=Decimal("10000"),
+            slippage=Decimal("0"),
             params={"threshold": Decimal("50000")},
         )
         await engine.start()
@@ -977,6 +1010,7 @@ class TestInsufficientCashHandling:
             symbol="BTC/USDT",
             timeframe="1m",
             initial_capital=Decimal("100"),  # Very small capital
+            slippage=Decimal("0"),
         )
         await engine.start()
 
@@ -1034,6 +1068,7 @@ class TestInsufficientCashHandling:
             symbol="BTC/USDT",
             timeframe="1m",
             initial_capital=Decimal("10000"),
+            slippage=Decimal("0"),
             params={"threshold": Decimal("50000")},
         )
         await engine.start()
@@ -1085,6 +1120,7 @@ class TestDeadlockFix:
                 symbol="BTC/USDT",
                 timeframe="1m",
                 initial_capital=Decimal("10000"),
+                slippage=Decimal("0"),
                 params={"threshold": Decimal("50000")},
             )
 

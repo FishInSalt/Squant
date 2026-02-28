@@ -87,17 +87,27 @@ class PaperMatchingEngine:
         orders: list[SimulatedOrder],
         current_price: Decimal,
         timestamp: datetime,
+        high: Decimal | None = None,
+        low: Decimal | None = None,
     ) -> list[Fill]:
-        """Check pending limit orders against current price.
+        """Check pending limit orders against current price (and high/low range).
 
-        BUY LIMIT: triggers when current_price <= limit_price
-        SELL LIMIT: triggers when current_price >= limit_price
+        When high/low are provided (closed candles), uses range-based triggering:
+          BUY LIMIT: triggers when low <= limit_price
+          SELL LIMIT: triggers when high >= limit_price
+
+        When high/low are None (unclosed candles), falls back to close price:
+          BUY LIMIT: triggers when current_price <= limit_price
+          SELL LIMIT: triggers when current_price >= limit_price
+
         Triggered orders fill at their limit price (price improvement).
 
         Args:
             orders: List of pending limit orders to check.
-            current_price: Current market price.
+            current_price: Current market price (candle close).
             timestamp: Fill timestamp.
+            high: Candle high price (optional, for closed candles).
+            low: Candle low price (optional, for closed candles).
 
         Returns:
             List of fills for triggered orders.
@@ -116,10 +126,14 @@ class PaperMatchingEngine:
             can_fill = False
 
             if order.side == OrderSide.BUY:
-                if current_price <= limit_price:
+                # BUY LIMIT: price must touch or go below limit
+                check_price = low if low is not None else current_price
+                if check_price <= limit_price:
                     can_fill = True
             else:
-                if current_price >= limit_price:
+                # SELL LIMIT: price must touch or go above limit
+                check_price = high if high is not None else current_price
+                if check_price >= limit_price:
                     can_fill = True
 
             if not can_fill:
