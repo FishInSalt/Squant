@@ -126,6 +126,7 @@ class SimulatedOrder:
     avg_fill_price: Decimal = Decimal("0")
     created_at: datetime | None = None
     filled_at: datetime | None = None
+    bars_remaining: int | None = None  # None = GTC, positive int = expire after N bars
 
     @classmethod
     def create(
@@ -136,6 +137,7 @@ class SimulatedOrder:
         amount: Decimal,
         price: Decimal | None = None,
         created_at: datetime | None = None,
+        bars_remaining: int | None = None,
     ) -> "SimulatedOrder":
         """Create a new simulated order."""
         if order_type == OrderType.LIMIT and price is None:
@@ -148,6 +150,7 @@ class SimulatedOrder:
             amount=amount,
             price=price,
             created_at=created_at,
+            bars_remaining=bars_remaining,
         )
 
     @property

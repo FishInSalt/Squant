@@ -59,6 +59,7 @@ class PaperTradingEngine:
         on_snapshot: SnapshotPersistCallback | None = None,
         on_result: ResultPersistCallback | None = None,
         risk_config: RiskConfig | None = None,
+        max_volume_participation: Decimal | None = None,
     ):
         """Initialize paper trading engine.
 
@@ -79,6 +80,8 @@ class PaperTradingEngine:
                 Persists the trading state needed for crash recovery.
             risk_config: Optional risk management configuration. When provided,
                 orders are validated against risk rules before execution.
+            max_volume_participation: Maximum fraction of bar volume that can be
+                filled in a single order (e.g., 0.1 = 10%). None disables the check.
         """
         self._run_id = run_id
         self._strategy = strategy
@@ -107,6 +110,7 @@ class PaperTradingEngine:
         self._matching_engine = PaperMatchingEngine(
             commission_rate=commission_rate,
             slippage=slippage,
+            max_volume_participation=max_volume_participation,
         )
 
         # Risk manager (optional, mirrors live trading pattern)
@@ -330,6 +334,7 @@ class PaperTradingEngine:
                         timestamp,
                         high=candle.high,
                         low=candle.low,
+                        volume=candle.volume,
                     )
                 else:
                     self._fill_new_orders(current_price, timestamp)
@@ -348,12 +353,19 @@ class PaperTradingEngine:
                 self._context._set_current_bar(bar)
                 self._context._add_bar_to_history(bar)
 
+                # 4a. Expire stale limit orders (decrement bars_remaining, cancel if <= 0)
+                self._expire_stale_orders()
+
                 # 5. Record equity snapshot (before strategy, consistent with live engine P0-1)
                 self._context._record_equity_snapshot(bar.time)
 
                 # 5a. Update risk manager equity (after snapshot, mirrors live engine)
                 if self._risk_manager:
                     self._risk_manager.update_equity(self._context.equity)
+                    # 5b. Update unrealized PnL so daily loss limit includes open positions
+                    self._risk_manager.update_unrealized_pnl(
+                        self._context._get_unrealized_pnl()
+                    )
 
                 # 6. Persist snapshot: try synchronous callback first, fall back to batch
                 if self._context.equity_curve:
@@ -423,6 +435,7 @@ class PaperTradingEngine:
         timestamp: datetime,
         high: Decimal | None = None,
         low: Decimal | None = None,
+        volume: Decimal | None = None,
     ) -> None:
         """Fill new market orders immediately and check limit orders.
 
@@ -435,6 +448,7 @@ class PaperTradingEngine:
             timestamp: Current timestamp for fills.
             high: Candle high price (for closed candles, improves limit trigger accuracy).
             low: Candle low price (for closed candles, improves limit trigger accuracy).
+            volume: Bar volume (for volume participation limit).
         """
         pending = self._context._get_pending_orders()
         if not pending:
@@ -447,7 +461,9 @@ class PaperTradingEngine:
                 # Risk check before filling market order
                 if not self._validate_order_risk(order, current_price):
                     continue
-                fill = self._matching_engine.fill_market_order(order, current_price, timestamp)
+                fill = self._matching_engine.fill_market_order(
+                    order, current_price, timestamp, volume=volume
+                )
                 if fill:
                     self._process_fill_safe(fill)
             elif order.type == OrderType.LIMIT:
@@ -456,7 +472,7 @@ class PaperTradingEngine:
         # Match limit orders
         if limit_orders:
             fills = self._matching_engine.match_pending_limits(
-                limit_orders, current_price, timestamp, high=high, low=low
+                limit_orders, current_price, timestamp, high=high, low=low, volume=volume
             )
             for fill in fills:
                 # Risk check before processing limit fill
@@ -509,6 +525,31 @@ class PaperTradingEngine:
             return False
 
         return True
+
+    def _expire_stale_orders(self) -> None:
+        """Expire limit orders whose bars_remaining has reached zero.
+
+        Decrements bars_remaining for each pending limit order. Orders that
+        reach zero are cancelled and moved to completed orders.
+        """
+        from squant.engine.backtest.types import OrderStatus, OrderType
+
+        expired = []
+        remaining = []
+        for order in self._context._pending_orders:
+            if order.type == OrderType.LIMIT and order.bars_remaining is not None:
+                order.bars_remaining -= 1
+                if order.bars_remaining <= 0:
+                    order.status = OrderStatus.CANCELLED
+                    self._context._completed_orders.append(order)
+                    logger.debug(f"Limit order {order.id} expired (TTL reached)")
+                    self._context.log(f"限价单过期: {order.side.value} {order.symbol} {order.amount}@{order.price}")
+                    expired.append(order)
+                    continue
+            remaining.append(order)
+
+        if expired:
+            self._context._pending_orders = remaining
 
     def _process_fill_safe(self, fill: Any) -> None:
         """Process a fill with error handling and trade result tracking.
@@ -627,4 +668,5 @@ class PaperTradingEngine:
         result["bar_count"] = self._bar_count
         if self._risk_manager:
             result["risk_state"] = self._risk_manager.get_state_summary()
+            result["risk_config"] = self._risk_manager.config.model_dump(mode="json")
         return result

@@ -196,6 +196,7 @@ class BacktestContext:
         symbol: str,
         amount: Decimal,
         price: Decimal | None = None,
+        valid_for_bars: int | None = None,
     ) -> str:
         """Place a buy order.
 
@@ -203,6 +204,8 @@ class BacktestContext:
             symbol: Trading symbol.
             amount: Amount to buy (must be positive).
             price: Limit price (None for market order).
+            valid_for_bars: Number of bars before the order expires
+                (None = GTC, only applicable to limit orders).
 
         Returns:
             Order ID.
@@ -253,6 +256,7 @@ class BacktestContext:
             amount=amount,
             price=Decimal(str(price)) if price is not None else None,
             created_at=self._current_bar.time if self._current_bar else None,
+            bars_remaining=valid_for_bars if order_type == OrderType.LIMIT else None,
         )
         self._pending_orders.append(order)
 
@@ -265,6 +269,7 @@ class BacktestContext:
         symbol: str,
         amount: Decimal,
         price: Decimal | None = None,
+        valid_for_bars: int | None = None,
     ) -> str:
         """Place a sell order.
 
@@ -275,6 +280,8 @@ class BacktestContext:
             symbol: Trading symbol.
             amount: Amount to sell (must be positive).
             price: Limit price (None for market order).
+            valid_for_bars: Number of bars before the order expires
+                (None = GTC, only applicable to limit orders).
 
         Returns:
             Order ID.
@@ -312,6 +319,7 @@ class BacktestContext:
             amount=amount,
             price=Decimal(str(price)) if price is not None else None,
             created_at=self._current_bar.time if self._current_bar else None,
+            bars_remaining=valid_for_bars if order_type == OrderType.LIMIT else None,
         )
         self._pending_orders.append(order)
 

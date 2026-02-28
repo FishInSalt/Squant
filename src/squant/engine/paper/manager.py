@@ -161,7 +161,10 @@ class SessionManager:
         return [engine.get_state_snapshot() for engine in self._sessions.values()]
 
     async def dispatch_candle(self, candle: WSCandle) -> None:
-        """Dispatch a candle to all subscribed engines.
+        """Dispatch a candle to all subscribed engines concurrently.
+
+        Uses asyncio.gather() so a slow strategy in one session does not
+        block other sessions subscribed to the same symbol/timeframe.
 
         Args:
             candle: WebSocket candle data.
@@ -175,31 +178,54 @@ class SessionManager:
         if not run_ids:
             return
 
-        # Dispatch to each engine
+        # Build list of (run_id, engine) pairs to dispatch to
+        targets: list[tuple[UUID, PaperTradingEngine]] = []
         for run_id in run_ids:
             engine = self._sessions.get(run_id)
             if engine and engine.is_running:
-                try:
-                    await engine.process_candle(candle)
-                    # Reset error counter on success (PP-H02)
-                    self._consecutive_errors.pop(run_id, None)
-                except Exception as e:
-                    logger.exception(f"Error dispatching candle to engine {run_id}: {e}")
-                    # Track consecutive errors and auto-stop if threshold reached (PP-H02)
-                    error_count = self._consecutive_errors.get(run_id, 0) + 1
-                    self._consecutive_errors[run_id] = error_count
-                    if error_count >= self._dispatch_error_threshold:
-                        logger.error(
-                            f"Engine {run_id} reached {error_count} consecutive dispatch errors, "
-                            f"stopping automatically"
-                        )
+                targets.append((run_id, engine))
+
+        if not targets:
+            return
+
+        async def _dispatch_one(run_id: UUID, engine: PaperTradingEngine) -> tuple[UUID, Exception | None]:
+            """Process a candle for a single engine, returning any error."""
+            try:
+                await engine.process_candle(candle)
+                return (run_id, None)
+            except Exception as e:
+                logger.exception(f"Error dispatching candle to engine {run_id}: {e}")
+                return (run_id, e)
+
+        # Dispatch concurrently
+        results = await asyncio.gather(
+            *(_dispatch_one(rid, eng) for rid, eng in targets),
+            return_exceptions=False,
+        )
+
+        # Process results: track errors and auto-stop if threshold reached
+        for run_id, error in results:
+            if error is None:
+                self._consecutive_errors.pop(run_id, None)
+            else:
+                error_count = self._consecutive_errors.get(run_id, 0) + 1
+                self._consecutive_errors[run_id] = error_count
+                if error_count >= self._dispatch_error_threshold:
+                    logger.error(
+                        f"Engine {run_id} reached {error_count} consecutive dispatch errors, "
+                        f"stopping automatically"
+                    )
+                    engine = self._sessions.get(run_id)
+                    if engine:
                         try:
                             await engine.stop(
                                 error=f"Auto-stopped: {error_count} consecutive dispatch errors"
                             )
                         except Exception as stop_error:
-                            logger.exception(f"Error auto-stopping engine {run_id}: {stop_error}")
-                        self._consecutive_errors.pop(run_id, None)
+                            logger.exception(
+                                f"Error auto-stopping engine {run_id}: {stop_error}"
+                            )
+                    self._consecutive_errors.pop(run_id, None)
 
     async def stop_all(self, reason: str = "shutdown") -> None:
         """Stop all active sessions.

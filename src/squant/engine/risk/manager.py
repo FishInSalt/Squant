@@ -88,6 +88,19 @@ class RiskManager:
         with self._lock:
             self.state.current_position_value = position_value
 
+    def update_unrealized_pnl(self, unrealized_pnl: Decimal) -> None:
+        """Update current unrealized PnL for daily loss calculation.
+
+        The daily loss check uses the *change* in unrealized PnL since the
+        day started, not the absolute value.  This way, a position that was
+        already underwater at day-open doesn't double-count.
+
+        Args:
+            unrealized_pnl: Total unrealized PnL across all positions.
+        """
+        with self._lock:
+            self.state.unrealized_pnl = unrealized_pnl
+
     def record_trade_result(self, pnl: Decimal) -> None:
         """Record the result of a completed trade.
 
@@ -252,14 +265,22 @@ class RiskManager:
         return RiskCheckResult.ok()
 
     def _check_daily_loss_limit(self) -> RiskCheckResult:
-        """Check daily loss limit.
+        """Check daily loss limit including unrealized PnL.
+
+        Effective daily PnL = realized daily PnL + change in unrealized PnL
+        since day start. This prevents strategies from holding large underwater
+        positions without triggering the daily loss limit.
 
         Returns:
             RiskCheckResult for daily loss limit check.
         """
+        # Compute effective daily PnL: realized + unrealized change since day start
+        unrealized_change = self.state.unrealized_pnl - self.state.daily_start_unrealized_pnl
+        effective_daily_pnl = self.state.daily_pnl + unrealized_change
+
         # Check relative limit
         if self.state.daily_start_equity > 0:
-            loss_pct = -self.state.daily_pnl / self.state.daily_start_equity
+            loss_pct = -effective_daily_pnl / self.state.daily_start_equity
             if loss_pct >= self.config.daily_loss_limit:
                 return RiskCheckResult.reject(
                     rule_type=RiskRuleType.DAILY_LOSS_LIMIT,
@@ -268,24 +289,27 @@ class RiskManager:
                     current_loss_pct=float(loss_pct),
                     limit_pct=float(self.config.daily_loss_limit),
                     daily_pnl=float(self.state.daily_pnl),
+                    unrealized_change=float(unrealized_change),
+                    effective_daily_pnl=float(effective_daily_pnl),
                 )
-        elif self.state.daily_pnl < 0:
+        elif effective_daily_pnl < 0:
             # daily_start_equity is 0 but we have losses — block trading (RSK-1)
             return RiskCheckResult.reject(
                 rule_type=RiskRuleType.DAILY_LOSS_LIMIT,
                 reason="Daily loss detected but daily_start_equity is 0 "
                 "(cannot calculate loss percentage)",
                 daily_pnl=float(self.state.daily_pnl),
+                unrealized_change=float(unrealized_change),
             )
 
         # Check absolute limit if configured
         if self.config.daily_loss_limit_absolute is not None:
-            if -self.state.daily_pnl >= self.config.daily_loss_limit_absolute:
+            if -effective_daily_pnl >= self.config.daily_loss_limit_absolute:
                 return RiskCheckResult.reject(
                     rule_type=RiskRuleType.DAILY_LOSS_LIMIT,
-                    reason=f"Daily loss limit reached: {-self.state.daily_pnl} "
+                    reason=f"Daily loss limit reached: {-effective_daily_pnl} "
                     f"(limit: {self.config.daily_loss_limit_absolute})",
-                    current_loss=float(-self.state.daily_pnl),
+                    current_loss=float(-effective_daily_pnl),
                     limit=float(self.config.daily_loss_limit_absolute),
                 )
 
@@ -418,8 +442,6 @@ class RiskManager:
             RiskCheckResult for position size check.
         """
         # Calculate new position after order
-        price = order.price if order.price else current_price
-
         if order.side == OrderSide.BUY:
             new_position_amount = current_position_amount + order.amount
         else:
@@ -441,7 +463,10 @@ class RiskManager:
         if order.side == OrderSide.SELL:
             return RiskCheckResult.ok()
 
-        new_position_value = new_position_amount * price
+        # Always use current_price for position value — reflects actual market
+        # exposure, not order cost. A BUY LIMIT at $40k when market is $50k
+        # produces a position worth $50k, not $40k.
+        new_position_value = new_position_amount * current_price
 
         # Check absolute position value limit
         if self.config.max_position_value is not None:
@@ -511,6 +536,66 @@ class RiskManager:
 
         return RiskCheckResult.ok()
 
+    def restore_state(self, state_dict: dict) -> None:
+        """Restore risk state from a persisted summary dict.
+
+        Restores cumulative fields (total_pnl, circuit breaker, etc.) so that
+        risk limits survive session resume. Daily stats are restored if the
+        persisted snapshot is from the same UTC day; otherwise they are reset.
+
+        Args:
+            state_dict: Dictionary from get_state_summary() (persisted in DB).
+        """
+        with self._lock:
+            # Cumulative fields — always restore
+            self.state.total_pnl = Decimal(str(state_dict.get("total_pnl", 0)))
+            self.state.total_loss_limit_triggered = state_dict.get(
+                "total_loss_limit_triggered", False
+            )
+            self.state.consecutive_losses = state_dict.get("consecutive_losses", 0)
+            self.state.circuit_breaker_triggered = state_dict.get(
+                "circuit_breaker_triggered", False
+            )
+            if state_dict.get("circuit_breaker_until"):
+                self.state.circuit_breaker_until = datetime.fromisoformat(
+                    state_dict["circuit_breaker_until"]
+                )
+
+            # Equity
+            if state_dict.get("current_equity"):
+                self._current_equity = Decimal(str(state_dict["current_equity"]))
+
+            # Unrealized PnL
+            self.state.unrealized_pnl = Decimal(str(state_dict.get("unrealized_pnl", 0)))
+
+            # Daily stats — restore if same UTC day, otherwise reset
+            daily_reset_str = state_dict.get("daily_reset_time")
+            same_day = False
+            if daily_reset_str:
+                saved_date = datetime.fromisoformat(daily_reset_str).date()
+                if saved_date == datetime.now(UTC).date():
+                    same_day = True
+
+            if same_day:
+                self.state.daily_trade_count = state_dict.get("daily_trade_count", 0)
+                self.state.daily_pnl = Decimal(str(state_dict.get("daily_pnl", 0)))
+                self.state.daily_start_equity = Decimal(
+                    str(state_dict.get("daily_start_equity", self._current_equity))
+                )
+                self.state.daily_start_unrealized_pnl = Decimal(
+                    str(state_dict.get("daily_start_unrealized_pnl", 0))
+                )
+                if daily_reset_str:
+                    self.state.daily_reset_time = datetime.fromisoformat(daily_reset_str)
+            else:
+                self.state.reset_daily_stats(self._current_equity)
+
+            logger.info(
+                f"RiskManager state restored: total_pnl={self.state.total_pnl}, "
+                f"circuit_breaker={self.state.circuit_breaker_triggered}, "
+                f"same_day={same_day}"
+            )
+
     def get_state_summary(self) -> dict:
         """Get a summary of current risk state.
 
@@ -527,6 +612,14 @@ class RiskManager:
             "daily_trade_limit": self.config.daily_trade_limit,
             "daily_pnl": float(self.state.daily_pnl),
             "daily_loss_limit_pct": float(self.config.daily_loss_limit),
+            "unrealized_pnl": float(self.state.unrealized_pnl),
+            "daily_start_unrealized_pnl": float(self.state.daily_start_unrealized_pnl),
+            "daily_start_equity": float(self.state.daily_start_equity),
+            "daily_reset_time": (
+                self.state.daily_reset_time.isoformat()
+                if self.state.daily_reset_time
+                else None
+            ),
             "total_pnl": float(self.state.total_pnl),
             "total_loss_limit_pct": float(self.config.total_loss_limit),
             "total_loss_limit_triggered": self.state.total_loss_limit_triggered,

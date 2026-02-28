@@ -862,6 +862,13 @@ class PaperTradingService:
 
         strategy_instance = self._instantiate_strategy(strategy_model.code)
 
+        # Restore risk config from persisted result (if available)
+        engine_risk_config = None
+        if run.result and run.result.get("risk_config"):
+            from squant.engine.risk.models import RiskConfig
+
+            engine_risk_config = RiskConfig(**run.result["risk_config"])
+
         # Create engine with same parameters
         engine = PaperTradingEngine(
             run_id=UUID(run.id),
@@ -874,11 +881,15 @@ class PaperTradingService:
             params=run.params,
             on_snapshot=self._create_snapshot_callback(),
             on_result=self._create_result_callback(),
+            risk_config=engine_risk_config,
         )
 
         # Restore trading state from result JSONB
         if run.result:
             engine.context.restore_state(run.result)
+            # Restore risk manager state (cumulative PnL, circuit breaker, etc.)
+            if engine._risk_manager and run.result.get("risk_state"):
+                engine._risk_manager.restore_state(run.result["risk_state"])
 
         # Register with session manager
         await session_manager.register(engine)

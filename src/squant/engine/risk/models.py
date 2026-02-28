@@ -235,6 +235,10 @@ class RiskState(BaseModel):
     # Position tracking
     current_position_value: Decimal = Decimal("0")
 
+    # Unrealized PnL tracking for daily loss calculation
+    unrealized_pnl: Decimal = Decimal("0")
+    daily_start_unrealized_pnl: Decimal = Decimal("0")
+
     def reset_daily_stats(self, equity: Decimal) -> None:
         """Reset daily statistics.
 
@@ -249,6 +253,7 @@ class RiskState(BaseModel):
         self.daily_trade_count = 0
         self.daily_pnl = Decimal("0")
         self.daily_start_equity = equity
+        self.daily_start_unrealized_pnl = self.unrealized_pnl
         self.daily_reset_time = datetime.now(UTC)
 
     def record_trade(self, pnl: Decimal) -> None:

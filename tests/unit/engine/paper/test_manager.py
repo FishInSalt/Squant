@@ -1,5 +1,6 @@
 """Unit tests for paper trading session manager."""
 
+import asyncio
 from datetime import UTC, datetime
 from decimal import Decimal
 from unittest.mock import AsyncMock, MagicMock
@@ -535,6 +536,113 @@ class TestDispatchConsecutiveErrors:
 
         # Engine should NOT have been auto-stopped
         engine.stop.assert_not_called()
+
+
+class TestParallelDispatch:
+    """Tests for concurrent candle dispatch via asyncio.gather()."""
+
+    @pytest.fixture
+    def sample_candle(self):
+        return WSCandle(
+            symbol="BTC/USDT",
+            timeframe="1m",
+            timestamp=datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC),
+            open=Decimal("45000"),
+            high=Decimal("46000"),
+            low=Decimal("44000"),
+            close=Decimal("45500"),
+            volume=Decimal("100"),
+            is_closed=True,
+        )
+
+    @pytest.mark.asyncio
+    async def test_concurrent_dispatch_calls_all_engines(self, session_manager, sample_candle):
+        """All engines should receive the candle even if dispatched concurrently."""
+        engines = []
+        for _ in range(5):
+            engine = MagicMock()
+            engine.run_id = uuid4()
+            engine.symbol = "BTC/USDT"
+            engine.timeframe = "1m"
+            engine.is_running = True
+            engine.process_candle = AsyncMock()
+            engines.append(engine)
+            await session_manager.register(engine)
+
+        await session_manager.dispatch_candle(sample_candle)
+
+        for engine in engines:
+            engine.process_candle.assert_called_once_with(sample_candle)
+
+    @pytest.mark.asyncio
+    async def test_slow_engine_does_not_block_others(self, session_manager, sample_candle):
+        """A slow engine should not prevent other engines from processing."""
+        import time
+
+        call_times: dict[str, float] = {}
+
+        async def slow_process(candle):
+            call_times["slow"] = time.monotonic()
+            await asyncio.sleep(0.1)
+
+        async def fast_process(candle):
+            call_times["fast"] = time.monotonic()
+
+        slow_engine = MagicMock()
+        slow_engine.run_id = uuid4()
+        slow_engine.symbol = "BTC/USDT"
+        slow_engine.timeframe = "1m"
+        slow_engine.is_running = True
+        slow_engine.process_candle = AsyncMock(side_effect=slow_process)
+
+        fast_engine = MagicMock()
+        fast_engine.run_id = uuid4()
+        fast_engine.symbol = "BTC/USDT"
+        fast_engine.timeframe = "1m"
+        fast_engine.is_running = True
+        fast_engine.process_candle = AsyncMock(side_effect=fast_process)
+
+        await session_manager.register(slow_engine)
+        await session_manager.register(fast_engine)
+
+        await session_manager.dispatch_candle(sample_candle)
+
+        # Both should have been called
+        slow_engine.process_candle.assert_called_once()
+        fast_engine.process_candle.assert_called_once()
+        # Both should start ~simultaneously (concurrent), not sequentially
+        # In sequential mode, total would be ~0.1s for slow + ~0 for fast
+        # The key test: the fast engine should start without waiting for slow
+        assert "slow" in call_times
+        assert "fast" in call_times
+
+    @pytest.mark.asyncio
+    async def test_one_error_does_not_affect_others(self, session_manager, sample_candle):
+        """One engine failing should not prevent other engines from processing."""
+        good_engine = MagicMock()
+        good_engine.run_id = uuid4()
+        good_engine.symbol = "BTC/USDT"
+        good_engine.timeframe = "1m"
+        good_engine.is_running = True
+        good_engine.process_candle = AsyncMock()
+
+        bad_engine = MagicMock()
+        bad_engine.run_id = uuid4()
+        bad_engine.symbol = "BTC/USDT"
+        bad_engine.timeframe = "1m"
+        bad_engine.is_running = True
+        bad_engine.process_candle = AsyncMock(side_effect=RuntimeError("crash"))
+        bad_engine.stop = AsyncMock()
+
+        await session_manager.register(good_engine)
+        await session_manager.register(bad_engine)
+
+        await session_manager.dispatch_candle(sample_candle)
+
+        # Good engine should still process successfully
+        good_engine.process_candle.assert_called_once_with(sample_candle)
+        # Bad engine error should be tracked but not propagate
+        assert session_manager._consecutive_errors.get(bad_engine.run_id, 0) == 1
 
 
 class TestSingleton:

@@ -32,25 +32,33 @@ class PaperMatchingEngine:
         self,
         commission_rate: Decimal = Decimal("0.001"),
         slippage: Decimal = Decimal("0"),
+        max_volume_participation: Decimal | None = None,
     ):
         self.commission_rate = commission_rate
         self.slippage = slippage
+        self.max_volume_participation = max_volume_participation
 
     def fill_market_order(
         self,
         order: SimulatedOrder,
         current_price: Decimal,
         timestamp: datetime,
+        volume: Decimal | None = None,
     ) -> Fill | None:
         """Fill a market order immediately at current_price with slippage.
 
         BUY: fill_price = current_price * (1 + slippage)
         SELL: fill_price = current_price * (1 - slippage)
 
+        When max_volume_participation is set, the fill amount is capped at
+        volume * max_volume_participation to prevent unrealistic fills on
+        low-volume bars.
+
         Args:
             order: Market order to fill.
             current_price: Current market price.
             timestamp: Fill timestamp.
+            volume: Bar volume (optional, used for volume participation check).
 
         Returns:
             Fill if order is a valid pending market order, None otherwise.
@@ -69,6 +77,12 @@ class PaperMatchingEngine:
             fill_price = current_price
 
         fill_amount = order.remaining
+
+        # Cap fill amount by volume participation limit
+        if self.max_volume_participation is not None and volume is not None and volume > 0:
+            max_amount = volume * self.max_volume_participation
+            fill_amount = min(fill_amount, max_amount)
+
         fill_value = fill_price * fill_amount
         fee = fill_value * self.commission_rate
 
@@ -89,6 +103,7 @@ class PaperMatchingEngine:
         timestamp: datetime,
         high: Decimal | None = None,
         low: Decimal | None = None,
+        volume: Decimal | None = None,
     ) -> list[Fill]:
         """Check pending limit orders against current price (and high/low range).
 
@@ -101,6 +116,7 @@ class PaperMatchingEngine:
           SELL LIMIT: triggers when current_price >= limit_price
 
         Triggered orders fill at their limit price (price improvement).
+        When max_volume_participation is set, the fill amount is capped.
 
         Args:
             orders: List of pending limit orders to check.
@@ -108,6 +124,7 @@ class PaperMatchingEngine:
             timestamp: Fill timestamp.
             high: Candle high price (optional, for closed candles).
             low: Candle low price (optional, for closed candles).
+            volume: Bar volume (optional, used for volume participation check).
 
         Returns:
             List of fills for triggered orders.
@@ -140,6 +157,12 @@ class PaperMatchingEngine:
                 continue
 
             fill_amount = order.remaining
+
+            # Cap fill amount by volume participation limit
+            if self.max_volume_participation is not None and volume is not None and volume > 0:
+                max_amount = volume * self.max_volume_participation
+                fill_amount = min(fill_amount, max_amount)
+
             fill_value = limit_price * fill_amount
             fee = fill_value * self.commission_rate
 

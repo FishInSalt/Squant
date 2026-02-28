@@ -306,3 +306,69 @@ class TestMatchPendingLimitsHighLow:
 
         assert len(fills) == 1
         assert fills[0].price == Decimal("51000")
+
+
+class TestVolumeParticipation:
+    """Tests for volume participation limiting."""
+
+    def test_market_order_capped_by_volume(self):
+        """Market order fill amount should be capped by max_volume_participation * volume."""
+        engine = PaperMatchingEngine(
+            commission_rate=Decimal("0.001"),
+            max_volume_participation=Decimal("0.1"),  # 10% of volume
+        )
+        # Order for 1.0 BTC but bar volume is only 5.0 BTC -> max fill = 0.5
+        order = _market_order(OrderSide.BUY, "1.0")
+        fill = engine.fill_market_order(order, Decimal("50000"), TS, volume=Decimal("5.0"))
+
+        assert fill is not None
+        assert fill.amount == Decimal("0.5")
+
+    def test_market_order_within_volume_fills_fully(self):
+        """Market order within volume limit should fill completely."""
+        engine = PaperMatchingEngine(
+            commission_rate=Decimal("0.001"),
+            max_volume_participation=Decimal("0.1"),
+        )
+        # Order for 0.1 BTC, bar volume is 10 BTC -> max fill = 1.0 > order size
+        order = _market_order(OrderSide.BUY, "0.1")
+        fill = engine.fill_market_order(order, Decimal("50000"), TS, volume=Decimal("10"))
+
+        assert fill is not None
+        assert fill.amount == Decimal("0.1")
+
+    def test_limit_order_capped_by_volume(self):
+        """Limit order fill amount should be capped by volume participation."""
+        engine = PaperMatchingEngine(
+            commission_rate=Decimal("0.001"),
+            max_volume_participation=Decimal("0.1"),
+        )
+        # BUY LIMIT order for 2.0 BTC, bar volume is 5.0 -> max fill = 0.5
+        order = _limit_order(OrderSide.BUY, "49000", "2.0")
+        fills = engine.match_pending_limits(
+            [order], Decimal("48000"), TS, volume=Decimal("5.0")
+        )
+
+        assert len(fills) == 1
+        assert fills[0].amount == Decimal("0.5")
+
+    def test_no_volume_limit_when_disabled(self):
+        """Without max_volume_participation, orders fill fully."""
+        engine = PaperMatchingEngine(commission_rate=Decimal("0.001"))
+        order = _market_order(OrderSide.BUY, "100")
+        fill = engine.fill_market_order(order, Decimal("50000"), TS, volume=Decimal("5"))
+
+        assert fill is not None
+        assert fill.amount == Decimal("100")  # No cap applied
+
+    def test_no_volume_limit_when_volume_is_none(self):
+        """When volume is not provided, no cap applies even with participation set."""
+        engine = PaperMatchingEngine(
+            commission_rate=Decimal("0.001"),
+            max_volume_participation=Decimal("0.1"),
+        )
+        order = _market_order(OrderSide.BUY, "100")
+        fill = engine.fill_market_order(order, Decimal("50000"), TS, volume=None)
+
+        assert fill is not None
+        assert fill.amount == Decimal("100")

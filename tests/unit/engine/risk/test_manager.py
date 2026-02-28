@@ -1463,3 +1463,260 @@ class TestInitializationDailyResetTime:
         """Test that daily_start_equity is set to initial equity."""
         rm = RiskManager(config=default_config, initial_equity=Decimal("5000"))
         assert rm.state.daily_start_equity == Decimal("5000")
+
+
+class TestPositionSizeMarketPrice:
+    """Tests for position size using market price (not limit price)."""
+
+    def test_position_size_uses_market_price_not_limit_price(self):
+        """BUY LIMIT at $40k when market is $50k should be evaluated at market price.
+
+        max_position_size=0.05 (5%), equity=10000
+        Limit price: 0.01 BTC * $40k = $400 (4%) -> would pass with limit price
+        Market price: 0.01 BTC * $50k = $500 (5%) -> should fail with market price
+        """
+        config = RiskConfig(
+            max_position_size=Decimal("0.05"),
+            max_order_size=Decimal("0.10"),
+            min_order_value=Decimal("1"),
+        )
+        rm = RiskManager(config=config, initial_equity=Decimal("10000"))
+
+        order = OrderRequest(
+            symbol="BTC/USDT",
+            side=OrderSide.BUY,
+            type=OrderType.LIMIT,
+            amount=Decimal("0.01"),
+            price=Decimal("40000"),  # Limit price far below market
+        )
+        result = rm.validate_order(order, Decimal("50000"), Decimal("0"))
+        assert result.passed is False
+        assert result.rule_type == RiskRuleType.MAX_POSITION_SIZE
+
+    def test_sell_orders_skip_position_limit(self):
+        """SELL orders only check for negative position, not position size limits."""
+        config = RiskConfig(
+            max_position_size=Decimal("0.05"),
+            max_order_size=Decimal("1.0"),
+            min_order_value=Decimal("1"),
+        )
+        rm = RiskManager(config=config, initial_equity=Decimal("10000"))
+
+        order = OrderRequest(
+            symbol="BTC/USDT",
+            side=OrderSide.SELL,
+            type=OrderType.LIMIT,
+            amount=Decimal("0.01"),
+            price=Decimal("60000"),
+        )
+        result = rm.validate_order(order, Decimal("50000"), Decimal("0.01"))
+        assert result.passed is True
+
+    def test_order_size_still_uses_limit_price(self):
+        """_check_order_size should still use limit price for cost calculation.
+
+        Order cost at limit price: 0.01 * $40k = $400 (4% of equity) -> passes 5% limit
+        """
+        config = RiskConfig(
+            max_position_size=Decimal("1.0"),  # Relaxed to isolate order_size check
+            max_order_size=Decimal("0.05"),
+            min_order_value=Decimal("1"),
+        )
+        rm = RiskManager(config=config, initial_equity=Decimal("10000"))
+
+        order = OrderRequest(
+            symbol="BTC/USDT",
+            side=OrderSide.BUY,
+            type=OrderType.LIMIT,
+            amount=Decimal("0.01"),
+            price=Decimal("40000"),  # $400 = 4% of equity -> passes
+        )
+        result = rm.validate_order(order, Decimal("50000"), Decimal("0"))
+        assert result.passed is True
+
+
+class TestDailyLossWithUnrealized:
+    """Tests that daily loss limit includes unrealized PnL changes."""
+
+    def _make_manager(self, daily_loss_limit=Decimal("0.05")):
+        """Helper: create RiskManager with specified daily loss limit."""
+        config = RiskConfig(
+            max_position_size=Decimal("1.0"),
+            max_order_size=Decimal("1.0"),
+            min_order_value=Decimal("1"),
+            daily_loss_limit=daily_loss_limit,
+        )
+        return RiskManager(config=config, initial_equity=Decimal("10000"))
+
+    def _make_order(self, amount=Decimal("0.01"), price=Decimal("50000")):
+        return OrderRequest(
+            symbol="BTC/USDT",
+            side=OrderSide.BUY,
+            type=OrderType.MARKET,
+            amount=amount,
+            price=price,
+        )
+
+    def test_unrealized_loss_triggers_daily_limit(self):
+        """Unrealized loss alone should trigger the daily loss limit.
+
+        No realized trades, but unrealized PnL drops by 6% of equity -> reject.
+        """
+        rm = self._make_manager()
+        # Simulate unrealized PnL dropping by $600 (6% of $10k equity)
+        rm.update_unrealized_pnl(Decimal("-600"))
+
+        order = self._make_order()
+        result = rm.validate_order(order, Decimal("50000"))
+        assert result.passed is False
+        assert result.rule_type == RiskRuleType.DAILY_LOSS_LIMIT
+
+    def test_combined_realized_and_unrealized_triggers_limit(self):
+        """Realized + unrealized loss combined should trigger the limit.
+
+        Realized daily loss = 2%, unrealized change = 4% -> total 6% > 5% limit.
+        """
+        rm = self._make_manager()
+        # Record realized loss of $200 (2% of equity)
+        rm.record_trade_result(Decimal("-200"))
+        # Unrealized PnL drops by $400 (4% of equity)
+        rm.update_unrealized_pnl(Decimal("-400"))
+
+        order = self._make_order()
+        result = rm.validate_order(order, Decimal("50000"))
+        assert result.passed is False
+        assert result.rule_type == RiskRuleType.DAILY_LOSS_LIMIT
+
+    def test_unrealized_below_threshold_passes(self):
+        """Unrealized loss below threshold should pass."""
+        rm = self._make_manager()
+        # Unrealized PnL drops by $300 (3% of $10k equity) -> under 5% limit
+        rm.update_unrealized_pnl(Decimal("-300"))
+
+        order = self._make_order()
+        result = rm.validate_order(order, Decimal("50000"))
+        assert result.passed is True
+
+    def test_daily_reset_captures_unrealized_baseline(self):
+        """After daily reset, only the change in unrealized PnL counts.
+
+        Position was already -$500 at day start. If unrealized stays at -$500,
+        the change is $0 and should not trigger the limit.
+        """
+        rm = self._make_manager()
+        # Position already underwater at -$500 before day reset
+        rm.update_unrealized_pnl(Decimal("-500"))
+        # Simulate daily reset (new trading day)
+        rm.check_daily_reset()
+        # Force reset by manipulating reset time
+        rm.state.daily_reset_time = None
+        rm.check_daily_reset()
+
+        # Unrealized PnL stays at -$500 -> change = 0
+        order = self._make_order()
+        result = rm.validate_order(order, Decimal("50000"))
+        assert result.passed is True
+
+        # Unrealized PnL worsens to -$1100 -> change = -$600 (6%) -> reject
+        rm.update_unrealized_pnl(Decimal("-1100"))
+        result = rm.validate_order(order, Decimal("50000"))
+        assert result.passed is False
+        assert result.rule_type == RiskRuleType.DAILY_LOSS_LIMIT
+
+
+class TestRiskManagerRestore:
+    """Tests for RiskManager.restore_state()."""
+
+    def _make_manager(self):
+        config = RiskConfig(
+            max_position_size=Decimal("1.0"),
+            max_order_size=Decimal("1.0"),
+            min_order_value=Decimal("1"),
+            daily_loss_limit=Decimal("0.05"),
+            total_loss_limit=Decimal("0.20"),
+            circuit_breaker_enabled=True,
+            circuit_breaker_loss_count=3,
+            circuit_breaker_cooldown_minutes=30,
+        )
+        return RiskManager(config=config, initial_equity=Decimal("10000"))
+
+    def test_restore_cumulative_fields(self):
+        """Restoring state should recover total_pnl and consecutive_losses."""
+        rm = self._make_manager()
+        state_dict = rm.get_state_summary()
+
+        # Simulate prior state
+        state_dict["total_pnl"] = -1500.0
+        state_dict["consecutive_losses"] = 2
+        state_dict["current_equity"] = 8500.0
+
+        rm2 = self._make_manager()
+        rm2.restore_state(state_dict)
+
+        assert rm2.state.total_pnl == Decimal("-1500")
+        assert rm2.state.consecutive_losses == 2
+        assert rm2._current_equity == Decimal("8500")
+
+    def test_restore_circuit_breaker(self):
+        """Restoring state should recover circuit breaker state."""
+        rm = self._make_manager()
+        state_dict = rm.get_state_summary()
+
+        state_dict["circuit_breaker_triggered"] = True
+        state_dict["circuit_breaker_until"] = "2099-12-31T23:59:59+00:00"
+
+        rm2 = self._make_manager()
+        rm2.restore_state(state_dict)
+
+        assert rm2.state.circuit_breaker_triggered is True
+        assert rm2.state.circuit_breaker_until is not None
+
+        # Orders should be rejected
+        order = OrderRequest(
+            symbol="BTC/USDT",
+            side=OrderSide.BUY,
+            type=OrderType.MARKET,
+            amount=Decimal("0.01"),
+            price=Decimal("50000"),
+        )
+        result = rm2.validate_order(order, Decimal("50000"))
+        assert result.passed is False
+        assert result.rule_type == RiskRuleType.CIRCUIT_BREAKER
+
+    def test_restore_total_loss_triggered(self):
+        """total_loss_limit_triggered should persist and block all orders."""
+        rm = self._make_manager()
+        state_dict = rm.get_state_summary()
+
+        state_dict["total_loss_limit_triggered"] = True
+        state_dict["total_pnl"] = -2500.0
+
+        rm2 = self._make_manager()
+        rm2.restore_state(state_dict)
+
+        order = OrderRequest(
+            symbol="BTC/USDT",
+            side=OrderSide.BUY,
+            type=OrderType.MARKET,
+            amount=Decimal("0.01"),
+            price=Decimal("50000"),
+        )
+        result = rm2.validate_order(order, Decimal("50000"))
+        assert result.passed is False
+        assert result.rule_type == RiskRuleType.TOTAL_LOSS_LIMIT
+
+    def test_restore_daily_stats_same_day(self):
+        """Daily stats should be restored when snapshot is from the same UTC day."""
+        rm = self._make_manager()
+        # Record some daily activity
+        rm.record_trade_result(Decimal("-200"))
+        rm.record_trade_result(Decimal("-100"))
+
+        state_dict = rm.get_state_summary()
+        # daily_reset_time is today -> same day
+
+        rm2 = self._make_manager()
+        rm2.restore_state(state_dict)
+
+        assert rm2.state.daily_trade_count == 2
+        assert rm2.state.daily_pnl == Decimal("-300")

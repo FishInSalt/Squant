@@ -1365,3 +1365,128 @@ class TestResultCallback:
             await engine_with_result_callback.process_candle(candle)
 
         assert result_callback.call_count == 3
+
+
+class LimitOrderStrategy(Strategy):
+    """Strategy that places a limit order on first bar."""
+
+    def on_init(self) -> None:
+        self.order_placed = False
+        self.order_id = None
+
+    def on_bar(self, bar: Bar) -> None:
+        if not self.order_placed:
+            valid_for = self.ctx.params.get("valid_for_bars")
+            self.order_id = self.ctx.buy(
+                bar.symbol,
+                Decimal("0.01"),
+                price=Decimal("40000"),
+                valid_for_bars=valid_for,
+            )
+            self.order_placed = True
+
+    def on_stop(self) -> None:
+        pass
+
+
+class TestOrderExpiration:
+    """Tests for limit order TTL/expiration mechanism."""
+
+    def _make_engine(self, strategy, valid_for_bars=None):
+        return PaperTradingEngine(
+            run_id=uuid4(),
+            strategy=strategy,
+            symbol="BTC/USDT",
+            timeframe="1m",
+            initial_capital=Decimal("100000"),
+            commission_rate=Decimal("0.001"),
+            slippage=Decimal("0"),
+            params={"valid_for_bars": valid_for_bars},
+        )
+
+    def _make_candle(self, minute, close=Decimal("50000"), is_closed=True):
+        return WSCandle(
+            symbol="BTC/USDT",
+            timeframe="1m",
+            timestamp=datetime(2024, 1, 1, 12, minute, 0, tzinfo=UTC),
+            open=close - Decimal("100"),
+            high=close + Decimal("500"),
+            low=close - Decimal("500"),
+            close=close,
+            volume=Decimal("100"),
+            is_closed=is_closed,
+        )
+
+    @pytest.mark.asyncio
+    async def test_limit_order_expires_after_ttl(self):
+        """Limit order with valid_for_bars=2 should expire after 2 closed bars."""
+        strategy = LimitOrderStrategy()
+        engine = self._make_engine(strategy, valid_for_bars=2)
+        await engine.start()
+
+        # Bar 0: strategy places limit buy @$40k (won't fill, price at $50k)
+        await engine.process_candle(self._make_candle(0))
+        assert len(engine.context.pending_orders) == 1
+        assert engine.context.pending_orders[0].bars_remaining == 2
+
+        # Bar 1: decrement -> bars_remaining=1, still pending
+        await engine.process_candle(self._make_candle(1))
+        assert len(engine.context.pending_orders) == 1
+
+        # Bar 2: decrement -> bars_remaining=0 -> expired
+        await engine.process_candle(self._make_candle(2))
+        assert len(engine.context.pending_orders) == 0
+        # Should be in completed orders as CANCELLED
+        cancelled = [
+            o for o in engine.context.completed_orders if o.status.value == "cancelled"
+        ]
+        assert len(cancelled) == 1
+
+    @pytest.mark.asyncio
+    async def test_gtc_order_does_not_expire(self):
+        """Limit order with no valid_for_bars (GTC) should never expire."""
+        strategy = LimitOrderStrategy()
+        engine = self._make_engine(strategy, valid_for_bars=None)
+        await engine.start()
+
+        # Bar 0: strategy places GTC limit buy @$40k
+        await engine.process_candle(self._make_candle(0))
+        assert len(engine.context.pending_orders) == 1
+        assert engine.context.pending_orders[0].bars_remaining is None
+
+        # Process 10 more bars — order should stay pending
+        for i in range(1, 11):
+            await engine.process_candle(self._make_candle(i))
+        assert len(engine.context.pending_orders) == 1
+
+    @pytest.mark.asyncio
+    async def test_order_filled_before_expiry(self):
+        """Order should fill if price reaches limit before TTL expires."""
+        strategy = LimitOrderStrategy()
+        engine = self._make_engine(strategy, valid_for_bars=5)
+        await engine.start()
+
+        # Bar 0: place limit buy @$40k
+        await engine.process_candle(self._make_candle(0, close=Decimal("50000")))
+        assert len(engine.context.pending_orders) == 1
+
+        # Bar 1: price drops to $39k — limit triggers (close < limit price)
+        await engine.process_candle(self._make_candle(1, close=Decimal("39000")))
+        # Order should have been filled
+        assert len(engine.context.pending_orders) == 0
+        assert engine.context.has_position("BTC/USDT")
+
+    @pytest.mark.asyncio
+    async def test_valid_for_bars_1_expires_immediately_on_next_bar(self):
+        """valid_for_bars=1 means expire after exactly 1 bar."""
+        strategy = LimitOrderStrategy()
+        engine = self._make_engine(strategy, valid_for_bars=1)
+        await engine.start()
+
+        # Bar 0: place order
+        await engine.process_candle(self._make_candle(0))
+        assert len(engine.context.pending_orders) == 1
+
+        # Bar 1: order expires
+        await engine.process_candle(self._make_candle(1))
+        assert len(engine.context.pending_orders) == 0
