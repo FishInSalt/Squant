@@ -300,3 +300,165 @@ class TestRiskManagerIntegration:
         # With amount:    pos = 0.12+0.10 = 0.22 * 50000 = 11000 → 11% > 9% → REJECT
         result = engine2._validate_order_risk(order2, Decimal("50000"))
         assert result is True, "Partial fill should use remaining, not full amount"
+
+
+class TestVolumeBudgetIntegration:
+    """Tests for volume budget correctness at the engine level."""
+
+    async def test_risk_rejected_limit_preserves_budget(self):
+        """When a limit fill is risk-rejected, its budget is preserved for other orders.
+
+        Without fix: matching engine deducts budget for ALL generated fills,
+        then engine rejects some fills, permanently losing that budget.
+        With fix: engine processes limits one-at-a-time, only deducting after
+        risk check passes.
+        """
+        from squant.engine.backtest.types import Position
+
+        config = RiskConfig(
+            max_position_size=Decimal("0.04"),  # 4% of equity = $4000
+            max_order_size=Decimal("0.9"),
+        )
+        engine = _create_engine(risk_config=config, initial_capital=Decimal("100000"))
+        engine._matching_engine.max_volume_participation = Decimal("0.1")
+        await engine.start()
+
+        # Place two limit buy orders:
+        # Order 1: 0.05 BTC @ $50000 → $2500 → but with existing position
+        #          it will exceed 4% limit → REJECTED by risk
+        # Order 2: 0.05 BTC @ $49000 → should still fill if budget is preserved
+
+        # Set up existing position that makes order1 exceed limit
+        engine._context._positions["BTC/USDT"] = Position(
+            symbol="BTC/USDT",
+            amount=Decimal("0.04"),
+            avg_entry_price=Decimal("50000"),
+        )
+        # Current position: 0.04 * $50000 = $2000 = 2%
+        # After order1: 0.04+0.05 = 0.09 * $50000 = $4500 = 4.5% > 4% → REJECTED
+        # After order2 alone: 0.04+0.05 = 0.09 * $49000 = $4410 = 4.41% > 4% → also rejected
+        # Adjust: make order2 small enough to pass
+        engine.context.buy("BTC/USDT", Decimal("0.05"), price=Decimal("50000"))
+        engine.context.buy("BTC/USDT", Decimal("0.03"), price=Decimal("49000"))
+        # After order2: 0.04+0.03 = 0.07 * $49000 = $3430 = 3.43% < 4% → PASS
+
+        # Candle: low=$48000 triggers both limits, volume=100, budget=10 BTC
+        candle = WSCandle(
+            symbol="BTC/USDT",
+            timeframe="1m",
+            timestamp=datetime(2024, 1, 1, 0, 1, tzinfo=UTC),
+            open=Decimal("50500"),
+            high=Decimal("51000"),
+            low=Decimal("48000"),
+            close=Decimal("50000"),
+            volume=Decimal("100"),
+            is_closed=True,
+        )
+
+        with patch("squant.config.get_settings") as mock_s:
+            settings = MagicMock()
+            settings.strategy.cpu_limit_seconds = 5
+            settings.strategy.memory_limit_mb = 256
+            mock_s.return_value = settings
+            await engine.process_candle(candle)
+
+        # Order1 (0.05 @ $50000) should be rejected (4.5% > 4%)
+        # Order2 (0.03 @ $49000) should be filled (3.43% < 4%) — budget was preserved
+        pos = engine._context._positions.get("BTC/USDT")
+        assert pos is not None
+        # Original position 0.04 + order2's 0.03 = 0.07
+        assert pos.amount == Decimal("0.07"), (
+            f"Expected 0.07 (order2 filled after order1 risk-rejected), got {pos.amount}"
+        )
+
+    async def test_cross_update_volume_cap(self):
+        """Cumulative fills across unclosed candle updates must not exceed bar budget.
+
+        Without fix: each unclosed update computes a fresh budget from cumulative
+        volume, allowing total fills to exceed final_volume * participation_rate.
+        With fix: engine tracks bar-level consumption and subtracts it.
+        """
+        config = RiskConfig(
+            max_position_size=Decimal("0.9"),
+            max_order_size=Decimal("0.9"),
+        )
+        engine = _create_engine(risk_config=config, initial_capital=Decimal("10000000"))
+        engine._matching_engine.max_volume_participation = Decimal("0.10")
+        await engine.start()
+
+        # Place a large limit order: 50 BTC @ $49000
+        engine.context.buy("BTC/USDT", Decimal("50"), price=Decimal("49000"))
+
+        bar_ts = datetime(2024, 1, 1, 0, 1, tzinfo=UTC)
+
+        # Unclosed update 1: volume=100, budget=10, minus consumed=0 → fill 10
+        candle1 = WSCandle(
+            symbol="BTC/USDT",
+            timeframe="1m",
+            timestamp=bar_ts,
+            open=Decimal("49500"),
+            high=Decimal("50000"),
+            low=Decimal("48000"),
+            close=Decimal("49000"),
+            volume=Decimal("100"),
+            is_closed=False,
+        )
+        with patch("squant.config.get_settings") as mock_s:
+            settings = MagicMock()
+            settings.strategy.cpu_limit_seconds = 5
+            settings.strategy.memory_limit_mb = 256
+            mock_s.return_value = settings
+            await engine.process_candle(candle1)
+
+        pos1 = engine._context._positions.get("BTC/USDT")
+        fill_after_1 = pos1.amount if pos1 else Decimal("0")
+        assert fill_after_1 == Decimal("10"), f"First update should fill 10, got {fill_after_1}"
+
+        # Unclosed update 2: volume=200, budget=20, minus consumed=10 → fill 10 more
+        candle2 = WSCandle(
+            symbol="BTC/USDT",
+            timeframe="1m",
+            timestamp=bar_ts,
+            open=Decimal("49500"),
+            high=Decimal("50000"),
+            low=Decimal("48000"),
+            close=Decimal("49000"),
+            volume=Decimal("200"),
+            is_closed=False,
+        )
+        with patch("squant.config.get_settings") as mock_s:
+            settings = MagicMock()
+            settings.strategy.cpu_limit_seconds = 5
+            settings.strategy.memory_limit_mb = 256
+            mock_s.return_value = settings
+            await engine.process_candle(candle2)
+
+        pos2 = engine._context._positions.get("BTC/USDT")
+        fill_after_2 = pos2.amount if pos2 else Decimal("0")
+        assert fill_after_2 == Decimal("20"), f"After 2 updates should fill 20, got {fill_after_2}"
+
+        # Closed candle: volume=250, budget=25, minus consumed=20 → fill 5 more
+        candle3 = WSCandle(
+            symbol="BTC/USDT",
+            timeframe="1m",
+            timestamp=bar_ts,
+            open=Decimal("49500"),
+            high=Decimal("50000"),
+            low=Decimal("48000"),
+            close=Decimal("49000"),
+            volume=Decimal("250"),
+            is_closed=True,
+        )
+        with patch("squant.config.get_settings") as mock_s:
+            settings = MagicMock()
+            settings.strategy.cpu_limit_seconds = 5
+            settings.strategy.memory_limit_mb = 256
+            mock_s.return_value = settings
+            await engine.process_candle(candle3)
+
+        pos3 = engine._context._positions.get("BTC/USDT")
+        fill_after_3 = pos3.amount if pos3 else Decimal("0")
+        # Total should be exactly 250 * 0.10 = 25 BTC, not more
+        assert fill_after_3 == Decimal("25"), (
+            f"Total fills across 3 updates should be 25 (= 250 * 0.10), got {fill_after_3}"
+        )

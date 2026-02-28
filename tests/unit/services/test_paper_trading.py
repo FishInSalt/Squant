@@ -566,7 +566,6 @@ class TestPaperTradingService:
             assert count == 1
             mock_session.commit.assert_called_once()
 
-
     @pytest.mark.asyncio
     async def test_stop_all_success(self, mock_session, mock_run, mock_engine):
         """Test stopping all active paper trading sessions."""
@@ -655,7 +654,6 @@ class TestPaperTradingService:
             assert count == 1
             assert mock_stop.call_count == 2
 
-
     @pytest.mark.asyncio
     async def test_stop_saves_result_to_db(self, mock_session, mock_run, mock_engine):
         """Test that stop() captures engine state and saves to result JSONB field."""
@@ -690,10 +688,13 @@ class TestPaperTradingService:
             # Check positional + keyword args
             if not kwargs:
                 # Args are positional: (run_id, status=..., result=..., ...)
-                kwargs = {k: v for k, v in zip(
-                    ["status", "result", "stopped_at", "error_message"],
-                    update_call.args[1:] if len(update_call.args) > 1 else [],
-                )}
+                kwargs = {
+                    k: v
+                    for k, v in zip(
+                        ["status", "result", "stopped_at", "error_message"],
+                        update_call.args[1:] if len(update_call.args) > 1 else [],
+                    )
+                }
                 kwargs.update(update_call.kwargs or {})
 
             assert "result" in kwargs
@@ -709,6 +710,59 @@ class TestPaperTradingService:
             assert result_data["open_trade"] is not None
             assert result_data["open_trade"]["entry_time"] == "2024-06-01T10:00:00+00:00"
             assert result_data["open_trade"]["entry_price"] == "50000"
+
+    @pytest.mark.asyncio
+    async def test_stop_calls_engine_stop_before_capturing_result(
+        self, mock_session, mock_run, mock_engine
+    ):
+        """Engine must be stopped before result is captured to prevent race conditions.
+
+        If build_result_for_persistence() runs before engine.stop(), an awaited
+        persist_snapshots could yield the event loop, allowing a candle to be
+        processed between result capture and engine halt.
+        """
+        run_id = uuid4()
+        mock_run.id = str(run_id)
+
+        call_order: list[str] = []
+        mock_engine.stop = AsyncMock(side_effect=lambda **kw: call_order.append("stop"))
+        mock_engine.build_result_for_persistence = MagicMock(
+            side_effect=lambda: (
+                call_order.append("build_result"),
+                {
+                    "cash": "9000",
+                    "equity": "10500",
+                    "trades_count": 0,
+                    "completed_orders_count": 0,
+                    "trades": [],
+                    "logs": [],
+                    "open_trade": None,
+                    "total_fees": "0",
+                    "bar_count": 0,
+                },
+            )[1]
+        )
+
+        with (
+            patch.object(StrategyRunRepository, "get", new_callable=AsyncMock) as mock_get,
+            patch.object(StrategyRunRepository, "update", new_callable=AsyncMock) as mock_update,
+            patch("squant.services.paper_trading.get_session_manager") as mock_get_manager,
+        ):
+            mock_get.return_value = mock_run
+            mock_update.return_value = mock_run
+
+            mock_manager = MagicMock()
+            mock_manager.get.return_value = mock_engine
+            mock_manager.unregister_and_check_subscription = AsyncMock(return_value=None)
+            mock_get_manager.return_value = mock_manager
+
+            service = PaperTradingService(mock_session)
+            await service.stop(run_id)
+
+            assert call_order == ["stop", "build_result"], (
+                f"engine.stop() must be called BEFORE build_result_for_persistence(), "
+                f"got: {call_order}"
+            )
 
     @pytest.mark.asyncio
     async def test_stop_for_shutdown_marks_interrupted(self, mock_session, mock_run, mock_engine):
@@ -997,18 +1051,15 @@ class TestMarkSessionInterrupted:
         """Test that result data is saved when marking session as interrupted."""
         result_data = {"cash": "10000", "equity": "10500"}
 
-        with patch.object(
-            StrategyRunRepository, "get", new_callable=AsyncMock
-        ) as mock_get, patch.object(
-            StrategyRunRepository, "update", new_callable=AsyncMock
-        ) as mock_update:
+        with (
+            patch.object(StrategyRunRepository, "get", new_callable=AsyncMock) as mock_get,
+            patch.object(StrategyRunRepository, "update", new_callable=AsyncMock) as mock_update,
+        ):
             mock_get.return_value = mock_run
             mock_run.status = RunStatus.RUNNING
 
             service = PaperTradingService(mock_session)
-            await service.mark_session_interrupted(
-                uuid4(), "timeout", result=result_data
-            )
+            await service.mark_session_interrupted(uuid4(), "timeout", result=result_data)
 
             mock_update.assert_called_once()
             call_kwargs = mock_update.call_args.kwargs
@@ -1018,11 +1069,10 @@ class TestMarkSessionInterrupted:
     @pytest.mark.asyncio
     async def test_mark_interrupted_without_result(self, mock_session, mock_run):
         """Test that result is None when not provided."""
-        with patch.object(
-            StrategyRunRepository, "get", new_callable=AsyncMock
-        ) as mock_get, patch.object(
-            StrategyRunRepository, "update", new_callable=AsyncMock
-        ) as mock_update:
+        with (
+            patch.object(StrategyRunRepository, "get", new_callable=AsyncMock) as mock_get,
+            patch.object(StrategyRunRepository, "update", new_callable=AsyncMock) as mock_update,
+        ):
             mock_get.return_value = mock_run
             mock_run.status = RunStatus.RUNNING
 
@@ -1053,9 +1103,7 @@ class TestResumeSession:
         """Test that resume rejects sessions with RUNNING status."""
         mock_run.status = RunStatus.RUNNING
 
-        with patch.object(
-            StrategyRunRepository, "get", new_callable=AsyncMock
-        ) as mock_get:
+        with patch.object(StrategyRunRepository, "get", new_callable=AsyncMock) as mock_get:
             mock_get.return_value = mock_run
 
             service = PaperTradingService(mock_session)
@@ -1067,9 +1115,7 @@ class TestResumeSession:
         """Test that resume rejects sessions with COMPLETED status."""
         mock_run.status = RunStatus.COMPLETED
 
-        with patch.object(
-            StrategyRunRepository, "get", new_callable=AsyncMock
-        ) as mock_get:
+        with patch.object(StrategyRunRepository, "get", new_callable=AsyncMock) as mock_get:
             mock_get.return_value = mock_run
 
             service = PaperTradingService(mock_session)
@@ -1077,9 +1123,7 @@ class TestResumeSession:
                 await service.resume(uuid4())
 
     @pytest.mark.asyncio
-    async def test_resume_accepts_error_status(
-        self, mock_session, resumable_run, mock_strategy
-    ):
+    async def test_resume_accepts_error_status(self, mock_session, resumable_run, mock_strategy):
         """Test that resume accepts ERROR status sessions."""
         resumable_run.status = RunStatus.ERROR
 
@@ -1102,9 +1146,18 @@ class TestResumeSession:
         mock_engine.run_id = uuid4()
 
         with (
-            patch.object(StrategyRunRepository, "get", new_callable=AsyncMock, return_value=resumable_run),
-            patch.object(StrategyRunRepository, "has_running_session", new_callable=AsyncMock, return_value=False),
-            patch.object(StrategyRunRepository, "update", new_callable=AsyncMock, return_value=resumable_run),
+            patch.object(
+                StrategyRunRepository, "get", new_callable=AsyncMock, return_value=resumable_run
+            ),
+            patch.object(
+                StrategyRunRepository,
+                "has_running_session",
+                new_callable=AsyncMock,
+                return_value=False,
+            ),
+            patch.object(
+                StrategyRunRepository, "update", new_callable=AsyncMock, return_value=resumable_run
+            ),
             patch("squant.config.get_settings", return_value=mock_settings),
             patch("squant.services.paper_trading.get_session_manager", return_value=mock_manager),
             patch("squant.services.paper_trading.get_stream_manager", return_value=mock_stream),
@@ -1147,9 +1200,18 @@ class TestResumeSession:
         mock_engine.run_id = uuid4()
 
         with (
-            patch.object(StrategyRunRepository, "get", new_callable=AsyncMock, return_value=resumable_run),
-            patch.object(StrategyRunRepository, "has_running_session", new_callable=AsyncMock, return_value=False),
-            patch.object(StrategyRunRepository, "update", new_callable=AsyncMock, return_value=resumable_run),
+            patch.object(
+                StrategyRunRepository, "get", new_callable=AsyncMock, return_value=resumable_run
+            ),
+            patch.object(
+                StrategyRunRepository,
+                "has_running_session",
+                new_callable=AsyncMock,
+                return_value=False,
+            ),
+            patch.object(
+                StrategyRunRepository, "update", new_callable=AsyncMock, return_value=resumable_run
+            ),
             patch("squant.config.get_settings", return_value=mock_settings),
             patch("squant.services.paper_trading.get_session_manager", return_value=mock_manager),
             patch("squant.services.paper_trading.get_stream_manager", return_value=mock_stream),
@@ -1169,9 +1231,7 @@ class TestResumeSession:
     @pytest.mark.asyncio
     async def test_resume_not_found(self, mock_session):
         """Test that resume raises SessionNotFoundError for missing session."""
-        with patch.object(
-            StrategyRunRepository, "get", new_callable=AsyncMock
-        ) as mock_get:
+        with patch.object(StrategyRunRepository, "get", new_callable=AsyncMock) as mock_get:
             mock_get.return_value = None
 
             service = PaperTradingService(mock_session)
@@ -1179,9 +1239,7 @@ class TestResumeSession:
                 await service.resume(uuid4())
 
     @pytest.mark.asyncio
-    async def test_resume_accepts_stopped_status(
-        self, mock_session, resumable_run, mock_strategy
-    ):
+    async def test_resume_accepts_stopped_status(self, mock_session, resumable_run, mock_strategy):
         """Test that resume accepts STOPPED status sessions."""
         resumable_run.status = RunStatus.STOPPED
 
@@ -1204,9 +1262,18 @@ class TestResumeSession:
         mock_engine.run_id = uuid4()
 
         with (
-            patch.object(StrategyRunRepository, "get", new_callable=AsyncMock, return_value=resumable_run),
-            patch.object(StrategyRunRepository, "has_running_session", new_callable=AsyncMock, return_value=False),
-            patch.object(StrategyRunRepository, "update", new_callable=AsyncMock, return_value=resumable_run),
+            patch.object(
+                StrategyRunRepository, "get", new_callable=AsyncMock, return_value=resumable_run
+            ),
+            patch.object(
+                StrategyRunRepository,
+                "has_running_session",
+                new_callable=AsyncMock,
+                return_value=False,
+            ),
+            patch.object(
+                StrategyRunRepository, "update", new_callable=AsyncMock, return_value=resumable_run
+            ),
             patch("squant.config.get_settings", return_value=mock_settings),
             patch("squant.services.paper_trading.get_session_manager", return_value=mock_manager),
             patch("squant.services.paper_trading.get_stream_manager", return_value=mock_stream),
@@ -1224,12 +1291,10 @@ class TestResumeSession:
             assert result is not None
 
     @pytest.mark.asyncio
-    async def test_resume_restores_state(
-        self, mock_session, resumable_run, mock_strategy
-    ):
-        """Test that resume calls restore_state when result exists."""
+    async def test_resume_restores_state(self, mock_session, resumable_run, mock_strategy):
+        """Test that resume calls restore_state and bar_count when result exists."""
         resumable_run.status = RunStatus.STOPPED
-        resumable_run.result = {"cash": "5000", "positions": {}}
+        resumable_run.result = {"cash": "5000", "positions": {}, "bar_count": 42}
 
         mock_settings = MagicMock()
         mock_settings.paper.max_sessions = 10
@@ -1249,9 +1314,18 @@ class TestResumeSession:
         mock_engine.run_id = uuid4()
 
         with (
-            patch.object(StrategyRunRepository, "get", new_callable=AsyncMock, return_value=resumable_run),
-            patch.object(StrategyRunRepository, "has_running_session", new_callable=AsyncMock, return_value=False),
-            patch.object(StrategyRunRepository, "update", new_callable=AsyncMock, return_value=resumable_run),
+            patch.object(
+                StrategyRunRepository, "get", new_callable=AsyncMock, return_value=resumable_run
+            ),
+            patch.object(
+                StrategyRunRepository,
+                "has_running_session",
+                new_callable=AsyncMock,
+                return_value=False,
+            ),
+            patch.object(
+                StrategyRunRepository, "update", new_callable=AsyncMock, return_value=resumable_run
+            ),
             patch("squant.config.get_settings", return_value=mock_settings),
             patch("squant.services.paper_trading.get_session_manager", return_value=mock_manager),
             patch("squant.services.paper_trading.get_stream_manager", return_value=mock_stream),
@@ -1270,6 +1344,9 @@ class TestResumeSession:
             # Verify restore_state was called with the result data
             mock_context.restore_state.assert_called_once_with(resumable_run.result)
 
+            # Verify bar_count is restored from persisted result
+            assert mock_engine._bar_count == 42
+
 
 class TestRecoverOrphanedSessions:
     """Tests for recover_orphaned_sessions (Phase 4)."""
@@ -1283,8 +1360,10 @@ class TestRecoverOrphanedSessions:
         with (
             patch("squant.config.get_settings", return_value=mock_settings),
             patch.object(
-                PaperTradingService, "mark_orphaned_sessions",
-                new_callable=AsyncMock, return_value=3,
+                PaperTradingService,
+                "mark_orphaned_sessions",
+                new_callable=AsyncMock,
+                return_value=3,
             ) as mock_mark,
         ):
             service = PaperTradingService(mock_session)
@@ -1303,8 +1382,10 @@ class TestRecoverOrphanedSessions:
         with (
             patch("squant.config.get_settings", return_value=mock_settings),
             patch.object(
-                StrategyRunRepository, "get_orphaned_sessions",
-                new_callable=AsyncMock, return_value=[],
+                StrategyRunRepository,
+                "get_orphaned_sessions",
+                new_callable=AsyncMock,
+                return_value=[],
             ),
         ):
             service = PaperTradingService(mock_session)
@@ -1326,15 +1407,21 @@ class TestRecoverOrphanedSessions:
         with (
             patch("squant.config.get_settings", return_value=mock_settings),
             patch.object(
-                StrategyRunRepository, "get_orphaned_sessions",
-                new_callable=AsyncMock, return_value=[mock_run],
+                StrategyRunRepository,
+                "get_orphaned_sessions",
+                new_callable=AsyncMock,
+                return_value=[mock_run],
             ),
             patch.object(
-                StrategyRunRepository, "update", new_callable=AsyncMock,
+                StrategyRunRepository,
+                "update",
+                new_callable=AsyncMock,
             ),
             patch.object(
-                EquityCurveRepository, "get_last_by_run",
-                new_callable=AsyncMock, return_value=None,
+                EquityCurveRepository,
+                "get_last_by_run",
+                new_callable=AsyncMock,
+                return_value=None,
             ),
         ):
             service = PaperTradingService(mock_session)
@@ -1358,19 +1445,27 @@ class TestRecoverOrphanedSessions:
         with (
             patch("squant.config.get_settings", return_value=mock_settings),
             patch.object(
-                StrategyRunRepository, "get_orphaned_sessions",
-                new_callable=AsyncMock, return_value=[mock_run],
+                StrategyRunRepository,
+                "get_orphaned_sessions",
+                new_callable=AsyncMock,
+                return_value=[mock_run],
             ),
             patch.object(
-                StrategyRunRepository, "update", new=mock_update,
+                StrategyRunRepository,
+                "update",
+                new=mock_update,
             ),
             patch.object(
-                PaperTradingService, "resume",
-                new_callable=AsyncMock, side_effect=Exception("resume failed"),
+                PaperTradingService,
+                "resume",
+                new_callable=AsyncMock,
+                side_effect=Exception("resume failed"),
             ),
             patch.object(
-                EquityCurveRepository, "get_last_by_run",
-                new_callable=AsyncMock, return_value=None,
+                EquityCurveRepository,
+                "get_last_by_run",
+                new_callable=AsyncMock,
+                return_value=None,
             ),
         ):
             service = PaperTradingService(mock_session)

@@ -132,6 +132,11 @@ class PaperTradingEngine:
         self._bar_count = 0
         self._last_active_at: datetime | None = None
 
+        # Cross-update volume tracking: prevents cumulative fills across
+        # unclosed candle updates from exceeding the bar's participation cap.
+        self._current_bar_timestamp: datetime | None = None
+        self._bar_volume_consumed: Decimal = Decimal("0")
+
         # Synchronous persistence callbacks
         self._on_snapshot = on_snapshot
         self._on_result = on_result
@@ -326,6 +331,12 @@ class PaperTradingEngine:
                 current_price = candle.close
                 timestamp = candle.timestamp
 
+                # Reset per-bar volume tracking when a new bar starts.
+                # Unclosed updates within the same bar share the same timestamp.
+                if self._current_bar_timestamp != candle.timestamp:
+                    self._current_bar_timestamp = candle.timestamp
+                    self._bar_volume_consumed = Decimal("0")
+
                 # 1-2. Fill new orders and match pending limits at current price
                 # Pass high/low for both closed and unclosed candles so that
                 # carried-over limit orders can trigger on intrabar price extremes.
@@ -334,24 +345,14 @@ class PaperTradingEngine:
                 # Volume is passed for both closed and unclosed candles.
                 # Closed: final bar volume. Unclosed: cumulative volume so far.
                 # Both are valid for volume participation rate enforcement.
-                if candle.is_closed:
-                    self._fill_new_orders(
-                        current_price,
-                        timestamp,
-                        high=candle.high,
-                        low=candle.low,
-                        volume=candle.volume,
-                        open_price=candle.open,
-                    )
-                else:
-                    self._fill_new_orders(
-                        current_price,
-                        timestamp,
-                        high=candle.high,
-                        low=candle.low,
-                        volume=candle.volume,
-                        open_price=candle.open,
-                    )
+                self._fill_new_orders(
+                    current_price,
+                    timestamp,
+                    high=candle.high,
+                    low=candle.low,
+                    volume=candle.volume,
+                    open_price=candle.open,
+                )
 
                 # 3. Move completed orders
                 self._context._move_completed_orders()
@@ -467,8 +468,14 @@ class PaperTradingEngine:
         if not pending:
             return
 
-        # Compute shared volume budget for this candle (market + limit share it)
+        # Compute shared volume budget for this candle (market + limit share it).
+        # Subtract volume already consumed in this bar from prior unclosed updates
+        # to prevent cumulative fills from exceeding the bar's participation cap.
         volume_budget = self._matching_engine.compute_volume_budget(volume)
+        if volume_budget is not None:
+            volume_budget = max(Decimal("0"), volume_budget - self._bar_volume_consumed)
+
+        filled_this_update = Decimal("0")
 
         # Separate market and limit orders for processing
         limit_orders = []
@@ -482,6 +489,7 @@ class PaperTradingEngine:
                 )
                 if fill:
                     self._process_fill_safe(fill)
+                    filled_this_update += fill.amount
                     # Deduct from shared budget
                     if volume_budget is not None:
                         volume_budget -= fill.amount
@@ -490,24 +498,36 @@ class PaperTradingEngine:
             elif order.type == OrderType.LIMIT:
                 limit_orders.append(order)
 
-        # Match limit orders (pass remaining budget)
+        # Match limit orders ONE AT A TIME so that risk-rejected fills
+        # do not consume budget from other orders.  The engine controls
+        # budget deduction (only after risk check passes).
         if limit_orders:
-            fills = self._matching_engine.match_pending_limits(
-                limit_orders,
-                current_price,
-                timestamp,
-                high=high,
-                low=low,
-                open_price=open_price,
-                volume_budget=volume_budget,
-            )
-            for fill in fills:
-                # Risk check before processing limit fill
-                # Find the original order for validation
-                order = next((o for o in limit_orders if o.id == fill.order_id), None)
-                if order and not self._validate_order_risk(order, current_price):
+            remaining_limit_budget = volume_budget
+            for order in limit_orders:
+                fills = self._matching_engine.match_pending_limits(
+                    [order],
+                    current_price,
+                    timestamp,
+                    high=high,
+                    low=low,
+                    open_price=open_price,
+                    volume_budget=remaining_limit_budget,
+                )
+                if not fills:
                     continue
+                fill = fills[0]
+                # Risk check BEFORE consuming budget
+                if not self._validate_order_risk(order, current_price):
+                    continue  # Budget preserved for subsequent orders
                 self._process_fill_safe(fill)
+                filled_this_update += fill.amount
+                if remaining_limit_budget is not None:
+                    remaining_limit_budget -= fill.amount
+                    if remaining_limit_budget < Decimal("0"):
+                        remaining_limit_budget = Decimal("0")
+
+        # Track cumulative fills across unclosed updates within the same bar
+        self._bar_volume_consumed += filled_this_update
 
     def _validate_order_risk(self, order: Any, current_price: Decimal) -> bool:
         """Validate an order against risk rules.

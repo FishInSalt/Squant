@@ -463,7 +463,7 @@ class BacktestContext:
         Args:
             message: Message to log.
         """
-        timestamp = self._current_bar.time if self._current_bar else datetime.now()
+        timestamp = self._current_bar.time if self._current_bar else datetime.now(UTC)
         self._logs.append(f"[{timestamp}] {message}")
 
     # =========================================================================

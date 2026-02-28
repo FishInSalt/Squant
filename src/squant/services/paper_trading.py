@@ -574,15 +574,16 @@ class PaperTradingService:
         result_data = None
 
         if engine:
-            # Capture final result using single source of truth
-            result_data = engine.build_result_for_persistence()
-
-            # Persist any pending snapshots
-            await self._persist_snapshots(str(run_id), engine.get_pending_snapshots())
-
-            # Stop engine
+            # Stop engine FIRST — acquires _processing_lock, waits for any
+            # in-progress candle to finish.  This prevents a race where an
+            # awaited persist_snapshots yields the event loop and a new candle
+            # is processed between result capture and engine stop.
             await engine.stop()
             error_message = engine.error_message
+
+            # NOW capture result and snapshots (engine state is stable)
+            result_data = engine.build_result_for_persistence()
+            await self._persist_snapshots(str(run_id), engine.get_pending_snapshots())
 
             # Unregister and atomically check subscription (Issue 019 fix)
             key_to_unsubscribe = await session_manager.unregister_and_check_subscription(run_id)
@@ -861,6 +862,7 @@ class PaperTradingService:
         # Restore trading state from result JSONB
         if run.result:
             engine.context.restore_state(run.result)
+            engine._bar_count = run.result.get("bar_count", 0)
             # Restore risk manager state (cumulative PnL, circuit breaker, etc.)
             if engine._risk_manager and run.result.get("risk_state"):
                 engine._risk_manager.restore_state(run.result["risk_state"])
