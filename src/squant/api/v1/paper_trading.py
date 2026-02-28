@@ -1,6 +1,7 @@
 """Paper trading API endpoints."""
 
 import logging
+from datetime import datetime
 from decimal import Decimal
 from uuid import UUID
 
@@ -396,12 +397,14 @@ async def get_paper_trading_run(
 async def get_equity_curve(
     run_id: UUID,
     session: AsyncSession = Depends(get_session),
+    since: datetime | None = Query(None, description="Only return records after this time (ISO 8601)"),
 ) -> ApiResponse[list[EquityCurvePoint]]:
     """Get equity curve for a paper trading run.
 
     Args:
         run_id: Paper trading run ID.
         session: Database session.
+        since: Optional time filter for incremental loading.
 
     Returns:
         Equity curve data points.
@@ -412,7 +415,7 @@ async def get_equity_curve(
     service = PaperTradingService(session)
 
     try:
-        equity_curve = await service.get_equity_curve(run_id)
+        equity_curve = await service.get_equity_curve(run_id, since=since)
         return ApiResponse(data=[EquityCurvePoint.model_validate(e) for e in equity_curve])
     except SessionNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))

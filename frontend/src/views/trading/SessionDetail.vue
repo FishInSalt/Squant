@@ -497,6 +497,7 @@ const equityCurve = ref<EquityPoint[]>([])
 
 let refreshTimer: ReturnType<typeof setInterval> | null = null
 let equityCurvePollCount = 0
+let statusInFlight = false
 
 // Running duration timer
 const now = ref(Date.now())
@@ -660,34 +661,49 @@ async function loadSession() {
   }
 }
 
-async function loadEquityCurve() {
+function mapEquityPoint(d: any): EquityPoint {
+  return {
+    time: d.time,
+    equity: d.equity,
+    cash: d.cash ?? 0,
+    position_value: d.position_value ?? 0,
+    unrealized_pnl: d.unrealized_pnl ?? 0,
+  }
+}
+
+async function loadEquityCurve(incremental = false) {
   try {
+    // Incremental: only fetch new points since the last known time
+    const since = incremental && equityCurve.value.length > 0
+      ? equityCurve.value[equityCurve.value.length - 1].time
+      : undefined
     const response = isPaper.value
-      ? await getPaperEquityCurve(props.id)
-      : await getLiveEquityCurve(props.id)
-    equityCurve.value = response.data.map((d: any) => ({
-      time: d.time,
-      equity: d.equity,
-      cash: d.cash ?? 0,
-      position_value: d.position_value ?? 0,
-      unrealized_pnl: d.unrealized_pnl ?? 0,
-    }))
+      ? await getPaperEquityCurve(props.id, since)
+      : await getLiveEquityCurve(props.id, since)
+    const newPoints = response.data.map(mapEquityPoint)
+    if (since && newPoints.length > 0) {
+      equityCurve.value = [...equityCurve.value, ...newPoints]
+    } else if (!since) {
+      equityCurve.value = newPoints
+    }
   } catch {
     // equity curve is optional, don't block UI
   }
 }
 
 async function loadStatus() {
+  if (statusInFlight) return // skip if previous poll still pending
+  statusInFlight = true
   try {
     const response = isPaper.value
       ? await getPaperSessionStatus(props.id)
       : await getLiveSessionStatus(props.id)
     status.value = response.data
 
-    // Refresh equity curve every 2 polls (~6s)
+    // Refresh equity curve every 2 polls (~6s), incremental after initial load
     equityCurvePollCount++
     if (equityCurvePollCount % 2 === 0) {
-      loadEquityCurve()
+      loadEquityCurve(true)
     }
 
     if (!status.value.is_running) {
@@ -713,6 +729,8 @@ async function loadStatus() {
     }
   } catch (error) {
     console.error('Failed to load status:', error)
+  } finally {
+    statusInFlight = false
   }
 }
 

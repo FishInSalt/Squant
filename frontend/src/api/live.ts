@@ -44,5 +44,5 @@ export const getRunningLiveSessions = () =>
   get<LiveSession[]>('/live')
 
 // 获取收益曲线
-export const getLiveEquityCurve = (id: string) =>
-  get<EquityCurvePoint[]>(`/live/${id}/equity-curve`)
+export const getLiveEquityCurve = (id: string, since?: string) =>
+  get<EquityCurvePoint[]>(`/live/${id}/equity-curve`, since ? { since } : undefined)

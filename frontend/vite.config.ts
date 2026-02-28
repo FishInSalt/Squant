@@ -30,6 +30,14 @@ export default defineConfig({
       '/api': {
         target: 'http://localhost:8000',
         changeOrigin: true,
+        // Strip upstream Content-Length so Node.js http server uses chunked
+        // transfer encoding. Prevents ERR_CONTENT_LENGTH_MISMATCH caused by
+        // http-proxy forwarding Content-Length but delivering bytes via chunks.
+        configure: (proxy) => {
+          proxy.on('proxyRes', (proxyRes) => {
+            delete proxyRes.headers['content-length']
+          })
+        },
       },
       '/ws': {
         target: 'ws://localhost:8000',

@@ -211,11 +211,19 @@ class EquityCurveRepository:
         self.session.add_all(instances)
         await self.session.flush()
 
-    async def get_by_run(self, run_id: str) -> list[EquityCurve]:
-        """Get equity curve for a run."""
-        stmt = (
-            select(EquityCurve).where(EquityCurve.run_id == run_id).order_by(EquityCurve.time.asc())
-        )
+    async def get_by_run(
+        self, run_id: str, since: datetime | None = None
+    ) -> list[EquityCurve]:
+        """Get equity curve for a run.
+
+        Args:
+            run_id: Run ID.
+            since: If provided, only return records with time > since.
+        """
+        stmt = select(EquityCurve).where(EquityCurve.run_id == run_id)
+        if since is not None:
+            stmt = stmt.where(EquityCurve.time > since)
+        stmt = stmt.order_by(EquityCurve.time.asc())
         result = await self.session.execute(stmt)
         return list(result.scalars().all())
 
@@ -1022,7 +1030,9 @@ class PaperTradingService:
             raise SessionNotFoundError(run_id)
         return run
 
-    async def get_equity_curve(self, run_id: UUID) -> list:
+    async def get_equity_curve(
+        self, run_id: UUID, since: datetime | None = None
+    ) -> list:
         """Get equity curve for a paper trading run.
 
         Merges persisted snapshots from DB with pending (not-yet-persisted)
@@ -1030,6 +1040,7 @@ class PaperTradingService:
 
         Args:
             run_id: Run ID.
+            since: If provided, only return records with time > since.
 
         Returns:
             List of equity curve records (EquityCurve + EquitySnapshot).
@@ -1042,13 +1053,15 @@ class PaperTradingService:
         if not run:
             raise SessionNotFoundError(run_id)
 
-        persisted = await self.equity_repo.get_by_run(str(run_id))
+        persisted = await self.equity_repo.get_by_run(str(run_id), since=since)
 
         # Append pending snapshots from engine memory for real-time updates
         session_manager = get_session_manager()
         engine = session_manager.get(run_id)
         if engine:
             pending = engine.peek_pending_snapshots()
+            if since is not None:
+                pending = [s for s in pending if s.time > since]
             if pending:
                 return list(persisted) + pending
 

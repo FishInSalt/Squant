@@ -46,6 +46,6 @@ export const getRunningPaperSessions = () =>
   get<PaperSession[]>('/paper')
 
 // 获取权益曲线
-export const getPaperEquityCurve = (id: string) =>
-  get<EquityCurvePoint[]>(`/paper/${id}/equity-curve`)
+export const getPaperEquityCurve = (id: string, since?: string) =>
+  get<EquityCurvePoint[]>(`/paper/${id}/equity-curve`, since ? { since } : undefined)
 
