@@ -79,7 +79,10 @@ class PaperMatchingEngine:
         fill_amount = order.remaining
 
         # Cap fill amount by volume participation limit
-        if self.max_volume_participation is not None and volume is not None and volume > 0:
+        if self.max_volume_participation is not None and volume is not None:
+            if volume <= 0:
+                # Zero-volume bar: no trades occurred, order cannot fill
+                return None
             max_amount = volume * self.max_volume_participation
             fill_amount = min(fill_amount, max_amount)
 
@@ -104,6 +107,7 @@ class PaperMatchingEngine:
         high: Decimal | None = None,
         low: Decimal | None = None,
         volume: Decimal | None = None,
+        open_price: Decimal | None = None,
     ) -> list[Fill]:
         """Check pending limit orders against current price (and high/low range).
 
@@ -115,7 +119,11 @@ class PaperMatchingEngine:
           BUY LIMIT: triggers when current_price <= limit_price
           SELL LIMIT: triggers when current_price >= limit_price
 
-        Triggered orders fill at their limit price (price improvement).
+        Triggered orders fill at their limit price or better (gap-open price
+        improvement). When open_price is provided and the bar opens through the
+        limit price, the fill price improves to the open price — consistent
+        with the backtest matching engine.
+
         When max_volume_participation is set, the fill amount is capped.
 
         Args:
@@ -125,6 +133,7 @@ class PaperMatchingEngine:
             high: Candle high price (optional, for closed candles).
             low: Candle low price (optional, for closed candles).
             volume: Bar volume (optional, used for volume participation check).
+            open_price: Candle open price (optional, for gap-open price improvement).
 
         Returns:
             List of fills for triggered orders.
@@ -156,14 +165,28 @@ class PaperMatchingEngine:
             if not can_fill:
                 continue
 
+            # Gap-open price improvement: if the bar opens through the limit,
+            # fill at the open price (better than limit). Consistent with
+            # backtest matching engine behavior.
+            if open_price is not None:
+                if order.side == OrderSide.BUY:
+                    fill_price = min(limit_price, open_price)
+                else:
+                    fill_price = max(limit_price, open_price)
+            else:
+                fill_price = limit_price
+
             fill_amount = order.remaining
 
             # Cap fill amount by volume participation limit
-            if self.max_volume_participation is not None and volume is not None and volume > 0:
+            if self.max_volume_participation is not None and volume is not None:
+                if volume <= 0:
+                    # Zero-volume bar: no trades occurred, order cannot fill
+                    continue
                 max_amount = volume * self.max_volume_participation
                 fill_amount = min(fill_amount, max_amount)
 
-            fill_value = limit_price * fill_amount
+            fill_value = fill_price * fill_amount
             fee = fill_value * self.commission_rate
 
             fills.append(
@@ -171,7 +194,7 @@ class PaperMatchingEngine:
                     order_id=order.id,
                     symbol=order.symbol,
                     side=order.side,
-                    price=limit_price,
+                    price=fill_price,
                     amount=fill_amount,
                     fee=fee,
                     timestamp=timestamp,

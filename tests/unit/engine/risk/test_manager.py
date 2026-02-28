@@ -1203,13 +1203,17 @@ class TestRiskState:
     """Tests for RiskState model."""
 
     def test_record_trade_updates_stats(self):
-        """Test that recording trades updates stats."""
+        """Test that recording trades updates pnl stats (not trade count).
+
+        daily_trade_count is incremented by RiskManager.record_order_fill(),
+        not by RiskState.record_trade().
+        """
         state = RiskState()
         state.daily_start_equity = Decimal("10000")
 
         state.record_trade(Decimal("100"))
 
-        assert state.daily_trade_count == 1
+        assert state.daily_trade_count == 0  # Not incremented by record_trade
         assert state.daily_pnl == Decimal("100")
         assert state.consecutive_losses == 0
 
@@ -1708,8 +1712,10 @@ class TestRiskManagerRestore:
     def test_restore_daily_stats_same_day(self):
         """Daily stats should be restored when snapshot is from the same UTC day."""
         rm = self._make_manager()
-        # Record some daily activity
+        # Record some daily activity: fills + trade closures
+        rm.record_order_fill()
         rm.record_trade_result(Decimal("-200"))
+        rm.record_order_fill()
         rm.record_trade_result(Decimal("-100"))
 
         state_dict = rm.get_state_summary()
@@ -1720,3 +1726,61 @@ class TestRiskManagerRestore:
 
         assert rm2.state.daily_trade_count == 2
         assert rm2.state.daily_pnl == Decimal("-300")
+
+
+class TestRecordOrderFill:
+    """Tests for record_order_fill() — daily trade count on each fill."""
+
+    def _make_manager(self, daily_trade_limit: int = 5) -> RiskManager:
+        config = RiskConfig(
+            max_position_size=Decimal("0.5"),
+            max_order_size=Decimal("0.2"),
+            daily_loss_limit=Decimal("0.1"),
+            daily_trade_limit=daily_trade_limit,
+        )
+        rm = RiskManager(config, initial_equity=Decimal("100000"))
+        rm.update_equity(Decimal("100000"))
+        rm.check_daily_reset()
+        return rm
+
+    def test_fill_increments_daily_count(self):
+        """Each fill should increment daily trade count."""
+        rm = self._make_manager()
+        assert rm.state.daily_trade_count == 0
+
+        rm.record_order_fill()
+        assert rm.state.daily_trade_count == 1
+
+        rm.record_order_fill()
+        assert rm.state.daily_trade_count == 2
+
+    def test_fills_without_close_still_counted(self):
+        """Fills that don't close a position still count toward daily limit."""
+        rm = self._make_manager(daily_trade_limit=3)
+
+        # 3 buy fills (pyramiding, no close)
+        rm.record_order_fill()
+        rm.record_order_fill()
+        rm.record_order_fill()
+
+        assert rm.state.daily_trade_count == 3
+
+        # Next order should be rejected
+        order = OrderRequest(
+            symbol="BTC/USDT",
+            side=OrderSide.BUY,
+            type=OrderType.MARKET,
+            amount=Decimal("0.001"),
+        )
+        result = rm.validate_order(order, Decimal("50000"))
+        assert result.passed is False
+        assert result.rule_type == RiskRuleType.DAILY_TRADE_LIMIT
+
+    def test_record_trade_does_not_increment_count(self):
+        """record_trade_result (position close) should not add to daily count."""
+        rm = self._make_manager()
+        rm.record_trade_result(Decimal("100"))
+        rm.record_trade_result(Decimal("-50"))
+
+        # Only record_order_fill increments the count
+        assert rm.state.daily_trade_count == 0

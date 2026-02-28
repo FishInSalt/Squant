@@ -188,12 +188,19 @@ class SessionManager:
         if not targets:
             return
 
-        async def _dispatch_one(run_id: UUID, engine: PaperTradingEngine) -> tuple[UUID, Exception | None]:
-            """Process a candle for a single engine, returning any error."""
+        async def _dispatch_one(
+            run_id: UUID, engine: PaperTradingEngine
+        ) -> tuple[UUID, BaseException | None]:
+            """Process a candle for a single engine, returning any error.
+
+            Catches BaseException (not just Exception) so that
+            asyncio.CancelledError from one engine does not cascade-cancel
+            all sibling engines via asyncio.gather().
+            """
             try:
                 await engine.process_candle(candle)
                 return (run_id, None)
-            except Exception as e:
+            except BaseException as e:
                 logger.exception(f"Error dispatching candle to engine {run_id}: {e}")
                 return (run_id, e)
 
@@ -222,9 +229,7 @@ class SessionManager:
                                 error=f"Auto-stopped: {error_count} consecutive dispatch errors"
                             )
                         except Exception as stop_error:
-                            logger.exception(
-                                f"Error auto-stopping engine {run_id}: {stop_error}"
-                            )
+                            logger.exception(f"Error auto-stopping engine {run_id}: {stop_error}")
                     self._consecutive_errors.pop(run_id, None)
 
     async def stop_all(self, reason: str = "shutdown") -> None:

@@ -257,12 +257,14 @@ class RiskState(BaseModel):
         self.daily_reset_time = datetime.now(UTC)
 
     def record_trade(self, pnl: Decimal) -> None:
-        """Record a completed trade.
+        """Record a completed trade (position fully closed).
+
+        Note: daily_trade_count is NOT incremented here — it is incremented
+        by RiskManager.record_order_fill() on each fill, not on position close.
 
         Args:
             pnl: Profit/loss from the trade.
         """
-        self.daily_trade_count += 1
         self.daily_pnl += pnl
         self.total_pnl += pnl  # Track cumulative PnL (RSK-004)
 

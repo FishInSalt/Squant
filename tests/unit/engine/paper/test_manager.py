@@ -644,6 +644,34 @@ class TestParallelDispatch:
         # Bad engine error should be tracked but not propagate
         assert session_manager._consecutive_errors.get(bad_engine.run_id, 0) == 1
 
+    @pytest.mark.asyncio
+    async def test_cancelled_error_does_not_cascade(self, session_manager, sample_candle):
+        """CancelledError in one engine must not cancel sibling engines."""
+        good_engine = MagicMock()
+        good_engine.run_id = uuid4()
+        good_engine.symbol = "BTC/USDT"
+        good_engine.timeframe = "1m"
+        good_engine.is_running = True
+        good_engine.process_candle = AsyncMock()
+
+        cancel_engine = MagicMock()
+        cancel_engine.run_id = uuid4()
+        cancel_engine.symbol = "BTC/USDT"
+        cancel_engine.timeframe = "1m"
+        cancel_engine.is_running = True
+        cancel_engine.process_candle = AsyncMock(side_effect=asyncio.CancelledError())
+        cancel_engine.stop = AsyncMock()
+
+        await session_manager.register(good_engine)
+        await session_manager.register(cancel_engine)
+
+        await session_manager.dispatch_candle(sample_candle)
+
+        # Good engine should still process — CancelledError should not cascade
+        good_engine.process_candle.assert_called_once_with(sample_candle)
+        # Cancelled engine's error should be tracked
+        assert session_manager._consecutive_errors.get(cancel_engine.run_id, 0) == 1
+
 
 class TestSingleton:
     """Tests for singleton behavior."""

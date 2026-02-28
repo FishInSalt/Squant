@@ -101,8 +101,18 @@ class RiskManager:
         with self._lock:
             self.state.unrealized_pnl = unrealized_pnl
 
+    def record_order_fill(self) -> None:
+        """Record that an order was filled (increments daily trade count).
+
+        Called on every fill (market or limit, partial or full) to track
+        order execution frequency. This is separate from record_trade_result()
+        which tracks round-trip PnL on position close.
+        """
+        with self._lock:
+            self.state.daily_trade_count += 1
+
     def record_trade_result(self, pnl: Decimal) -> None:
-        """Record the result of a completed trade.
+        """Record the result of a completed trade (position fully closed).
 
         Args:
             pnl: Profit/loss from the trade.
@@ -616,9 +626,7 @@ class RiskManager:
             "daily_start_unrealized_pnl": float(self.state.daily_start_unrealized_pnl),
             "daily_start_equity": float(self.state.daily_start_equity),
             "daily_reset_time": (
-                self.state.daily_reset_time.isoformat()
-                if self.state.daily_reset_time
-                else None
+                self.state.daily_reset_time.isoformat() if self.state.daily_reset_time else None
             ),
             "total_pnl": float(self.state.total_pnl),
             "total_loss_limit_pct": float(self.config.total_loss_limit),

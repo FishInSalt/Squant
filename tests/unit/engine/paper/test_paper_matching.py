@@ -345,9 +345,7 @@ class TestVolumeParticipation:
         )
         # BUY LIMIT order for 2.0 BTC, bar volume is 5.0 -> max fill = 0.5
         order = _limit_order(OrderSide.BUY, "49000", "2.0")
-        fills = engine.match_pending_limits(
-            [order], Decimal("48000"), TS, volume=Decimal("5.0")
-        )
+        fills = engine.match_pending_limits([order], Decimal("48000"), TS, volume=Decimal("5.0"))
 
         assert len(fills) == 1
         assert fills[0].amount == Decimal("0.5")
@@ -372,3 +370,132 @@ class TestVolumeParticipation:
 
         assert fill is not None
         assert fill.amount == Decimal("100")
+
+
+class TestGapOpenPriceImprovement:
+    """Tests for limit order gap-open price improvement.
+
+    When the bar opens through the limit price, the fill should occur
+    at the open price (better than limit), consistent with backtest engine.
+    """
+
+    def test_buy_limit_gap_down_fills_at_open(self):
+        """BUY LIMIT at 43K, bar opens at 41K → fill at 41K (price improvement)."""
+        engine = PaperMatchingEngine(commission_rate=Decimal("0.001"))
+        order = _limit_order(OrderSide.BUY, "43000")
+        fills = engine.match_pending_limits(
+            [order],
+            current_price=Decimal("42000"),
+            timestamp=TS,
+            high=Decimal("42500"),
+            low=Decimal("40500"),
+            open_price=Decimal("41000"),
+        )
+        assert len(fills) == 1
+        # Gap down: open 41K < limit 43K → fill at 41K
+        assert fills[0].price == Decimal("41000")
+
+    def test_buy_limit_no_gap_fills_at_limit(self):
+        """BUY LIMIT at 43K, bar opens at 44K, dips to 42.5K → fill at 43K."""
+        engine = PaperMatchingEngine(commission_rate=Decimal("0.001"))
+        order = _limit_order(OrderSide.BUY, "43000")
+        fills = engine.match_pending_limits(
+            [order],
+            current_price=Decimal("43500"),
+            timestamp=TS,
+            high=Decimal("44500"),
+            low=Decimal("42500"),
+            open_price=Decimal("44000"),
+        )
+        assert len(fills) == 1
+        # No gap: open 44K > limit 43K → fill at limit 43K
+        assert fills[0].price == Decimal("43000")
+
+    def test_sell_limit_gap_up_fills_at_open(self):
+        """SELL LIMIT at 47K, bar opens at 49K → fill at 49K (price improvement)."""
+        engine = PaperMatchingEngine(commission_rate=Decimal("0.001"))
+        order = _limit_order(OrderSide.SELL, "47000")
+        fills = engine.match_pending_limits(
+            [order],
+            current_price=Decimal("48000"),
+            timestamp=TS,
+            high=Decimal("49500"),
+            low=Decimal("47500"),
+            open_price=Decimal("49000"),
+        )
+        assert len(fills) == 1
+        # Gap up: open 49K > limit 47K → fill at 49K
+        assert fills[0].price == Decimal("49000")
+
+    def test_sell_limit_no_gap_fills_at_limit(self):
+        """SELL LIMIT at 47K, bar opens at 46K, rises to 47.5K → fill at 47K."""
+        engine = PaperMatchingEngine(commission_rate=Decimal("0.001"))
+        order = _limit_order(OrderSide.SELL, "47000")
+        fills = engine.match_pending_limits(
+            [order],
+            current_price=Decimal("46500"),
+            timestamp=TS,
+            high=Decimal("47500"),
+            low=Decimal("45500"),
+            open_price=Decimal("46000"),
+        )
+        assert len(fills) == 1
+        # No gap: open 46K < limit 47K → fill at limit 47K
+        assert fills[0].price == Decimal("47000")
+
+    def test_no_open_price_falls_back_to_limit(self):
+        """Without open_price (unclosed candle), fills at limit price."""
+        engine = PaperMatchingEngine(commission_rate=Decimal("0.001"))
+        order = _limit_order(OrderSide.BUY, "43000")
+        fills = engine.match_pending_limits(
+            [order],
+            current_price=Decimal("42000"),
+            timestamp=TS,
+            high=Decimal("43500"),
+            low=Decimal("41500"),
+            # No open_price
+        )
+        assert len(fills) == 1
+        assert fills[0].price == Decimal("43000")
+
+
+class TestZeroVolumeBarBlocking:
+    """Tests that zero-volume bars block fills when volume participation is set."""
+
+    def test_market_order_blocked_on_zero_volume(self):
+        """Market order should not fill on a zero-volume bar."""
+        engine = PaperMatchingEngine(
+            commission_rate=Decimal("0.001"),
+            max_volume_participation=Decimal("0.1"),
+        )
+        order = _market_order(OrderSide.BUY)
+        fill = engine.fill_market_order(order, Decimal("50000"), TS, volume=Decimal("0"))
+
+        assert fill is None
+
+    def test_limit_order_blocked_on_zero_volume(self):
+        """Limit order should not fill on a zero-volume bar."""
+        engine = PaperMatchingEngine(
+            commission_rate=Decimal("0.001"),
+            max_volume_participation=Decimal("0.1"),
+        )
+        order = _limit_order(OrderSide.BUY, "50000")
+        fills = engine.match_pending_limits(
+            [order],
+            current_price=Decimal("49000"),
+            timestamp=TS,
+            high=Decimal("50500"),
+            low=Decimal("48500"),
+            volume=Decimal("0"),
+        )
+
+        assert len(fills) == 0
+
+    def test_market_order_fills_without_participation_limit(self):
+        """Without max_volume_participation, zero-volume doesn't block fills."""
+        engine = PaperMatchingEngine(commission_rate=Decimal("0.001"))
+        order = _market_order(OrderSide.BUY)
+        fill = engine.fill_market_order(order, Decimal("50000"), TS, volume=Decimal("0"))
+
+        assert fill is not None
+        assert fill.amount == Decimal("0.1")

@@ -339,6 +339,7 @@ class PaperTradingEngine:
                         high=candle.high,
                         low=candle.low,
                         volume=candle.volume,
+                        open_price=candle.open,
                     )
                 else:
                     self._fill_new_orders(
@@ -346,6 +347,7 @@ class PaperTradingEngine:
                         timestamp,
                         high=candle.high,
                         low=candle.low,
+                        open_price=candle.open,
                     )
 
                 # 3. Move completed orders
@@ -443,6 +445,7 @@ class PaperTradingEngine:
         high: Decimal | None = None,
         low: Decimal | None = None,
         volume: Decimal | None = None,
+        open_price: Decimal | None = None,
     ) -> None:
         """Fill new market orders immediately and check limit orders.
 
@@ -456,6 +459,7 @@ class PaperTradingEngine:
             high: Candle high price (for closed candles, improves limit trigger accuracy).
             low: Candle low price (for closed candles, improves limit trigger accuracy).
             volume: Bar volume (for volume participation limit).
+            open_price: Candle open price (for gap-open price improvement on limits).
         """
         pending = self._context._get_pending_orders()
         if not pending:
@@ -479,7 +483,13 @@ class PaperTradingEngine:
         # Match limit orders
         if limit_orders:
             fills = self._matching_engine.match_pending_limits(
-                limit_orders, current_price, timestamp, high=high, low=low, volume=volume
+                limit_orders,
+                current_price,
+                timestamp,
+                high=high,
+                low=low,
+                volume=volume,
+                open_price=open_price,
             )
             for fill in fills:
                 # Risk check before processing limit fill
@@ -581,6 +591,10 @@ class PaperTradingEngine:
             # Cancel the order to prevent infinite retry (consistent with backtest runner)
             self._context.cancel_order(fill.order_id)
             return
+
+        # Record every successful fill for daily trade count (not just round-trip closes)
+        if self._risk_manager:
+            self._risk_manager.record_order_fill()
 
         # Check if a trade was completed (closed) by this fill
         if self._risk_manager and len(self._context._trades) > trades_count_before:
