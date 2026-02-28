@@ -1132,6 +1132,38 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/paper/{run_id}/resume": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Resume Paper Trading
+         * @description Resume a stopped or errored paper trading session.
+         *
+         *     Restores trading state from the saved result snapshot and replays
+         *     historical bars to rebuild strategy internal state.
+         *
+         *     Args:
+         *         run_id: Paper trading run ID.
+         *         request: Optional resume configuration.
+         *         redis: Redis client for circuit breaker check.
+         *         session: Database session.
+         *
+         *     Returns:
+         *         Updated paper trading run record.
+         */
+        post: operations["resume_paper_trading_api_v1_paper__run_id__resume_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/paper/{run_id}/status": {
         parameters: {
             query?: never;
@@ -1201,7 +1233,7 @@ export interface paths {
          *     Args:
          *         page: Page number (1-indexed).
          *         page_size: Items per page.
-         *         status: Optional status filter (pending, running, stopped, error).
+         *         status: Optional status filter (pending, running, stopped, error, interrupted).
          *         session: Database session.
          *
          *     Returns:
@@ -1260,6 +1292,7 @@ export interface paths {
          *     Args:
          *         run_id: Paper trading run ID.
          *         session: Database session.
+         *         since: Optional time filter for incremental loading.
          *
          *     Returns:
          *         Equity curve data points.
@@ -1477,7 +1510,7 @@ export interface paths {
          *     Args:
          *         page: Page number (1-indexed).
          *         page_size: Items per page.
-         *         status: Optional status filter (pending, running, stopped, error).
+         *         status: Optional status filter (pending, running, stopped, error, interrupted).
          *         session: Database session.
          *
          *     Returns:
@@ -1536,6 +1569,7 @@ export interface paths {
          *     Args:
          *         run_id: Live trading run ID.
          *         session: Database session.
+         *         since: Optional time filter for incremental loading.
          *
          *     Returns:
          *         Equity curve data points.
@@ -4109,6 +4143,24 @@ export interface components {
             risk_state: components["schemas"]["RiskStateResponse"] | null;
         };
         /**
+         * OpenTradeInfo
+         * @description Currently open trade (position entry info for chart markers).
+         */
+        OpenTradeInfo: {
+            /** Symbol */
+            symbol: string;
+            /** Side */
+            side: string;
+            /** Entry Time */
+            entry_time: string;
+            /** Entry Price */
+            entry_price: number;
+            /** Amount */
+            amount: number;
+            /** Fees */
+            fees: number;
+        };
+        /**
          * OrderDetail
          * @description Order detail response.
          */
@@ -4639,6 +4691,7 @@ export interface components {
             trades_count: number;
             /** Trades */
             trades?: components["schemas"]["TradeRecordResponse"][];
+            open_trade?: components["schemas"]["OpenTradeInfo"] | null;
             /** Logs */
             logs?: string[];
         };
@@ -4733,6 +4786,18 @@ export interface components {
              * @description Minutes remaining in cooldown if applicable
              */
             cooldown_remaining_minutes?: number | null;
+        };
+        /**
+         * ResumePaperTradingRequest
+         * @description Request to resume a stopped/errored paper trading session.
+         */
+        ResumePaperTradingRequest: {
+            /**
+             * Warmup Bars
+             * @description Number of historical bars to replay for strategy warmup
+             * @default 200
+             */
+            warmup_bars: number;
         };
         /**
          * RiskConfigRequest
@@ -7022,6 +7087,41 @@ export interface operations {
             };
         };
     };
+    resume_paper_trading_api_v1_paper__run_id__resume_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["ResumePaperTradingRequest"] | null;
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_PaperTradingRunResponse_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_paper_trading_status_api_v1_paper__run_id__status_get: {
         parameters: {
             query?: never;
@@ -7142,7 +7242,10 @@ export interface operations {
     };
     get_equity_curve_api_v1_paper__run_id__equity_curve_get: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Only return records after this time (ISO 8601) */
+                since?: string | null;
+            };
             header?: never;
             path: {
                 run_id: string;
@@ -7421,7 +7524,10 @@ export interface operations {
     };
     get_equity_curve_api_v1_live__run_id__equity_curve_get: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Only return records after this time (ISO 8601) */
+                since?: string | null;
+            };
             header?: never;
             path: {
                 run_id: string;
