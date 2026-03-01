@@ -194,6 +194,10 @@ class Fill:
     amount: Decimal
     fee: Decimal
     timestamp: datetime
+    # 价格来源元数据（模拟交易撮合引擎填充，回测为 None）
+    price_source: str | None = None  # "ask", "bid", "slippage", "limit", "stop_limit"
+    reference_price: Decimal | None = None  # last price
+    spread_pct: Decimal | None = None  # spread 百分比
 
 
 @dataclass

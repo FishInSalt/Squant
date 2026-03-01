@@ -310,7 +310,8 @@ class BacktestContext:
             price_info = f"@{price}"
         else:
             price_info = "市价"
-        self.log(f"提交买入 {symbol} {amount} {price_info}")
+        short_id = order.id[:8]
+        self.log(f"提交买入 {symbol} {amount} {price_info} #{short_id}")
         return order.id
 
     def sell(
@@ -392,7 +393,8 @@ class BacktestContext:
             price_info = f"@{price}"
         else:
             price_info = "市价"
-        self.log(f"提交卖出 {symbol} {amount} {price_info}")
+        short_id = order.id[:8]
+        self.log(f"提交卖出 {symbol} {amount} {price_info} #{short_id}")
         return order.id
 
     def cancel_order(self, order_id: str) -> bool:
@@ -596,9 +598,6 @@ class BacktestContext:
         self._fills.append(fill)
         self._total_fees += fill.fee
 
-        side_label = "买入" if fill.side == OrderSide.BUY else "卖出"
-        self.log(f"成交 {side_label} {fill.symbol} {fill.amount}@{fill.price} 手续费={fill.fee}")
-
         # Update position (this may also raise if trying to go short)
         position.update(fill.amount, fill.price, fill.side)
 
@@ -648,6 +647,10 @@ class BacktestContext:
             prev_amount: Position amount before the fill.
             new_amount: Position amount after the fill.
         """
+        side_label = "买入成交" if fill.side == OrderSide.BUY else "卖出成交"
+        short_id = fill.order_id[:8]
+        price_detail = self._format_price_detail(fill)
+
         # Position opened
         if prev_amount == Decimal("0") and new_amount != Decimal("0"):
             self._partial_exit_pnl = Decimal("0")
@@ -661,8 +664,11 @@ class BacktestContext:
                 amount=abs(new_amount),
                 fees=fill.fee,
             )
-            direction = "多" if fill.side == OrderSide.BUY else "空"
-            self.log(f"开仓 {fill.symbol} {direction} {abs(new_amount)}@{fill.price}")
+            self.log(
+                f"{side_label} #{short_id} {fill.symbol} "
+                f"{fill.amount}@{fill.price} [开仓] "
+                f"{price_detail}手续费={fill.fee}"
+            )
 
         # Position increased
         elif (prev_amount > 0 and new_amount > prev_amount) or (
@@ -676,9 +682,12 @@ class BacktestContext:
                 self._open_trade.entry_price = (prev_value + new_value) / abs(new_amount)
                 self._open_trade.fees += fill.fee
                 self._open_trade.amount = abs(new_amount)
+                avg = self._open_trade.entry_price
                 self.log(
-                    f"加仓 {fill.symbol} +{added_amount}@{fill.price} "
-                    f"持仓={abs(new_amount)} 均价={self._open_trade.entry_price:.4f}"
+                    f"{side_label} #{short_id} {fill.symbol} "
+                    f"{added_amount}@{fill.price} "
+                    f"[加仓→{abs(new_amount)} 均价={avg:.4f}] "
+                    f"{price_detail}手续费={fill.fee}"
                 )
 
         # Position decreased or closed
@@ -702,7 +711,9 @@ class BacktestContext:
                 self._open_trade.exit_time = fill.timestamp
                 # Weighted average exit price across all partial exits
                 if self._exit_fill_amount > 0:
-                    self._open_trade.exit_price = self._exit_fill_notional / self._exit_fill_amount
+                    self._open_trade.exit_price = (
+                        self._exit_fill_notional / self._exit_fill_amount
+                    )
                 else:
                     self._open_trade.exit_price = fill.price
 
@@ -716,17 +727,53 @@ class BacktestContext:
 
                 pnl_sign = "+" if pnl >= 0 else ""
                 self.log(
-                    f"平仓 {fill.symbol} {fill_amount}@{fill.price} "
-                    f"盈亏={pnl_sign}{pnl:.4f} ({pnl_sign}{self._open_trade.pnl_pct:.2f}%)"
+                    f"{side_label} #{short_id} {fill.symbol} "
+                    f"{fill_amount}@{fill.price} [平仓] "
+                    f"{price_detail}"
+                    f"盈亏={pnl_sign}{pnl:.4f}({pnl_sign}{self._open_trade.pnl_pct:.2f}%) "
+                    f"手续费={self._open_trade.fees}"
                 )
 
                 self._trades.append(self._open_trade)
                 self._open_trade = None
             else:
-                self.log(f"减仓 {fill.symbol} -{fill_amount}@{fill.price} 剩余={abs(new_amount)}")
+                self.log(
+                    f"{side_label} #{short_id} {fill.symbol} "
+                    f"{fill_amount}@{fill.price} [减仓→{abs(new_amount)}] "
+                    f"{price_detail}手续费={fill.fee}"
+                )
 
             # Note: Position reversal (long→short or short→long) is not supported
             # in spot trading. sell() validation prevents negative positions.
+
+    def _format_price_detail(self, fill: Fill) -> str:
+        """Format price source detail for fill logs.
+
+        Returns a string describing the price source (bid/ask, slippage, or limit).
+        Trailing space included when non-empty for easy concatenation.
+        Returns empty string when no price source metadata (e.g. backtest fills).
+        """
+        if fill.price_source is None:
+            return ""
+        if fill.price_source in ("ask", "bid"):
+            parts = [f"{fill.price_source}={fill.price}"]
+            if fill.reference_price is not None:
+                parts.append(f"last={fill.reference_price}")
+            if fill.spread_pct is not None:
+                parts.append(f"spread={fill.spread_pct:.2f}%")
+            return " ".join(parts) + " "
+        elif fill.price_source == "slippage":
+            parts = ["slippage"]
+            if fill.reference_price is not None:
+                parts.append(f"last={fill.reference_price}")
+            if fill.spread_pct is not None:
+                parts.append(f"spread={fill.spread_pct:.2f}%")
+            return " ".join(parts) + " "
+        elif fill.price_source in ("limit", "stop_limit"):
+            return "限价成交 "
+        elif fill.price_source == "last":
+            return ""
+        return ""
 
     def _record_equity_snapshot(self, time: datetime) -> None:
         """Record an equity snapshot.

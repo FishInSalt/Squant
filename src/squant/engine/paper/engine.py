@@ -548,6 +548,8 @@ class PaperTradingEngine:
             if fill:
                 if not self._validate_order_risk(order, current_price):
                     continue
+                short_id = order.id[:8]
+                self._context.log(f"止损触发 #{short_id} 触发价={order.stop_price}")
                 self._process_fill_safe(fill)
                 filled_this_update += fill.amount
                 if volume_budget is not None:
@@ -557,11 +559,16 @@ class PaperTradingEngine:
 
         # Process STOP_LIMIT orders: check trigger → mark triggered → try limit fill
         for order in stop_limit_orders:
+            was_triggered = order.triggered
             fills = self._matching_engine.match_pending_stop_limits(
                 [order], current_price, timestamp,
                 high=high, low=low, open_price=open_price,
                 volume_budget=volume_budget,
             )
+            # Log trigger event (whether or not limit is reachable)
+            if not was_triggered and order.triggered:
+                short_id = order.id[:8]
+                self._context.log(f"止损触发 #{short_id} 触发价={order.stop_price}")
             if not fills:
                 # Order may still have been triggered but limit not reachable yet.
                 # It will be picked up as a limit order on the next update.
@@ -672,10 +679,11 @@ class PaperTradingEngine:
                     order.status = OrderStatus.CANCELLED
                     self._context._completed_orders.append(order)
                     logger.debug(f"Order {order.id} expired (TTL reached)")
+                    short_id = order.id[:8]
                     price_info = f"@{order.price}" if order.price else ""
                     stop_info = f"止损@{order.stop_price}" if order.stop_price else ""
                     self._context.log(
-                        f"订单过期: {order.side.value} {order.symbol} "
+                        f"订单过期 #{short_id} {order.side.value} {order.symbol} "
                         f"{order.amount}{stop_info}{price_info}"
                     )
                     expired.append(order)

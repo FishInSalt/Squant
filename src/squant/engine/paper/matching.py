@@ -98,7 +98,7 @@ class PaperMatchingEngine:
         if order.status in (OrderStatus.FILLED, OrderStatus.CANCELLED):
             return None
 
-        fill_price = self._compute_market_fill_price(
+        fill_price, price_source = self._compute_market_fill_price(
             order.side, current_price, bid=bid, ask=ask,
         )
 
@@ -122,6 +122,11 @@ class PaperMatchingEngine:
         fill_value = fill_price * fill_amount
         fee = fill_value * self.commission_rate
 
+        # Compute spread percentage
+        spread_pct: Decimal | None = None
+        if current_price and current_price > 0:
+            spread_pct = abs(fill_price - current_price) / current_price * 100
+
         return Fill(
             order_id=order.id,
             symbol=order.symbol,
@@ -130,6 +135,9 @@ class PaperMatchingEngine:
             amount=fill_amount,
             fee=fee,
             timestamp=timestamp,
+            price_source=price_source,
+            reference_price=current_price,
+            spread_pct=spread_pct,
         )
 
     def _compute_market_fill_price(
@@ -138,7 +146,7 @@ class PaperMatchingEngine:
         current_price: Decimal,
         bid: Decimal | None = None,
         ask: Decimal | None = None,
-    ) -> Decimal:
+    ) -> tuple[Decimal, str]:
         """Compute fill price for market-style execution.
 
         Uses bid/ask when available (spread simulation), otherwise falls
@@ -151,20 +159,21 @@ class PaperMatchingEngine:
             ask: Best ask price from ticker.
 
         Returns:
-            Computed fill price before clamping.
+            Tuple of (fill_price, price_source) where price_source is one of
+            "ask", "bid", "slippage", "last".
         """
         if side == OrderSide.BUY:
             if ask is not None:
-                return ask
+                return ask, "ask"
             if self.slippage > 0:
-                return current_price * (1 + self.slippage)
-            return current_price
+                return current_price * (1 + self.slippage), "slippage"
+            return current_price, "last"
         else:
             if bid is not None:
-                return bid
+                return bid, "bid"
             if self.slippage > 0:
-                return current_price * (1 - self.slippage)
-            return current_price
+                return current_price * (1 - self.slippage), "slippage"
+            return current_price, "last"
 
     def match_pending_limits(
         self,
@@ -275,6 +284,7 @@ class PaperMatchingEngine:
                     amount=fill_amount,
                     fee=fee,
                     timestamp=timestamp,
+                    price_source="limit",
                 )
             )
 
@@ -354,7 +364,7 @@ class PaperMatchingEngine:
             return None
 
         # Triggered — fill as market order using spread or slippage
-        fill_price = self._compute_market_fill_price(
+        fill_price, price_source = self._compute_market_fill_price(
             order.side, current_price, bid=bid, ask=ask,
         )
 
@@ -373,6 +383,11 @@ class PaperMatchingEngine:
         fill_value = fill_price * fill_amount
         fee = fill_value * self.commission_rate
 
+        # Compute spread percentage
+        spread_pct: Decimal | None = None
+        if current_price and current_price > 0:
+            spread_pct = abs(fill_price - current_price) / current_price * 100
+
         return Fill(
             order_id=order.id,
             symbol=order.symbol,
@@ -381,6 +396,9 @@ class PaperMatchingEngine:
             amount=fill_amount,
             fee=fee,
             timestamp=timestamp,
+            price_source=price_source,
+            reference_price=current_price,
+            spread_pct=spread_pct,
         )
 
     def _try_fill_as_limit(
@@ -455,6 +473,7 @@ class PaperMatchingEngine:
             amount=fill_amount,
             fee=fee,
             timestamp=timestamp,
+            price_source="stop_limit",
         )
 
     def match_pending_stop_limits(
