@@ -849,11 +849,10 @@ async function handleEmergencyClose() {
 
 onMounted(async () => {
   await loadSession()
-  if (isRunning.value) {
-    await loadStatus()
-    if (status.value?.is_running) {
-      startPolling()
-    }
+  // Always load status (backend returns historical data from DB for stopped sessions)
+  await loadStatus()
+  if (isRunning.value && status.value?.is_running) {
+    startPolling()
   } else if (session.value?.status === 'interrupted') {
     // Session interrupted (e.g. backend restarting) — poll for recovery
     startRecoveryPolling()
