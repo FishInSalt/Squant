@@ -578,8 +578,8 @@ class RiskManager:
                     state_dict["circuit_breaker_until"]
                 )
 
-            # Equity
-            if state_dict.get("current_equity"):
+            # Equity (use 'in' check — get() is falsy when equity is 0)
+            if "current_equity" in state_dict and state_dict["current_equity"] is not None:
                 self._current_equity = Decimal(str(state_dict["current_equity"]))
 
             # Unrealized PnL

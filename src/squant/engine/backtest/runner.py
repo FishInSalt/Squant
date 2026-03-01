@@ -280,11 +280,11 @@ class BacktestRunner:
                         self._context.cancel_order(order.id)
                         break
 
-        # 2a. Expire stale limit orders (decrement bars_remaining, cancel if <= 0)
-        self._expire_stale_orders()
-
-        # 3. Move completed orders
+        # 2a. Move completed orders (before expiry, so FILLED orders are removed first)
         self._context._move_completed_orders()
+
+        # 2b. Expire stale limit orders (decrement bars_remaining, cancel if <= 0)
+        self._expire_stale_orders()
 
         # 4. Update current bar
         self._context._set_current_bar(bar)
@@ -327,6 +327,10 @@ class BacktestRunner:
         expired = []
         remaining = []
         for order in self._context._pending_orders:
+            # Skip already-completed orders (FILLED/CANCELLED) to avoid overwriting status
+            if order.status in (OrderStatus.FILLED, OrderStatus.CANCELLED):
+                remaining.append(order)
+                continue
             if order.type == OrderType.LIMIT and order.bars_remaining is not None:
                 order.bars_remaining -= 1
                 if order.bars_remaining <= 0:

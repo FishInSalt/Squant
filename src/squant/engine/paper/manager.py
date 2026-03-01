@@ -243,7 +243,8 @@ class SessionManager:
                     key_to_unsub = await self.unregister_and_check_subscription(run_id)
                     self._consecutive_errors.pop(run_id, None)
 
-                    # Persist state and update DB (same pattern as _health_check)
+                    # Persist state and update DB — mark as ERROR (not INTERRUPTED)
+                    # to prevent infinite auto-recovery loop on strategy bugs.
                     try:
                         from squant.infra.database import get_session_context
                         from squant.services.paper_trading import PaperTradingService
@@ -252,7 +253,7 @@ class SessionManager:
                             service = PaperTradingService(db_session)
                             if pending_snapshots:
                                 await service._persist_snapshots(str(run_id), pending_snapshots)
-                            await service.mark_session_interrupted(
+                            await service.mark_session_error(
                                 run_id,
                                 error_message=error_msg,
                                 result=result_data,

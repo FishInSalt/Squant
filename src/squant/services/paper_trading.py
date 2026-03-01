@@ -592,7 +592,8 @@ class PaperTradingService:
         # Determine status based on stop reason
         if for_shutdown:
             status = RunStatus.INTERRUPTED
-            error_message = "Session interrupted by application shutdown"
+            # Preserve engine's original error message (e.g. risk limit triggered)
+            error_message = error_message or "Session interrupted by application shutdown"
         else:
             status = RunStatus.STOPPED
 
@@ -729,6 +730,35 @@ class PaperTradingService:
             )
             await self.session.commit()
             logger.info(f"Marked session {run_id} as interrupted: {error_message}")
+
+    async def mark_session_error(
+        self,
+        run_id: UUID,
+        error_message: str,
+        result: dict[str, Any] | None = None,
+    ) -> None:
+        """Mark a session as errored in the database.
+
+        Used when auto-stop triggers due to repeated dispatch failures
+        (strategy bugs). Unlike mark_session_interrupted, ERROR status
+        prevents auto-recovery on restart to avoid infinite retry loops.
+
+        Args:
+            run_id: Run ID of the session to mark.
+            error_message: Error description.
+            result: Optional engine state snapshot to save as final result.
+        """
+        run = await self.run_repo.get(run_id)
+        if run and run.status in (RunStatus.RUNNING, RunStatus.INTERRUPTED):
+            await self.run_repo.update(
+                run.id,
+                status=RunStatus.ERROR,
+                error_message=error_message,
+                result=result,
+                stopped_at=datetime.now(UTC),
+            )
+            await self.session.commit()
+            logger.info(f"Marked session {run_id} as error: {error_message}")
 
     def list_active(self) -> list[dict[str, Any]]:
         """List all active paper trading sessions.

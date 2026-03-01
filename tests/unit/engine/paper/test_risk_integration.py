@@ -473,7 +473,7 @@ class TestTradeCompletionDetection:
         Regression test for R7-001: the old len(_trades) > before pattern fails
         when deque is at capacity because append doesn't increase len.
         """
-        config = RiskConfig(max_daily_loss=Decimal("999999"))
+        config = RiskConfig(daily_loss_limit_absolute=Decimal("999999"))
         # Create engine with small max_trades to trigger the deque-full condition
         with patch("squant.config.get_settings") as mock_settings:
             settings = MagicMock()

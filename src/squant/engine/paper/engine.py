@@ -551,7 +551,7 @@ class PaperTradingEngine:
         exchange_type = ExchangeOrderType(order.type.value)
 
         # Get current position amount for position size check
-        position = self._context._positions.get(self._symbol)
+        position = self._context._positions.get(order.symbol)
         current_position_amount = position.amount if position and position.is_open else Decimal("0")
 
         order_request = OrderRequest(
