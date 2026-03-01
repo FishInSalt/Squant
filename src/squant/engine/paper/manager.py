@@ -249,7 +249,9 @@ class SessionManager:
                     engine = self._sessions.get(run_id)
                     result_data = None
                     pending_snapshots: list = []
+                    auto_stop_symbol: str | None = None
                     if engine:
+                        auto_stop_symbol = engine.symbol
                         try:
                             await engine.stop(error=error_msg)
                         except Exception as stop_error:
@@ -286,19 +288,22 @@ class SessionManager:
                             f"Failed to update DB for auto-stopped session {run_id}: {db_err}"
                         )
 
-                    # Unsubscribe if this was the last session for the key
-                    if key_to_unsub:
-                        try:
-                            from squant.websocket.manager import get_stream_manager
+                    # Unsubscribe ticker (always, ref-counted independently)
+                    # and candles (only if last session for key)
+                    try:
+                        from squant.websocket.manager import get_stream_manager
 
-                            stream_manager = get_stream_manager()
+                        stream_manager = get_stream_manager()
+                        if auto_stop_symbol:
+                            await stream_manager.unsubscribe_ticker(auto_stop_symbol)
+                        if key_to_unsub:
                             await stream_manager.unsubscribe_candles(*key_to_unsub)
-                            await stream_manager.unsubscribe_ticker(key_to_unsub[0])
+                        if auto_stop_symbol or key_to_unsub:
                             logger.info(
-                                f"Unsubscribed from candles+ticker {key_to_unsub} after auto-stop"
+                                f"Unsubscribed ticker+candles after auto-stop {run_id}"
                             )
-                        except Exception as unsub_err:
-                            logger.warning(f"Failed to unsubscribe after auto-stop: {unsub_err}")
+                    except Exception as unsub_err:
+                        logger.warning(f"Failed to unsubscribe after auto-stop: {unsub_err}")
 
     def dispatch_ticker(self, ticker: WSTicker) -> None:
         """Dispatch a ticker to all engines subscribed to the ticker's symbol.

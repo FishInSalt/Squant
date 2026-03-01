@@ -457,6 +457,7 @@ class TestPaperTradingService:
 
             mock_stream = MagicMock()
             mock_stream.unsubscribe_candles = AsyncMock()
+            mock_stream.unsubscribe_ticker = AsyncMock()
             mock_get_stream.return_value = mock_stream
 
             service = PaperTradingService(mock_session)
@@ -464,6 +465,7 @@ class TestPaperTradingService:
 
             # DB should be committed before unsubscribe (Issue 021 fix)
             mock_session.commit.assert_called_once()
+            mock_stream.unsubscribe_ticker.assert_called_once_with("BTC/USDT")
             mock_stream.unsubscribe_candles.assert_called_once_with("BTC/USDT", "1m")
 
     @pytest.mark.asyncio
@@ -493,6 +495,7 @@ class TestPaperTradingService:
             mock_get_manager.return_value = mock_manager
 
             mock_stream = MagicMock()
+            mock_stream.unsubscribe_ticker = AsyncMock()
             # Simulate unsubscribe failure
             mock_stream.unsubscribe_candles = AsyncMock(side_effect=Exception("WS error"))
             mock_get_stream.return_value = mock_stream
@@ -1138,6 +1141,7 @@ class TestResumeSession:
 
         mock_stream = MagicMock()
         mock_stream.subscribe_candles = AsyncMock()
+        mock_stream.subscribe_ticker = AsyncMock()
 
         mock_engine = MagicMock()
         mock_engine.start = AsyncMock()
@@ -1192,6 +1196,7 @@ class TestResumeSession:
 
         mock_stream = MagicMock()
         mock_stream.subscribe_candles = AsyncMock()
+        mock_stream.subscribe_ticker = AsyncMock()
 
         mock_engine = MagicMock()
         mock_engine.start = AsyncMock()
@@ -1254,6 +1259,7 @@ class TestResumeSession:
 
         mock_stream = MagicMock()
         mock_stream.subscribe_candles = AsyncMock()
+        mock_stream.subscribe_ticker = AsyncMock()
 
         mock_engine = MagicMock()
         mock_engine.start = AsyncMock()
@@ -1305,6 +1311,7 @@ class TestResumeSession:
 
         mock_stream = MagicMock()
         mock_stream.subscribe_candles = AsyncMock()
+        mock_stream.subscribe_ticker = AsyncMock()
 
         mock_context = MagicMock()
         mock_engine = MagicMock()
