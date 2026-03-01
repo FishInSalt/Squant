@@ -14,8 +14,7 @@ export const strategyTemplates: StrategyTemplate[] = [
     name: 'dual_ma',
     displayName: '双均线交叉',
     description: '经典趋势跟踪策略。当快线上穿慢线时买入，下穿时卖出。适合趋势行情。',
-    code: `from squant.engine.backtest.strategy_base import Strategy
-from decimal import Decimal
+    code: `from decimal import Decimal
 
 
 class DualMA(Strategy):
@@ -86,8 +85,7 @@ class DualMA(Strategy):
     name: 'rsi_reversal',
     displayName: 'RSI 均值回归',
     description: '基于相对强弱指数的均值回归策略。RSI 超卖时买入，超买时卖出。适合震荡行情。',
-    code: `from squant.engine.backtest.strategy_base import Strategy
-from decimal import Decimal
+    code: `from decimal import Decimal
 
 
 class RSIReversal(Strategy):
@@ -187,8 +185,7 @@ class RSIReversal(Strategy):
     name: 'buy_and_hold',
     displayName: '买入持有',
     description: '最简单的基准策略。在第一根K线买入后一直持有。常用作其他策略的对比基准。',
-    code: `from squant.engine.backtest.strategy_base import Strategy
-from decimal import Decimal
+    code: `from decimal import Decimal
 
 
 class BuyAndHold(Strategy):
@@ -231,8 +228,7 @@ class BuyAndHold(Strategy):
     name: 'bollinger_bands',
     displayName: '布林带突破',
     description: '基于布林带的波动率策略。价格触及下轨时买入，触及上轨时卖出。适合区间震荡行情。',
-    code: `from squant.engine.backtest.strategy_base import Strategy
-from decimal import Decimal
+    code: `from decimal import Decimal
 import math
 
 

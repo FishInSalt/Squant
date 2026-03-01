@@ -84,21 +84,13 @@ class RSIMeanReversionStrategy(Strategy):  # noqa: F821
         # 超卖区间 → 买入信号
         if rsi < self.oversold:
             if not pos or pos.amount <= 0:
-                self.ctx.buy(
-                    symbol=bar.symbol,
-                    amount=self.amount,
-                    price=bar.close,
-                )
+                self.ctx.buy(symbol=bar.symbol, amount=self.amount)
                 self.ctx.log(f"RSI={rsi:.1f} 超卖买入: {bar.close}")
 
         # 超买区间 → 卖出信号
         elif rsi > self.overbought:
             if pos and pos.amount > 0:
-                self.ctx.sell(
-                    symbol=bar.symbol,
-                    amount=pos.amount,
-                    price=bar.close,
-                )
+                self.ctx.sell(symbol=bar.symbol, amount=pos.amount)
                 self.ctx.log(f"RSI={rsi:.1f} 超买卖出: {bar.close}")
 
     def on_stop(self) -> None:
