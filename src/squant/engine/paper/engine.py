@@ -506,11 +506,7 @@ class PaperTradingEngine:
             elif order.type == OrderType.STOP:
                 stop_orders.append(order)
             elif order.type == OrderType.STOP_LIMIT:
-                # Already-triggered stop-limits act as regular limit orders
-                if order.triggered:
-                    limit_orders.append(order)
-                else:
-                    stop_limit_orders.append(order)
+                stop_limit_orders.append(order)
 
         # Process STOP orders: check trigger → fill as market
         for order in stop_orders:

@@ -957,8 +957,9 @@ class TestStopLimitOrders:
         fills = engine.process_bar(bar, [order])
         assert len(fills) == 1
         assert order.triggered is True
-        # Limit buy: fill at min(limit_price, open) = min(43500, 42000) = 42000
-        assert fills[0].price == Decimal("42000")
+        # Same-bar trigger: no gap-open improvement.
+        # Fill at max(limit_price, stop_price) = max(43500, 43000) = 43500
+        assert fills[0].price == Decimal("43500")
 
     def test_stop_limit_triggers_but_limit_not_reachable(
         self, engine: MatchingEngine
@@ -1077,8 +1078,64 @@ class TestStopLimitOrders:
         fills = engine.process_bar(bar, [order])
         assert len(fills) == 1
         assert order.triggered is True
-        # Sell limit: fill at max(limit_price=40500, open=42000) = 42000
-        assert fills[0].price == Decimal("42000")
+        # Same-bar trigger: no gap-open improvement.
+        # Sell fill at min(limit_price=40500, stop_price=41000) = 40500
+        assert fills[0].price == Decimal("40500")
+
+    def test_stop_limit_cross_bar_uses_gap_open_improvement(
+        self, engine: MatchingEngine
+    ) -> None:
+        """Previously triggered STOP_LIMIT fills with gap-open price improvement."""
+        order = SimulatedOrder.create(
+            symbol="BTC/USDT",
+            side=OrderSide.BUY,
+            order_type=OrderType.STOP_LIMIT,
+            amount=Decimal("1"),
+            stop_price=Decimal("43000"),
+            price=Decimal("42000"),  # limit price below stop
+        )
+
+        # Bar 1: triggers but limit not reachable (low=41500 > limit=42000 is false,
+        # actually low=42500 > 42000, so limit IS reachable... let's use price=40000)
+        order2 = SimulatedOrder.create(
+            symbol="BTC/USDT",
+            side=OrderSide.BUY,
+            order_type=OrderType.STOP_LIMIT,
+            amount=Decimal("1"),
+            stop_price=Decimal("43000"),
+            price=Decimal("40000"),
+        )
+
+        # Bar 1: triggers (high=44000 >= 43000) but limit not reachable (low=41000 > 40000 is false...
+        # low=41000 <= 40000 is false since 41000 > 40000). So no fill.
+        bar1 = Bar(
+            time=datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC),
+            symbol="BTC/USDT",
+            open=Decimal("42000"),
+            high=Decimal("44000"),
+            low=Decimal("41000"),
+            close=Decimal("43200"),
+            volume=Decimal("1000"),
+        )
+        fills1 = engine.process_bar(bar1, [order2])
+        assert len(fills1) == 0
+        assert order2.triggered is True
+
+        # Bar 2: opens at 39500, low=39000 <= 40000 → limit reachable
+        # Gap-open improvement: fill at min(limit=40000, open=39500) = 39500
+        bar2 = Bar(
+            time=datetime(2024, 1, 1, 13, 0, 0, tzinfo=UTC),
+            symbol="BTC/USDT",
+            open=Decimal("39500"),
+            high=Decimal("40500"),
+            low=Decimal("39000"),
+            close=Decimal("40200"),
+            volume=Decimal("1000"),
+        )
+        fills2 = engine.process_bar(bar2, [order2])
+        assert len(fills2) == 1
+        # Cross-bar: regular limit fill with gap-open improvement
+        assert fills2[0].price == Decimal("39500")
 
 
 class TestSimulatedOrderCreateValidation:

@@ -270,7 +270,14 @@ class MatchingEngine:
         Two-phase execution:
         1. If not yet triggered, check trigger condition. If triggered, mark
            order.triggered=True and attempt limit fill on the same bar.
-        2. If already triggered, delegate to limit order fill logic.
+        2. If already triggered (from a previous bar), delegate to regular
+           limit order fill logic (which may use gap-open price improvement).
+
+        When triggered and filled on the same bar, gap-open price improvement
+        is suppressed: the stop triggers at stop_price (not at bar.open), so
+        bar.open should not be used to improve the fill price. Instead, the
+        fill price is clamped to [stop_price, limit_price] for BUY and
+        [limit_price, stop_price] for SELL.
 
         Args:
             order: Stop-limit order to fill.
@@ -279,15 +286,72 @@ class MatchingEngine:
         Returns:
             Fill if both triggered and limit is reachable, None otherwise.
         """
+        just_triggered = False
         if not order.triggered:
             # Phase 1: check trigger
             if not self._check_stop_trigger(order, bar):
                 return None
             # Triggered on this bar
             order.triggered = True
+            just_triggered = True
 
-        # Phase 2: attempt limit fill (same logic as regular limit orders)
+        if just_triggered:
+            # Same-bar trigger: no gap-open price improvement
+            return self._fill_limit_order_at_trigger(order, bar)
+
+        # Already triggered on a previous bar: regular limit fill with gap-open
         return self._fill_limit_order(order, bar)
+
+    def _fill_limit_order_at_trigger(
+        self, order: SimulatedOrder, bar: Bar
+    ) -> Fill | None:
+        """Fill a just-triggered stop-limit as a limit order without gap-open improvement.
+
+        When a STOP_LIMIT triggers on the same bar it fills, bar.open occurred
+        before the trigger point. The fill price should be the limit price
+        (not improved by bar.open), since the limit order only becomes active
+        after the stop triggers at stop_price.
+
+        Args:
+            order: Stop-limit order just triggered on this bar.
+            bar: Current bar data.
+
+        Returns:
+            Fill at limit price if reachable, None otherwise.
+        """
+        if order.price is None or order.stop_price is None:
+            return None
+
+        limit_price = order.price
+        can_fill = False
+
+        if order.side == OrderSide.BUY:
+            if bar.low <= limit_price:
+                can_fill = True
+                # Don't improve below stop_price — the trigger happened there
+                fill_price = max(limit_price, order.stop_price)
+        else:
+            if bar.high >= limit_price:
+                can_fill = True
+                # Don't improve above stop_price — the trigger happened there
+                fill_price = min(limit_price, order.stop_price)
+
+        if not can_fill:
+            return None
+
+        fill_amount = order.remaining
+        fill_value = fill_price * fill_amount
+        fee = fill_value * self.commission_rate
+
+        return Fill(
+            order_id=order.id,
+            symbol=order.symbol,
+            side=order.side,
+            price=fill_price,
+            amount=fill_amount,
+            fee=fee,
+            timestamp=bar.time,
+        )
 
     def validate_order(self, order: SimulatedOrder, cash: Decimal) -> tuple[bool, str]:
         """Validate if an order can be placed.
