@@ -112,7 +112,6 @@
             <el-descriptions-item label="时间周期">{{ session.timeframe }}</el-descriptions-item>
             <el-descriptions-item label="初始资金">{{ formatNumber(session.initial_capital ?? 0, 2) }}</el-descriptions-item>
             <el-descriptions-item label="手续费率">{{ formatNumber((session.commission_rate ?? 0) * 100, 4) }}%</el-descriptions-item>
-            <el-descriptions-item label="滑点">{{ session.slippage != null ? formatNumber(session.slippage * 100, 4) + '%' : '-' }}</el-descriptions-item>
             <el-descriptions-item label="启动时间">{{ session.started_at ? new Date(session.started_at).toLocaleString('zh-CN') : '-' }}</el-descriptions-item>
             <el-descriptions-item label="停止时间">{{ session.stopped_at ? new Date(session.stopped_at).toLocaleString('zh-CN') : '-' }}</el-descriptions-item>
             <el-descriptions-item v-if="status" label="已处理Bar数">{{ status.bar_count }}</el-descriptions-item>

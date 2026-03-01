@@ -109,18 +109,7 @@
                 />
               </el-form-item>
             </el-col>
-            <el-col :span="12">
-              <el-form-item label="滑点 (%)" prop="slippage">
-                <el-input-number
-                  v-model="form.slippage"
-                  :min="0"
-                  :max="100"
-                  :step="0.01"
-                  :precision="4"
-                  style="width: 100%"
-                />
-              </el-form-item>
-            </el-col>
+            <!-- 滑点已由实时 bid/ask spread 模拟替代，后端使用默认值作为降级保护 -->
           </el-row>
 
           <div v-if="selectedStrategy?.params_schema?.properties" class="params-section">
@@ -258,7 +247,6 @@ const form = reactive({
   timeframe: '1h',
   initial_capital: 10000,
   commission_rate: 0.1,
-  slippage: 0.1,
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   params: {} as Record<string, any>,
 })
@@ -328,7 +316,6 @@ async function handleSubmit() {
       timeframe: form.timeframe,
       initial_capital: form.initial_capital,
       commission_rate: form.commission_rate / 100,
-      slippage: form.slippage / 100,
       params: form.params,
     }
 
