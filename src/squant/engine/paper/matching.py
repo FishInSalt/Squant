@@ -64,18 +64,20 @@ class PaperMatchingEngine:
         volume_budget: Decimal | None = None,
         high: Decimal | None = None,
         low: Decimal | None = None,
+        bid: Decimal | None = None,
+        ask: Decimal | None = None,
     ) -> Fill | None:
-        """Fill a market order immediately at current_price with slippage.
+        """Fill a market order at the best available price.
 
-        BUY: fill_price = current_price * (1 + slippage)
-        SELL: fill_price = current_price * (1 - slippage)
+        When bid/ask data is available (from ticker stream), uses actual
+        spread pricing: BUY fills at ask, SELL fills at bid. This provides
+        more realistic simulation than fixed slippage.
 
-        When high/low are provided, the slippage-adjusted price is clamped to
-        [low, high] to ensure the fill price stays within the bar's traded range
-        (consistent with the backtest matching engine).
+        When bid/ask is not available, falls back to slippage-based pricing:
+        BUY: current_price * (1 + slippage), SELL: current_price * (1 - slippage).
 
-        When volume_budget is provided, it is used directly as the fill cap.
-        Otherwise, falls back to computing from volume * max_volume_participation.
+        When high/low are provided, the fill price is clamped to [low, high]
+        to ensure it stays within the bar's traded range.
 
         Args:
             order: Market order to fill.
@@ -83,8 +85,10 @@ class PaperMatchingEngine:
             timestamp: Fill timestamp.
             volume: Bar volume (legacy, used when volume_budget not provided).
             volume_budget: Pre-computed shared volume budget (takes priority).
-            high: Candle high price (optional, for clamping slippage).
-            low: Candle low price (optional, for clamping slippage).
+            high: Candle high price (optional, for clamping).
+            low: Candle low price (optional, for clamping).
+            bid: Best bid price from ticker (for sell orders).
+            ask: Best ask price from ticker (for buy orders).
 
         Returns:
             Fill if order is a valid pending market order, None otherwise.
@@ -94,13 +98,9 @@ class PaperMatchingEngine:
         if order.status in (OrderStatus.FILLED, OrderStatus.CANCELLED):
             return None
 
-        if self.slippage > 0:
-            if order.side == OrderSide.BUY:
-                fill_price = current_price * (1 + self.slippage)
-            else:
-                fill_price = current_price * (1 - self.slippage)
-        else:
-            fill_price = current_price
+        fill_price = self._compute_market_fill_price(
+            order.side, current_price, bid=bid, ask=ask,
+        )
 
         # Clamp to bar range (consistent with backtest matching engine)
         if high is not None and low is not None:
@@ -131,6 +131,40 @@ class PaperMatchingEngine:
             fee=fee,
             timestamp=timestamp,
         )
+
+    def _compute_market_fill_price(
+        self,
+        side: OrderSide,
+        current_price: Decimal,
+        bid: Decimal | None = None,
+        ask: Decimal | None = None,
+    ) -> Decimal:
+        """Compute fill price for market-style execution.
+
+        Uses bid/ask when available (spread simulation), otherwise falls
+        back to current_price with slippage applied.
+
+        Args:
+            side: Order side (BUY or SELL).
+            current_price: Current market price (candle close).
+            bid: Best bid price from ticker.
+            ask: Best ask price from ticker.
+
+        Returns:
+            Computed fill price before clamping.
+        """
+        if side == OrderSide.BUY:
+            if ask is not None:
+                return ask
+            if self.slippage > 0:
+                return current_price * (1 + self.slippage)
+            return current_price
+        else:
+            if bid is not None:
+                return bid
+            if self.slippage > 0:
+                return current_price * (1 - self.slippage)
+            return current_price
 
     def match_pending_limits(
         self,
@@ -288,8 +322,13 @@ class PaperMatchingEngine:
         high: Decimal | None = None,
         low: Decimal | None = None,
         volume_budget: Decimal | None = None,
+        bid: Decimal | None = None,
+        ask: Decimal | None = None,
     ) -> Fill | None:
         """Fill a stop order if triggered, using market-order style execution.
+
+        After the stop triggers, the order fills as a market order using
+        bid/ask spread pricing (when available) or slippage fallback.
 
         Args:
             order: Stop order to fill.
@@ -298,6 +337,8 @@ class PaperMatchingEngine:
             high: Candle high price.
             low: Candle low price.
             volume_budget: Pre-computed shared volume budget.
+            bid: Best bid price from ticker (for sell orders).
+            ask: Best ask price from ticker (for buy orders).
 
         Returns:
             Fill if triggered, None otherwise.
@@ -312,14 +353,10 @@ class PaperMatchingEngine:
         if not self._check_stop_trigger_tick(order, current_price, high, low):
             return None
 
-        # Triggered — fill as market order at current price with slippage
-        if self.slippage > 0:
-            if order.side == OrderSide.BUY:
-                fill_price = current_price * (1 + self.slippage)
-            else:
-                fill_price = current_price * (1 - self.slippage)
-        else:
-            fill_price = current_price
+        # Triggered — fill as market order using spread or slippage
+        fill_price = self._compute_market_fill_price(
+            order.side, current_price, bid=bid, ask=ask,
+        )
 
         # Clamp to bar range
         if high is not None and low is not None:

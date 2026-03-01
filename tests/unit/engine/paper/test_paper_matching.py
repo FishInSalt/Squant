@@ -789,3 +789,118 @@ class TestStopLimitOrderPaper:
         )
         assert len(fills) == 1
         assert fills[0].price == Decimal("42000")
+
+
+class TestSpreadSimulation:
+    """Tests for bid/ask spread-based fill pricing."""
+
+    def test_market_buy_uses_ask_price(self):
+        """BUY market order fills at ask price when available."""
+        engine = PaperMatchingEngine(
+            commission_rate=Decimal("0.001"), slippage=Decimal("0.005"),
+        )
+        order = _market_order(OrderSide.BUY)
+        fill = engine.fill_market_order(
+            order, Decimal("42000"), TS, ask=Decimal("42050"),
+        )
+        assert fill is not None
+        # Should use ask price, NOT close + slippage
+        assert fill.price == Decimal("42050")
+
+    def test_market_sell_uses_bid_price(self):
+        """SELL market order fills at bid price when available."""
+        engine = PaperMatchingEngine(
+            commission_rate=Decimal("0.001"), slippage=Decimal("0.005"),
+        )
+        order = _market_order(OrderSide.SELL)
+        fill = engine.fill_market_order(
+            order, Decimal("42000"), TS, bid=Decimal("41950"),
+        )
+        assert fill is not None
+        # Should use bid price, NOT close - slippage
+        assert fill.price == Decimal("41950")
+
+    def test_market_buy_fallback_to_slippage(self):
+        """BUY market order falls back to slippage when no ask available."""
+        engine = PaperMatchingEngine(
+            commission_rate=Decimal("0.001"), slippage=Decimal("0.005"),
+        )
+        order = _market_order(OrderSide.BUY)
+        fill = engine.fill_market_order(
+            order, Decimal("42000"), TS,
+        )
+        assert fill is not None
+        # No ask → close * (1 + slippage) = 42000 * 1.005 = 42210
+        assert fill.price == Decimal("42000") * (1 + Decimal("0.005"))
+
+    def test_market_sell_fallback_to_slippage(self):
+        """SELL market order falls back to slippage when no bid available."""
+        engine = PaperMatchingEngine(
+            commission_rate=Decimal("0.001"), slippage=Decimal("0.005"),
+        )
+        order = _market_order(OrderSide.SELL)
+        fill = engine.fill_market_order(
+            order, Decimal("42000"), TS,
+        )
+        assert fill is not None
+        # No bid → close * (1 - slippage) = 42000 * 0.995 = 41790
+        assert fill.price == Decimal("42000") * (1 - Decimal("0.005"))
+
+    def test_stop_order_buy_uses_ask_on_trigger(self):
+        """STOP BUY uses ask price after triggering."""
+        engine = PaperMatchingEngine(
+            commission_rate=Decimal("0.001"), slippage=Decimal("0.005"),
+        )
+        order = _stop_order(OrderSide.BUY, "43000")
+        fill = engine.fill_stop_order(
+            order, Decimal("43200"), TS,
+            high=Decimal("44000"), low=Decimal("42000"),
+            ask=Decimal("43250"),
+        )
+        assert fill is not None
+        assert fill.price == Decimal("43250")
+
+    def test_stop_order_sell_uses_bid_on_trigger(self):
+        """STOP SELL uses bid price after triggering."""
+        engine = PaperMatchingEngine(
+            commission_rate=Decimal("0.001"), slippage=Decimal("0.005"),
+        )
+        order = _stop_order(OrderSide.SELL, "41000")
+        fill = engine.fill_stop_order(
+            order, Decimal("40800"), TS,
+            high=Decimal("42000"), low=Decimal("40500"),
+            bid=Decimal("40750"),
+        )
+        assert fill is not None
+        assert fill.price == Decimal("40750")
+
+    def test_spread_with_bar_clamp(self):
+        """Spread price is clamped to bar range [low, high]."""
+        engine = PaperMatchingEngine(
+            commission_rate=Decimal("0.001"), slippage=Decimal("0"),
+        )
+        order = _market_order(OrderSide.BUY)
+        # Ask is above candle high — should be clamped to high
+        fill = engine.fill_market_order(
+            order, Decimal("42000"), TS,
+            high=Decimal("42100"), low=Decimal("41900"),
+            ask=Decimal("42200"),
+        )
+        assert fill is not None
+        assert fill.price == Decimal("42100")  # Clamped to high
+
+    def test_spread_with_volume_budget(self):
+        """Spread simulation respects volume participation budget."""
+        engine = PaperMatchingEngine(
+            commission_rate=Decimal("0.001"), slippage=Decimal("0"),
+            max_volume_participation=Decimal("0.1"),
+        )
+        order = _market_order(OrderSide.BUY, amount="10")
+        fill = engine.fill_market_order(
+            order, Decimal("42000"), TS,
+            volume_budget=Decimal("5"),
+            ask=Decimal("42050"),
+        )
+        assert fill is not None
+        assert fill.price == Decimal("42050")
+        assert fill.amount == Decimal("5")  # Capped by volume budget

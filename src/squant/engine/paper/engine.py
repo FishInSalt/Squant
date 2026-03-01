@@ -20,7 +20,7 @@ from squant.engine.paper.matching import PaperMatchingEngine
 from squant.engine.resource_limits import ResourceLimitExceededError, resource_limiter
 from squant.engine.risk.manager import RiskManager
 from squant.engine.risk.models import RiskConfig
-from squant.infra.exchange.okx.ws_types import WSCandle
+from squant.infra.exchange.okx.ws_types import WSCandle, WSTicker
 from squant.infra.exchange.types import OrderRequest
 from squant.models.enums import OrderSide as ExchangeOrderSide
 from squant.models.enums import OrderType as ExchangeOrderType
@@ -136,6 +136,12 @@ class PaperTradingEngine:
         # unclosed candle updates from exceeding the bar's participation cap.
         self._current_bar_timestamp: datetime | None = None
         self._bar_volume_consumed: Decimal = Decimal("0")
+
+        # Cached bid/ask from ticker stream for spread simulation.
+        # When available, market orders use ask (BUY) / bid (SELL) instead of
+        # close + fixed slippage, providing more realistic fill pricing.
+        self._latest_bid: Decimal | None = None
+        self._latest_ask: Decimal | None = None
 
         # Synchronous persistence callbacks
         self._on_snapshot = on_snapshot
@@ -293,6 +299,22 @@ class PaperTradingEngine:
         self._is_running = False
         self._stopped_at = datetime.now(UTC)
 
+    def on_ticker(self, ticker: WSTicker) -> None:
+        """Cache latest bid/ask from ticker stream for spread simulation.
+
+        Called by SessionManager.dispatch_ticker() whenever a new ticker
+        arrives for this engine's symbol. The cached bid/ask values are
+        used by _fill_new_orders() to provide spread-based fill pricing
+        instead of the fixed slippage fallback.
+
+        Args:
+            ticker: WebSocket ticker data with bid/ask prices.
+        """
+        if ticker.bid is not None:
+            self._latest_bid = ticker.bid
+        if ticker.ask is not None:
+            self._latest_ask = ticker.ask
+
     async def process_candle(self, candle: WSCandle) -> None:
         """Process a WebSocket candle update (tick-level matching).
 
@@ -345,6 +367,7 @@ class PaperTradingEngine:
                 # Volume is passed for both closed and unclosed candles.
                 # Closed: final bar volume. Unclosed: cumulative volume so far.
                 # Both are valid for volume participation rate enforcement.
+                # Bid/ask from cached ticker data enable spread-based fills.
                 self._fill_new_orders(
                     current_price,
                     timestamp,
@@ -352,6 +375,8 @@ class PaperTradingEngine:
                     low=candle.low,
                     volume=candle.volume,
                     open_price=candle.open,
+                    bid=self._latest_bid,
+                    ask=self._latest_ask,
                 )
 
                 # 3. Move completed orders
@@ -450,6 +475,8 @@ class PaperTradingEngine:
         low: Decimal | None = None,
         volume: Decimal | None = None,
         open_price: Decimal | None = None,
+        bid: Decimal | None = None,
+        ask: Decimal | None = None,
     ) -> None:
         """Fill new market orders immediately and check limit orders.
 
@@ -463,6 +490,8 @@ class PaperTradingEngine:
             low: Candle low price (for closed candles, improves limit trigger accuracy).
             volume: Bar volume (for volume participation limit).
             open_price: Candle open price (for gap-open price improvement on limits).
+            bid: Best bid price from ticker (for spread-based sell fills).
+            ask: Best ask price from ticker (for spread-based buy fills).
         """
         pending = self._context._get_pending_orders()
         if not pending:
@@ -492,6 +521,7 @@ class PaperTradingEngine:
                 fill = self._matching_engine.fill_market_order(
                     order, current_price, timestamp,
                     volume_budget=volume_budget, high=high, low=low,
+                    bid=bid, ask=ask,
                 )
                 if fill:
                     self._process_fill_safe(fill)
@@ -513,6 +543,7 @@ class PaperTradingEngine:
             fill = self._matching_engine.fill_stop_order(
                 order, current_price, timestamp,
                 high=high, low=low, volume_budget=volume_budget,
+                bid=bid, ask=ask,
             )
             if fill:
                 if not self._validate_order_risk(order, current_price):
@@ -771,6 +802,12 @@ class PaperTradingEngine:
         result["risk_state"] = (
             self._risk_manager.get_state_summary() if self._risk_manager else None
         )
+
+        # API-only: current bid/ask spread (informational)
+        result["spread"] = {
+            "bid": str(self._latest_bid) if self._latest_bid else None,
+            "ask": str(self._latest_ask) if self._latest_ask else None,
+        }
 
         return result
 

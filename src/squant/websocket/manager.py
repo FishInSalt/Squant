@@ -845,6 +845,12 @@ class StreamManager:
                     ticker.model_dump(mode="json"),
                 )
 
+                # Dispatch to paper trading sessions for spread simulation
+                from squant.engine.paper.manager import get_session_manager
+
+                session_manager = get_session_manager()
+                session_manager.dispatch_ticker(ticker)
+
             elif data_type == "candle":
                 candle: WSCandle = data
                 # Publish to Redis for WebSocket clients
@@ -921,6 +927,12 @@ class StreamManager:
                 f"ticker:{symbol}",
                 ticker.model_dump(mode="json"),
             )
+
+            # Dispatch to paper trading sessions for spread simulation
+            from squant.engine.paper.manager import get_session_manager
+
+            session_manager = get_session_manager()
+            session_manager.dispatch_ticker(ticker)
 
     async def _process_candle(self, arg: dict, data: list, channel: str) -> None:
         """Process candlestick data and publish to Redis."""

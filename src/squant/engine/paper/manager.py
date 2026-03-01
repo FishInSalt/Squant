@@ -1,6 +1,6 @@
 """Session manager for paper trading engines.
 
-Manages all active paper trading sessions and handles candle distribution.
+Manages all active paper trading sessions and handles candle and ticker distribution.
 """
 
 from __future__ import annotations
@@ -12,7 +12,7 @@ from uuid import UUID
 
 if TYPE_CHECKING:
     from squant.engine.paper.engine import PaperTradingEngine
-    from squant.infra.exchange.okx.ws_types import WSCandle
+    from squant.infra.exchange.okx.ws_types import WSCandle, WSTicker
 
 logger = logging.getLogger(__name__)
 
@@ -22,7 +22,7 @@ class SessionManager:
 
     This is a singleton that:
     - Tracks all running paper trading engines
-    - Routes candle data to relevant engines
+    - Routes candle and ticker data to relevant engines
     - Handles graceful shutdown of all sessions
     """
 
@@ -33,6 +33,9 @@ class SessionManager:
 
         # Subscription tracking: (symbol, timeframe) -> set of run_ids
         self._subscriptions: dict[tuple[str, str], set[UUID]] = {}
+
+        # Ticker subscription tracking: symbol -> set of run_ids
+        self._ticker_subscriptions: dict[str, set[UUID]] = {}
 
         # Lock for thread-safe operations
         self._lock = asyncio.Lock()
@@ -62,10 +65,16 @@ class SessionManager:
 
             self._sessions[run_id] = engine
 
-            # Track subscription
+            # Track candle subscription
             if key not in self._subscriptions:
                 self._subscriptions[key] = set()
             self._subscriptions[key].add(run_id)
+
+            # Track ticker subscription (by symbol only)
+            symbol = engine.symbol
+            if symbol not in self._ticker_subscriptions:
+                self._ticker_subscriptions[symbol] = set()
+            self._ticker_subscriptions[symbol].add(run_id)
 
             logger.info(
                 f"Registered engine {run_id} for {engine.symbol}:{engine.timeframe}, "
@@ -90,6 +99,13 @@ class SessionManager:
                 self._subscriptions[key].discard(run_id)
                 if not self._subscriptions[key]:
                     del self._subscriptions[key]
+
+            # Remove from ticker subscription tracking
+            symbol = engine.symbol
+            if symbol in self._ticker_subscriptions:
+                self._ticker_subscriptions[symbol].discard(run_id)
+                if not self._ticker_subscriptions[symbol]:
+                    del self._ticker_subscriptions[symbol]
 
             # Clean up error tracking (PP-H02)
             self._consecutive_errors.pop(run_id, None)
@@ -117,7 +133,14 @@ class SessionManager:
 
             key = (engine.symbol, engine.timeframe)
 
-            # Remove from subscription tracking
+            # Remove from ticker subscription tracking
+            symbol = engine.symbol
+            if symbol in self._ticker_subscriptions:
+                self._ticker_subscriptions[symbol].discard(run_id)
+                if not self._ticker_subscriptions[symbol]:
+                    del self._ticker_subscriptions[symbol]
+
+            # Remove from candle subscription tracking
             if key in self._subscriptions:
                 self._subscriptions[key].discard(run_id)
                 if not self._subscriptions[key]:
@@ -270,9 +293,30 @@ class SessionManager:
 
                             stream_manager = get_stream_manager()
                             await stream_manager.unsubscribe_candles(*key_to_unsub)
-                            logger.info(f"Unsubscribed from candles {key_to_unsub} after auto-stop")
+                            await stream_manager.unsubscribe_ticker(key_to_unsub[0])
+                            logger.info(
+                                f"Unsubscribed from candles+ticker {key_to_unsub} after auto-stop"
+                            )
                         except Exception as unsub_err:
                             logger.warning(f"Failed to unsubscribe after auto-stop: {unsub_err}")
+
+    def dispatch_ticker(self, ticker: WSTicker) -> None:
+        """Dispatch a ticker to all engines subscribed to the ticker's symbol.
+
+        Updates each engine's cached bid/ask for spread-based fill pricing.
+        This is a lightweight synchronous operation (no I/O, no error tracking).
+
+        Args:
+            ticker: WebSocket ticker data with bid/ask prices.
+        """
+        run_ids = self._ticker_subscriptions.get(ticker.symbol)
+        if not run_ids:
+            return
+
+        for run_id in run_ids:
+            engine = self._sessions.get(run_id)
+            if engine and engine.is_running:
+                engine.on_ticker(ticker)
 
     async def stop_all(self, reason: str = "shutdown") -> None:
         """Stop all active sessions.

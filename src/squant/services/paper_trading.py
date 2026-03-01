@@ -374,10 +374,11 @@ class PaperTradingService:
             # Register with session manager
             await session_manager.register(engine)
 
-            # Subscribe to WebSocket candles
+            # Subscribe to WebSocket candles and tickers (for spread simulation)
             stream_manager = get_stream_manager()
             await stream_manager.subscribe_candles(symbol, timeframe)
             subscribed = True
+            await stream_manager.subscribe_ticker(symbol)
 
             # Start engine
             await engine.start()
@@ -403,7 +404,8 @@ class PaperTradingService:
                     if key_to_unsubscribe and subscribed:
                         stream_manager = get_stream_manager()
                         await stream_manager.unsubscribe_candles(*key_to_unsubscribe)
-                        logger.info(f"Unsubscribed from candles: {key_to_unsubscribe}")
+                        await stream_manager.unsubscribe_ticker(key_to_unsubscribe[0])
+                        logger.info(f"Unsubscribed from candles+ticker: {key_to_unsubscribe}")
                 except Exception as cleanup_error:
                     logger.warning(
                         f"Failed to cleanup engine during error handling: {cleanup_error}"
@@ -413,6 +415,7 @@ class PaperTradingService:
                 try:
                     stream_manager = get_stream_manager()
                     await stream_manager.unsubscribe_candles(symbol, timeframe)
+                    await stream_manager.unsubscribe_ticker(symbol)
                 except Exception as cleanup_error:
                     logger.warning(
                         f"Failed to cleanup WebSocket subscription during error handling: {cleanup_error}"
@@ -613,10 +616,11 @@ class PaperTradingService:
             try:
                 stream_manager = get_stream_manager()
                 await stream_manager.unsubscribe_candles(*key_to_unsubscribe)
-                logger.info(f"Unsubscribed from candles: {key_to_unsubscribe}")
+                await stream_manager.unsubscribe_ticker(key_to_unsubscribe[0])
+                logger.info(f"Unsubscribed from candles+ticker: {key_to_unsubscribe}")
             except Exception as e:
                 # Log but don't fail - database is already updated
-                logger.warning(f"Failed to unsubscribe from candles: {e}")
+                logger.warning(f"Failed to unsubscribe from candles/ticker: {e}")
 
         logger.info(f"{'Shutdown' if for_shutdown else 'Stopped'} paper trading session {run_id}")
         return run
