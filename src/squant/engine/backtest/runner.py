@@ -280,6 +280,9 @@ class BacktestRunner:
                         self._context.cancel_order(order.id)
                         break
 
+        # 2a. Expire stale limit orders (decrement bars_remaining, cancel if <= 0)
+        self._expire_stale_orders()
+
         # 3. Move completed orders
         self._context._move_completed_orders()
 
@@ -311,6 +314,33 @@ class BacktestRunner:
         except Exception as e:
             self._context.log(f"ERROR in on_bar: {e}")
             logger.warning(f"Strategy on_bar error: {e}")
+
+    def _expire_stale_orders(self) -> None:
+        """Expire limit orders whose bars_remaining has reached zero.
+
+        Decrements bars_remaining for each pending limit order. Orders that
+        reach zero are cancelled and moved to completed orders.
+        Mirrors PaperTradingEngine._expire_stale_orders().
+        """
+        from squant.engine.backtest.types import OrderStatus, OrderType
+
+        expired = []
+        remaining = []
+        for order in self._context._pending_orders:
+            if order.type == OrderType.LIMIT and order.bars_remaining is not None:
+                order.bars_remaining -= 1
+                if order.bars_remaining <= 0:
+                    order.status = OrderStatus.CANCELLED
+                    self._context._completed_orders.append(order)
+                    self._context.log(
+                        f"限价单过期: {order.side.value} {order.symbol} {order.amount}@{order.price}"
+                    )
+                    expired.append(order)
+                    continue
+            remaining.append(order)
+
+        if expired:
+            self._context._pending_orders = remaining
 
     def _build_result(self) -> BacktestResult:
         """Build the final backtest result.

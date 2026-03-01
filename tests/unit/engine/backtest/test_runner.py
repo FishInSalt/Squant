@@ -379,7 +379,7 @@ class TestProcessBar:
         call_order = []
 
         # Strategy that records call order and modifies cash via buy
-        strategy_code = '''
+        strategy_code = """
 class MyStrategy(Strategy):
     def on_init(self):
         pass
@@ -387,7 +387,7 @@ class MyStrategy(Strategy):
         pass
     def on_stop(self):
         pass
-'''
+"""
         runner = BacktestRunner(
             strategy_code=strategy_code,
             strategy_name="Test",
@@ -638,3 +638,97 @@ class TestBacktestCancellation:
         error2 = BacktestCancelledError()
         assert "cancelled" in str(error2).lower()
         assert error2.run_id is None
+
+
+class TestLimitOrderExpiry:
+    """Tests for limit order bars_remaining expiry in backtest."""
+
+    @pytest.mark.asyncio
+    async def test_limit_order_expires_after_valid_for_bars(self):
+        """Test that limit orders with valid_for_bars expire after N bars."""
+        strategy_code = """
+class MyStrategy(Strategy):
+    def on_init(self):
+        self.placed = False
+
+    def on_bar(self, bar):
+        if not self.placed:
+            # Place a limit buy far below market — should never fill
+            self.ctx.buy(bar.symbol, Decimal("0.01"),
+                         price=Decimal("10000"), valid_for_bars=3)
+            self.placed = True
+"""
+        base_time = datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC)
+        bars = [
+            Bar(
+                time=base_time + timedelta(hours=i),
+                symbol="BTC/USDT",
+                open=Decimal("50000"),
+                high=Decimal("51000"),
+                low=Decimal("49000"),
+                close=Decimal("50500"),
+                volume=Decimal("100"),
+            )
+            for i in range(6)
+        ]
+
+        runner = BacktestRunner(
+            strategy_code=strategy_code,
+            strategy_name="Test",
+            symbol="BTC/USDT",
+            timeframe="1h",
+            initial_capital=Decimal("100000"),
+        )
+
+        result = await runner.run(async_bar_iterator(bars))
+
+        # Order should be cancelled (expired), not filled
+        assert len(result.trades) == 0
+        cancelled = [o for o in result.orders if o.status.value == "cancelled"]
+        assert len(cancelled) == 1
+        # Verify log mentions expiry
+        assert any("限价单过期" in log for log in result.logs)
+
+    @pytest.mark.asyncio
+    async def test_limit_order_without_valid_for_bars_stays_active(self):
+        """Test that limit orders without valid_for_bars (GTC) never expire."""
+        strategy_code = """
+class MyStrategy(Strategy):
+    def on_init(self):
+        self.placed = False
+
+    def on_bar(self, bar):
+        if not self.placed:
+            # GTC limit buy far below market
+            self.ctx.buy(bar.symbol, Decimal("0.01"),
+                         price=Decimal("10000"))
+            self.placed = True
+"""
+        base_time = datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC)
+        bars = [
+            Bar(
+                time=base_time + timedelta(hours=i),
+                symbol="BTC/USDT",
+                open=Decimal("50000"),
+                high=Decimal("51000"),
+                low=Decimal("49000"),
+                close=Decimal("50500"),
+                volume=Decimal("100"),
+            )
+            for i in range(10)
+        ]
+
+        runner = BacktestRunner(
+            strategy_code=strategy_code,
+            strategy_name="Test",
+            symbol="BTC/USDT",
+            timeframe="1h",
+            initial_capital=Decimal("100000"),
+        )
+
+        result = await runner.run(async_bar_iterator(bars))
+
+        # GTC order should still be pending (not cancelled, not filled)
+        assert len(result.trades) == 0
+        cancelled = [o for o in result.orders if o.status.value == "cancelled"]
+        assert len(cancelled) == 0

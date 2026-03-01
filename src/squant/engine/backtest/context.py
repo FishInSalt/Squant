@@ -228,7 +228,10 @@ class BacktestContext:
         elif self._current_bar:
             # Market order: estimate using current bar's close price + slippage
             estimated_cost = (
-                self._current_bar.close * amount * (1 + self._slippage) * (1 + self._commission_rate)
+                self._current_bar.close
+                * amount
+                * (1 + self._slippage)
+                * (1 + self._commission_rate)
             )
         else:
             # No bar yet, skip validation (will be caught at fill time)
@@ -818,7 +821,8 @@ class BacktestContext:
             "open_trade": open_trade,
             "fills": fills,
             "trades_count": len(self._trades),
-            "completed_orders_count": self._restored_completed_orders_count + len(self._completed_orders),
+            "completed_orders_count": self._restored_completed_orders_count
+            + len(self._completed_orders),
             "logs": list(self._logs),
             "benchmark_initial_price": (
                 str(self._benchmark_initial_price)
@@ -925,11 +929,11 @@ class BacktestContext:
                 amount=Decimal(str(ot["amount"])),
                 fees=Decimal(str(ot["fees"])),
             )
-            if ot.get("partial_exit_pnl"):
+            if ot.get("partial_exit_pnl") is not None:
                 self._partial_exit_pnl = Decimal(str(ot["partial_exit_pnl"]))
-            if ot.get("exit_fill_notional"):
+            if ot.get("exit_fill_notional") is not None:
                 self._exit_fill_notional = Decimal(str(ot["exit_fill_notional"]))
-            if ot.get("exit_fill_amount"):
+            if ot.get("exit_fill_amount") is not None:
                 self._exit_fill_amount = Decimal(str(ot["exit_fill_amount"]))
         else:
             # Fallback: rebuild from positions (no entry_time available)
