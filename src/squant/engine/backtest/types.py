@@ -20,6 +20,8 @@ class OrderType(str, Enum):
 
     MARKET = "market"
     LIMIT = "limit"
+    STOP = "stop"
+    STOP_LIMIT = "stop_limit"
 
 
 class OrderStatus(str, Enum):
@@ -121,6 +123,8 @@ class SimulatedOrder:
     type: OrderType
     amount: Decimal
     price: Decimal | None = None
+    stop_price: Decimal | None = None  # Trigger price for STOP and STOP_LIMIT orders
+    triggered: bool = False  # Whether a STOP_LIMIT order has been triggered
     status: OrderStatus = OrderStatus.PENDING
     filled: Decimal = Decimal("0")
     avg_fill_price: Decimal = Decimal("0")
@@ -136,12 +140,23 @@ class SimulatedOrder:
         order_type: OrderType,
         amount: Decimal,
         price: Decimal | None = None,
+        stop_price: Decimal | None = None,
         created_at: datetime | None = None,
         bars_remaining: int | None = None,
     ) -> "SimulatedOrder":
         """Create a new simulated order."""
         if order_type == OrderType.LIMIT and price is None:
             raise ValueError("Limit orders require a price")
+        if order_type == OrderType.STOP:
+            if stop_price is None:
+                raise ValueError("Stop orders require a stop_price")
+            if price is not None:
+                raise ValueError("Stop orders must not have a limit price (use STOP_LIMIT)")
+        if order_type == OrderType.STOP_LIMIT:
+            if stop_price is None:
+                raise ValueError("Stop-limit orders require a stop_price")
+            if price is None:
+                raise ValueError("Stop-limit orders require a limit price")
         return cls(
             id=str(uuid4()),
             symbol=symbol,
@@ -149,6 +164,7 @@ class SimulatedOrder:
             type=order_type,
             amount=amount,
             price=price,
+            stop_price=stop_price,
             created_at=created_at,
             bars_remaining=bars_remaining,
         )

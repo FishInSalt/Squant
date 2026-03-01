@@ -15,7 +15,14 @@ from uuid import UUID
 
 from squant.engine.backtest.context import BacktestContext
 from squant.engine.backtest.strategy_base import Strategy
-from squant.engine.backtest.types import Bar, EquitySnapshot, Fill
+from squant.engine.backtest.types import (
+    Bar,
+    EquitySnapshot,
+    Fill,
+)
+from squant.engine.backtest.types import (
+    OrderType as BacktestOrderType,
+)
 from squant.engine.resource_limits import ResourceLimitExceededError, resource_limiter
 from squant.engine.risk import RiskConfig, RiskManager
 from squant.infra.exchange.types import CancelOrderRequest, OrderRequest, OrderResponse
@@ -1067,6 +1074,18 @@ class LiveTradingEngine:
 
         # Get pending orders from context that haven't been submitted
         for order in self._context._get_pending_orders():
+            # Guard: STOP/STOP_LIMIT not supported in live trading yet
+            if order.type in (BacktestOrderType.STOP, BacktestOrderType.STOP_LIMIT):
+                logger.warning(
+                    f"STOP/STOP_LIMIT orders not supported in live trading, "
+                    f"cancelling order {order.id}"
+                )
+                order.status = OrderStatus.CANCELLED
+                self._context._completed_orders.append(order)
+                if order in self._context._pending_orders:
+                    self._context._pending_orders.remove(order)
+                continue
+
             # Skip if already tracked as live order
             if order.id in self._live_orders:
                 continue

@@ -477,8 +477,10 @@ class PaperTradingEngine:
 
         filled_this_update = Decimal("0")
 
-        # Separate market and limit orders for processing
+        # Separate orders by type for processing
         limit_orders = []
+        stop_orders = []
+        stop_limit_orders = []
         for order in pending:
             # Skip orders for wrong symbol (defensive, consistent with backtest matching)
             if order.symbol != self._symbol:
@@ -501,6 +503,51 @@ class PaperTradingEngine:
                             volume_budget = Decimal("0")
             elif order.type == OrderType.LIMIT:
                 limit_orders.append(order)
+            elif order.type == OrderType.STOP:
+                stop_orders.append(order)
+            elif order.type == OrderType.STOP_LIMIT:
+                # Already-triggered stop-limits act as regular limit orders
+                if order.triggered:
+                    limit_orders.append(order)
+                else:
+                    stop_limit_orders.append(order)
+
+        # Process STOP orders: check trigger → fill as market
+        for order in stop_orders:
+            fill = self._matching_engine.fill_stop_order(
+                order, current_price, timestamp,
+                high=high, low=low, volume_budget=volume_budget,
+            )
+            if fill:
+                if not self._validate_order_risk(order, current_price):
+                    continue
+                self._process_fill_safe(fill)
+                filled_this_update += fill.amount
+                if volume_budget is not None:
+                    volume_budget -= fill.amount
+                    if volume_budget < Decimal("0"):
+                        volume_budget = Decimal("0")
+
+        # Process STOP_LIMIT orders: check trigger → mark triggered → try limit fill
+        for order in stop_limit_orders:
+            fills = self._matching_engine.match_pending_stop_limits(
+                [order], current_price, timestamp,
+                high=high, low=low, open_price=open_price,
+                volume_budget=volume_budget,
+            )
+            if not fills:
+                # Order may still have been triggered but limit not reachable yet.
+                # It will be picked up as a limit order on the next update.
+                continue
+            fill = fills[0]
+            if not self._validate_order_risk(order, current_price):
+                continue
+            self._process_fill_safe(fill)
+            filled_this_update += fill.amount
+            if volume_budget is not None:
+                volume_budget -= fill.amount
+                if volume_budget < Decimal("0"):
+                    volume_budget = Decimal("0")
 
         # Match limit orders ONE AT A TIME so that risk-rejected fills
         # do not consume budget from other orders.  The engine controls
@@ -560,6 +607,7 @@ class PaperTradingEngine:
             type=exchange_type,
             amount=order.remaining,  # Use remaining (not full) to avoid double-counting
             price=order.price,
+            stop_price=order.stop_price,
         )
 
         result = self._risk_manager.validate_order(
@@ -588,14 +636,20 @@ class PaperTradingEngine:
         expired = []
         remaining = []
         for order in self._context._pending_orders:
-            if order.type == OrderType.LIMIT and order.bars_remaining is not None:
+            if (
+                order.type in (OrderType.LIMIT, OrderType.STOP, OrderType.STOP_LIMIT)
+                and order.bars_remaining is not None
+            ):
                 order.bars_remaining -= 1
                 if order.bars_remaining <= 0:
                     order.status = OrderStatus.CANCELLED
                     self._context._completed_orders.append(order)
-                    logger.debug(f"Limit order {order.id} expired (TTL reached)")
+                    logger.debug(f"Order {order.id} expired (TTL reached)")
+                    price_info = f"@{order.price}" if order.price else ""
+                    stop_info = f"止损@{order.stop_price}" if order.stop_price else ""
                     self._context.log(
-                        f"限价单过期: {order.side.value} {order.symbol} {order.amount}@{order.price}"
+                        f"订单过期: {order.side.value} {order.symbol} "
+                        f"{order.amount}{stop_info}{price_info}"
                     )
                     expired.append(order)
                     continue
@@ -709,6 +763,8 @@ class PaperTradingEngine:
                 "type": order.type.value,
                 "amount": str(order.amount),
                 "price": str(order.price) if order.price else None,
+                "stop_price": str(order.stop_price) if order.stop_price else None,
+                "triggered": order.triggered,
                 "status": order.status.value,
                 "created_at": order.created_at.isoformat() if order.created_at else None,
             }

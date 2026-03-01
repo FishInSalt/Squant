@@ -1932,3 +1932,132 @@ class TestExitFillTrackingRestore:
         new_ctx.restore_state(snapshot)
         assert new_ctx._exit_fill_notional == Decimal("52000") * Decimal("0.5")
         assert new_ctx._exit_fill_amount == Decimal("0.5")
+
+
+class TestStopOrderContextAPI:
+    """Tests for stop/stop-limit order placement via context API."""
+
+    def test_buy_stop_order_creates_correct_type(self, context: BacktestContext) -> None:
+        """buy() with stop_price creates a STOP order."""
+        bar = Bar(
+            time=datetime(2024, 1, 1, tzinfo=UTC),
+            symbol="BTC/USDT",
+            open=Decimal("42000"),
+            high=Decimal("43000"),
+            low=Decimal("41000"),
+            close=Decimal("42500"),
+            volume=Decimal("100"),
+        )
+        context._set_current_bar(bar)
+
+        order_id = context.buy("BTC/USDT", Decimal("0.1"), stop_price=Decimal("43000"))
+
+        orders = context.pending_orders
+        assert len(orders) == 1
+        order = orders[0]
+        assert order.id == order_id
+        assert order.type == OrderType.STOP
+        assert order.stop_price == Decimal("43000")
+        assert order.price is None
+        assert order.triggered is False
+
+    def test_buy_stop_limit_order_creates_correct_type(self, context: BacktestContext) -> None:
+        """buy() with stop_price and price creates a STOP_LIMIT order."""
+        bar = Bar(
+            time=datetime(2024, 1, 1, tzinfo=UTC),
+            symbol="BTC/USDT",
+            open=Decimal("42000"),
+            high=Decimal("43000"),
+            low=Decimal("41000"),
+            close=Decimal("42500"),
+            volume=Decimal("100"),
+        )
+        context._set_current_bar(bar)
+
+        order_id = context.buy(
+            "BTC/USDT", Decimal("0.1"),
+            price=Decimal("43500"), stop_price=Decimal("43000"),
+        )
+
+        orders = context.pending_orders
+        assert len(orders) == 1
+        order = orders[0]
+        assert order.id == order_id
+        assert order.type == OrderType.STOP_LIMIT
+        assert order.stop_price == Decimal("43000")
+        assert order.price == Decimal("43500")
+
+    def test_sell_stop_order_creates_correct_type(self, context: BacktestContext) -> None:
+        """sell() with stop_price creates a STOP order."""
+        bar = Bar(
+            time=datetime(2024, 1, 1, tzinfo=UTC),
+            symbol="BTC/USDT",
+            open=Decimal("42000"),
+            high=Decimal("43000"),
+            low=Decimal("41000"),
+            close=Decimal("42500"),
+            volume=Decimal("100"),
+        )
+        context._set_current_bar(bar)
+
+        # Give a position first
+        from squant.engine.backtest.types import Fill, OrderSide as Side
+
+        context._process_fill(Fill(
+            order_id="fake",
+            symbol="BTC/USDT",
+            side=Side.BUY,
+            price=Decimal("42000"),
+            amount=Decimal("1"),
+            fee=Decimal("42"),
+            timestamp=datetime(2024, 1, 1, tzinfo=UTC),
+        ))
+
+        order_id = context.sell("BTC/USDT", Decimal("0.5"), stop_price=Decimal("41000"))
+
+        orders = context.pending_orders
+        assert len(orders) == 1
+        order = orders[0]
+        assert order.id == order_id
+        assert order.type == OrderType.STOP
+        assert order.stop_price == Decimal("41000")
+
+    def test_stop_buy_cash_reservation(self, context: BacktestContext) -> None:
+        """STOP buy reserves cash based on stop_price + slippage."""
+        bar = Bar(
+            time=datetime(2024, 1, 1, tzinfo=UTC),
+            symbol="BTC/USDT",
+            open=Decimal("42000"),
+            high=Decimal("43000"),
+            low=Decimal("41000"),
+            close=Decimal("42500"),
+            volume=Decimal("100"),
+        )
+        context._set_current_bar(bar)
+
+        # Place a stop buy that would use most of the capital
+        # Capital = 100000, stop_price = 43000, amount = 2
+        # Cost ≈ 43000 * 2 * 1.001 (commission) = 86086
+        context.buy("BTC/USDT", Decimal("2"), stop_price=Decimal("43000"))
+
+        # Second stop buy should fail due to insufficient available cash
+        with pytest.raises(ValueError, match="Insufficient cash"):
+            context.buy("BTC/USDT", Decimal("1"), stop_price=Decimal("43000"))
+
+    def test_stop_order_gets_bars_remaining(self, context: BacktestContext) -> None:
+        """STOP orders support valid_for_bars expiry."""
+        bar = Bar(
+            time=datetime(2024, 1, 1, tzinfo=UTC),
+            symbol="BTC/USDT",
+            open=Decimal("42000"),
+            high=Decimal("43000"),
+            low=Decimal("41000"),
+            close=Decimal("42500"),
+            volume=Decimal("100"),
+        )
+        context._set_current_bar(bar)
+
+        context.buy("BTC/USDT", Decimal("0.1"), stop_price=Decimal("43000"), valid_for_bars=5)
+
+        orders = context.pending_orders
+        assert orders[0].bars_remaining == 5

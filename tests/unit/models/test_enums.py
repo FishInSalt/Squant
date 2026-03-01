@@ -101,15 +101,19 @@ class TestOrderType:
         """Test all order types exist."""
         assert OrderType.MARKET == "market"
         assert OrderType.LIMIT == "limit"
+        assert OrderType.STOP == "stop"
+        assert OrderType.STOP_LIMIT == "stop_limit"
 
     def test_count(self):
         """Test total number of types."""
-        assert len(OrderType) == 2
+        assert len(OrderType) == 4
 
     def test_can_create_from_value(self):
         """Test creating enum from value."""
         assert OrderType("market") == OrderType.MARKET
         assert OrderType("limit") == OrderType.LIMIT
+        assert OrderType("stop") == OrderType.STOP
+        assert OrderType("stop_limit") == OrderType.STOP_LIMIT
 
 
 class TestOrderStatus:

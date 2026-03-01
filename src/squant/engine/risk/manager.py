@@ -221,7 +221,7 @@ class RiskManager:
             return result
 
         # Check price deviation (RSK-005)
-        if order.type == OrderType.LIMIT and order.price is not None:
+        if order.type in (OrderType.LIMIT, OrderType.STOP_LIMIT) and order.price is not None:
             result = self._check_price_deviation(order.price, current_price, order.side)
             if not result.passed:
                 return result
@@ -403,8 +403,8 @@ class RiskManager:
         Returns:
             RiskCheckResult for order size check.
         """
-        # Calculate order value
-        price = order.price if order.price else current_price
+        # Calculate order value: prefer limit price, then stop price, then market price
+        price = order.price or getattr(order, "stop_price", None) or current_price
         order_value = order.amount * price
 
         # Check minimum order value

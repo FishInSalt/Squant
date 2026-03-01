@@ -620,3 +620,172 @@ class TestSharedVolumeBudget:
         order = _limit_order(OrderSide.BUY, "50000", "1")
         fills = engine.match_pending_limits([order], Decimal("49000"), TS, volume_budget=budget)
         assert len(fills) == 0
+
+
+def _stop_order(side: OrderSide, stop_price: str, amount: str = "0.1") -> SimulatedOrder:
+    return SimulatedOrder.create(
+        symbol=SYMBOL,
+        side=side,
+        order_type=OrderType.STOP,
+        amount=Decimal(amount),
+        stop_price=Decimal(stop_price),
+    )
+
+
+def _stop_limit_order(
+    side: OrderSide, stop_price: str, price: str, amount: str = "0.1"
+) -> SimulatedOrder:
+    return SimulatedOrder.create(
+        symbol=SYMBOL,
+        side=side,
+        order_type=OrderType.STOP_LIMIT,
+        amount=Decimal(amount),
+        stop_price=Decimal(stop_price),
+        price=Decimal(price),
+    )
+
+
+class TestStopOrderPaper:
+    """Tests for stop order tick-level matching."""
+
+    def test_buy_stop_triggers_with_high_low(self):
+        """Buy STOP triggers when high >= stop_price (closed candle)."""
+        engine = PaperMatchingEngine(commission_rate=Decimal("0.001"), slippage=Decimal("0"))
+        order = _stop_order(OrderSide.BUY, "43000")
+        fill = engine.fill_stop_order(
+            order, Decimal("42500"), TS, high=Decimal("43500"), low=Decimal("41000")
+        )
+        assert fill is not None
+        assert fill.price == Decimal("42500")  # current_price, no slippage
+
+    def test_buy_stop_does_not_trigger_with_high_low(self):
+        """Buy STOP does not trigger when high < stop_price."""
+        engine = PaperMatchingEngine(commission_rate=Decimal("0.001"), slippage=Decimal("0"))
+        order = _stop_order(OrderSide.BUY, "45000")
+        fill = engine.fill_stop_order(
+            order, Decimal("42500"), TS, high=Decimal("44000"), low=Decimal("41000")
+        )
+        assert fill is None
+
+    def test_sell_stop_triggers_with_high_low(self):
+        """Sell STOP triggers when low <= stop_price (closed candle)."""
+        engine = PaperMatchingEngine(commission_rate=Decimal("0.001"), slippage=Decimal("0"))
+        order = _stop_order(OrderSide.SELL, "41500")
+        fill = engine.fill_stop_order(
+            order, Decimal("41200"), TS, high=Decimal("43000"), low=Decimal("41000")
+        )
+        assert fill is not None
+        assert fill.price == Decimal("41200")
+
+    def test_sell_stop_does_not_trigger_with_high_low(self):
+        """Sell STOP does not trigger when low > stop_price."""
+        engine = PaperMatchingEngine(commission_rate=Decimal("0.001"), slippage=Decimal("0"))
+        order = _stop_order(OrderSide.SELL, "40000")
+        fill = engine.fill_stop_order(
+            order, Decimal("41200"), TS, high=Decimal("43000"), low=Decimal("41000")
+        )
+        assert fill is None
+
+    def test_buy_stop_triggers_on_current_price_no_high_low(self):
+        """Buy STOP triggers using current_price when no high/low (unclosed candle)."""
+        engine = PaperMatchingEngine(commission_rate=Decimal("0.001"), slippage=Decimal("0"))
+        order = _stop_order(OrderSide.BUY, "43000")
+        fill = engine.fill_stop_order(order, Decimal("43500"), TS)
+        assert fill is not None
+
+    def test_buy_stop_does_not_trigger_on_current_price(self):
+        """Buy STOP does not trigger when current_price < stop_price (unclosed)."""
+        engine = PaperMatchingEngine(commission_rate=Decimal("0.001"), slippage=Decimal("0"))
+        order = _stop_order(OrderSide.BUY, "43000")
+        fill = engine.fill_stop_order(order, Decimal("42500"), TS)
+        assert fill is None
+
+    def test_stop_order_with_slippage(self):
+        """Stop order applies slippage to fill price."""
+        engine = PaperMatchingEngine(
+            commission_rate=Decimal("0.001"), slippage=Decimal("0.001")
+        )
+        order = _stop_order(OrderSide.BUY, "43000")
+        fill = engine.fill_stop_order(
+            order, Decimal("43000"), TS, high=Decimal("44000"), low=Decimal("42000")
+        )
+        assert fill is not None
+        expected = Decimal("43000") * (1 + Decimal("0.001"))
+        assert fill.price == expected
+
+    def test_stop_order_respects_volume_budget(self):
+        """Stop order fill amount is capped by volume budget."""
+        engine = PaperMatchingEngine(commission_rate=Decimal("0.001"), slippage=Decimal("0"))
+        order = _stop_order(OrderSide.BUY, "43000", amount="10")
+        fill = engine.fill_stop_order(
+            order, Decimal("43500"), TS,
+            high=Decimal("44000"), low=Decimal("42000"),
+            volume_budget=Decimal("5"),
+        )
+        assert fill is not None
+        assert fill.amount == Decimal("5")
+
+
+class TestStopLimitOrderPaper:
+    """Tests for stop-limit order tick-level matching."""
+
+    def test_stop_limit_triggers_and_fills(self):
+        """STOP_LIMIT triggers and limit is reachable → fills."""
+        engine = PaperMatchingEngine(commission_rate=Decimal("0.001"), slippage=Decimal("0"))
+        order = _stop_limit_order(OrderSide.BUY, "43000", "43500")
+        fills = engine.match_pending_stop_limits(
+            [order], Decimal("43200"), TS,
+            high=Decimal("44000"), low=Decimal("41000"),
+        )
+        assert len(fills) == 1
+        assert order.triggered is True
+        # Buy limit fill: limit_price=43500, low=41000 <= 43500 → can fill
+        assert fills[0].price == Decimal("43500")
+
+    def test_stop_limit_triggers_but_limit_not_reachable(self):
+        """STOP_LIMIT triggers but limit not reachable → triggered=True, no fill."""
+        engine = PaperMatchingEngine(commission_rate=Decimal("0.001"), slippage=Decimal("0"))
+        # Buy stop-limit: stop at 43000, limit at 40000 (too low to fill)
+        order = _stop_limit_order(OrderSide.BUY, "43000", "40000")
+        fills = engine.match_pending_stop_limits(
+            [order], Decimal("43200"), TS,
+            high=Decimal("44000"), low=Decimal("41000"),
+        )
+        assert len(fills) == 0
+        assert order.triggered is True
+
+    def test_stop_limit_does_not_trigger(self):
+        """STOP_LIMIT does not trigger → triggered=False, no fill."""
+        engine = PaperMatchingEngine(commission_rate=Decimal("0.001"), slippage=Decimal("0"))
+        order = _stop_limit_order(OrderSide.BUY, "45000", "45500")
+        fills = engine.match_pending_stop_limits(
+            [order], Decimal("43200"), TS,
+            high=Decimal("44000"), low=Decimal("41000"),
+        )
+        assert len(fills) == 0
+        assert order.triggered is False
+
+    def test_sell_stop_limit_triggers_and_fills(self):
+        """Sell STOP_LIMIT triggers and fills correctly."""
+        engine = PaperMatchingEngine(commission_rate=Decimal("0.001"), slippage=Decimal("0"))
+        order = _stop_limit_order(OrderSide.SELL, "41500", "41000")
+        fills = engine.match_pending_stop_limits(
+            [order], Decimal("41200"), TS,
+            high=Decimal("43000"), low=Decimal("40500"),
+        )
+        assert len(fills) == 1
+        assert order.triggered is True
+        # Sell limit fill: limit_price=41000, high=43000 >= 41000 → can fill
+        assert fills[0].price == Decimal("41000")
+
+    def test_already_triggered_stop_limit_fills_as_limit(self):
+        """Already-triggered STOP_LIMIT fills as a limit order."""
+        engine = PaperMatchingEngine(commission_rate=Decimal("0.001"), slippage=Decimal("0"))
+        order = _stop_limit_order(OrderSide.BUY, "43000", "42000")
+        order.triggered = True  # Pre-triggered
+        fills = engine.match_pending_stop_limits(
+            [order], Decimal("41500"), TS,
+            high=Decimal("42500"), low=Decimal("41000"),
+        )
+        assert len(fills) == 1
+        assert fills[0].price == Decimal("42000")

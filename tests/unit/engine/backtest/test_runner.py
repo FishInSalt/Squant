@@ -687,7 +687,7 @@ class MyStrategy(Strategy):
         cancelled = [o for o in result.orders if o.status.value == "cancelled"]
         assert len(cancelled) == 1
         # Verify log mentions expiry
-        assert any("限价单过期" in log for log in result.logs)
+        assert any("订单过期" in log for log in result.logs)
 
     @pytest.mark.asyncio
     async def test_limit_order_without_valid_for_bars_stays_active(self):
@@ -732,3 +732,111 @@ class MyStrategy(Strategy):
         assert len(result.trades) == 0
         cancelled = [o for o in result.orders if o.status.value == "cancelled"]
         assert len(cancelled) == 0
+
+
+class TestStopOrderRunner:
+    """Tests for stop orders in backtest runner end-to-end."""
+
+    async def test_sell_stop_triggers_and_fills(self):
+        """Strategy places a sell stop that triggers on a subsequent bar."""
+        strategy_code = '''
+class MyStrategy(Strategy):
+    def on_init(self):
+        self.bought = False
+        self.stop_placed = False
+
+    def on_bar(self, bar):
+        from decimal import Decimal
+        if not self.bought:
+            self.ctx.buy(bar.symbol, Decimal("1"))
+            self.bought = True
+        elif not self.stop_placed and self.ctx.has_position(bar.symbol):
+            # Set stop loss at 40000
+            self.ctx.sell(bar.symbol, Decimal("1"), stop_price=Decimal("40000"))
+            self.stop_placed = True
+'''
+        # Bar 0: buy at open
+        # Bar 1: place stop at 40000 (price above stop, no trigger)
+        # Bar 2: price drops → stop triggers
+        bars = [
+            Bar(
+                time=datetime(2024, 1, 1, 0, i, tzinfo=UTC),
+                symbol="BTC/USDT",
+                open=open_p,
+                high=high_p,
+                low=low_p,
+                close=close_p,
+                volume=Decimal("100"),
+            )
+            for i, (open_p, high_p, low_p, close_p) in enumerate([
+                (Decimal("42000"), Decimal("43000"), Decimal("41000"), Decimal("42500")),
+                (Decimal("42500"), Decimal("43000"), Decimal("41500"), Decimal("42000")),
+                (Decimal("41000"), Decimal("41500"), Decimal("39500"), Decimal("40000")),
+            ])
+        ]
+
+        runner = BacktestRunner(
+            strategy_code=strategy_code,
+            strategy_name="StopTest",
+            symbol="BTC/USDT",
+            timeframe="1h",
+            initial_capital=Decimal("100000"),
+        )
+
+        result = await runner.run(async_bar_iterator(bars))
+
+        # Should have 1 completed trade (buy + sell stop)
+        assert len(result.trades) == 1
+        trade = result.trades[0]
+        assert trade.exit_price is not None
+        # Stop triggered at bar 2: min(stop=40000, open=41000) = 40000
+        assert trade.exit_price == Decimal("40000")
+
+    async def test_stop_order_expires_with_bars_remaining(self):
+        """Stop order with valid_for_bars expires after N bars."""
+        strategy_code = '''
+class MyStrategy(Strategy):
+    def on_init(self):
+        self.bought = False
+        self.stop_placed = False
+
+    def on_bar(self, bar):
+        from decimal import Decimal
+        if not self.bought:
+            self.ctx.buy(bar.symbol, Decimal("1"))
+            self.bought = True
+        elif not self.stop_placed and self.ctx.has_position(bar.symbol):
+            self.ctx.sell(bar.symbol, Decimal("1"), stop_price=Decimal("38000"), valid_for_bars=2)
+            self.stop_placed = True
+'''
+        # Bar 0: buy
+        # Bar 1: place stop at 38000 (valid_for_bars=2)
+        # Bar 2: no trigger, bars_remaining 2→1
+        # Bar 3: no trigger, bars_remaining 1→0 → cancelled
+        bars = [
+            Bar(
+                time=datetime(2024, 1, 1, 0, i, tzinfo=UTC),
+                symbol="BTC/USDT",
+                open=Decimal("42000"),
+                high=Decimal("43000"),
+                low=Decimal("41000"),
+                close=Decimal("42500"),
+                volume=Decimal("100"),
+            )
+            for i in range(4)
+        ]
+
+        runner = BacktestRunner(
+            strategy_code=strategy_code,
+            strategy_name="StopExpiryTest",
+            symbol="BTC/USDT",
+            timeframe="1h",
+            initial_capital=Decimal("100000"),
+        )
+
+        result = await runner.run(async_bar_iterator(bars))
+
+        # Stop should have expired without triggering
+        cancelled = [o for o in result.orders if o.status.value == "cancelled"]
+        assert len(cancelled) == 1
+        assert cancelled[0].stop_price == Decimal("38000")

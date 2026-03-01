@@ -331,13 +331,19 @@ class BacktestRunner:
             if order.status in (OrderStatus.FILLED, OrderStatus.CANCELLED):
                 remaining.append(order)
                 continue
-            if order.type == OrderType.LIMIT and order.bars_remaining is not None:
+            if (
+                order.type in (OrderType.LIMIT, OrderType.STOP, OrderType.STOP_LIMIT)
+                and order.bars_remaining is not None
+            ):
                 order.bars_remaining -= 1
                 if order.bars_remaining <= 0:
                     order.status = OrderStatus.CANCELLED
                     self._context._completed_orders.append(order)
+                    price_info = f"@{order.price}" if order.price else ""
+                    stop_info = f"止损@{order.stop_price}" if order.stop_price else ""
                     self._context.log(
-                        f"限价单过期: {order.side.value} {order.symbol} {order.amount}@{order.price}"
+                        f"订单过期: {order.side.value} {order.symbol} "
+                        f"{order.amount}{stop_info}{price_info}"
                     )
                     expired.append(order)
                     continue

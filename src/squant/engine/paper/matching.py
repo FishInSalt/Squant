@@ -249,3 +249,229 @@ class PaperMatchingEngine:
                 remaining_budget -= fill_amount
 
         return fills
+
+    def _check_stop_trigger_tick(
+        self,
+        order: SimulatedOrder,
+        current_price: Decimal,
+        high: Decimal | None = None,
+        low: Decimal | None = None,
+    ) -> bool:
+        """Check if a stop order's trigger condition is met at tick level.
+
+        With high/low (closed candle): uses range-based check (same as backtest).
+        Without high/low (unclosed candle): uses current_price (close) as proxy.
+
+        Args:
+            order: Stop or stop-limit order.
+            current_price: Current market price (candle close).
+            high: Candle high price (for closed candles).
+            low: Candle low price (for closed candles).
+
+        Returns:
+            True if trigger condition is met.
+        """
+        if order.stop_price is None:
+            return False
+        if order.side == OrderSide.BUY:
+            check_price = high if high is not None else current_price
+            return check_price >= order.stop_price
+        else:
+            check_price = low if low is not None else current_price
+            return check_price <= order.stop_price
+
+    def fill_stop_order(
+        self,
+        order: SimulatedOrder,
+        current_price: Decimal,
+        timestamp: datetime,
+        high: Decimal | None = None,
+        low: Decimal | None = None,
+        volume_budget: Decimal | None = None,
+    ) -> Fill | None:
+        """Fill a stop order if triggered, using market-order style execution.
+
+        Args:
+            order: Stop order to fill.
+            current_price: Current market price.
+            timestamp: Fill timestamp.
+            high: Candle high price.
+            low: Candle low price.
+            volume_budget: Pre-computed shared volume budget.
+
+        Returns:
+            Fill if triggered, None otherwise.
+        """
+        if order.type != OrderType.STOP:
+            return None
+        if order.status in (OrderStatus.FILLED, OrderStatus.CANCELLED):
+            return None
+        if order.stop_price is None:
+            return None
+
+        if not self._check_stop_trigger_tick(order, current_price, high, low):
+            return None
+
+        # Triggered — fill as market order at current price with slippage
+        if self.slippage > 0:
+            if order.side == OrderSide.BUY:
+                fill_price = current_price * (1 + self.slippage)
+            else:
+                fill_price = current_price * (1 - self.slippage)
+        else:
+            fill_price = current_price
+
+        # Clamp to bar range
+        if high is not None and low is not None:
+            fill_price = max(low, min(high, fill_price))
+
+        fill_amount = order.remaining
+
+        # Cap fill amount by volume budget
+        if volume_budget is not None:
+            if volume_budget <= 0:
+                return None
+            fill_amount = min(fill_amount, volume_budget)
+
+        fill_value = fill_price * fill_amount
+        fee = fill_value * self.commission_rate
+
+        return Fill(
+            order_id=order.id,
+            symbol=order.symbol,
+            side=order.side,
+            price=fill_price,
+            amount=fill_amount,
+            fee=fee,
+            timestamp=timestamp,
+        )
+
+    def _try_fill_as_limit(
+        self,
+        order: SimulatedOrder,
+        current_price: Decimal,
+        timestamp: datetime,
+        high: Decimal | None = None,
+        low: Decimal | None = None,
+        open_price: Decimal | None = None,
+        volume_budget: Decimal | None = None,
+    ) -> Fill | None:
+        """Try to fill a triggered stop-limit order as a limit order.
+
+        Shared logic between match_pending_limits and match_pending_stop_limits.
+
+        Args:
+            order: Order with a limit price to check.
+            current_price: Current market price.
+            timestamp: Fill timestamp.
+            high: Candle high.
+            low: Candle low.
+            open_price: Candle open (for gap-open price improvement).
+            volume_budget: Pre-computed shared volume budget.
+
+        Returns:
+            Fill if limit is reachable, None otherwise.
+        """
+        if order.price is None:
+            return None
+
+        limit_price = order.price
+        can_fill = False
+
+        if order.side == OrderSide.BUY:
+            check_price = low if low is not None else current_price
+            if check_price <= limit_price:
+                can_fill = True
+        else:
+            check_price = high if high is not None else current_price
+            if check_price >= limit_price:
+                can_fill = True
+
+        if not can_fill:
+            return None
+
+        # Gap-open price improvement
+        if open_price is not None:
+            if order.side == OrderSide.BUY:
+                fill_price = min(limit_price, open_price)
+            else:
+                fill_price = max(limit_price, open_price)
+        else:
+            fill_price = limit_price
+
+        fill_amount = order.remaining
+
+        # Cap fill amount by volume budget
+        if volume_budget is not None:
+            if volume_budget <= 0:
+                return None
+            fill_amount = min(fill_amount, volume_budget)
+
+        fill_value = fill_price * fill_amount
+        fee = fill_value * self.commission_rate
+
+        return Fill(
+            order_id=order.id,
+            symbol=order.symbol,
+            side=order.side,
+            price=fill_price,
+            amount=fill_amount,
+            fee=fee,
+            timestamp=timestamp,
+        )
+
+    def match_pending_stop_limits(
+        self,
+        orders: list[SimulatedOrder],
+        current_price: Decimal,
+        timestamp: datetime,
+        high: Decimal | None = None,
+        low: Decimal | None = None,
+        open_price: Decimal | None = None,
+        volume_budget: Decimal | None = None,
+    ) -> list[Fill]:
+        """Check pending stop-limit orders: trigger and attempt limit fill.
+
+        For untriggered orders, checks trigger condition and marks triggered=True.
+        For triggered orders, attempts limit fill.
+
+        Args:
+            orders: List of pending stop-limit orders.
+            current_price: Current market price.
+            timestamp: Fill timestamp.
+            high: Candle high price.
+            low: Candle low price.
+            open_price: Candle open price.
+            volume_budget: Pre-computed shared volume budget.
+
+        Returns:
+            List of fills for orders that triggered and limit was reachable.
+        """
+        fills: list[Fill] = []
+        remaining_budget = volume_budget
+
+        for order in orders:
+            if order.type != OrderType.STOP_LIMIT:
+                continue
+            if order.status in (OrderStatus.FILLED, OrderStatus.CANCELLED):
+                continue
+
+            if not order.triggered:
+                # Check trigger condition
+                if not self._check_stop_trigger_tick(order, current_price, high, low):
+                    continue
+                # Mark as triggered
+                order.triggered = True
+
+            # Attempt limit fill
+            fill = self._try_fill_as_limit(
+                order, current_price, timestamp,
+                high=high, low=low, open_price=open_price,
+                volume_budget=remaining_budget,
+            )
+            if fill:
+                fills.append(fill)
+                if remaining_budget is not None:
+                    remaining_budget -= fill.amount
+
+        return fills

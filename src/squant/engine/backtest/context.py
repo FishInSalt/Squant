@@ -199,6 +199,7 @@ class BacktestContext:
         symbol: str,
         amount: Decimal,
         price: Decimal | None = None,
+        stop_price: Decimal | None = None,
         valid_for_bars: int | None = None,
     ) -> str:
         """Place a buy order.
@@ -206,9 +207,10 @@ class BacktestContext:
         Args:
             symbol: Trading symbol.
             amount: Amount to buy (must be positive).
-            price: Limit price (None for market order).
+            price: Limit price (None for market order; required for STOP_LIMIT).
+            stop_price: Stop trigger price (for STOP or STOP_LIMIT orders).
             valid_for_bars: Number of bars before the order expires
-                (None = GTC, only applicable to limit orders).
+                (None = GTC, applicable to non-market orders).
 
         Returns:
             Order ID.
@@ -221,10 +223,30 @@ class BacktestContext:
 
         amount = Decimal(str(amount))
 
+        # Determine order type
+        if stop_price is not None and price is not None:
+            order_type = OrderType.STOP_LIMIT
+        elif stop_price is not None:
+            order_type = OrderType.STOP
+        elif price is not None:
+            order_type = OrderType.LIMIT
+        else:
+            order_type = OrderType.MARKET
+
         # Validate sufficient cash for buy orders, accounting for pending buys
-        if price is not None:
-            # Limit order: use limit price
+        if order_type == OrderType.LIMIT:
             estimated_cost = Decimal(str(price)) * amount * (1 + self._commission_rate)
+        elif order_type == OrderType.STOP_LIMIT:
+            # Limit price caps the cost
+            estimated_cost = Decimal(str(price)) * amount * (1 + self._commission_rate)
+        elif order_type == OrderType.STOP:
+            # Worst case: triggered at stop_price + slippage
+            estimated_cost = (
+                Decimal(str(stop_price))
+                * amount
+                * (1 + self._slippage)
+                * (1 + self._commission_rate)
+            )
         elif self._current_bar:
             # Market order: estimate using current bar's close price + slippage
             estimated_cost = (
@@ -241,7 +263,16 @@ class BacktestContext:
         pending_buy_cost = Decimal("0")
         for order in self._pending_orders:
             if order.side == OrderSide.BUY:
-                if order.price is not None:
+                if order.type == OrderType.STOP_LIMIT and order.price is not None:
+                    pending_buy_cost += order.price * order.remaining * (1 + self._commission_rate)
+                elif order.type == OrderType.STOP and order.stop_price is not None:
+                    pending_buy_cost += (
+                        order.stop_price
+                        * order.remaining
+                        * (1 + self._slippage)
+                        * (1 + self._commission_rate)
+                    )
+                elif order.price is not None:
                     pending_buy_cost += order.price * order.remaining * (1 + self._commission_rate)
                 elif self._current_bar:
                     pending_buy_cost += (
@@ -259,19 +290,26 @@ class BacktestContext:
                 f"(cash={self._cash}, reserved_for_pending={pending_buy_cost})"
             )
 
-        order_type = OrderType.LIMIT if price is not None else OrderType.MARKET
         order = SimulatedOrder.create(
             symbol=symbol,
             side=OrderSide.BUY,
             order_type=order_type,
             amount=amount,
             price=Decimal(str(price)) if price is not None else None,
+            stop_price=Decimal(str(stop_price)) if stop_price is not None else None,
             created_at=self._current_bar.time if self._current_bar else None,
-            bars_remaining=valid_for_bars if order_type == OrderType.LIMIT else None,
+            bars_remaining=valid_for_bars if order_type != OrderType.MARKET else None,
         )
         self._pending_orders.append(order)
 
-        price_info = f"@{price}" if price is not None else "市价"
+        if order_type == OrderType.STOP:
+            price_info = f"止损@{stop_price}"
+        elif order_type == OrderType.STOP_LIMIT:
+            price_info = f"止损@{stop_price}限价@{price}"
+        elif order_type == OrderType.LIMIT:
+            price_info = f"@{price}"
+        else:
+            price_info = "市价"
         self.log(f"提交买入 {symbol} {amount} {price_info}")
         return order.id
 
@@ -280,6 +318,7 @@ class BacktestContext:
         symbol: str,
         amount: Decimal,
         price: Decimal | None = None,
+        stop_price: Decimal | None = None,
         valid_for_bars: int | None = None,
     ) -> str:
         """Place a sell order.
@@ -290,9 +329,10 @@ class BacktestContext:
         Args:
             symbol: Trading symbol.
             amount: Amount to sell (must be positive).
-            price: Limit price (None for market order).
+            price: Limit price (None for market order; required for STOP_LIMIT).
+            stop_price: Stop trigger price (for STOP or STOP_LIMIT orders).
             valid_for_bars: Number of bars before the order expires
-                (None = GTC, only applicable to limit orders).
+                (None = GTC, applicable to non-market orders).
 
         Returns:
             Order ID.
@@ -304,6 +344,16 @@ class BacktestContext:
             raise ValueError("Amount must be positive")
 
         amount = Decimal(str(amount))
+
+        # Determine order type
+        if stop_price is not None and price is not None:
+            order_type = OrderType.STOP_LIMIT
+        elif stop_price is not None:
+            order_type = OrderType.STOP
+        elif price is not None:
+            order_type = OrderType.LIMIT
+        else:
+            order_type = OrderType.MARKET
 
         # Validate sufficient position (spot trading - no short selling)
         position = self._positions.get(symbol)
@@ -322,19 +372,26 @@ class BacktestContext:
                 f"requested={amount} (position={current_position}, pending_sells={pending_sell_amount})"
             )
 
-        order_type = OrderType.LIMIT if price is not None else OrderType.MARKET
         order = SimulatedOrder.create(
             symbol=symbol,
             side=OrderSide.SELL,
             order_type=order_type,
             amount=amount,
             price=Decimal(str(price)) if price is not None else None,
+            stop_price=Decimal(str(stop_price)) if stop_price is not None else None,
             created_at=self._current_bar.time if self._current_bar else None,
-            bars_remaining=valid_for_bars if order_type == OrderType.LIMIT else None,
+            bars_remaining=valid_for_bars if order_type != OrderType.MARKET else None,
         )
         self._pending_orders.append(order)
 
-        price_info = f"@{price}" if price is not None else "市价"
+        if order_type == OrderType.STOP:
+            price_info = f"止损@{stop_price}"
+        elif order_type == OrderType.STOP_LIMIT:
+            price_info = f"止损@{stop_price}限价@{price}"
+        elif order_type == OrderType.LIMIT:
+            price_info = f"@{price}"
+        else:
+            price_info = "市价"
         self.log(f"提交卖出 {symbol} {amount} {price_info}")
         return order.id
 
