@@ -4676,6 +4676,10 @@ export interface components {
              * Format: date-time
              */
             updated_at: string;
+            /** Equity */
+            equity?: number | null;
+            /** Unrealized Pnl */
+            unrealized_pnl?: number | null;
         };
         /**
          * PaperTradingStatusResponse

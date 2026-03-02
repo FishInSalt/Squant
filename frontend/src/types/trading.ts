@@ -146,6 +146,8 @@ export interface PaperSession {
   started_at?: string
   stopped_at?: string
   updated_at: string
+  equity?: number
+  unrealized_pnl?: number
 }
 
 // 实盘交易会话（匹配后端 LiveTradingRunResponse）

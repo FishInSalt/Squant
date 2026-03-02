@@ -5,7 +5,7 @@ from decimal import Decimal
 from typing import Any
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from squant.schemas.backtest import FillRecordResponse, TradeRecordResponse
 from squant.schemas.live_trading import RiskConfigRequest
@@ -73,8 +73,38 @@ class PaperTradingRunResponse(BaseModel):
     stopped_at: datetime | None
     created_at: datetime
     updated_at: datetime
+    # Extracted from result JSONB for list display (IMP-006)
+    equity: NumberDecimal | None = None
+    unrealized_pnl: NumberDecimal | None = None
 
     model_config = {"from_attributes": True}
+
+    @model_validator(mode="wrap")
+    @classmethod
+    def _handle_orm_result_fields(cls, data: Any, handler: Any) -> "PaperTradingRunResponse":
+        """Handle equity/unrealized_pnl which don't exist on StrategyRun ORM.
+
+        These fields are populated from result JSONB in the API layer.
+        When model_validate() with from_attributes=True reads an ORM object,
+        getattr() may return invalid types. This validator catches the error,
+        strips the problematic fields, and retries.
+        """
+        try:
+            return handler(data)
+        except Exception:
+            if isinstance(data, dict):
+                raise
+            # ORM object: build dict manually, excluding result-only fields
+            from pydantic.fields import FieldInfo
+
+            result = {}
+            for name, field_info in cls.model_fields.items():
+                if name in ("equity", "unrealized_pnl"):
+                    result[name] = None
+                    continue
+                val = getattr(data, name, field_info.default)
+                result[name] = val
+            return handler(result)
 
 
 class PositionInfo(BaseModel):

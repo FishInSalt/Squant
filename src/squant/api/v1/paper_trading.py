@@ -371,7 +371,16 @@ async def list_paper_trading_runs(
         status=run_status,
     )
 
-    items = [PaperTradingRunResponse.model_validate(r) for r in runs]
+    items = []
+    for r in runs:
+        item = PaperTradingRunResponse.model_validate(r)
+        # Extract equity/unrealized_pnl from result JSONB (IMP-006)
+        if r.result and isinstance(r.result, dict):
+            if "equity" in r.result:
+                item.equity = r.result["equity"]
+            if "unrealized_pnl" in r.result:
+                item.unrealized_pnl = r.result["unrealized_pnl"]
+        items.append(item)
 
     return ApiResponse(
         data=PaginatedData(
