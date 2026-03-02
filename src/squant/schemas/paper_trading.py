@@ -95,8 +95,6 @@ class PaperTradingRunResponse(BaseModel):
             if isinstance(data, dict):
                 raise
             # ORM object: build dict manually, excluding result-only fields
-            from pydantic.fields import FieldInfo
-
             result = {}
             for name, field_info in cls.model_fields.items():
                 if name in ("equity", "unrealized_pnl"):

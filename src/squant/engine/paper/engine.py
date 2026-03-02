@@ -207,9 +207,9 @@ class PaperTradingEngine:
         # WebSocket event emission callback
         self._on_event = on_event
         # Incremental tracking indexes for event delta computation
-        self._last_emitted_fill_idx = 0
-        self._last_emitted_trade_idx = 0
-        self._last_emitted_log_idx = 0
+        self._last_emitted_fill_total = 0
+        self._last_emitted_trade_total = 0
+        self._last_emitted_log_total = 0
 
     @property
     def run_id(self) -> UUID:
@@ -928,17 +928,18 @@ class PaperTradingEngine:
     def _build_bar_update_event(self) -> dict[str, Any]:
         """Build incremental bar update event for WebSocket push."""
         ctx = self._context
-        fills_list = list(ctx._fills)
-        trades_list = list(ctx._trades)
-        logs_list = list(ctx._logs)
 
-        new_fills = fills_list[self._last_emitted_fill_idx:]
-        new_trades = trades_list[self._last_emitted_trade_idx:]
-        new_logs = logs_list[self._last_emitted_log_idx:]
+        fill_delta = ctx._total_fills_added - self._last_emitted_fill_total
+        trade_delta = ctx._total_trades_added - self._last_emitted_trade_total
+        log_delta = ctx._total_logs_added - self._last_emitted_log_total
 
-        self._last_emitted_fill_idx = len(fills_list)
-        self._last_emitted_trade_idx = len(trades_list)
-        self._last_emitted_log_idx = len(logs_list)
+        new_fills = list(ctx._fills)[-fill_delta:] if fill_delta > 0 else []
+        new_trades = list(ctx._trades)[-trade_delta:] if trade_delta > 0 else []
+        new_logs = list(ctx._logs)[-log_delta:] if log_delta > 0 else []
+
+        self._last_emitted_fill_total = ctx._total_fills_added
+        self._last_emitted_trade_total = ctx._total_trades_added
+        self._last_emitted_log_total = ctx._total_logs_added
 
         return {
             "event": "bar_update",

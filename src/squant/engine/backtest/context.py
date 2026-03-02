@@ -107,6 +107,13 @@ class BacktestContext:
         # Logging
         self._logs: deque[str] = deque(maxlen=max_logs)
 
+        # Cumulative counters for incremental WebSocket tracking.
+        # Deque maxlen causes old items to be evicted, so len(deque) plateaus.
+        # These counters track total items ever added, enabling correct delta calculation.
+        self._total_fills_added: int = 0
+        self._total_trades_added: int = 0
+        self._total_logs_added: int = 0
+
         # Total fees paid
         self._total_fees = Decimal("0")
 
@@ -557,6 +564,7 @@ class BacktestContext:
         """
         timestamp = self._current_bar.time if self._current_bar else datetime.now(UTC)
         self._logs.append(f"[{timestamp}] {message}")
+        self._total_logs_added += 1
 
     # =========================================================================
     # Internal Methods (called by BacktestRunner)
@@ -620,6 +628,7 @@ class BacktestContext:
 
         # Record the fill (only after validation passes)
         self._fills.append(fill)
+        self._total_fills_added += 1
         self._total_fees += fill.fee
 
         # Update position (this may also raise if trying to go short)
@@ -759,6 +768,7 @@ class BacktestContext:
                 )
 
                 self._trades.append(self._open_trade)
+                self._total_trades_added += 1
                 self._open_trade = None
             else:
                 self.log(
@@ -1012,6 +1022,7 @@ class BacktestContext:
                     fees=Decimal(str(t["fees"])),
                 )
                 self._trades.append(trade)
+            self._total_trades_added = len(self._trades)
 
         # Restore fills (for display and strategy access after resume)
         if "fills" in state:
@@ -1027,6 +1038,7 @@ class BacktestContext:
                     timestamp=datetime.fromisoformat(f["timestamp"]),
                 )
                 self._fills.append(fill)
+            self._total_fills_added = len(self._fills)
 
         # Restore completed orders count (content not serialized, only count)
         self._restored_completed_orders_count = state.get("completed_orders_count", 0)
@@ -1036,6 +1048,7 @@ class BacktestContext:
             self._logs.clear()
             for log_entry in state["logs"]:
                 self._logs.append(log_entry)
+            self._total_logs_added = len(self._logs)
 
         # Restore benchmark initial price for buy-and-hold comparison
         bip = state.get("benchmark_initial_price")
