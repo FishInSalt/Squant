@@ -51,6 +51,7 @@ class BacktestContext:
         max_fills: int = 5000,
         max_trades: int | None = None,
         max_logs: int = 1000,
+        min_order_value: Decimal = Decimal("5"),
     ):
         """Initialize backtest context.
 
@@ -65,11 +66,14 @@ class BacktestContext:
             max_fills: Maximum fills to keep.
             max_trades: Maximum trades to keep.
             max_logs: Maximum log entries to keep.
+            min_order_value: Minimum order notional value in quote currency.
+                Orders below this value are silently rejected (returns None).
         """
         self._initial_capital = initial_capital
         self._cash = initial_capital
         self._commission_rate = commission_rate
         self._slippage = slippage
+        self._min_order_value = min_order_value
         self._params = params or {}
         self._max_bar_history = max_bar_history
 
@@ -201,7 +205,7 @@ class BacktestContext:
         price: Decimal | None = None,
         stop_price: Decimal | None = None,
         valid_for_bars: int | None = None,
-    ) -> str:
+    ) -> str | None:
         """Place a buy order.
 
         Args:
@@ -213,7 +217,7 @@ class BacktestContext:
                 (None = GTC, applicable to non-market orders).
 
         Returns:
-            Order ID.
+            Order ID, or None if the order notional is below min_order_value.
 
         Raises:
             ValueError: If amount is not positive or insufficient cash.
@@ -222,6 +226,16 @@ class BacktestContext:
             raise ValueError("Amount must be positive")
 
         amount = Decimal(str(amount))
+
+        # Minimum order value check — silently reject dust orders
+        ref_price = (
+            Decimal(str(price)) if price is not None
+            else Decimal(str(stop_price)) if stop_price is not None
+            else self._current_bar.close if self._current_bar
+            else None
+        )
+        if ref_price is not None and amount * ref_price < self._min_order_value:
+            return None
 
         # Determine order type
         if stop_price is not None and price is not None:
@@ -321,7 +335,7 @@ class BacktestContext:
         price: Decimal | None = None,
         stop_price: Decimal | None = None,
         valid_for_bars: int | None = None,
-    ) -> str:
+    ) -> str | None:
         """Place a sell order.
 
         This is a SPOT trading system - short selling is not allowed.
@@ -336,7 +350,7 @@ class BacktestContext:
                 (None = GTC, applicable to non-market orders).
 
         Returns:
-            Order ID.
+            Order ID, or None if the order notional is below min_order_value.
 
         Raises:
             ValueError: If amount is not positive or exceeds position.
@@ -345,6 +359,16 @@ class BacktestContext:
             raise ValueError("Amount must be positive")
 
         amount = Decimal(str(amount))
+
+        # Minimum order value check — silently reject dust orders
+        ref_price = (
+            Decimal(str(price)) if price is not None
+            else Decimal(str(stop_price)) if stop_price is not None
+            else self._current_bar.close if self._current_bar
+            else None
+        )
+        if ref_price is not None and amount * ref_price < self._min_order_value:
+            return None
 
         # Determine order type
         if stop_price is not None and price is not None:
