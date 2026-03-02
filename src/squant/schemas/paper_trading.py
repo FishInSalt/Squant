@@ -7,7 +7,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
-from squant.schemas.backtest import TradeRecordResponse
+from squant.schemas.backtest import FillRecordResponse, TradeRecordResponse
 from squant.schemas.live_trading import RiskConfigRequest
 from squant.schemas.types import NumberDecimal
 
@@ -132,6 +132,7 @@ class PaperTradingStatusResponse(BaseModel):
     completed_orders_count: int
     trades_count: int
     trades: list[TradeRecordResponse] = Field(default_factory=list)
+    fills: list[FillRecordResponse] = Field(default_factory=list)
     open_trade: OpenTradeInfo | None = None
     logs: list[str] = Field(default_factory=list)
     risk_state: dict[str, Any] | None = None

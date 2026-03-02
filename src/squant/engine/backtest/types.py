@@ -264,5 +264,6 @@ class BacktestResult:
     # Detailed data
     equity_curve: list[EquitySnapshot] = field(default_factory=list)
     trades: list[TradeRecord] = field(default_factory=list)
+    fills: list[Fill] = field(default_factory=list)
     orders: list[SimulatedOrder] = field(default_factory=list)
     logs: list[str] = field(default_factory=list)

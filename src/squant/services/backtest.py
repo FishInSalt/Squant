@@ -502,6 +502,18 @@ class BacktestService:
                 for t in result.trades
                 if t.is_closed
             ]
+            result_data["fills"] = [
+                {
+                    "order_id": f.order_id,
+                    "symbol": f.symbol,
+                    "side": f.side.value,
+                    "price": str(f.price),
+                    "amount": str(f.amount),
+                    "fee": str(f.fee),
+                    "timestamp": f.timestamp.isoformat(),
+                }
+                for f in result.fills
+            ]
             run = await self.run_repo.update(
                 run.id,
                 status=RunStatus.COMPLETED,

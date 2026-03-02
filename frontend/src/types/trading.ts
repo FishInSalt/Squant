@@ -47,6 +47,7 @@ export interface BacktestResult {
   metrics: BacktestMetrics | null
   equity_curve: EquityPoint[]
   trades: Trade[]
+  fills: Fill[]
   total_bars?: number
 }
 
@@ -99,6 +100,17 @@ export interface EquityCurvePoint {
 export interface DrawdownPoint {
   timestamp: number
   drawdown: number
+}
+
+// 逐笔成交记录（匹配后端 FillRecordResponse）
+export interface Fill {
+  order_id: string
+  symbol: string
+  side: 'buy' | 'sell'
+  price: number
+  amount: number
+  fee: number
+  timestamp: string
 }
 
 // 交易记录（匹配后端 TradeRecordResponse）
@@ -228,6 +240,7 @@ export interface PaperTradingStatus {
   completed_orders_count: number
   trades_count: number
   trades: Trade[]
+  fills: Fill[]
   open_trade?: OpenTrade
   logs: string[]
 }

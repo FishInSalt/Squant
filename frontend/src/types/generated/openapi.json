@@ -5500,6 +5500,13 @@
             "type": "array",
             "title": "Trades"
           },
+          "fills": {
+            "items": {
+              "$ref": "#/components/schemas/FillRecordResponse"
+            },
+            "type": "array",
+            "title": "Fills"
+          },
           "total_bars": {
             "anyOf": [
               {
@@ -6587,7 +6594,7 @@
           },
           "type": {
             "$ref": "#/components/schemas/OrderType",
-            "description": "Order type (MARKET/LIMIT)"
+            "description": "Order type (MARKET/LIMIT/STOP/STOP_LIMIT)"
           },
           "amount": {
             "anyOf": [
@@ -6617,7 +6624,23 @@
               }
             ],
             "title": "Price",
-            "description": "Limit price (required for LIMIT orders)"
+            "description": "Limit price (required for LIMIT/STOP_LIMIT)"
+          },
+          "stop_price": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "string",
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stop Price",
+            "description": "Stop trigger price (required for STOP/STOP_LIMIT)"
           },
           "client_order_id": {
             "anyOf": [
@@ -7252,6 +7275,51 @@
         ],
         "title": "ExportFormat",
         "description": "Export format enum (TRD-009#4)."
+      },
+      "FillRecordResponse": {
+        "properties": {
+          "order_id": {
+            "type": "string",
+            "title": "Order Id"
+          },
+          "symbol": {
+            "type": "string",
+            "title": "Symbol"
+          },
+          "side": {
+            "type": "string",
+            "title": "Side"
+          },
+          "price": {
+            "type": "number",
+            "title": "Price"
+          },
+          "amount": {
+            "type": "number",
+            "title": "Amount"
+          },
+          "fee": {
+            "type": "number",
+            "title": "Fee"
+          },
+          "timestamp": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Timestamp"
+          }
+        },
+        "type": "object",
+        "required": [
+          "order_id",
+          "symbol",
+          "side",
+          "price",
+          "amount",
+          "fee",
+          "timestamp"
+        ],
+        "title": "FillRecordResponse",
+        "description": "Individual fill record response."
       },
       "HTTPValidationError": {
         "properties": {
@@ -8032,6 +8100,18 @@
             "title": "Price",
             "description": "Order price"
           },
+          "stop_price": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stop Price",
+            "description": "Stop trigger price"
+          },
           "amount": {
             "type": "number",
             "title": "Amount",
@@ -8257,7 +8337,9 @@
         "type": "string",
         "enum": [
           "market",
-          "limit"
+          "limit",
+          "stop",
+          "stop_limit"
         ],
         "title": "OrderType",
         "description": "Order type."
@@ -8334,6 +8416,18 @@
             ],
             "title": "Price",
             "description": "Order price"
+          },
+          "stop_price": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stop Price",
+            "description": "Stop trigger price"
           },
           "amount": {
             "type": "number",
@@ -8992,6 +9086,13 @@
             },
             "type": "array",
             "title": "Trades"
+          },
+          "fills": {
+            "items": {
+              "$ref": "#/components/schemas/FillRecordResponse"
+            },
+            "type": "array",
+            "title": "Fills"
           },
           "open_trade": {
             "anyOf": [

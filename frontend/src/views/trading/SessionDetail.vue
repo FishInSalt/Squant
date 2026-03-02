@@ -145,6 +145,7 @@
           :symbol="session.symbol"
           :timeframe="session.timeframe"
           :trades="isPaper ? paperTrades : undefined"
+          :fills="isPaper ? paperFills : undefined"
           :open-trade="isPaper ? paperOpenTrade : undefined"
           :realtime="isRunning && !!status?.is_running"
           height="500px"
@@ -477,6 +478,7 @@ import type {
   Position,
   RiskState,
   Trade,
+  Fill,
   EquityPoint,
 } from '@/types'
 
@@ -597,6 +599,11 @@ const pendingCount = computed(() => {
 const paperTrades = computed<Trade[]>(() => {
   if (!status.value || !isPaper.value) return []
   return (status.value as PaperTradingStatus).trades || []
+})
+
+const paperFills = computed<Fill[]>(() => {
+  if (!status.value || !isPaper.value) return []
+  return (status.value as PaperTradingStatus).fills || []
 })
 
 const paperOpenTrade = computed(() => {

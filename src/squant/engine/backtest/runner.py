@@ -382,6 +382,7 @@ class BacktestRunner:
             metrics=metrics.to_dict(),
             equity_curve=self._context.equity_curve,
             trades=self._context.trades,
+            fills=self._context.fills,
             orders=self._context.completed_orders,
             logs=self._context.logs,
         )

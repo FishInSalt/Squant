@@ -26,6 +26,7 @@ from squant.schemas.backtest import (
     DataAvailabilityResponse,
     EquityCurvePoint,
     ExportFormat,
+    FillRecordResponse,
     RunBacktestRequest,
     TradeRecordResponse,
 )
@@ -358,6 +359,7 @@ async def get_backtest_detail(
         # Extract strongly-typed metrics from run.result dict (BT-004)
         metrics = None
         trades: list[TradeRecordResponse] = []
+        fills: list[FillRecordResponse] = []
         if run.result:
             metrics = BacktestMetrics(
                 **{k: v for k, v in run.result.items() if k in BacktestMetrics.model_fields}
@@ -368,6 +370,12 @@ async def get_backtest_detail(
                 for t in raw_trades:
                     if isinstance(t, dict):
                         trades.append(TradeRecordResponse(**t))
+            # Extract fills if stored in result
+            raw_fills = run.result.get("fills", [])
+            if raw_fills and isinstance(raw_fills, list):
+                for f in raw_fills:
+                    if isinstance(f, dict):
+                        fills.append(FillRecordResponse(**f))
 
         return ApiResponse(
             data=BacktestDetailResponse(
@@ -375,6 +383,7 @@ async def get_backtest_detail(
                 metrics=metrics,
                 equity_curve=[EquityCurvePoint.model_validate(e) for e in equity_curve],
                 trades=trades,
+                fills=fills,
                 total_bars=len(equity_curve),
             )
         )

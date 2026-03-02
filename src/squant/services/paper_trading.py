@@ -688,6 +688,7 @@ class PaperTradingService:
                     "completed_orders_count": run.result.get("completed_orders_count", 0),
                     "trades_count": run.result.get("trades_count", 0),
                     "trades": run.result.get("trades", []),
+                    "fills": run.result.get("fills", []),
                     "open_trade": run.result.get("open_trade"),
                     "logs": run.result.get("logs", []),
                 }
@@ -707,6 +708,7 @@ class PaperTradingService:
                     "completed_orders_count": 0,
                     "trades_count": 0,
                     "trades": [],
+                    "fills": [],
                     "logs": [],
                 }
             )

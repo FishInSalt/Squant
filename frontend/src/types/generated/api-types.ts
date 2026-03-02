@@ -2937,6 +2937,8 @@ export interface components {
             equity_curve: components["schemas"]["EquityCurvePoint"][];
             /** Trades */
             trades?: components["schemas"]["TradeRecordResponse"][];
+            /** Fills */
+            fills?: components["schemas"]["FillRecordResponse"][];
             /** Total Bars */
             total_bars?: number | null;
         };
@@ -3568,7 +3570,7 @@ export interface components {
             symbol: string;
             /** @description Order side (BUY/SELL) */
             side: components["schemas"]["OrderSide"];
-            /** @description Order type (MARKET/LIMIT) */
+            /** @description Order type (MARKET/LIMIT/STOP/STOP_LIMIT) */
             type: components["schemas"]["OrderType"];
             /**
              * Amount
@@ -3577,9 +3579,14 @@ export interface components {
             amount: number | string;
             /**
              * Price
-             * @description Limit price (required for LIMIT orders)
+             * @description Limit price (required for LIMIT/STOP_LIMIT)
              */
             price?: number | string | null;
+            /**
+             * Stop Price
+             * @description Stop trigger price (required for STOP/STOP_LIMIT)
+             */
+            stop_price?: number | string | null;
             /**
              * Client Order Id
              * @description Optional client order ID
@@ -3887,6 +3894,29 @@ export interface components {
          * @enum {string}
          */
         ExportFormat: "json" | "csv";
+        /**
+         * FillRecordResponse
+         * @description Individual fill record response.
+         */
+        FillRecordResponse: {
+            /** Order Id */
+            order_id: string;
+            /** Symbol */
+            symbol: string;
+            /** Side */
+            side: string;
+            /** Price */
+            price: number;
+            /** Amount */
+            amount: number;
+            /** Fee */
+            fee: number;
+            /**
+             * Timestamp
+             * Format: date-time
+             */
+            timestamp: string;
+        };
         /** HTTPValidationError */
         HTTPValidationError: {
             /** Detail */
@@ -4209,6 +4239,11 @@ export interface components {
              */
             price?: number | null;
             /**
+             * Stop Price
+             * @description Stop trigger price
+             */
+            stop_price?: number | null;
+            /**
              * Amount
              * @description Order amount
              */
@@ -4359,7 +4394,7 @@ export interface components {
          * @description Order type.
          * @enum {string}
          */
-        OrderType: "market" | "limit";
+        OrderType: "market" | "limit" | "stop" | "stop_limit";
         /**
          * OrderWithTrades
          * @description Order detail with trades.
@@ -4408,6 +4443,11 @@ export interface components {
              * @description Order price
              */
             price?: number | null;
+            /**
+             * Stop Price
+             * @description Stop trigger price
+             */
+            stop_price?: number | null;
             /**
              * Amount
              * @description Order amount
@@ -4691,6 +4731,8 @@ export interface components {
             trades_count: number;
             /** Trades */
             trades?: components["schemas"]["TradeRecordResponse"][];
+            /** Fills */
+            fills?: components["schemas"]["FillRecordResponse"][];
             open_trade?: components["schemas"]["OpenTradeInfo"] | null;
             /** Logs */
             logs?: string[];

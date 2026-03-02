@@ -56,6 +56,7 @@ const mockResult = {
       pnl_pct: 2.38,
     },
   ],
+  fills: [],
 }
 
 beforeEach(() => {

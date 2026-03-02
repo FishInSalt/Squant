@@ -161,6 +161,18 @@ class TradeRecordResponse(BaseModel):
     fees: NumberDecimal
 
 
+class FillRecordResponse(BaseModel):
+    """Individual fill record response."""
+
+    order_id: str
+    symbol: str
+    side: str
+    price: NumberDecimal
+    amount: NumberDecimal
+    fee: NumberDecimal
+    timestamp: datetime
+
+
 class BacktestMetrics(BaseModel):
     """Strongly-typed backtest performance metrics (BT-004).
 
@@ -210,6 +222,7 @@ class BacktestDetailResponse(BaseModel):
     metrics: BacktestMetrics | None = None
     equity_curve: list[EquityCurvePoint]
     trades: list[TradeRecordResponse] = Field(default_factory=list)
+    fills: list[FillRecordResponse] = Field(default_factory=list)
     total_bars: int | None = None
 
 

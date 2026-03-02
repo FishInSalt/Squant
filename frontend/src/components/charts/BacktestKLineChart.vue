@@ -110,7 +110,7 @@
 import { ref, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { init, dispose, registerOverlay, type Chart } from 'klinecharts'
 import { Setting, Loading, Plus, CircleClose } from '@element-plus/icons-vue'
-import type { Candle, Trade } from '@/types'
+import type { Candle, Trade, Fill } from '@/types'
 import { INDICATOR_DEFS, getDefaultParams, getIndicatorDef, getDynamicParamLabel, suggestNewPeriod, type IndicatorParams } from './indicatorConfig'
 
 // --- Constants ---
@@ -121,6 +121,7 @@ const SUB_PANE_HEIGHT = 120 // Fixed height for sub-pane indicators (px)
 interface Props {
   candles: Candle[]           // Initial data from parent
   trades?: Trade[]
+  fills?: Fill[]
   height?: string
   totalCount?: number         // Total candles in backtest (for knowing if more exists)
   onLoadMore?: (params: { before?: number; after?: number }) => Promise<Candle[]>
@@ -608,7 +609,9 @@ function onDynamicParamChange(name: string) {
 
 /** Rebuild trade markers and tooltip map based on current allCandles data */
 function rebuildTradeMarkers() {
-  if (!chart || !props.trades || props.trades.length === 0) {
+  const hasFills = props.fills && props.fills.length > 0
+  const hasTrades = props.trades && props.trades.length > 0
+  if (!chart || (!hasFills && !hasTrades)) {
     tradeInfoMap.value = new Map()
     hoveredTrades.value = []
     return
@@ -673,42 +676,64 @@ function rebuildTradeMarkers() {
     newTradeMap.get(candleTs)!.push(info)
   }
 
-  for (const trade of props.trades) {
-    const entryTs = new Date(trade.entry_time).getTime()
-
-    // Only add markers within loaded data range
-    if (entryTs >= minTs && entryTs <= maxTs) {
-      const snapped = snapTs(entryTs)
+  // Use fills as marker source when available (shows every individual fill);
+  // otherwise fall back to trades (entry/exit only)
+  if (hasFills) {
+    for (const fill of props.fills!) {
+      const ts = new Date(fill.timestamp).getTime()
+      if (ts < minTs || ts > maxTs) continue
+      const snapped = snapTs(ts)
+      const isBuy = fill.side === 'buy'
       overlays.push({
-        name: 'buyMarker',
+        name: isBuy ? 'buyMarker' : 'sellMarker',
         lock: true,
-        points: [{ timestamp: entryTs, value: findLow(entryTs) }],
+        points: [{ timestamp: ts, value: isBuy ? findLow(ts) : findHigh(ts) }],
       })
       addToMap(snapped, {
-        type: 'buy',
-        price: trade.entry_price,
-        amount: trade.amount,
-        time: trade.entry_time,
+        type: fill.side as 'buy' | 'sell',
+        price: fill.price,
+        amount: fill.amount,
+        time: fill.timestamp,
       })
     }
+  } else {
+    for (const trade of props.trades!) {
+      const entryTs = new Date(trade.entry_time).getTime()
 
-    if (trade.exit_time && trade.exit_price) {
-      const exitTs = new Date(trade.exit_time).getTime()
-      if (exitTs >= minTs && exitTs <= maxTs) {
-        const snapped = snapTs(exitTs)
+      // Only add markers within loaded data range
+      if (entryTs >= minTs && entryTs <= maxTs) {
+        const snapped = snapTs(entryTs)
         overlays.push({
-          name: 'sellMarker',
+          name: 'buyMarker',
           lock: true,
-          points: [{ timestamp: exitTs, value: findHigh(exitTs) }],
+          points: [{ timestamp: entryTs, value: findLow(entryTs) }],
         })
         addToMap(snapped, {
-          type: 'sell',
-          price: trade.exit_price!,
+          type: 'buy',
+          price: trade.entry_price,
           amount: trade.amount,
-          time: trade.exit_time,
-          pnl: trade.pnl,
-          pnlPct: trade.pnl_pct,
+          time: trade.entry_time,
         })
+      }
+
+      if (trade.exit_time && trade.exit_price) {
+        const exitTs = new Date(trade.exit_time).getTime()
+        if (exitTs >= minTs && exitTs <= maxTs) {
+          const snapped = snapTs(exitTs)
+          overlays.push({
+            name: 'sellMarker',
+            lock: true,
+            points: [{ timestamp: exitTs, value: findHigh(exitTs) }],
+          })
+          addToMap(snapped, {
+            type: 'sell',
+            price: trade.exit_price!,
+            amount: trade.amount,
+            time: trade.exit_time,
+            pnl: trade.pnl,
+            pnlPct: trade.pnl_pct,
+          })
+        }
       }
     }
   }
@@ -742,8 +767,8 @@ watch(() => props.candles, (newCandles) => {
   nextTick(() => initChart())
 })
 
-// Watch for trades change (rebuild markers)
-watch(() => props.trades, () => {
+// Watch for trades/fills change (rebuild markers)
+watch(() => [props.trades, props.fills], () => {
   if (chart) {
     rebuildTradeMarkers()
   }

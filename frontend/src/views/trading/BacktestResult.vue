@@ -159,6 +159,7 @@
           v-else
           :candles="candles"
           :trades="result.trades"
+          :fills="result.fills"
           :total-count="totalCandleCount"
           :on-load-more="loadMoreCandles"
           height="500px"
