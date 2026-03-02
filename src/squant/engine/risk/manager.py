@@ -79,6 +79,44 @@ class RiskManager:
         with self._lock:
             self._current_equity = equity
 
+    def check_total_loss_limit(self) -> bool:
+        """Check if total loss limit has been breached (IMP-005).
+
+        Called by the engine after updating equity and unrealized PnL on each bar.
+        Unlike validate_order() which only runs on order submission, this runs
+        every bar to detect when cumulative losses cross the threshold even without
+        new orders.
+
+        Returns:
+            True if total loss limit is triggered (engine should stop).
+        """
+        with self._lock:
+            if self.state.total_loss_limit_triggered:
+                return True
+
+            effective_total_pnl = self.state.total_pnl + self.state.unrealized_pnl
+
+            if self._initial_equity > 0:
+                loss_pct = -effective_total_pnl / self._initial_equity
+                if loss_pct >= self.config.total_loss_limit:
+                    self.state.total_loss_limit_triggered = True
+                    logger.critical(
+                        f"TOTAL LOSS LIMIT TRIGGERED: {loss_pct:.2%} loss "
+                        f"(limit: {self.config.total_loss_limit:.2%})"
+                    )
+                    return True
+
+            if self.config.total_loss_limit_absolute is not None:
+                if -effective_total_pnl >= self.config.total_loss_limit_absolute:
+                    self.state.total_loss_limit_triggered = True
+                    logger.critical(
+                        f"TOTAL LOSS LIMIT TRIGGERED: {-effective_total_pnl} loss "
+                        f"(limit: {self.config.total_loss_limit_absolute})"
+                    )
+                    return True
+
+            return False
+
     def update_position_value(self, position_value: Decimal) -> None:
         """Update current position value.
 

@@ -562,3 +562,99 @@ class TestTradeCompletionDetection:
         # Each trade should have positive PnL
         for i, pnl in enumerate(record_calls):
             assert pnl > 0, f"Trade {i + 1} PnL should be positive, got {pnl}"
+
+
+class TestTotalLossLimitAutoStop:
+    """Tests that engine auto-stops when total loss limit is triggered (IMP-005)."""
+
+    async def test_engine_stops_on_total_loss_limit(self):
+        """Engine should auto-stop after risk manager triggers total loss limit.
+
+        When cumulative losses exceed total_loss_limit (default 20% of initial equity),
+        the engine must stop itself instead of continuing to run silently.
+        """
+        config = RiskConfig(
+            total_loss_limit=Decimal("0.05"),  # 5% for easier triggering
+            max_order_size=Decimal("0.9"),  # relax other limits
+            max_position_size=Decimal("0.9"),
+        )
+        engine = _create_engine(risk_config=config, initial_capital=Decimal("100000"))
+        await engine.start()
+        assert engine.is_running is True
+
+        # Buy BTC at high price
+        engine.context.buy("BTC/USDT", Decimal("1"))
+        candle_buy = _make_candle(
+            "50000",
+            ts=datetime(2024, 1, 1, 0, 1, tzinfo=UTC),
+        )
+        with patch("squant.config.get_settings") as mock_s:
+            s = MagicMock()
+            s.strategy.cpu_limit_seconds = 5
+            s.strategy.memory_limit_mb = 256
+            mock_s.return_value = s
+            await engine.process_candle(candle_buy)
+
+        # Sell at big loss (price dropped from 50000 to 44000 → $6000 loss = 6% > 5%)
+        engine.context.sell("BTC/USDT", Decimal("1"))
+        candle_sell = _make_candle(
+            "44000",
+            ts=datetime(2024, 1, 1, 0, 2, tzinfo=UTC),
+        )
+        with patch("squant.config.get_settings") as mock_s:
+            s = MagicMock()
+            s.strategy.cpu_limit_seconds = 5
+            s.strategy.memory_limit_mb = 256
+            mock_s.return_value = s
+            await engine.process_candle(candle_sell)
+
+        # Now the risk manager should have triggered total loss limit.
+        # Next bar should auto-stop the engine.
+        candle_next = _make_candle(
+            "43000",
+            ts=datetime(2024, 1, 1, 0, 3, tzinfo=UTC),
+        )
+        with patch("squant.config.get_settings") as mock_s:
+            s = MagicMock()
+            s.strategy.cpu_limit_seconds = 5
+            s.strategy.memory_limit_mb = 256
+            mock_s.return_value = s
+            await engine.process_candle(candle_next)
+
+        # Engine should have auto-stopped
+        assert engine.is_running is False
+        assert engine.error_message is not None
+        assert "total loss limit" in engine.error_message.lower()
+
+    async def test_engine_continues_without_risk_config(self):
+        """Engine without risk config should never auto-stop on losses."""
+        engine = _create_engine(risk_config=None, initial_capital=Decimal("100000"))
+        await engine.start()
+
+        # Buy and sell at a loss
+        engine.context.buy("BTC/USDT", Decimal("1"))
+        candle_buy = _make_candle(
+            "50000",
+            ts=datetime(2024, 1, 1, 0, 1, tzinfo=UTC),
+        )
+        with patch("squant.config.get_settings") as mock_s:
+            s = MagicMock()
+            s.strategy.cpu_limit_seconds = 5
+            s.strategy.memory_limit_mb = 256
+            mock_s.return_value = s
+            await engine.process_candle(candle_buy)
+
+        engine.context.sell("BTC/USDT", Decimal("1"))
+        candle_sell = _make_candle(
+            "30000",
+            ts=datetime(2024, 1, 1, 0, 2, tzinfo=UTC),
+        )
+        with patch("squant.config.get_settings") as mock_s:
+            s = MagicMock()
+            s.strategy.cpu_limit_seconds = 5
+            s.strategy.memory_limit_mb = 256
+            mock_s.return_value = s
+            await engine.process_candle(candle_sell)
+
+        # Even with 40% loss, engine keeps running (no risk config)
+        assert engine.is_running is True

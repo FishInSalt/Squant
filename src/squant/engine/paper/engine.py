@@ -406,6 +406,19 @@ class PaperTradingEngine:
                     # 5b. Update unrealized PnL so daily loss limit includes open positions
                     self._risk_manager.update_unrealized_pnl(self._context._get_unrealized_pnl())
 
+                    # 5c. Auto-stop if total loss limit triggered (IMP-005)
+                    if self._risk_manager.check_total_loss_limit():
+                        msg = (
+                            f"Risk auto-stop: total loss limit triggered "
+                            f"(loss {-self._risk_manager.state.total_pnl:.2f}, "
+                            f"unrealized {self._risk_manager.state.unrealized_pnl:.2f})"
+                        )
+                        logger.warning(f"Engine {self._run_id}: {msg}")
+                        self._context.log(msg)
+                        self._error_message = msg
+                        self._stop_impl()
+                        return
+
                 # 6. Persist snapshot: try synchronous callback first, fall back to batch
                 if self._context.equity_curve:
                     latest_snapshot = self._context.equity_curve[-1]
