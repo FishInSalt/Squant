@@ -73,7 +73,26 @@ const mockPaperStatus: PaperTradingStatus = {
       fees: 5,
     },
   ],
-  fills: [],
+  fills: [
+    {
+      order_id: 'ord-1',
+      symbol: 'BTC/USDT',
+      side: 'buy' as const,
+      price: 50000,
+      amount: 0.1,
+      fee: 5,
+      timestamp: '2024-01-15T10:00:00Z',
+    },
+    {
+      order_id: 'ord-2',
+      symbol: 'BTC/USDT',
+      side: 'sell' as const,
+      price: 51000,
+      amount: 0.1,
+      fee: 5,
+      timestamp: '2024-01-16T10:00:00Z',
+    },
+  ],
   logs: ['[2024-01-15 10:00:00] Strategy started', '[2024-01-15 10:05:00] Buy signal detected'],
 }
 
@@ -210,7 +229,7 @@ describe('SessionDetail', () => {
       expect(wrapper.find('.equity-curve-stub').exists()).toBe(true)
     })
 
-    it('renders tabs for positions, orders, trades, logs', async () => {
+    it('renders tabs for positions, orders, trades, fills, logs', async () => {
       const wrapper = mountPaper()
       await flushPromises()
       const tabLabels = wrapper.findAll('.el-tabs__item')
@@ -218,7 +237,19 @@ describe('SessionDetail', () => {
       expect(texts.some(t => t.includes('持仓'))).toBe(true)
       expect(texts.some(t => t.includes('挂单'))).toBe(true)
       expect(texts.some(t => t.includes('交易记录'))).toBe(true)
+      expect(texts.some(t => t.includes('成交明细'))).toBe(true)
       expect(texts.some(t => t.includes('日志'))).toBe(true)
+    })
+
+    it('shows fill data in fills tab', async () => {
+      const wrapper = mountPaper()
+      await flushPromises()
+      const fillsTab = wrapper.findAll('.el-tabs__item').find(el => el.text().includes('成交明细'))
+      await fillsTab!.trigger('click')
+      await flushPromises()
+      expect(wrapper.text()).toContain('BTC/USDT')
+      expect(wrapper.text()).toContain('买入')
+      expect(wrapper.text()).toContain('卖出')
     })
 
     it('shows positions table in default tab', async () => {
@@ -360,11 +391,12 @@ describe('SessionDetail', () => {
       expect(tabLabels.some(el => el.text().includes('风控'))).toBe(true)
     })
 
-    it('does not show trades or logs tabs for live', async () => {
+    it('does not show trades, fills, or logs tabs for live', async () => {
       const wrapper = mountLive()
       await flushPromises()
       const tabLabels = wrapper.findAll('.el-tabs__item')
       expect(tabLabels.some(el => el.text().includes('交易记录'))).toBe(false)
+      expect(tabLabels.some(el => el.text().includes('成交明细'))).toBe(false)
       expect(tabLabels.some(el => el.text().includes('日志'))).toBe(false)
     })
 

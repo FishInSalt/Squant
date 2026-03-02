@@ -56,7 +56,26 @@ const mockResult = {
       pnl_pct: 2.38,
     },
   ],
-  fills: [],
+  fills: [
+    {
+      order_id: 'fill-1',
+      symbol: 'BTC/USDT',
+      side: 'buy' as const,
+      price: 42000,
+      amount: 0.1,
+      fee: 0.005,
+      timestamp: '2024-01-15T10:00:00Z',
+    },
+    {
+      order_id: 'fill-2',
+      symbol: 'BTC/USDT',
+      side: 'sell' as const,
+      price: 43000,
+      amount: 0.1,
+      fee: 0.005,
+      timestamp: '2024-01-16T10:00:00Z',
+    },
+  ],
 }
 
 beforeEach(() => {
@@ -111,6 +130,25 @@ describe('BacktestResult', () => {
     expect(wrapper.text()).toContain('索提诺比率')
     expect(wrapper.text()).toContain('盈利交易数')
     expect(wrapper.text()).toContain('最大连亏')
+  })
+
+  it('shows fills section with data', async () => {
+    vi.mocked(backtestApi.getBacktestStatus).mockResolvedValue(wrapApiResponse(completedBacktest))
+    vi.mocked(backtestApi.getBacktestResult).mockResolvedValue(wrapApiResponse(mockResult))
+    const wrapper = mountView(BacktestResult, { props: { id: 'bt-1' } })
+    await flushPromises()
+    expect(wrapper.text()).toContain('成交明细')
+    expect(wrapper.text()).toContain('共 2 笔')
+  })
+
+  it('hides fills section when no fills', async () => {
+    vi.mocked(backtestApi.getBacktestStatus).mockResolvedValue(wrapApiResponse(completedBacktest))
+    vi.mocked(backtestApi.getBacktestResult).mockResolvedValue(
+      wrapApiResponse({ ...mockResult, fills: [] })
+    )
+    const wrapper = mountView(BacktestResult, { props: { id: 'bt-1' } })
+    await flushPromises()
+    expect(wrapper.find('.fills-section').exists()).toBe(false)
   })
 
   it('shows back button', async () => {

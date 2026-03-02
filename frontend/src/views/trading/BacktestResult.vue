@@ -261,6 +261,58 @@
         </div>
       </div>
 
+      <div class="fills-section card" v-if="result.fills && result.fills.length > 0">
+        <div class="card-header">
+          <h3 class="card-title">成交明细</h3>
+          <span class="trade-count">共 {{ result.fills.length }} 笔</span>
+        </div>
+        <el-table :data="paginatedFills" stripe max-height="500" :default-sort="{ prop: 'timestamp', order: 'ascending' }" @sort-change="handleFillsSortChange">
+          <el-table-column prop="timestamp" label="时间" width="170" sortable="custom">
+            <template #default="{ row }">
+              {{ formatDateTime(row.timestamp) }}
+            </template>
+          </el-table-column>
+          <el-table-column prop="symbol" label="币对" width="120" />
+          <el-table-column prop="side" label="方向" width="70">
+            <template #default="{ row }">
+              <el-tag :type="row.side === 'buy' ? 'success' : 'danger'" size="small">
+                {{ row.side === 'buy' ? '买入' : '卖出' }}
+              </el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column prop="price" label="价格" width="120" align="right" sortable="custom">
+            <template #default="{ row }">
+              {{ formatPrice(row.price) }}
+            </template>
+          </el-table-column>
+          <el-table-column prop="amount" label="数量" width="100" align="right">
+            <template #default="{ row }">
+              {{ formatNumber(row.amount, 4) }}
+            </template>
+          </el-table-column>
+          <el-table-column label="成交额" width="120" align="right">
+            <template #default="{ row }">
+              {{ formatNumber(row.price * row.amount, 2) }}
+            </template>
+          </el-table-column>
+          <el-table-column prop="fee" label="手续费" width="90" align="right">
+            <template #default="{ row }">
+              {{ formatNumber(row.fee, 4) }}
+            </template>
+          </el-table-column>
+        </el-table>
+        <div class="trade-pagination" v-if="result.fills.length > fillsPageSize">
+          <el-pagination
+            v-model:current-page="fillsPage"
+            :page-size="fillsPageSize"
+            :page-sizes="[20, 50, 100]"
+            :total="result.fills.length"
+            layout="total, sizes, prev, pager, next"
+            @size-change="handleFillsPageSizeChange"
+          />
+        </div>
+      </div>
+
       <div class="details-section card">
         <div class="card-header">
           <h3 class="card-title">详细指标</h3>
@@ -375,6 +427,11 @@ const tradesPageSize = ref(20)
 const tradesSortProp = ref('')
 const tradesSortOrder = ref('')
 
+const fillsPage = ref(1)
+const fillsPageSize = ref(20)
+const fillsSortProp = ref('')
+const fillsSortOrder = ref('')
+
 const sortedTrades = computed(() => {
   if (!result.value) return []
   const trades = [...result.value.trades]
@@ -410,6 +467,44 @@ const tradeStats = computed(() => {
   const winRate = trades.length > 0 ? (wins / trades.length) * 100 : 0
   return { wins, losses, winRate }
 })
+
+const sortedFills = computed(() => {
+  if (!result.value?.fills) return []
+  const fills = [...result.value.fills]
+  if (!fillsSortProp.value || !fillsSortOrder.value) return fills
+
+  const prop = fillsSortProp.value
+  const asc = fillsSortOrder.value === 'ascending'
+
+  fills.sort((a: any, b: any) => {
+    let va = a[prop]
+    let vb = b[prop]
+    if (prop === 'timestamp') {
+      va = va ? new Date(va).getTime() : 0
+      vb = vb ? new Date(vb).getTime() : 0
+    }
+    if (va < vb) return asc ? -1 : 1
+    if (va > vb) return asc ? 1 : -1
+    return 0
+  })
+  return fills
+})
+
+const paginatedFills = computed(() => {
+  const start = (fillsPage.value - 1) * fillsPageSize.value
+  return sortedFills.value.slice(start, start + fillsPageSize.value)
+})
+
+function handleFillsSortChange({ prop, order }: { prop: string; order: string | null }) {
+  fillsSortProp.value = prop || ''
+  fillsSortOrder.value = order || ''
+  fillsPage.value = 1
+}
+
+function handleFillsPageSizeChange(size: number) {
+  fillsPageSize.value = size
+  fillsPage.value = 1
+}
 
 function handleSortChange({ prop, order }: { prop: string; order: string | null }) {
   tradesSortProp.value = prop || ''
@@ -750,7 +845,8 @@ onUnmounted(() => {
     }
   }
 
-  .trades-section {
+  .trades-section,
+  .fills-section {
     margin-bottom: 24px;
 
     .trade-summary {

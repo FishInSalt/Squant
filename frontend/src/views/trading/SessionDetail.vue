@@ -394,6 +394,51 @@
             </el-table>
           </el-tab-pane>
 
+          <el-tab-pane v-if="isPaper" name="fills">
+            <template #label>
+              成交明细
+              <el-badge v-if="paperFills.length" :value="paperFills.length" class="tab-badge" />
+            </template>
+            <el-table :data="paperFills" stripe empty-text="暂无成交记录" max-height="400">
+              <el-table-column prop="timestamp" label="时间" min-width="140">
+                <template #default="{ row }">
+                  {{ formatTradeTime(row.timestamp) }}
+                </template>
+              </el-table-column>
+              <el-table-column prop="symbol" label="币对" min-width="120" />
+              <el-table-column prop="side" label="方向" min-width="70">
+                <template #default="{ row }">
+                  <el-tag
+                    :type="row.side === 'buy' ? 'success' : 'danger'"
+                    size="small"
+                  >
+                    {{ row.side === 'buy' ? '买入' : '卖出' }}
+                  </el-tag>
+                </template>
+              </el-table-column>
+              <el-table-column prop="price" label="价格" min-width="110" align="right">
+                <template #default="{ row }">
+                  {{ formatPrice(row.price) }}
+                </template>
+              </el-table-column>
+              <el-table-column prop="amount" label="数量" min-width="100" align="right">
+                <template #default="{ row }">
+                  {{ formatNumber(row.amount, 4) }}
+                </template>
+              </el-table-column>
+              <el-table-column label="成交额" min-width="120" align="right">
+                <template #default="{ row }">
+                  {{ formatNumber(row.price * row.amount, 2) }}
+                </template>
+              </el-table-column>
+              <el-table-column prop="fee" label="手续费" min-width="90" align="right">
+                <template #default="{ row }">
+                  {{ formatNumber(row.fee, 4) }}
+                </template>
+              </el-table-column>
+            </el-table>
+          </el-tab-pane>
+
           <el-tab-pane v-if="isPaper" name="logs">
             <template #label>
               日志
