@@ -388,6 +388,7 @@ class LiveTradingService:
                 params=params,
                 on_snapshot=self._create_snapshot_callback(),
                 on_result=self._create_result_callback(),
+                on_event=self._create_event_callback(UUID(run.id)),
             )
 
             # Register with session manager
@@ -619,6 +620,31 @@ class LiveTradingService:
                 await repo.update(run_id, result=result)
 
         return _persist_result
+
+    @staticmethod
+    def _create_event_callback(run_id: UUID) -> Any:
+        """Create callback that publishes engine events to Redis for WebSocket push."""
+
+        async def _publish(event_data: dict) -> None:
+            try:
+                import json
+
+                from squant.infra.redis import get_redis_client
+
+                redis = await get_redis_client()
+                channel = f"squant:ws:trading:{run_id}"
+                message = json.dumps(
+                    {
+                        "type": "trading_status",
+                        "channel": f"trading:{run_id}",
+                        "data": event_data,
+                    }
+                )
+                await redis.publish(channel, message)
+            except Exception as e:
+                logger.debug(f"Failed to publish trading event: {e}")
+
+        return _publish
 
     async def stop(
         self, run_id: UUID, cancel_orders: bool = True, *, for_shutdown: bool = False

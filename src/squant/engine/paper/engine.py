@@ -29,8 +29,53 @@ from squant.models.enums import OrderType as ExchangeOrderType
 SnapshotPersistCallback = Callable[[str, EquitySnapshot], Awaitable[None]]
 # Callback type for synchronous result state persistence
 ResultPersistCallback = Callable[[str, dict[str, Any]], Awaitable[None]]
+# Callback type for WebSocket event emission
+EventCallback = Callable[[dict[str, Any]], Awaitable[None]]
 
 logger = logging.getLogger(__name__)
+
+
+def _serialize_fill(f: Any) -> dict[str, Any]:
+    """Serialize a Fill for WebSocket event."""
+    return {
+        "order_id": f.order_id,
+        "symbol": f.symbol,
+        "side": f.side.value if hasattr(f.side, "value") else str(f.side),
+        "price": str(f.price),
+        "amount": str(f.amount),
+        "fee": str(f.fee),
+        "timestamp": f.timestamp.isoformat() if f.timestamp else None,
+    }
+
+
+def _serialize_trade(t: Any) -> dict[str, Any]:
+    """Serialize a TradeRecord for WebSocket event."""
+    return {
+        "symbol": t.symbol,
+        "side": t.side.value if hasattr(t.side, "value") else str(t.side),
+        "entry_time": t.entry_time.isoformat() if t.entry_time else None,
+        "entry_price": str(t.entry_price),
+        "exit_time": t.exit_time.isoformat() if t.exit_time else None,
+        "exit_price": str(t.exit_price) if t.exit_price else None,
+        "amount": str(t.amount),
+        "pnl": str(t.pnl),
+        "pnl_pct": str(t.pnl_pct),
+        "fees": str(t.fees),
+    }
+
+
+def _serialize_open_trade(ot: Any) -> dict[str, Any] | None:
+    """Serialize an open trade for WebSocket event."""
+    if ot is None:
+        return None
+    return {
+        "symbol": ot.symbol,
+        "side": ot.side.value if hasattr(ot.side, "value") else str(ot.side),
+        "entry_time": ot.entry_time.isoformat() if ot.entry_time else None,
+        "entry_price": str(ot.entry_price),
+        "amount": str(ot.amount),
+        "fees": str(ot.fees),
+    }
 
 
 class PaperTradingEngine:
@@ -60,6 +105,7 @@ class PaperTradingEngine:
         on_result: ResultPersistCallback | None = None,
         risk_config: RiskConfig | None = None,
         max_volume_participation: Decimal | None = None,
+        on_event: EventCallback | None = None,
     ):
         """Initialize paper trading engine.
 
@@ -82,6 +128,8 @@ class PaperTradingEngine:
                 orders are validated against risk rules before execution.
             max_volume_participation: Maximum fraction of bar volume that can be
                 filled in a single order (e.g., 0.1 = 10%). None disables the check.
+            on_event: Optional callback for WebSocket event emission.
+                Called after each bar to push incremental status updates.
         """
         self._run_id = run_id
         self._strategy = strategy
@@ -155,6 +203,13 @@ class PaperTradingEngine:
 
         # Lock to ensure stop() waits for in-progress candle processing (PP-C05)
         self._processing_lock = asyncio.Lock()
+
+        # WebSocket event emission callback
+        self._on_event = on_event
+        # Incremental tracking indexes for event delta computation
+        self._last_emitted_fill_idx = 0
+        self._last_emitted_trade_idx = 0
+        self._last_emitted_log_idx = 0
 
     @property
     def run_id(self) -> UUID:
@@ -300,6 +355,20 @@ class PaperTradingEngine:
 
         self._is_running = False
         self._stopped_at = datetime.now(UTC)
+
+        # Emit engine_stopped event via WebSocket
+        if self._on_event:
+            try:
+                event = {
+                    "event": "engine_stopped",
+                    "run_id": str(self._run_id),
+                    "error_message": self._error_message,
+                    "stopped_at": self._stopped_at.isoformat() if self._stopped_at else None,
+                }
+                loop = asyncio.get_running_loop()
+                loop.create_task(self._on_event(event))
+            except Exception:
+                pass
 
     def on_ticker(self, ticker: WSTicker) -> None:
         """Cache latest bid/ask from ticker stream for spread simulation.
@@ -465,6 +534,15 @@ class PaperTradingEngine:
                         await self._on_result(str(self._run_id), result_data)
                     except Exception as e:
                         logger.warning(f"Result persist callback failed for {self._run_id}: {e}")
+
+                # 9. Emit bar update event via WebSocket
+                if self._on_event:
+                    try:
+                        event = self._build_bar_update_event()
+                        loop = asyncio.get_running_loop()
+                        loop.create_task(self._on_event(event))
+                    except Exception as e:
+                        logger.debug(f"Event emit failed for {self._run_id}: {e}")
 
                 logger.debug(
                     f"Processed bar {self._bar_count} at {bar.time}, equity={self._context.equity}"
@@ -846,3 +924,59 @@ class PaperTradingEngine:
             result["risk_state"] = self._risk_manager.get_state_summary()
             result["risk_config"] = self._risk_manager.config.model_dump(mode="json")
         return result
+
+    def _build_bar_update_event(self) -> dict[str, Any]:
+        """Build incremental bar update event for WebSocket push."""
+        ctx = self._context
+        fills_list = list(ctx._fills)
+        trades_list = list(ctx._trades)
+        logs_list = list(ctx._logs)
+
+        new_fills = fills_list[self._last_emitted_fill_idx:]
+        new_trades = trades_list[self._last_emitted_trade_idx:]
+        new_logs = logs_list[self._last_emitted_log_idx:]
+
+        self._last_emitted_fill_idx = len(fills_list)
+        self._last_emitted_trade_idx = len(trades_list)
+        self._last_emitted_log_idx = len(logs_list)
+
+        return {
+            "event": "bar_update",
+            "run_id": str(self._run_id),
+            "bar_count": self._bar_count,
+            "cash": str(ctx._cash),
+            "equity": str(ctx.equity),
+            "unrealized_pnl": str(ctx._get_unrealized_pnl()),
+            "realized_pnl": str(sum(t.pnl for t in ctx._trades)),
+            "total_fees": str(ctx._total_fees),
+            "completed_orders_count": len(ctx._completed_orders),
+            "trades_count": len(ctx._trades),
+            "positions": {
+                sym: {
+                    "amount": str(pos.amount),
+                    "avg_entry_price": str(pos.avg_entry_price),
+                }
+                for sym, pos in ctx._positions.items()
+                if pos.amount != 0
+            },
+            "pending_orders": [
+                {
+                    "id": o.id,
+                    "symbol": o.symbol,
+                    "side": o.side.value,
+                    "type": o.type.value,
+                    "amount": str(o.amount),
+                    "price": str(o.price) if o.price else None,
+                    "status": o.status.value,
+                    "created_at": o.created_at.isoformat() if o.created_at else None,
+                }
+                for o in ctx._pending_orders
+            ],
+            "open_trade": _serialize_open_trade(ctx._open_trade),
+            "new_fills": [_serialize_fill(f) for f in new_fills],
+            "new_trades": [_serialize_trade(t) for t in new_trades],
+            "new_logs": new_logs,
+            "risk_state": (
+                self._risk_manager.get_state_summary() if self._risk_manager else None
+            ),
+        }

@@ -23,6 +23,11 @@ from squant.engine.backtest.types import (
 from squant.engine.backtest.types import (
     OrderType as BacktestOrderType,
 )
+from squant.engine.paper.engine import (
+    _serialize_fill,
+    _serialize_open_trade,
+    _serialize_trade,
+)
 from squant.engine.resource_limits import ResourceLimitExceededError, resource_limiter
 from squant.engine.risk import RiskConfig, RiskManager
 from squant.infra.exchange.types import CancelOrderRequest, OrderRequest, OrderResponse
@@ -36,6 +41,8 @@ if TYPE_CHECKING:
 SnapshotPersistCallback = Callable[[str, EquitySnapshot], Awaitable[None]]
 # Callback type for synchronous result state persistence
 ResultPersistCallback = Callable[[str, dict[str, Any]], Awaitable[None]]
+# Callback type for WebSocket event emission
+EventCallback = Callable[[dict[str, Any]], Awaitable[None]]
 
 logger = logging.getLogger(__name__)
 
@@ -122,6 +129,7 @@ class LiveTradingEngine:
         params: dict[str, Any] | None = None,
         on_snapshot: SnapshotPersistCallback | None = None,
         on_result: ResultPersistCallback | None = None,
+        on_event: EventCallback | None = None,
     ):
         """Initialize live trading engine.
 
@@ -136,6 +144,7 @@ class LiveTradingEngine:
             params: Strategy parameters.
             on_snapshot: Optional callback for synchronous snapshot persistence.
             on_result: Optional callback for synchronous result state persistence.
+            on_event: Optional callback for WebSocket event emission.
         """
         self._run_id = run_id
         self._strategy = strategy
@@ -212,6 +221,13 @@ class LiveTradingEngine:
         # Updates are queued here and drained synchronously within process_candle
         # to prevent concurrent state mutation between WS callbacks and polling.
         self._pending_ws_updates: list[WSOrderUpdate] = []
+
+        # WebSocket event emission callback
+        self._on_event = on_event
+        # Incremental tracking indexes for event delta computation
+        self._last_emitted_fill_idx = 0
+        self._last_emitted_trade_idx = 0
+        self._last_emitted_log_idx = 0
 
         # Order sync rate limiting - avoid excessive polling
         # Track last poll time per order to avoid redundant API calls
@@ -422,6 +438,20 @@ class LiveTradingEngine:
                 self._error_message = f"Strategy stop failed: {e}"
 
         self._stopped_at = datetime.now(UTC)
+
+        # Emit engine_stopped event via WebSocket
+        if self._on_event:
+            try:
+                event = {
+                    "event": "engine_stopped",
+                    "run_id": str(self._run_id),
+                    "error_message": self._error_message,
+                    "stopped_at": self._stopped_at.isoformat() if self._stopped_at else None,
+                }
+                loop = asyncio.get_running_loop()
+                loop.create_task(self._on_event(event))
+            except Exception:
+                pass
 
     async def emergency_close(self) -> dict[str, Any]:
         """Emergency close all positions at market price.
@@ -684,6 +714,15 @@ class LiveTradingEngine:
                         await self._on_result(str(self._run_id), result_data)
                     except Exception as e:
                         logger.warning(f"Result persist callback failed for {self._run_id}: {e}")
+
+                # Emit bar update event via WebSocket
+                if self._on_event:
+                    try:
+                        event = self._build_bar_update_event()
+                        loop = asyncio.get_running_loop()
+                        loop.create_task(self._on_event(event))
+                    except Exception as e:
+                        logger.debug(f"Event emit failed for {self._run_id}: {e}")
 
                 logger.debug(
                     f"Processed bar {self._bar_count} at {bar.time}, equity={self._context.equity}"
@@ -1369,3 +1408,57 @@ class LiveTradingEngine:
         result["bar_count"] = self._bar_count
         result["risk_state"] = self._risk_manager.get_state_summary()
         return result
+
+    def _build_bar_update_event(self) -> dict[str, Any]:
+        """Build incremental bar update event for WebSocket push."""
+        ctx = self._context
+        fills_list = list(ctx._fills)
+        trades_list = list(ctx._trades)
+        logs_list = list(ctx._logs)
+
+        new_fills = fills_list[self._last_emitted_fill_idx:]
+        new_trades = trades_list[self._last_emitted_trade_idx:]
+        new_logs = logs_list[self._last_emitted_log_idx:]
+
+        self._last_emitted_fill_idx = len(fills_list)
+        self._last_emitted_trade_idx = len(trades_list)
+        self._last_emitted_log_idx = len(logs_list)
+
+        return {
+            "event": "bar_update",
+            "run_id": str(self._run_id),
+            "bar_count": self._bar_count,
+            "cash": str(ctx._cash),
+            "equity": str(ctx.equity),
+            "unrealized_pnl": str(ctx._get_unrealized_pnl()),
+            "realized_pnl": str(sum(t.pnl for t in ctx._trades)),
+            "total_fees": str(ctx._total_fees),
+            "completed_orders_count": len(ctx._completed_orders),
+            "trades_count": len(ctx._trades),
+            "positions": {
+                sym: {
+                    "amount": str(pos.amount),
+                    "avg_entry_price": str(pos.avg_entry_price),
+                }
+                for sym, pos in ctx._positions.items()
+                if pos.amount != 0
+            },
+            "pending_orders": [
+                {
+                    "id": o.id,
+                    "symbol": o.symbol,
+                    "side": o.side.value,
+                    "type": o.type.value,
+                    "amount": str(o.amount),
+                    "price": str(o.price) if o.price else None,
+                    "status": o.status.value,
+                    "created_at": o.created_at.isoformat() if o.created_at else None,
+                }
+                for o in ctx._pending_orders
+            ],
+            "open_trade": _serialize_open_trade(ctx._open_trade),
+            "new_fills": [_serialize_fill(f) for f in new_fills],
+            "new_trades": [_serialize_trade(t) for t in new_trades],
+            "new_logs": new_logs,
+            "risk_state": self._risk_manager.get_state_summary(),
+        }

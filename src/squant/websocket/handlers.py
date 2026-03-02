@@ -218,7 +218,7 @@ class WebSocketGateway:
             self._running = False
 
     # Valid channel prefixes for subscription (R3-017)
-    VALID_CHANNEL_PREFIXES = ("ticker:", "candle:", "orderbook:", "trade:")
+    VALID_CHANNEL_PREFIXES = ("ticker:", "candle:", "orderbook:", "trade:", "trading:")
     VALID_EXACT_CHANNELS = ("orders", "account")
     MAX_CHANNEL_LENGTH = 64
     # Frontend max pageSize is 200 tickers + system channel + headroom for other channel types
@@ -322,6 +322,10 @@ class WebSocketGateway:
         """
         parts = channel.split(":")
         channel_type = parts[0]
+
+        # trading: channels use Redis pub/sub only, no exchange subscription
+        if channel_type == "trading":
+            return
 
         try:
             if channel_type == "ticker" and len(parts) >= 2:
@@ -463,6 +467,10 @@ class WebSocketGateway:
         """
         parts = channel.split(":")
         channel_type = parts[0]
+
+        # trading: channels use Redis pub/sub only, no exchange subscription
+        if channel_type == "trading":
+            return
 
         try:
             if channel_type == "ticker" and len(parts) >= 2:

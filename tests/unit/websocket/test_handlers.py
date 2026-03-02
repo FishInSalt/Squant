@@ -835,3 +835,44 @@ class TestChannelFormatValidation:
         await gateway._subscribe_okx("account")
 
         mock_stream_manager.subscribe_account.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_trading_channel_accepted(self, mock_websocket, mock_stream_manager):
+        """Test that trading: prefix is accepted as a valid channel."""
+        gateway = WebSocketGateway(mock_websocket, mock_stream_manager)
+        gateway._running = True
+        gateway._pubsub = AsyncMock()
+        gateway._pubsub.subscribe = AsyncMock()
+
+        await gateway._subscribe("trading:some-run-id")
+
+        # Should be subscribed to Redis
+        assert "trading:some-run-id" in gateway._subscribed_channels
+        # Should NOT call any exchange subscription
+        mock_stream_manager.subscribe_ticker.assert_not_called()
+        mock_stream_manager.subscribe_candles.assert_not_called()
+        mock_stream_manager.subscribe_trades.assert_not_called()
+        mock_stream_manager.subscribe_orderbook.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_trading_channel_subscribe_okx_noop(self, mock_websocket, mock_stream_manager):
+        """Test that _subscribe_okx is a no-op for trading: channels."""
+        gateway = WebSocketGateway(mock_websocket, mock_stream_manager)
+        gateway._running = True
+
+        await gateway._subscribe_okx("trading:some-run-id")
+
+        # No exchange subscription should be triggered
+        mock_stream_manager.subscribe_ticker.assert_not_called()
+        mock_stream_manager.subscribe_candles.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_trading_channel_unsubscribe_okx_noop(self, mock_websocket, mock_stream_manager):
+        """Test that _unsubscribe_okx is a no-op for trading: channels."""
+        gateway = WebSocketGateway(mock_websocket, mock_stream_manager)
+        gateway._running = True
+
+        await gateway._unsubscribe_okx("trading:some-run-id")
+
+        # No exchange unsubscription should be triggered
+        mock_stream_manager.unsubscribe_ticker.assert_not_called()

@@ -65,8 +65,12 @@ export interface CandleUpdate {
 // Candle 更新回调类型
 type CandleCallback = (candle: CandleUpdate) => void
 
+// Trading status 更新回调类型
+type TradingStatusCallback = (data: Record<string, unknown>) => void
+
 // 将 candleCallbacks 移到 store 外部，避免热更新时被重置
 const candleCallbacks = new Map<string, Set<CandleCallback>>()
+const tradingCallbacks = new Map<string, Set<TradingStatusCallback>>()
 
 export const useWebSocketStore = defineStore('websocket', () => {
   // State
@@ -406,6 +410,15 @@ export const useWebSocketStore = defineStore('websocket', () => {
         }
         break
 
+      case 'trading_status':
+        if (message.data && message.channel) {
+          const callbacks = tradingCallbacks.get(message.channel)
+          if (callbacks && callbacks.size > 0) {
+            callbacks.forEach((cb) => cb(message.data!))
+          }
+        }
+        break
+
       case 'trade':
         // TODO: 处理成交数据
         break
@@ -524,6 +537,35 @@ export const useWebSocketStore = defineStore('websocket', () => {
   }
 
   /**
+   * 注册交易状态更新回调
+   * @param runId 交易会话 ID
+   * @param callback 回调函数
+   */
+  function onTradingStatus(runId: string, callback: TradingStatusCallback): void {
+    const channel = `trading:${runId}`
+    if (!tradingCallbacks.has(channel)) {
+      tradingCallbacks.set(channel, new Set())
+    }
+    tradingCallbacks.get(channel)!.add(callback)
+  }
+
+  /**
+   * 移除交易状态更新回调
+   * @param runId 交易会话 ID
+   * @param callback 回调函数
+   */
+  function offTradingStatus(runId: string, callback: TradingStatusCallback): void {
+    const channel = `trading:${runId}`
+    const callbacks = tradingCallbacks.get(channel)
+    if (callbacks) {
+      callbacks.delete(callback)
+      if (callbacks.size === 0) {
+        tradingCallbacks.delete(channel)
+      }
+    }
+  }
+
+  /**
    * 订阅多个 ticker
    * @returns 取消订阅函数
    */
@@ -572,5 +614,7 @@ export const useWebSocketStore = defineStore('websocket', () => {
     subscribeToCandles,
     onCandle,
     offCandle,
+    onTradingStatus,
+    offTradingStatus,
   }
 })

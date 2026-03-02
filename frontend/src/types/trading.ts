@@ -299,3 +299,33 @@ export interface LiveTradingStatus {
   trades_count: number
   risk_state?: RiskState
 }
+
+// WebSocket 交易状态事件类型
+export interface TradingBarUpdate {
+  event: 'bar_update'
+  run_id: string
+  bar_count: number
+  cash: string
+  equity: string
+  unrealized_pnl: string
+  realized_pnl: string
+  total_fees: string
+  completed_orders_count: number
+  trades_count: number
+  positions: Record<string, { amount: string; avg_entry_price: string }>
+  pending_orders: PendingOrderInfo[]
+  open_trade?: OpenTrade
+  new_fills: Fill[]
+  new_trades: Trade[]
+  new_logs: string[]
+  risk_state?: Record<string, unknown>
+}
+
+export interface TradingEngineStopped {
+  event: 'engine_stopped'
+  run_id: string
+  error_message?: string
+  stopped_at?: string
+}
+
+export type TradingStatusEvent = TradingBarUpdate | TradingEngineStopped

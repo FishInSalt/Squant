@@ -525,6 +525,7 @@ import type {
   Trade,
   Fill,
   EquityPoint,
+  OpenTrade,
 } from '@/types'
 
 const props = defineProps<{
@@ -677,6 +678,91 @@ const equityCurveWithFallback = computed<EquityPoint[]>(() => {
   ]
 })
 
+// --- WebSocket trading status ---
+
+const wsChannel = computed(() => `trading:${props.id}`)
+
+function handleTradingEvent(data: Record<string, unknown>) {
+  if (!status.value) return
+  const eventType = data.event as string
+
+  if (eventType === 'bar_update') {
+    // Replace scalar metrics
+    status.value.bar_count = data.bar_count as number
+    status.value.cash = parseFloat(data.cash as string)
+    status.value.equity = parseFloat(data.equity as string)
+    status.value.unrealized_pnl = parseFloat(data.unrealized_pnl as string)
+    status.value.realized_pnl = parseFloat(data.realized_pnl as string)
+    status.value.total_fees = parseFloat(data.total_fees as string)
+    status.value.completed_orders_count = data.completed_orders_count as number
+    status.value.trades_count = data.trades_count as number
+
+    // Parse positions: convert string amounts to numbers
+    const rawPositions = data.positions as Record<string, { amount: string; avg_entry_price: string }> | undefined
+    if (rawPositions) {
+      const parsed: Record<string, Position> = {}
+      for (const [sym, pos] of Object.entries(rawPositions)) {
+        parsed[sym] = {
+          amount: parseFloat(pos.amount),
+          avg_entry_price: parseFloat(pos.avg_entry_price),
+        }
+      }
+      status.value.positions = parsed
+    }
+
+    // Replace pending orders
+    status.value.pending_orders = (data.pending_orders as PendingOrderInfo[]) || []
+
+    // Replace open trade
+    if (isPaper.value) {
+      const ps = status.value as PaperTradingStatus
+      ps.open_trade = data.open_trade as OpenTrade | undefined
+    }
+
+    // Append incremental data
+    if (isPaper.value) {
+      const ps = status.value as PaperTradingStatus
+      const newFills = data.new_fills as Fill[] | undefined
+      if (Array.isArray(newFills) && newFills.length && ps.fills) {
+        ps.fills.push(...newFills)
+      }
+      const newTrades = data.new_trades as Trade[] | undefined
+      if (Array.isArray(newTrades) && newTrades.length && ps.trades) {
+        ps.trades.push(...newTrades)
+      }
+      const newLogs = data.new_logs as string[] | undefined
+      if (Array.isArray(newLogs) && newLogs.length && ps.logs) {
+        ps.logs.push(...newLogs)
+      }
+    }
+
+    if (data.risk_state) {
+      (status.value as LiveTradingStatus).risk_state = data.risk_state as RiskState
+    }
+
+    // Trigger incremental equity curve load
+    loadEquityCurve(true)
+  } else if (eventType === 'engine_stopped') {
+    status.value.is_running = false
+    if (data.error_message) {
+      status.value.error_message = data.error_message as string
+    }
+    // Refresh session to get final DB state
+    loadSession()
+    unsubscribeTradingChannel()
+  }
+}
+
+function subscribeTradingChannel() {
+  wsStore.subscribe(wsChannel.value)
+  wsStore.onTradingStatus(props.id, handleTradingEvent)
+}
+
+function unsubscribeTradingChannel() {
+  wsStore.offTradingStatus(props.id, handleTradingEvent)
+  wsStore.unsubscribe(wsChannel.value)
+}
+
 function formatTradeTime(time: string): string {
   return new Date(time).toLocaleString('zh-CN', {
     month: '2-digit',
@@ -810,7 +896,8 @@ let recoveryTimer: ReturnType<typeof setInterval> | null = null
 
 function startPolling() {
   if (refreshTimer) return
-  refreshTimer = setInterval(loadStatus, 3000)
+  // Use 30s fallback polling when WebSocket is active (was 3s before WS support)
+  refreshTimer = setInterval(loadStatus, 30000)
 }
 
 function stopPolling() {
@@ -843,6 +930,7 @@ async function handleStop() {
     try {
       await stopPaperTrading(props.id)
       toastSuccess('已停止')
+      unsubscribeTradingChannel()
       stopPolling()
       await loadSession()
     } catch (error) {
@@ -854,6 +942,7 @@ async function handleStop() {
     try {
       await stopLiveTrading(props.id, cancelOrders)
       toastSuccess(cancelOrders ? '已停止，挂单已取消' : '已停止，挂单已保留')
+      unsubscribeTradingChannel()
       stopPolling()
       await loadSession()
     } catch (error) {
@@ -868,6 +957,8 @@ async function handleResume() {
     await resumePaperTrading(props.id)
     toastSuccess('已恢复')
     await loadSession()
+    await loadStatus()
+    subscribeTradingChannel()
     startPolling()
   } catch (error: any) {
     toastError(error?.response?.data?.message || '恢复失败')
@@ -904,6 +995,8 @@ onMounted(async () => {
   // Always load status (backend returns historical data from DB for stopped sessions)
   await loadStatus()
   if (isRunning.value && status.value?.is_running) {
+    // Subscribe to WebSocket for real-time updates + fallback polling (30s)
+    subscribeTradingChannel()
     startPolling()
   } else if (session.value?.status === 'interrupted') {
     // Session interrupted (e.g. backend restarting) — poll for recovery
@@ -916,6 +1009,7 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
+  unsubscribeTradingChannel()
   stopPolling()
   stopRecoveryPolling()
   if (durationTimer) {
