@@ -44,6 +44,12 @@ class RiskConfigRequest(BaseModel):
         le=10,
         description="Consecutive losses to trigger circuit breaker",
     )
+    min_order_value: Decimal = Field(
+        default=Decimal("10"),
+        gt=0,
+        le=100000,
+        description="Minimum order value in quote currency (e.g., USDT)",
+    )
 
 
 class StartLiveTradingRequest(BaseModel):

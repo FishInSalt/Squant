@@ -1,5 +1,11 @@
 import { get, post } from './index'
-import type { PaperSession, PaperTradingStatus, PaginatedData, EquityCurvePoint } from '@/types'
+import type {
+  PaperSession,
+  PaperTradingStatus,
+  PaginatedData,
+  EquityCurvePoint,
+  RiskConfig,
+} from '@/types'
 
 // 启动模拟交易
 export const startPaperTrading = (config: {
@@ -8,7 +14,9 @@ export const startPaperTrading = (config: {
   symbol: string
   timeframe: string
   initial_capital: number
+  commission_rate?: number
   params: Record<string, unknown>
+  risk_config?: RiskConfig
 }) =>
   post<PaperSession>('/paper', config)
 

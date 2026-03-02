@@ -112,6 +112,102 @@
             <!-- 滑点已由实时 bid/ask spread 模拟替代，后端使用默认值作为降级保护 -->
           </el-row>
 
+          <div class="risk-config-section">
+            <div class="risk-config-header">
+              <el-switch v-model="enableRiskConfig" size="small" />
+              <span class="risk-config-label">风控配置（可选）</span>
+            </div>
+            <div v-show="enableRiskConfig" class="risk-config-body">
+              <el-row :gutter="16">
+                <el-col :span="12">
+                  <el-form-item label="最大持仓比例">
+                    <el-input-number
+                      v-model="riskConfig.max_position_size"
+                      :min="0.01"
+                      :max="1"
+                      :step="0.1"
+                      :precision="2"
+                      style="width: 100%"
+                    />
+                  </el-form-item>
+                </el-col>
+                <el-col :span="12">
+                  <el-form-item label="最大单笔下单比例">
+                    <el-input-number
+                      v-model="riskConfig.max_order_size"
+                      :min="0.01"
+                      :max="1"
+                      :step="0.1"
+                      :precision="2"
+                      style="width: 100%"
+                    />
+                  </el-form-item>
+                </el-col>
+              </el-row>
+              <el-row :gutter="16">
+                <el-col :span="12">
+                  <el-form-item label="每日交易限制">
+                    <el-input-number
+                      v-model="riskConfig.daily_trade_limit"
+                      :min="1"
+                      :max="1000"
+                      style="width: 100%"
+                    />
+                  </el-form-item>
+                </el-col>
+                <el-col :span="12">
+                  <el-form-item label="日最大亏损比例">
+                    <el-input-number
+                      v-model="riskConfig.daily_loss_limit"
+                      :min="0.01"
+                      :max="1"
+                      :step="0.01"
+                      :precision="2"
+                      style="width: 100%"
+                    />
+                  </el-form-item>
+                </el-col>
+              </el-row>
+              <el-row :gutter="16">
+                <el-col :span="12">
+                  <el-form-item label="价格偏离限制">
+                    <el-input-number
+                      v-model="riskConfig.price_deviation_limit"
+                      :min="0.001"
+                      :max="0.5"
+                      :step="0.01"
+                      :precision="3"
+                      style="width: 100%"
+                    />
+                  </el-form-item>
+                </el-col>
+                <el-col :span="12">
+                  <el-form-item label="熔断触发次数">
+                    <el-input-number
+                      v-model="riskConfig.circuit_breaker_threshold"
+                      :min="1"
+                      :max="20"
+                      style="width: 100%"
+                    />
+                  </el-form-item>
+                </el-col>
+              </el-row>
+              <el-row :gutter="16">
+                <el-col :span="12">
+                  <el-form-item label="最小下单金额 (USDT)">
+                    <el-input-number
+                      v-model="riskConfig.min_order_value"
+                      :min="1"
+                      :max="100000"
+                      :step="5"
+                      style="width: 100%"
+                    />
+                  </el-form-item>
+                </el-col>
+              </el-row>
+            </div>
+          </div>
+
           <div v-if="selectedStrategy?.params_schema?.properties" class="params-section">
             <h4>策略参数</h4>
             <el-row :gutter="16">
@@ -251,6 +347,17 @@ const form = reactive({
   params: {} as Record<string, any>,
 })
 
+const enableRiskConfig = ref(false)
+const riskConfig = reactive({
+  max_position_size: 0.5,
+  max_order_size: 0.2,
+  daily_trade_limit: 50,
+  daily_loss_limit: 0.05,
+  price_deviation_limit: 0.02,
+  circuit_breaker_threshold: 3,
+  min_order_value: 10,
+})
+
 const rules: FormRules = {
   strategy_id: [{ required: true, message: '请选择策略', trigger: 'change' }],
   exchange: [{ required: true, message: '请选择交易所', trigger: 'change' }],
@@ -309,7 +416,7 @@ async function handleSubmit() {
 
   submitting.value = true
   try {
-    const config = {
+    const config: Record<string, unknown> = {
       strategy_id: form.strategy_id,
       exchange: form.exchange,
       symbol: form.symbol,
@@ -318,8 +425,12 @@ async function handleSubmit() {
       commission_rate: form.commission_rate / 100,
       params: form.params,
     }
+    if (enableRiskConfig.value) {
+      config.risk_config = { ...riskConfig }
+    }
 
-    const response = await startPaperTrading(config)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const response = await startPaperTrading(config as any)
     toastSuccess('模拟交易已启动')
     router.push(`/trading/monitor/paper/${response.data.id}`)
   } catch (error) {
@@ -375,6 +486,28 @@ onMounted(async () => {
     display: grid;
     grid-template-columns: 1fr 400px;
     gap: 24px;
+  }
+
+  .risk-config-section {
+    margin: 16px 0;
+    padding: 12px 0;
+    border-top: 1px solid #ebeef5;
+
+    .risk-config-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 12px;
+    }
+
+    .risk-config-label {
+      font-size: 14px;
+      color: #606266;
+    }
+
+    .risk-config-body {
+      padding-top: 4px;
+    }
   }
 
   .params-section {

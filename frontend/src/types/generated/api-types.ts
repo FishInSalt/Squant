@@ -4882,6 +4882,12 @@ export interface components {
              * @default 3
              */
             circuit_breaker_threshold: number;
+            /**
+             * Min Order Value
+             * @description Minimum order value in quote currency (e.g., USDT)
+             * @default 10
+             */
+            min_order_value: number | string;
         };
         /**
          * RiskRuleListItem

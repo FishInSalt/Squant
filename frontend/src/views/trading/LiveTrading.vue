@@ -202,6 +202,20 @@
             </el-col>
           </el-row>
 
+          <el-row :gutter="16">
+            <el-col :span="12">
+              <el-form-item label="最小下单金额 (USDT)">
+                <el-input-number
+                  v-model="form.risk_config.min_order_value"
+                  :min="1"
+                  :max="100000"
+                  :step="5"
+                  style="width: 100%"
+                />
+              </el-form-item>
+            </el-col>
+          </el-row>
+
           <div v-if="selectedStrategy?.params_schema?.properties" class="params-section">
             <el-divider>策略参数</el-divider>
             <el-row :gutter="16">
@@ -356,6 +370,7 @@ const form = reactive({
     daily_loss_limit: 0.05,
     price_deviation_limit: 0.02,
     circuit_breaker_threshold: 3,
+    min_order_value: 10,
   },
 })
 

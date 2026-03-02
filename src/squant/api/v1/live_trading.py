@@ -76,6 +76,7 @@ async def start_live_trading(
         daily_loss_limit=request.risk_config.daily_loss_limit,
         max_price_deviation=request.risk_config.price_deviation_limit,
         circuit_breaker_loss_count=request.risk_config.circuit_breaker_threshold,
+        min_order_value=request.risk_config.min_order_value,
     )
 
     try:

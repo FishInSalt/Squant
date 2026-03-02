@@ -104,6 +104,7 @@ class PaperTradingEngine:
             max_fills=settings.paper_max_fills,
             max_trades=settings.paper_max_trades,
             max_logs=settings.paper_max_logs,
+            min_order_value=risk_config.min_order_value if risk_config else Decimal("5"),
         )
 
         # Tick-level matching engine (paper-specific, not bar-level backtest engine)

@@ -177,6 +177,7 @@ export interface RiskConfig {
   daily_loss_limit: number
   price_deviation_limit?: number
   circuit_breaker_threshold?: number
+  min_order_value?: number
 }
 
 // 运行日志

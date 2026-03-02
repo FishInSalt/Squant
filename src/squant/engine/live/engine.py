@@ -160,6 +160,7 @@ class LiveTradingEngine:
             max_fills=settings.paper_max_fills,
             max_trades=settings.paper_max_trades,
             max_logs=settings.paper_max_logs,
+            min_order_value=risk_config.min_order_value,
         )
 
         # Risk manager
