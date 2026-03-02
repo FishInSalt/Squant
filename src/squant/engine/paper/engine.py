@@ -127,6 +127,7 @@ class PaperTradingEngine:
 
         # Engine state
         self._is_running = False
+        self._warming_up = False  # True during strategy warmup (IMP-009)
         self._started_at: datetime | None = None
         self._stopped_at: datetime | None = None
         self._error_message: str | None = None
@@ -337,7 +338,7 @@ class PaperTradingEngine:
         Args:
             candle: WebSocket candle data.
         """
-        if not self._is_running:
+        if not self._is_running or self._warming_up:
             return
 
         # Verify symbol matches

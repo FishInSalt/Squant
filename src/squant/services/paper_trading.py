@@ -926,9 +926,14 @@ class PaperTradingService:
             # Start engine (calls strategy.on_init())
             await engine.start()
 
-            # Warmup: replay historical bars through strategy to rebuild internal state
+            # Warmup: replay historical bars through strategy to rebuild internal state.
+            # Set _warming_up flag to prevent real-time candles from interleaving (IMP-009).
             if warmup_bars > 0:
-                await self._warmup_strategy(engine, run, warmup_bars)
+                engine._warming_up = True
+                try:
+                    await self._warmup_strategy(engine, run, warmup_bars)
+                finally:
+                    engine._warming_up = False
 
             # Update DB status to RUNNING
             run = await self.run_repo.update(
