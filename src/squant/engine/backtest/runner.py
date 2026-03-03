@@ -206,6 +206,7 @@ class BacktestRunner:
 
             # Inject Strategy base class into globals
             from squant.engine.backtest.strategy_base import Strategy as StrategyBase
+            from squant.engine.backtest import indicators as ta_module
             from squant.engine.backtest.types import (
                 Bar,
                 Fill,
@@ -222,6 +223,7 @@ class BacktestRunner:
             compiled.restricted_globals["OrderType"] = OrderType
             compiled.restricted_globals["Fill"] = Fill
             compiled.restricted_globals["OrderStatus"] = OrderStatus
+            compiled.restricted_globals["ta"] = ta_module
 
             # Execute the code to define the class
             local_namespace: dict[str, Any] = {}

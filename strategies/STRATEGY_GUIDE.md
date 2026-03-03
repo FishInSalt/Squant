@@ -12,18 +12,19 @@
 3. [策略参数](#3-策略参数)
 4. [K线数据 (Bar)](#4-k线数据-bar)
 5. [历史数据查询](#5-历史数据查询)
-6. [账户状态查询](#6-账户状态查询)
-7. [持仓管理](#7-持仓管理)
-8. [下单接口](#8-下单接口)
-9. [订单类型详解](#9-订单类型详解)
-10. [订单生命周期](#10-订单生命周期)
-11. [成交价格机制](#11-成交价格机制)
-12. [风险管理](#12-风险管理)
-13. [沙箱环境与限制](#13-沙箱环境与限制)
-14. [常见策略模式](#14-常见策略模式)
-15. [注意事项与陷阱](#15-注意事项与陷阱)
-16. [完整策略模板](#16-完整策略模板)
-17. [绩效指标](#17-绩效指标)
+6. [内置技术指标 (ta)](#6-内置技术指标-ta)
+7. [账户状态查询](#7-账户状态查询)
+8. [持仓管理](#8-持仓管理)
+9. [下单接口](#9-下单接口)
+10. [订单类型详解](#10-订单类型详解)
+11. [订单生命周期](#11-订单生命周期)
+12. [成交价格机制](#12-成交价格机制)
+13. [风险管理](#13-风险管理)
+14. [沙箱环境与限制](#14-沙箱环境与限制)
+15. [常见策略模式](#15-常见策略模式)
+16. [注意事项与陷阱](#16-注意事项与陷阱)
+17. [完整策略模板](#17-完整策略模板)
+18. [绩效指标](#18-绩效指标)
 
 ---
 
@@ -232,7 +233,91 @@ def on_bar(self, bar):
 
 ---
 
-## 6. 账户状态查询
+## 6. 内置技术指标 (ta)
+
+系统内置了 `ta` 模块，提供常用技术指标的纯函数实现。所有函数接收 `list[Decimal]`
+参数（与 `ctx.get_closes()` 等返回值兼容），返回 `Decimal` 或 `None`（数据不足时）。
+
+`ta` 模块在沙箱中自动注入，无需导入。
+
+### 指标一览
+
+| 函数 | 签名 | 返回值 | 说明 |
+|------|------|--------|------|
+| `ta.sma` | `(data, period)` | `Decimal \| None` | 简单移动平均 |
+| `ta.ema` | `(data, period)` | `Decimal \| None` | 指数移动平均 |
+| `ta.rsi` | `(data, period=14)` | `Decimal \| None` | 相对强弱指数 (0-100) |
+| `ta.macd` | `(data, fast=12, slow=26, signal=9)` | `tuple \| None` | MACD (macd_line, signal_line, histogram) |
+| `ta.bollinger_bands` | `(data, period=20, num_std=2)` | `tuple \| None` | 布林带 (upper, middle, lower) |
+| `ta.atr` | `(highs, lows, closes, period=14)` | `Decimal \| None` | 平均真实波幅 |
+| `ta.stdev` | `(data, period)` | `Decimal \| None` | 总体标准差 |
+| `ta.highest` | `(data, period)` | `Decimal \| None` | 区间最高值 |
+| `ta.lowest` | `(data, period)` | `Decimal \| None` | 区间最低值 |
+| `ta.crossover` | `(fast, slow)` | `bool` | 快线上穿慢线 |
+| `ta.crossunder` | `(fast, slow)` | `bool` | 快线下穿慢线 |
+
+### 使用示例
+
+```python
+class TADemoStrategy(Strategy):
+    def on_bar(self, bar):
+        closes = self.ctx.get_closes(50)
+        if len(closes) < 26:
+            return
+
+        # 移动平均
+        sma20 = ta.sma(closes, 20)
+        ema10 = ta.ema(closes, 10)
+
+        # RSI
+        rsi_val = ta.rsi(closes, 14)
+        if rsi_val is not None and rsi_val < Decimal("30"):
+            self.ctx.log("RSI 超卖")
+
+        # MACD
+        result = ta.macd(closes)
+        if result is not None:
+            macd_line, signal_line, histogram = result
+            if histogram > 0:
+                self.ctx.log("MACD 多头")
+
+        # 布林带
+        bb = ta.bollinger_bands(closes, 20)
+        if bb is not None:
+            upper, middle, lower = bb
+            if bar.close < lower:
+                self.ctx.log("价格触及布林带下轨")
+
+        # ATR（需要高低价数据）
+        highs = self.ctx.get_highs(20)
+        lows = self.ctx.get_lows(20)
+        atr_val = ta.atr(highs, lows, closes[-20:], 14)
+
+        # 区间极值
+        high_20 = ta.highest(closes, 20)
+        low_20 = ta.lowest(closes, 20)
+
+        # 均线交叉
+        fast_ma = [ta.sma(closes[:i], 5) for i in range(len(closes)-1, len(closes)+1)]
+        slow_ma = [ta.sma(closes[:i], 20) for i in range(len(closes)-1, len(closes)+1)]
+        if None not in fast_ma and None not in slow_ma:
+            if ta.crossover(fast_ma, slow_ma):
+                self.ctx.buy(bar.symbol, Decimal("0.01"))
+            elif ta.crossunder(fast_ma, slow_ma):
+                self.ctx.close_position(bar.symbol)
+```
+
+### 注意事项
+
+- **数据不足时返回 None**：所有指标在数据不足时返回 `None`，务必检查。
+- **数据顺序**：所有数据列表必须按时间从旧到新排列（与 `ctx.get_closes()` 一致）。
+- **ATR 需要三个序列**：`ta.atr()` 需要分别传入 highs、lows、closes。
+- **MACD 需要较多数据**：默认参数 `(12, 26, 9)` 至少需要 34 根K线。
+- **crossover/crossunder 需要序列**：传入至少 2 个值的列表，用于比较相邻两期。
+
+---
+
+## 7. 账户状态查询
 
 | 属性/方法 | 类型 | 说明 |
 |-----------|------|------|
@@ -275,7 +360,7 @@ def on_bar(self, bar):
 
 ---
 
-## 7. 持仓管理
+## 8. 持仓管理
 
 本系统仅支持**现货交易**，不支持做空。
 
@@ -308,9 +393,9 @@ all_positions = self.ctx.positions  # dict[str, Position]
 
 ---
 
-## 8. 下单接口
+## 9. 下单接口
 
-### 8.1 买入 — `self.ctx.buy()`
+### 9.1 买入 — `self.ctx.buy()`
 
 ```python
 order_id = self.ctx.buy(
@@ -324,7 +409,7 @@ order_id = self.ctx.buy(
 # 抛出: ValueError — 数量 ≤ 0 或资金不足
 ```
 
-### 8.2 卖出 — `self.ctx.sell()`
+### 9.2 卖出 — `self.ctx.sell()`
 
 ```python
 order_id = self.ctx.sell(
@@ -338,13 +423,13 @@ order_id = self.ctx.sell(
 # 抛出: ValueError — 数量 ≤ 0 或超出可卖持仓
 ```
 
-### 8.3 取消订单 — `self.ctx.cancel_order()`
+### 9.3 取消订单 — `self.ctx.cancel_order()`
 
 ```python
 success = self.ctx.cancel_order(order_id)  # bool: True=取消成功
 ```
 
-### 8.4 查询订单 — `self.ctx.get_order()`
+### 9.4 查询订单 — `self.ctx.get_order()`
 
 ```python
 order = self.ctx.get_order(order_id)  # SimulatedOrder | None
@@ -358,7 +443,7 @@ if order:
     # order.is_complete   — 是否已结束 (filled 或 cancelled)
 ```
 
-### 8.5 一键平仓 — `self.ctx.close_position()`
+### 9.5 一键平仓 — `self.ctx.close_position()`
 
 ```python
 order_id = self.ctx.close_position(symbol)
@@ -374,7 +459,7 @@ if pos:
     self.ctx.sell(bar.symbol, pos.amount)
 ```
 
-### 8.6 目标持仓 — `self.ctx.target_position()`
+### 9.6 目标持仓 — `self.ctx.target_position()`
 
 ```python
 order_id = self.ctx.target_position(symbol, target_amount)
@@ -393,7 +478,7 @@ self.ctx.target_position(bar.symbol, Decimal("0.5"))
 self.ctx.target_position(bar.symbol, Decimal("0"))
 ```
 
-### 8.7 目标比例 — `self.ctx.target_percent()`
+### 9.7 目标比例 — `self.ctx.target_percent()`
 
 ```python
 order_id = self.ctx.target_percent(symbol, percent)
@@ -413,7 +498,7 @@ self.ctx.target_percent(bar.symbol, Decimal("0"))
 
 ---
 
-## 9. 订单类型详解
+## 10. 订单类型详解
 
 通过 `price` 和 `stop_price` 参数组合自动推断订单类型：
 
@@ -424,7 +509,7 @@ self.ctx.target_percent(bar.symbol, Decimal("0"))
 | `None` | 设定 | **止损单** (STOP) | 触发后按市价成交 |
 | 设定 | 设定 | **止损限价单** (STOP_LIMIT) | 触发后变为限价单 |
 
-### 9.1 市价单 (MARKET)
+### 10.1 市价单 (MARKET)
 
 最简单的订单类型，在下一根K线（回测）或当前 tick（模拟）成交。
 
@@ -438,7 +523,7 @@ if pos:
     self.ctx.sell(bar.symbol, pos.amount)
 ```
 
-### 9.2 限价单 (LIMIT)
+### 10.2 限价单 (LIMIT)
 
 设定目标价格，价格到达时成交。可能享受跳空改善价。
 
@@ -463,7 +548,7 @@ self.ctx.buy(bar.symbol, Decimal("0.1"), price=Decimal("49000"), valid_for_bars=
   - 买入：`fill_price = min(limit_price, bar.open)`
   - 卖出：`fill_price = max(limit_price, bar.open)`
 
-### 9.3 止损单 (STOP)
+### 10.3 止损单 (STOP)
 
 当价格突破止损价时，触发市价成交。**常用于保护利润或限制亏损。**
 
@@ -486,7 +571,7 @@ self.ctx.buy(bar.symbol, Decimal("0.1"), stop_price=Decimal("52000"))
 - 卖出：`min(stop_price, bar.open) × (1 - slippage)`
 - 如果开盘即跳空过止损价，以跳空价成交（更差）
 
-### 9.4 止损限价单 (STOP_LIMIT)
+### 10.4 止损限价单 (STOP_LIMIT)
 
 两阶段订单：先触发止损，然后变为限价单等待成交。
 **防止在极端行情中以过差的价格成交。**
@@ -521,7 +606,7 @@ self.ctx.buy(
 
 ---
 
-## 10. 订单生命周期
+## 11. 订单生命周期
 
 ```
               ┌── 成交 → FILLED
@@ -610,7 +695,7 @@ def on_order_done(self, order):
 
 ---
 
-## 11. 成交价格机制
+## 12. 成交价格机制
 
 ### 回测模式
 
@@ -659,7 +744,7 @@ if order_id is None:
 
 ---
 
-## 12. 风险管理
+## 13. 风险管理
 
 风险管理在模拟交易和实盘交易中可选启用。
 当配置了风控参数时，每笔成交前都会进行风控检查，违规订单会被取消。
@@ -694,7 +779,7 @@ if order_id is None:
 
 ---
 
-## 13. 沙箱环境与限制
+## 14. 沙箱环境与限制
 
 策略在安全沙箱中运行，以下内容**自动注入**，无需导入：
 
@@ -707,6 +792,7 @@ if order_id is None:
 | `OrderSide` | `OrderSide.BUY`, `OrderSide.SELL` |
 | `OrderType` | `OrderType.MARKET`, `LIMIT`, `STOP`, `STOP_LIMIT` |
 | `OrderStatus` | `OrderStatus.PENDING`, `FILLED`, `CANCELLED`（用于 `on_order_done`）|
+| `ta` | 内置技术指标模块（详见[第 6 节](#6-内置技术指标-ta)）|
 | `Decimal` | 精确小数 |
 | `math` | 数学函数模块（部分函数） |
 
@@ -743,9 +829,9 @@ if order_id is None:
 
 ---
 
-## 14. 常见策略模式
+## 15. 常见策略模式
 
-### 14.1 均线交叉策略
+### 15.1 均线交叉策略（使用 ta 模块）
 
 ```python
 class MACrossStrategy(Strategy):
@@ -753,35 +839,37 @@ class MACrossStrategy(Strategy):
         self.fast = self.ctx.params.get("fast", 5)
         self.slow = self.ctx.params.get("slow", 20)
         self.amount = Decimal(str(self.ctx.params.get("amount", "0.01")))
-        self.prev_fast = None
-        self.prev_slow = None
+        self.prev_fast_ma = None
+        self.prev_slow_ma = None
 
     def on_bar(self, bar):
-        closes = self.ctx.get_closes(self.slow)
+        closes = self.ctx.get_closes(self.slow + 1)
         if len(closes) < self.slow:
             return
 
-        fast_ma = sum(closes[-self.fast:]) / self.fast
-        slow_ma = sum(closes) / self.slow
+        fast_ma = ta.sma(closes, self.fast)
+        slow_ma = ta.sma(closes, self.slow)
+        if fast_ma is None or slow_ma is None:
+            return
 
-        if self.prev_fast is not None:
+        if self.prev_fast_ma is not None:
             pos = self.ctx.get_position(bar.symbol)
 
             # 金叉买入
-            if self.prev_fast < self.prev_slow and fast_ma > slow_ma:
+            if self.prev_fast_ma < self.prev_slow_ma and fast_ma > slow_ma:
                 if not pos:
                     self.ctx.buy(bar.symbol, self.amount)
 
             # 死叉卖出
-            elif self.prev_fast > self.prev_slow and fast_ma < slow_ma:
+            elif self.prev_fast_ma > self.prev_slow_ma and fast_ma < slow_ma:
                 if pos:
                     self.ctx.sell(bar.symbol, pos.amount)
 
-        self.prev_fast = fast_ma
-        self.prev_slow = slow_ma
+        self.prev_fast_ma = fast_ma
+        self.prev_slow_ma = slow_ma
 ```
 
-### 14.2 带止损止盈的策略
+### 15.2 带止损止盈的策略
 
 ```python
 class StopLossStrategy(Strategy):
@@ -845,7 +933,7 @@ class StopLossStrategy(Strategy):
                     self.ctx.log(f"止盈触发 @ {tp_order.avg_fill_price}")
 ```
 
-### 14.3 基于权益比例的仓位管理
+### 15.3 基于权益比例的仓位管理
 
 ```python
 class PositionSizingStrategy(Strategy):
@@ -884,7 +972,7 @@ class PositionSizingStrategy(Strategy):
         pass
 ```
 
-### 14.4 网格交易策略
+### 15.4 网格交易策略
 
 ```python
 class GridStrategy(Strategy):
@@ -936,7 +1024,7 @@ class GridStrategy(Strategy):
         self.ctx.log(f"网格策略停止, 基准价: {self.base_price}")
 ```
 
-### 14.5 追踪止损
+### 15.5 追踪止损
 
 ```python
 class TrailingStopStrategy(Strategy):
@@ -1000,9 +1088,9 @@ class TrailingStopStrategy(Strategy):
 
 ---
 
-## 15. 注意事项与陷阱
+## 16. 注意事项与陷阱
 
-### 15.1 市价单在回测中延迟一根K线成交
+### 16.1 市价单在回测中延迟一根K线成交
 
 ```python
 # ❌ 错误认知
@@ -1021,7 +1109,7 @@ def on_bar(self, bar):
         pos = self.ctx.get_position(bar.symbol)
 ```
 
-### 15.2 资金预留 — 多个挂单的资金冲突
+### 16.2 资金预留 — 多个挂单的资金冲突
 
 ```python
 # ❌ 可能导致 ValueError: Insufficient cash
@@ -1038,7 +1126,7 @@ def on_bar(self, bar):
     self.ctx.buy(bar.symbol, per_order, price=Decimal("48000"))
 ```
 
-### 15.3 卖出不能超过持仓
+### 16.3 卖出不能超过持仓
 
 ```python
 # ❌ 同时挂两个卖出单，总量超过持仓
@@ -1055,7 +1143,7 @@ if pos:
     self.ctx.sell(bar.symbol, half, price=Decimal("55000"))
 ```
 
-### 15.4 Decimal 类型
+### 16.4 Decimal 类型
 
 ```python
 # ❌ 使用 float 会导致精度问题
@@ -1068,7 +1156,7 @@ amount = Decimal("0.1")
 amount = Decimal(str(self.ctx.params.get("amount", "0.1")))
 ```
 
-### 15.5 buy() 返回 None 不是异常
+### 16.5 buy() 返回 None 不是异常
 
 ```python
 # ❌ 忽略返回值
@@ -1081,20 +1169,20 @@ if order_id is None:
     self.ctx.log("订单被拒绝（金额过小）")
 ```
 
-### 15.6 权益快照在 on_bar 之前记录
+### 16.6 权益快照在 on_bar 之前记录
 
 权益曲线中的快照反映的是**策略决策之前**的状态。
 这意味着当你在 `on_bar()` 中买入后，该笔订单的成交
 不会反映在当前K线的权益快照中，而是在下一根。
 
-### 15.7 止损/止盈配对管理
+### 16.7 止损/止盈配对管理
 
 同时挂止损和止盈单时，一个成交后必须手动取消另一个，
 否则可能导致意外交易（见 14.2 示例）。
 
 ---
 
-## 16. 完整策略模板
+## 17. 完整策略模板
 
 ```python
 """策略名称和简要描述。
@@ -1174,7 +1262,7 @@ class MyStrategy(Strategy):
 
 ---
 
-## 17. 绩效指标
+## 18. 绩效指标
 
 回测和模拟交易完成后，系统自动计算以下绩效指标：
 
