@@ -686,16 +686,25 @@ def on_order_done(self, order):
     - order.filled_amount, order.filled_price, order.filled_at
     """
     # 示例：OCO 管理 — 一侧完成后取消另一侧
+    # 注意：回调内 cancel_order 的目标订单不会在本轮触发 on_order_done，
+    # 必须在此处同步清理对侧 ID，否则策略状态会卡死。
     if order.status == OrderStatus.FILLED and order.id == self.take_profit_id:
         self.ctx.cancel_order(self.stop_loss_id)
+        self.take_profit_id = None
+        self.stop_loss_id = None
     elif order.status == OrderStatus.FILLED and order.id == self.stop_loss_id:
         self.ctx.cancel_order(self.take_profit_id)
+        self.stop_loss_id = None
+        self.take_profit_id = None
 ```
 
 **注意事项**：
 - 回调中下的订单同样在**下一根K线**成交
 - 回调中抛出的异常会被捕获并记录，**不会**导致策略崩溃
 - 沙箱中可使用 `Fill` 和 `OrderStatus` 类型进行类型检查
+- **回调内 `cancel_order()` 的关键限制**：在 `on_order_done` 中取消的订单，
+  其 `on_order_done` **不会**在本轮触发（回调列表在循环前已固定）。
+  因此在取消对侧订单时，**必须同步清理本地 ID**，否则策略状态会卡死
 - RestrictedPython 限制：不能使用 `+=` 等增量赋值，需写成 `self.x = self.x + 1`
 
 ---
@@ -917,20 +926,24 @@ class StopLossStrategy(Strategy):
 
     def on_order_done(self, order):
         # OCO 管理：一侧完成后取消另一侧
+        # 注意：cancel_order() 在回调内调用时，被取消订单的 on_order_done
+        # 不会在本轮触发，因此必须在此处同步清理对侧 ID。
         if order.status == OrderStatus.FILLED:
             if order.id == self.stop_order_id:
+                self.stop_order_id = None
                 if self.tp_order_id:
                     self.ctx.cancel_order(self.tp_order_id)
+                    self.tp_order_id = None
                 self.ctx.log(f"止损触发 @ {order.filled_price}")
             elif order.id == self.tp_order_id:
+                self.tp_order_id = None
                 if self.stop_order_id:
                     self.ctx.cancel_order(self.stop_order_id)
+                    self.stop_order_id = None
                 self.ctx.log(f"止盈触发 @ {order.filled_price}")
-
-        # 不论成交还是取消，重置 ID
-        if order.id == self.stop_order_id:
+        elif order.id == self.stop_order_id:
             self.stop_order_id = None
-        if order.id == self.tp_order_id:
+        elif order.id == self.tp_order_id:
             self.tp_order_id = None
 
     def on_bar(self, bar):
