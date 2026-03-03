@@ -205,8 +205,8 @@ class BacktestRunner:
             compiled = compile_strategy(self.strategy_code)
 
             # Inject Strategy base class into globals
-            from squant.engine.backtest.strategy_base import Strategy as StrategyBase
             from squant.engine.backtest import indicators as ta_module
+            from squant.engine.backtest.strategy_base import Strategy as StrategyBase
             from squant.engine.backtest.types import (
                 Bar,
                 Fill,

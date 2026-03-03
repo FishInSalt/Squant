@@ -2001,7 +2001,8 @@ class TestStopOrderContextAPI:
         context._set_current_bar(bar)
 
         # Give a position first
-        from squant.engine.backtest.types import Fill, OrderSide as Side
+        from squant.engine.backtest.types import Fill
+        from squant.engine.backtest.types import OrderSide as Side
 
         context._process_fill(Fill(
             order_id="fake",
