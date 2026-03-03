@@ -461,6 +461,43 @@ def _build_restricted_globals() -> dict[str, Any]:
 
     restricted_builtins["math"] = _restricted_math
 
+    # Add restricted statistics module for statistical analysis (IMP-P2-8)
+    # statistics is a pure-Python module with no I/O or system access — safe for sandbox.
+    import statistics
+
+    _SAFE_STATISTICS_ATTRS = frozenset(
+        {
+            "mean",
+            "fmean",
+            "harmonic_mean",
+            "median",
+            "median_low",
+            "median_high",
+            "mode",
+            "multimode",
+            "pstdev",
+            "pvariance",
+            "stdev",
+            "variance",
+            "quantiles",
+            "correlation",
+            "covariance",
+            "linear_regression",
+        }
+    )
+
+    class _RestrictedStatistics:
+        """Proxy that exposes only safe statistics functions."""
+
+        pass
+
+    _restricted_statistics = _RestrictedStatistics()
+    for _attr in _SAFE_STATISTICS_ATTRS:
+        if hasattr(statistics, _attr):
+            setattr(_restricted_statistics, _attr, getattr(statistics, _attr))
+
+    restricted_builtins["statistics"] = _restricted_statistics
+
     # Build globals with guards
     restricted_globals = {
         "__builtins__": restricted_builtins,
@@ -577,6 +614,7 @@ def _strip_sandbox_imports(code: str) -> str:
         "from squant.engine.backtest.types import Position",
         "from decimal import Decimal",
         "import math",
+        "import statistics",
     }
     lines = code.split("\n")
     cleaned = [line for line in lines if line.strip() not in sandbox_imports]

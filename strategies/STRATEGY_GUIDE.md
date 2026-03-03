@@ -795,6 +795,7 @@ if order_id is None:
 | `ta` | 内置技术指标模块（详见[第 6 节](#6-内置技术指标-ta)）|
 | `Decimal` | 精确小数 |
 | `math` | 数学函数模块（部分函数） |
+| `statistics` | 统计函数模块（mean, median, stdev 等） |
 
 ### 可用内置函数
 
@@ -811,6 +812,22 @@ if order_id is None:
 常数: `pi`, `e`, `inf`, `nan`
 
 **不可用**（防止 DoS）: `factorial`, `comb`, `perm`, `gcd`
+
+### 可用 statistics 函数
+
+集中趋势: `mean`, `fmean`, `harmonic_mean`, `median`, `median_low`, `median_high`, `mode`, `multimode`
+离散度: `stdev`, `variance`, `pstdev`, `pvariance`, `quantiles`
+相关性: `correlation`, `covariance`, `linear_regression`
+
+```python
+# 在策略中使用 statistics 模块
+closes = self.ctx.get_closes(20)
+if len(closes) >= 20:
+    avg = statistics.mean(closes)
+    med = statistics.median(closes)
+    sd = statistics.stdev(closes)
+    self.ctx.log(f"均值={avg}, 中位数={med}, 标准差={sd:.2f}")
+```
 
 ### 禁止事项
 

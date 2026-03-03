@@ -1202,6 +1202,37 @@ class AttackStrategy(Strategy):
         assert not hasattr(restricted_math, "gcd")
         assert not hasattr(restricted_math, "lcm")
 
+    def test_restricted_statistics_safe_functions_accessible(self):
+        """Test restricted statistics allows safe functions (IMP-P2-8)."""
+        globals_dict = _build_restricted_globals()
+        builtins = globals_dict["__builtins__"]
+        restricted_stats = builtins["statistics"]
+
+        import statistics
+
+        # Verify safe functions work correctly
+        data = [1, 2, 3, 4, 5]
+        assert restricted_stats.mean(data) == statistics.mean(data)
+        assert restricted_stats.median(data) == statistics.median(data)
+        assert restricted_stats.stdev(data) == statistics.stdev(data)
+        assert restricted_stats.pstdev(data) == statistics.pstdev(data)
+        assert restricted_stats.variance(data) == statistics.variance(data)
+        assert restricted_stats.pvariance(data) == statistics.pvariance(data)
+
+    def test_statistics_usable_in_strategy_sandbox(self):
+        """Test that statistics module works end-to-end in strategy code (IMP-P2-8)."""
+        code = """
+class StatsStrategy(Strategy):
+    def on_bar(self, bar):
+        data = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+        avg = statistics.mean(data)
+        med = statistics.median(data)
+        sd = statistics.stdev(data)
+        self.ctx.log(f"mean={avg} median={med} stdev={sd:.2f}")
+"""
+        compiled = compile_strategy(code)
+        assert compiled.code_object is not None
+
     def test_object_subclasses_blocked_by_attribute_guard(self):
         """Test that object.__subclasses__() is blocked by RestrictedPython.
 
