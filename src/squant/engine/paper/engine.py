@@ -861,6 +861,55 @@ class PaperTradingEngine:
             completed_trade = self._context._trades[-1]
             self._risk_manager.record_trade_result(completed_trade.pnl)
 
+        # Emit real-time fill event via WebSocket (best-effort, never block engine)
+        if self._on_event and not self._warming_up:
+            try:
+                event = self._build_fill_event(fill)
+                loop = asyncio.get_running_loop()
+                loop.create_task(self._on_event(event))
+            except Exception:
+                pass
+
+    def _build_fill_event(self, fill: Any) -> dict[str, Any]:
+        """Build a real-time fill event for immediate WebSocket push.
+
+        Emitted from _process_fill_safe() on every successful fill, allowing
+        the frontend to update scalar state (cash, equity, positions) immediately
+        instead of waiting for bar close. The fill detail is included for toast
+        notifications; the authoritative fills list is still delivered via
+        bar_update's new_fills at bar close.
+        """
+        ctx = self._context
+        return {
+            "event": "fill",
+            "run_id": str(self._run_id),
+            "fill": _serialize_fill(fill),
+            "cash": str(ctx._cash),
+            "equity": str(ctx.equity),
+            "unrealized_pnl": str(ctx._get_unrealized_pnl()),
+            "positions": {
+                sym: {
+                    "amount": str(pos.amount),
+                    "avg_entry_price": str(pos.avg_entry_price),
+                }
+                for sym, pos in ctx._positions.items()
+                if pos.amount != 0
+            },
+            "pending_orders": [
+                {
+                    "id": o.id,
+                    "symbol": o.symbol,
+                    "side": o.side.value,
+                    "type": o.type.value,
+                    "amount": str(o.amount),
+                    "price": str(o.price) if o.price else None,
+                    "status": o.status.value,
+                }
+                for o in ctx._pending_orders
+            ],
+            "open_trade": _serialize_open_trade(ctx._open_trade),
+        }
+
     def _candle_to_bar(self, candle: WSCandle) -> Bar:
         """Convert WSCandle to Bar.
 

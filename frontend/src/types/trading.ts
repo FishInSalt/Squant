@@ -328,4 +328,24 @@ export interface TradingEngineStopped {
   stopped_at?: string
 }
 
-export type TradingStatusEvent = TradingBarUpdate | TradingEngineStopped
+export interface TradingFillEvent {
+  event: 'fill'
+  run_id: string
+  fill: {
+    order_id: string
+    symbol: string
+    side: string
+    price: string
+    amount: string
+    fee: string
+    timestamp: string | null
+  }
+  cash: string
+  equity: string
+  unrealized_pnl: string
+  positions: Record<string, { amount: string; avg_entry_price: string }>
+  pending_orders: PendingOrderInfo[]
+  open_trade?: OpenTrade
+}
+
+export type TradingStatusEvent = TradingBarUpdate | TradingEngineStopped | TradingFillEvent

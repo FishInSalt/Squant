@@ -246,6 +246,157 @@ class TestEngineStoppedEvent:
         assert stopped_events[0]["error_message"] == "Test error"
 
 
+class TestFillEvent:
+    """Tests for real-time fill event emission."""
+
+    async def test_fill_event_emitted_on_intrabar_fill(self, run_id, on_event_mock):
+        """Test that fill event is emitted when an order fills on an unclosed candle."""
+        strategy = SimpleStrategy()
+        engine = PaperTradingEngine(
+            run_id=run_id,
+            strategy=strategy,
+            symbol="BTC/USDT",
+            timeframe="1m",
+            initial_capital=Decimal("10000"),
+            commission_rate=Decimal("0.001"),
+            slippage=Decimal("0"),
+            params={"threshold": Decimal("60000")},
+            on_event=on_event_mock,
+        )
+        await engine.start()
+
+        # First closed candle — strategy places a buy order
+        t1 = datetime(2024, 1, 1, 0, 0, tzinfo=UTC)
+        candle1 = make_candle(timestamp=t1, close=Decimal("50000"))
+        await engine.process_candle(candle1)
+
+        # bar_update emitted, reset mock to isolate fill events
+        on_event_mock.reset_mock()
+
+        # Second candle, UNCLOSED — pending buy order gets filled intrabar
+        t2 = t1 + timedelta(minutes=1)
+        candle2 = make_candle(timestamp=t2, close=Decimal("50100"), is_closed=False)
+        await engine.process_candle(candle2)
+
+        # A fill event should have been emitted (not bar_update, since candle is unclosed)
+        assert on_event_mock.call_count >= 1
+        fill_events = [
+            call.args[0]
+            for call in on_event_mock.call_args_list
+            if call.args[0].get("event") == "fill"
+        ]
+        assert len(fill_events) == 1
+        event = fill_events[0]
+        assert event["run_id"] == str(run_id)
+        assert event["fill"]["side"] == "buy"
+        assert "cash" in event
+        assert "equity" in event
+        assert "unrealized_pnl" in event
+        assert "positions" in event
+        assert "pending_orders" in event
+        assert "open_trade" in event
+
+    async def test_fill_event_contains_correct_scalar_state(self, run_id, on_event_mock):
+        """Test that fill event scalar state reflects post-fill values."""
+        strategy = SimpleStrategy()
+        engine = PaperTradingEngine(
+            run_id=run_id,
+            strategy=strategy,
+            symbol="BTC/USDT",
+            timeframe="1m",
+            initial_capital=Decimal("10000"),
+            commission_rate=Decimal("0.001"),
+            slippage=Decimal("0"),
+            params={"threshold": Decimal("60000")},
+            on_event=on_event_mock,
+        )
+        await engine.start()
+
+        # Place order via closed candle
+        t1 = datetime(2024, 1, 1, 0, 0, tzinfo=UTC)
+        candle1 = make_candle(timestamp=t1, close=Decimal("50000"))
+        await engine.process_candle(candle1)
+        on_event_mock.reset_mock()
+
+        # Fill via unclosed candle
+        t2 = t1 + timedelta(minutes=1)
+        candle2 = make_candle(timestamp=t2, close=Decimal("50100"), is_closed=False)
+        await engine.process_candle(candle2)
+
+        fill_events = [
+            call.args[0]
+            for call in on_event_mock.call_args_list
+            if call.args[0].get("event") == "fill"
+        ]
+        assert len(fill_events) == 1
+        event = fill_events[0]
+
+        # Cash should have decreased (bought 0.1 BTC)
+        cash = Decimal(event["cash"])
+        assert cash < Decimal("10000")
+
+        # Should have a position
+        assert "BTC/USDT" in event["positions"]
+        assert Decimal(event["positions"]["BTC/USDT"]["amount"]) == Decimal("0.1")
+
+    async def test_fill_event_not_emitted_during_warmup(self, run_id, on_event_mock):
+        """Test that fill events are suppressed during warmup phase."""
+        strategy = SimpleStrategy()
+        engine = PaperTradingEngine(
+            run_id=run_id,
+            strategy=strategy,
+            symbol="BTC/USDT",
+            timeframe="1m",
+            initial_capital=Decimal("10000"),
+            commission_rate=Decimal("0.001"),
+            slippage=Decimal("0"),
+            params={"threshold": Decimal("60000")},
+            on_event=on_event_mock,
+        )
+        await engine.start()
+
+        # Set warmup flag
+        engine._warming_up = True
+
+        # Process candle - no events at all (process_candle returns early during warmup)
+        t1 = datetime(2024, 1, 1, 0, 0, tzinfo=UTC)
+        candle1 = make_candle(timestamp=t1, close=Decimal("50000"))
+        await engine.process_candle(candle1)
+
+        on_event_mock.assert_not_called()
+
+    async def test_fill_event_callback_error_does_not_break_engine(self, run_id):
+        """Test that an error in the on_event callback doesn't crash the engine."""
+        error_callback = AsyncMock(side_effect=Exception("callback failed"))
+
+        strategy = SimpleStrategy()
+        engine = PaperTradingEngine(
+            run_id=run_id,
+            strategy=strategy,
+            symbol="BTC/USDT",
+            timeframe="1m",
+            initial_capital=Decimal("10000"),
+            commission_rate=Decimal("0.001"),
+            slippage=Decimal("0"),
+            params={"threshold": Decimal("60000")},
+            on_event=error_callback,
+        )
+        await engine.start()
+
+        # Place order via closed candle
+        t1 = datetime(2024, 1, 1, 0, 0, tzinfo=UTC)
+        candle1 = make_candle(timestamp=t1, close=Decimal("50000"))
+        await engine.process_candle(candle1)
+
+        # Fill via unclosed candle — callback will raise, but engine should survive
+        t2 = t1 + timedelta(minutes=1)
+        candle2 = make_candle(timestamp=t2, close=Decimal("50100"), is_closed=False)
+        await engine.process_candle(candle2)
+
+        # Engine should still be running
+        assert engine.is_running is True
+
+
 class TestNoEventCallback:
     """Tests to ensure engine works without on_event callback."""
 

@@ -742,6 +742,31 @@ function handleTradingEvent(data: Record<string, unknown>) {
 
     // Trigger incremental equity curve load
     loadEquityCurve(true)
+  } else if (eventType === 'fill') {
+    // Real-time fill event: update scalar state immediately (no fills list append —
+    // authoritative fills list comes via bar_update's new_fills at bar close)
+    status.value.cash = parseFloat(data.cash as string)
+    status.value.equity = parseFloat(data.equity as string)
+    status.value.unrealized_pnl = parseFloat(data.unrealized_pnl as string)
+
+    const rawPositions = data.positions as Record<string, { amount: string; avg_entry_price: string }> | undefined
+    if (rawPositions) {
+      const parsed: Record<string, Position> = {}
+      for (const [sym, pos] of Object.entries(rawPositions)) {
+        parsed[sym] = {
+          amount: parseFloat(pos.amount),
+          avg_entry_price: parseFloat(pos.avg_entry_price),
+        }
+      }
+      status.value.positions = parsed
+    }
+
+    status.value.pending_orders = (data.pending_orders as PendingOrderInfo[]) || []
+
+    if (isPaper.value) {
+      const ps = status.value as PaperTradingStatus
+      ps.open_trade = data.open_trade as OpenTrade | undefined
+    }
   } else if (eventType === 'engine_stopped') {
     status.value.is_running = false
     if (data.error_message) {
