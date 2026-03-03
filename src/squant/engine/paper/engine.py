@@ -504,6 +504,11 @@ class PaperTradingEngine:
                     if not persisted:
                         self._pending_snapshots.append(latest_snapshot)
 
+                # 6b. Sync ticker ask to context for accurate market order cost
+                # estimation in strategy.buy() — prevents underestimating cost
+                # when ask exceeds close*(1+slippage).
+                self._context._ref_ask = self._latest_ask
+
                 # 7. Call strategy on_bar with resource limits (STR-013)
                 from squant.config import get_settings
 

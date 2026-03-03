@@ -120,6 +120,10 @@ class BacktestContext:
         # Price cache for multi-symbol equity calculation
         self._last_prices: dict[str, Decimal] = {}
 
+        # Latest ask price from ticker (set by paper engine for better market order
+        # cost estimation; None in backtest where ticker data is unavailable)
+        self._ref_ask: Decimal | None = None
+
     # =========================================================================
     # Public Properties
     # =========================================================================
@@ -269,13 +273,14 @@ class BacktestContext:
                 * (1 + self._commission_rate)
             )
         elif self._current_bar:
-            # Market order: estimate using current bar's close price + slippage
-            estimated_cost = (
-                self._current_bar.close
-                * amount
-                * (1 + self._slippage)
-                * (1 + self._commission_rate)
-            )
+            # Market order: estimate using the best available price reference.
+            # When ticker ask is available (paper trading), use the higher of
+            # close+slippage and ask to avoid underestimating cost — the fill
+            # will use ask price, which may exceed close*(1+slippage).
+            ref_price = self._current_bar.close * (1 + self._slippage)
+            if self._ref_ask is not None:
+                ref_price = max(ref_price, self._ref_ask)
+            estimated_cost = ref_price * amount * (1 + self._commission_rate)
         else:
             # No bar yet, skip validation (will be caught at fill time)
             estimated_cost = Decimal("0")
@@ -296,10 +301,12 @@ class BacktestContext:
                 elif order.price is not None:
                     pending_buy_cost += order.price * order.remaining * (1 + self._commission_rate)
                 elif self._current_bar:
+                    pending_ref = self._current_bar.close * (1 + self._slippage)
+                    if self._ref_ask is not None:
+                        pending_ref = max(pending_ref, self._ref_ask)
                     pending_buy_cost += (
-                        self._current_bar.close
+                        pending_ref
                         * order.remaining
-                        * (1 + self._slippage)
                         * (1 + self._commission_rate)
                     )
 

@@ -747,6 +747,134 @@ class TestProcessingLock:
         assert engine.is_healthy(timeout_seconds=300) is False
 
 
+class TestAskPriceCostEstimation:
+    """Tests for market order cost estimation using ticker ask price."""
+
+    @pytest.mark.asyncio
+    async def test_market_buy_fills_when_ask_exceeds_slippage(self):
+        """Test that market buy fills correctly when ask > close*(1+slippage).
+
+        Before the fix, buy() estimated cost using close*(1+slippage), which
+        could be lower than the actual ask-based fill price. If the user had
+        just enough cash for the slippage-based estimate but not for the ask,
+        the order would pass validation at buy() time but get cancelled at
+        fill time with "Insufficient cash".
+
+        The fix makes buy() use max(close*(1+slippage), ask) for estimation,
+        so the cash check at order creation time is consistent with the fill.
+        """
+        from squant.infra.exchange.okx.ws_types import WSTicker
+
+        class AllInBuyStrategy(Strategy):
+            """Strategy that uses most cash on a single buy."""
+
+            def on_init(self):
+                self.bought = False
+
+            def on_bar(self, bar):
+                if not self.bought and not self.ctx.has_position(bar.symbol):
+                    # Buy 0.19 BTC at ~50100 ask = ~9519 + ~9.5 fee ≈ 9529
+                    # Comfortably within 10000 capital when using ask-based estimate
+                    self.ctx.buy(bar.symbol, Decimal("0.19"))
+                    self.bought = True
+
+            def on_stop(self):
+                pass
+
+        strategy = AllInBuyStrategy()
+        engine = PaperTradingEngine(
+            run_id=uuid4(),
+            strategy=strategy,
+            symbol="BTC/USDT",
+            timeframe="1m",
+            initial_capital=Decimal("10000"),
+            commission_rate=Decimal("0.001"),
+            slippage=Decimal("0.0005"),  # 5bps
+        )
+        await engine.start()
+
+        # Simulate ticker with ask price 20bps above close (exceeds 5bps slippage)
+        ticker = WSTicker(
+            symbol="BTC/USDT",
+            last=Decimal("50000"),
+            bid=Decimal("49950"),
+            ask=Decimal("50100"),
+        )
+        engine.on_ticker(ticker)
+
+        # Bar 1: strategy places buy order — should pass with ask-based estimate
+        candle1 = WSCandle(
+            symbol="BTC/USDT",
+            timeframe="1m",
+            timestamp=datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC),
+            open=Decimal("49900"),
+            high=Decimal("50200"),
+            low=Decimal("49800"),
+            close=Decimal("50000"),
+            volume=Decimal("100"),
+            is_closed=True,
+        )
+        await engine.process_candle(candle1)
+        assert strategy.bought is True
+        assert len(engine.context.pending_orders) == 1
+
+        # Bar 2: market order fills at ask price (50100)
+        candle2 = WSCandle(
+            symbol="BTC/USDT",
+            timeframe="1m",
+            timestamp=datetime(2024, 1, 1, 12, 1, 0, tzinfo=UTC),
+            open=Decimal("50050"),
+            high=Decimal("50200"),
+            low=Decimal("49900"),
+            close=Decimal("50050"),
+            volume=Decimal("100"),
+            is_closed=True,
+        )
+        await engine.process_candle(candle2)
+
+        # Order should be filled at ask price, not cancelled
+        assert engine.context.has_position("BTC/USDT")
+        assert len(engine.context.pending_orders) == 0
+        assert len(engine.context.fills) == 1
+        assert engine.context.fills[0].price == Decimal("50100")
+
+    @pytest.mark.asyncio
+    async def test_ref_ask_not_set_without_ticker(self):
+        """Test that without ticker data, cost estimation falls back to slippage."""
+        strategy = SimpleStrategy()
+        engine = PaperTradingEngine(
+            run_id=uuid4(),
+            strategy=strategy,
+            symbol="BTC/USDT",
+            timeframe="1m",
+            initial_capital=Decimal("10000"),
+            commission_rate=Decimal("0.001"),
+            slippage=Decimal("0.0005"),
+            params={"threshold": Decimal("60000")},
+        )
+        await engine.start()
+
+        # No ticker set → _ref_ask should remain None
+        assert engine._context._ref_ask is None
+
+        candle = WSCandle(
+            symbol="BTC/USDT",
+            timeframe="1m",
+            timestamp=datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC),
+            open=Decimal("49900"),
+            high=Decimal("50200"),
+            low=Decimal("49800"),
+            close=Decimal("50000"),
+            volume=Decimal("100"),
+            is_closed=True,
+        )
+        await engine.process_candle(candle)
+
+        # Strategy placed a buy, should succeed with slippage-based estimate
+        assert engine.context.has_position("BTC/USDT") is False  # fills on next bar
+        assert len(engine.context.pending_orders) == 1  # order pending
+
+
 class FailingOnInitStrategy(Strategy):
     """Strategy that raises in on_init."""
 
