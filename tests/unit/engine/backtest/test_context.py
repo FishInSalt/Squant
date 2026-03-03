@@ -2061,3 +2061,228 @@ class TestStopOrderContextAPI:
 
         orders = context.pending_orders
         assert orders[0].bars_remaining == 5
+
+
+class TestConvenienceTradingMethods:
+    """Tests for close_position, target_position, target_percent."""
+
+    def _setup_position(self, context: BacktestContext, symbol: str, amount: Decimal) -> None:
+        """Helper: simulate owning a position by processing a fill."""
+        bar = Bar(
+            time=datetime(2024, 1, 1, tzinfo=UTC),
+            symbol=symbol,
+            open=Decimal("50000"),
+            high=Decimal("51000"),
+            low=Decimal("49000"),
+            close=Decimal("50000"),
+            volume=Decimal("100"),
+        )
+        context._set_current_bar(bar)
+        context._add_bar_to_history(bar)
+
+        fill = Fill(
+            order_id="setup-fill",
+            symbol=symbol,
+            side=OrderSide.BUY,
+            price=Decimal("50000"),
+            amount=amount,
+            fee=amount * Decimal("50000") * Decimal("0.001"),
+            timestamp=bar.time,
+        )
+        context._process_fill(fill)
+
+    # --- close_position ---
+
+    def test_close_position_sells_entire_position(self, context: BacktestContext) -> None:
+        """close_position places a market sell for the full position amount."""
+        self._setup_position(context, "BTC/USDT", Decimal("0.5"))
+        order_id = context.close_position("BTC/USDT")
+
+        assert order_id is not None
+        assert len(context.pending_orders) == 1
+        order = context.pending_orders[0]
+        assert order.side == OrderSide.SELL
+        assert order.amount == Decimal("0.5")
+        assert order.type == OrderType.MARKET
+
+    def test_close_position_no_position_returns_none(self, context: BacktestContext) -> None:
+        """close_position returns None when there is no position."""
+        bar = Bar(
+            time=datetime(2024, 1, 1, tzinfo=UTC),
+            symbol="BTC/USDT",
+            open=Decimal("50000"),
+            high=Decimal("51000"),
+            low=Decimal("49000"),
+            close=Decimal("50000"),
+            volume=Decimal("100"),
+        )
+        context._set_current_bar(bar)
+        result = context.close_position("BTC/USDT")
+        assert result is None
+
+    def test_close_position_cancels_pending_sells(self, context: BacktestContext) -> None:
+        """close_position cancels existing pending sell orders before placing new sell."""
+        self._setup_position(context, "BTC/USDT", Decimal("1.0"))
+        # Place partial sell order first
+        context.sell("BTC/USDT", Decimal("0.3"), price=Decimal("55000"))
+        assert len(context.pending_orders) == 1
+
+        # close_position should cancel the pending sell and sell everything
+        order_id = context.close_position("BTC/USDT")
+        assert order_id is not None
+        # Only the new market sell should be pending
+        pending = context.pending_orders
+        assert len(pending) == 1
+        assert pending[0].amount == Decimal("1.0")
+        assert pending[0].type == OrderType.MARKET
+
+    # --- target_position ---
+
+    def test_target_position_buy_to_increase(self, context: BacktestContext) -> None:
+        """target_position buys the difference when target > current."""
+        self._setup_position(context, "BTC/USDT", Decimal("0.3"))
+        order_id = context.target_position("BTC/USDT", Decimal("0.5"))
+
+        assert order_id is not None
+        pending = context.pending_orders
+        assert len(pending) == 1
+        assert pending[0].side == OrderSide.BUY
+        assert pending[0].amount == Decimal("0.2")
+
+    def test_target_position_sell_to_decrease(self, context: BacktestContext) -> None:
+        """target_position sells the difference when target < current."""
+        self._setup_position(context, "BTC/USDT", Decimal("0.5"))
+        order_id = context.target_position("BTC/USDT", Decimal("0.2"))
+
+        assert order_id is not None
+        pending = context.pending_orders
+        assert len(pending) == 1
+        assert pending[0].side == OrderSide.SELL
+        assert pending[0].amount == Decimal("0.3")
+
+    def test_target_position_no_change_returns_none(self, context: BacktestContext) -> None:
+        """target_position returns None when already at target."""
+        self._setup_position(context, "BTC/USDT", Decimal("0.5"))
+        result = context.target_position("BTC/USDT", Decimal("0.5"))
+        assert result is None
+        assert len(context.pending_orders) == 0
+
+    def test_target_position_zero_closes(self, context: BacktestContext) -> None:
+        """target_position(symbol, 0) sells the entire position."""
+        self._setup_position(context, "BTC/USDT", Decimal("0.5"))
+        order_id = context.target_position("BTC/USDT", Decimal("0"))
+
+        assert order_id is not None
+        pending = context.pending_orders
+        assert len(pending) == 1
+        assert pending[0].side == OrderSide.SELL
+        assert pending[0].amount == Decimal("0.5")
+
+    def test_target_position_negative_raises(self, context: BacktestContext) -> None:
+        """target_position raises ValueError for negative target."""
+        bar = Bar(
+            time=datetime(2024, 1, 1, tzinfo=UTC),
+            symbol="BTC/USDT",
+            open=Decimal("50000"),
+            high=Decimal("51000"),
+            low=Decimal("49000"),
+            close=Decimal("50000"),
+            volume=Decimal("100"),
+        )
+        context._set_current_bar(bar)
+        with pytest.raises(ValueError, match="target_amount must be >= 0"):
+            context.target_position("BTC/USDT", Decimal("-0.1"))
+
+    def test_target_position_from_zero_buys(self, context: BacktestContext) -> None:
+        """target_position opens a new position when none exists."""
+        bar = Bar(
+            time=datetime(2024, 1, 1, tzinfo=UTC),
+            symbol="BTC/USDT",
+            open=Decimal("50000"),
+            high=Decimal("51000"),
+            low=Decimal("49000"),
+            close=Decimal("50000"),
+            volume=Decimal("100"),
+        )
+        context._set_current_bar(bar)
+        order_id = context.target_position("BTC/USDT", Decimal("0.5"))
+
+        assert order_id is not None
+        pending = context.pending_orders
+        assert len(pending) == 1
+        assert pending[0].side == OrderSide.BUY
+        assert pending[0].amount == Decimal("0.5")
+
+    def test_target_position_cancels_conflicting_orders(self, context: BacktestContext) -> None:
+        """target_position cancels pending orders on the same side before adjusting."""
+        self._setup_position(context, "BTC/USDT", Decimal("1.0"))
+        # Place a pending sell
+        context.sell("BTC/USDT", Decimal("0.3"), price=Decimal("55000"))
+        assert len(context.pending_orders) == 1
+
+        # target_position to sell more should cancel the pending sell first
+        order_id = context.target_position("BTC/USDT", Decimal("0.5"))
+        assert order_id is not None
+        pending = context.pending_orders
+        assert len(pending) == 1
+        assert pending[0].amount == Decimal("0.5")
+        assert pending[0].side == OrderSide.SELL
+
+    # --- target_percent ---
+
+    def test_target_percent_buys_correct_amount(self, context: BacktestContext) -> None:
+        """target_percent calculates and buys to reach 50% equity allocation."""
+        bar = Bar(
+            time=datetime(2024, 1, 1, tzinfo=UTC),
+            symbol="BTC/USDT",
+            open=Decimal("50000"),
+            high=Decimal("51000"),
+            low=Decimal("49000"),
+            close=Decimal("50000"),
+            volume=Decimal("100"),
+        )
+        context._set_current_bar(bar)
+        context._add_bar_to_history(bar)
+
+        # equity=100000, 50% target = 50000 worth = 1.0 BTC at 50000
+        order_id = context.target_percent("BTC/USDT", Decimal("0.5"))
+        assert order_id is not None
+        pending = context.pending_orders
+        assert len(pending) == 1
+        assert pending[0].side == OrderSide.BUY
+        assert pending[0].amount == Decimal("1")
+
+    def test_target_percent_sells_excess(self, context: BacktestContext) -> None:
+        """target_percent sells when current position exceeds target allocation."""
+        self._setup_position(context, "BTC/USDT", Decimal("1.0"))
+        # Position value = 1.0 * 50000 = 50000, equity ≈ 99950 + 50000 = ~99950 cash + 50000 pos
+        # target 10% of equity → need to sell down
+        order_id = context.target_percent("BTC/USDT", Decimal("0.1"))
+        assert order_id is not None
+        pending = context.pending_orders
+        assert len(pending) == 1
+        assert pending[0].side == OrderSide.SELL
+
+    def test_target_percent_out_of_range_raises(self, context: BacktestContext) -> None:
+        """target_percent raises for percent outside [0, 1]."""
+        bar = Bar(
+            time=datetime(2024, 1, 1, tzinfo=UTC),
+            symbol="BTC/USDT",
+            open=Decimal("50000"),
+            high=Decimal("51000"),
+            low=Decimal("49000"),
+            close=Decimal("50000"),
+            volume=Decimal("100"),
+        )
+        context._set_current_bar(bar)
+
+        with pytest.raises(ValueError, match="percent must be between 0 and 1"):
+            context.target_percent("BTC/USDT", Decimal("1.5"))
+
+        with pytest.raises(ValueError, match="percent must be between 0 and 1"):
+            context.target_percent("BTC/USDT", Decimal("-0.1"))
+
+    def test_target_percent_no_bar_raises(self, context: BacktestContext) -> None:
+        """target_percent raises when no current bar is set."""
+        with pytest.raises(ValueError, match="No current bar"):
+            context.target_percent("BTC/USDT", Decimal("0.5"))

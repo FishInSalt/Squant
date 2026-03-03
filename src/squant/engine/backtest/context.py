@@ -500,6 +500,108 @@ class BacktestContext:
         return pos is not None and pos.is_open
 
     # =========================================================================
+    # Convenience Trading Methods
+    # =========================================================================
+
+    def close_position(self, symbol: str) -> str | None:
+        """Close the entire position for a symbol with a market sell order.
+
+        Cancels all pending sell orders for the symbol first, then sells
+        the full position amount. Does nothing if no position is open.
+
+        Args:
+            symbol: Trading symbol.
+
+        Returns:
+            Order ID if a sell order was placed, None if no position to close.
+        """
+        pos = self._positions.get(symbol)
+        if not pos or not pos.is_open:
+            return None
+
+        # Cancel existing pending sell orders to free up the full position
+        for order in list(self._pending_orders):
+            if order.symbol == symbol and order.side == OrderSide.SELL:
+                self.cancel_order(order.id)
+
+        return self.sell(symbol, pos.amount)
+
+    def target_position(self, symbol: str, target_amount: Decimal) -> str | None:
+        """Adjust position to a target amount, buying or selling the difference.
+
+        Cancels conflicting pending orders before placing the adjustment order.
+
+        Args:
+            symbol: Trading symbol.
+            target_amount: Desired position amount (must be >= 0).
+
+        Returns:
+            Order ID if an order was placed, None if no adjustment needed
+            or order was below minimum value.
+
+        Raises:
+            ValueError: If target_amount is negative.
+        """
+        if target_amount < 0:
+            raise ValueError("target_amount must be >= 0 (short selling not supported)")
+
+        target_amount = Decimal(str(target_amount))
+
+        pos = self._positions.get(symbol)
+        current_amount = pos.amount if pos and pos.is_open else Decimal("0")
+        diff = target_amount - current_amount
+
+        if diff == Decimal("0"):
+            return None
+
+        if diff > Decimal("0"):
+            # Need to buy more — cancel pending buy orders to recalculate
+            for order in list(self._pending_orders):
+                if order.symbol == symbol and order.side == OrderSide.BUY:
+                    self.cancel_order(order.id)
+            return self.buy(symbol, diff)
+        else:
+            # Need to sell some — cancel pending sell orders to free position
+            for order in list(self._pending_orders):
+                if order.symbol == symbol and order.side == OrderSide.SELL:
+                    self.cancel_order(order.id)
+            return self.sell(symbol, abs(diff))
+
+    def target_percent(self, symbol: str, percent: Decimal) -> str | None:
+        """Adjust position to a target percentage of total equity.
+
+        Calculates the target position amount based on current equity and
+        the reference price (current bar's close), then delegates to
+        target_position().
+
+        Args:
+            symbol: Trading symbol.
+            percent: Target allocation as a decimal (e.g., 0.5 = 50% of equity).
+                Must be between 0 and 1 inclusive.
+
+        Returns:
+            Order ID if an order was placed, None if no adjustment needed.
+
+        Raises:
+            ValueError: If percent is out of [0, 1] range or no price available.
+        """
+        percent = Decimal(str(percent))
+        if percent < 0 or percent > 1:
+            raise ValueError("percent must be between 0 and 1")
+
+        if not self._current_bar:
+            raise ValueError("No current bar available for price reference")
+
+        price = self._current_bar.close
+        if price <= 0:
+            raise ValueError("Current price is zero or negative")
+
+        target_value = self.equity * percent
+        target_amount = target_value / price
+
+        return self.target_position(symbol, target_amount)
+
+    # =========================================================================
     # Market Data Access
     # =========================================================================
 
