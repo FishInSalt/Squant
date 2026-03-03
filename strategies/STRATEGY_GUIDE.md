@@ -242,6 +242,10 @@ def on_bar(self, bar):
 | `self.ctx.commission_rate` | `Decimal` | 手续费率 |
 | `self.ctx.slippage` | `Decimal` | 滑点率 |
 | `self.ctx.total_fees` | `Decimal` | 累计手续费 |
+| `self.ctx.unrealized_pnl` | `Decimal` | 浮动盈亏（所有持仓按当前价计算）|
+| `self.ctx.realized_pnl` | `Decimal` | 已实现盈亏（所有已平仓交易的 PnL 总和）|
+| `self.ctx.return_pct` | `Decimal` | 总收益率（如 0.05 = 5%）|
+| `self.ctx.max_drawdown` | `Decimal` | 最大回撤（如 0.10 = 10%）|
 | `self.ctx.pending_orders` | `list` | 当前挂单列表 |
 | `self.ctx.completed_orders` | `list` | 已完成订单列表 |
 | `self.ctx.fills` | `list` | 全部成交记录 |
@@ -258,9 +262,15 @@ def on_bar(self, bar):
         self.ctx.log("资金不足，暂停开仓")
         return
 
-    # 检查收益率
-    return_rate = (self.ctx.equity - self.ctx.initial_capital) / self.ctx.initial_capital
-    self.ctx.log(f"当前收益率: {return_rate:.2%}")
+    # 直接使用内置指标（无需手算）
+    self.ctx.log(f"收益率: {self.ctx.return_pct:.2%}")
+    self.ctx.log(f"浮动盈亏: {self.ctx.unrealized_pnl}")
+    self.ctx.log(f"最大回撤: {self.ctx.max_drawdown:.2%}")
+
+    # 回撤超限暂停开仓
+    if self.ctx.max_drawdown > Decimal("0.15"):
+        self.ctx.log("回撤超过15%，暂停开仓")
+        return
 ```
 
 ---

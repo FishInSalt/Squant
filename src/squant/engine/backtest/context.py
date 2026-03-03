@@ -206,6 +206,42 @@ class BacktestContext:
         """Get total fees paid."""
         return self._total_fees
 
+    @property
+    def unrealized_pnl(self) -> Decimal:
+        """Get unrealized PnL for all open positions."""
+        return self._get_unrealized_pnl()
+
+    @property
+    def realized_pnl(self) -> Decimal:
+        """Get total realized PnL from closed trades."""
+        return sum((t.pnl for t in self._trades), Decimal("0"))
+
+    @property
+    def return_pct(self) -> Decimal:
+        """Get total return as a decimal (e.g., 0.05 = 5%)."""
+        if self._initial_capital == 0:
+            return Decimal("0")
+        return (self.equity - self._initial_capital) / self._initial_capital
+
+    @property
+    def max_drawdown(self) -> Decimal:
+        """Get maximum drawdown as a decimal (e.g., 0.10 = 10% drawdown).
+
+        Computed from equity curve snapshots. Returns 0 if no snapshots yet.
+        """
+        if not self._equity_curve:
+            return Decimal("0")
+        peak = Decimal("0")
+        max_dd = Decimal("0")
+        for snapshot in self._equity_curve:
+            if snapshot.equity > peak:
+                peak = snapshot.equity
+            if peak > 0:
+                dd = (peak - snapshot.equity) / peak
+                if dd > max_dd:
+                    max_dd = dd
+        return max_dd
+
     # =========================================================================
     # Order Placement
     # =========================================================================

@@ -2286,3 +2286,124 @@ class TestConvenienceTradingMethods:
         """target_percent raises when no current bar is set."""
         with pytest.raises(ValueError, match="No current bar"):
             context.target_percent("BTC/USDT", Decimal("0.5"))
+
+
+class TestAccountMetrics:
+    """Tests for public account metrics properties (P1-4)."""
+
+    def test_unrealized_pnl_no_position(self, context: BacktestContext) -> None:
+        """unrealized_pnl returns 0 with no position."""
+        assert context.unrealized_pnl == Decimal("0")
+
+    def test_unrealized_pnl_with_profit(
+        self, context: BacktestContext, sample_bar: Bar
+    ) -> None:
+        """unrealized_pnl reflects paper profit."""
+        context._set_current_bar(sample_bar)
+        # Simulate a buy fill
+        fill = Fill(
+            order_id="test",
+            symbol="BTC/USDT",
+            side=OrderSide.BUY,
+            price=Decimal("50000"),
+            amount=Decimal("1"),
+            fee=Decimal("50"),
+            timestamp=sample_bar.time,
+        )
+        context._process_fill(fill)
+        # Set a higher price
+        higher_bar = Bar(
+            time=sample_bar.time,
+            symbol="BTC/USDT",
+            open=Decimal("51000"),
+            high=Decimal("52000"),
+            low=Decimal("50500"),
+            close=Decimal("51000"),
+            volume=Decimal("100"),
+        )
+        context._set_current_bar(higher_bar)
+        # Position bought at 50000, now at 51000 → +1000
+        assert context.unrealized_pnl == Decimal("1000")
+
+    def test_realized_pnl_no_trades(self, context: BacktestContext) -> None:
+        """realized_pnl returns 0 with no completed trades."""
+        assert context.realized_pnl == Decimal("0")
+
+    def test_realized_pnl_after_round_trip(
+        self, context: BacktestContext, sample_bar: Bar
+    ) -> None:
+        """realized_pnl reflects closed trade PnL."""
+        context._set_current_bar(sample_bar)
+        # Buy fill
+        buy_fill = Fill(
+            order_id="buy1",
+            symbol="BTC/USDT",
+            side=OrderSide.BUY,
+            price=Decimal("50000"),
+            amount=Decimal("1"),
+            fee=Decimal("50"),
+            timestamp=sample_bar.time,
+        )
+        context._process_fill(buy_fill)
+        # Sell fill at higher price
+        sell_fill = Fill(
+            order_id="sell1",
+            symbol="BTC/USDT",
+            side=OrderSide.SELL,
+            price=Decimal("51000"),
+            amount=Decimal("1"),
+            fee=Decimal("51"),
+            timestamp=sample_bar.time,
+        )
+        context._process_fill(sell_fill)
+        # 1 completed trade with PnL
+        assert len(context.trades) == 1
+        assert context.realized_pnl == context.trades[0].pnl
+
+    def test_return_pct_initial(self, context: BacktestContext) -> None:
+        """return_pct is 0 at start."""
+        assert context.return_pct == Decimal("0")
+
+    def test_return_pct_after_profit(
+        self, context: BacktestContext, sample_bar: Bar
+    ) -> None:
+        """return_pct reflects equity change."""
+        context._set_current_bar(sample_bar)
+        # Buy 1 BTC at 50000
+        fill = Fill(
+            order_id="test",
+            symbol="BTC/USDT",
+            side=OrderSide.BUY,
+            price=Decimal("50000"),
+            amount=Decimal("1"),
+            fee=Decimal("50"),
+            timestamp=sample_bar.time,
+        )
+        context._process_fill(fill)
+        # Initial capital is 100000, after buy: cash=49950, position=50000, equity=99950
+        # return = (99950-100000)/100000 = -0.0005
+        expected = (context.equity - Decimal("100000")) / Decimal("100000")
+        assert context.return_pct == expected
+
+    def test_max_drawdown_no_snapshots(self, context: BacktestContext) -> None:
+        """max_drawdown returns 0 with no equity curve."""
+        assert context.max_drawdown == Decimal("0")
+
+    def test_max_drawdown_with_decline(self, context: BacktestContext) -> None:
+        """max_drawdown reflects peak-to-trough decline."""
+        from squant.engine.backtest.types import EquitySnapshot
+
+        # Simulate equity curve: 100 → 110 → 90 → 100
+        for i, eq in enumerate([100, 110, 90, 100]):
+            context._equity_curve.append(
+                EquitySnapshot(
+                    time=datetime(2024, 1, 1, i, tzinfo=UTC),
+                    equity=Decimal(str(eq)),
+                    cash=Decimal(str(eq)),
+                    position_value=Decimal("0"),
+                    unrealized_pnl=Decimal("0"),
+                )
+            )
+        # Peak=110, trough=90, drawdown = (110-90)/110 = 20/110
+        expected = Decimal("20") / Decimal("110")
+        assert abs(context.max_drawdown - expected) < Decimal("0.0001")
