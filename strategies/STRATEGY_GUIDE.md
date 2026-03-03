@@ -29,7 +29,7 @@
 
 ## 1. 策略基本结构
 
-每个策略是一个继承自 `Strategy` 的 Python 类，需实现三个生命周期方法：
+每个策略是一个继承自 `Strategy` 的 Python 类，必须实现 `on_bar`，可选实现其他生命周期方法：
 
 ```python
 class MyStrategy(Strategy):
@@ -55,6 +55,32 @@ class MyStrategy(Strategy):
         - 记录日志
 
         这是策略的核心逻辑所在。
+        """
+        pass
+
+    def on_fill(self, fill):
+        """成交回调 — 订单成交时调用（在 on_bar 之前）。
+
+        用途：
+        - 成交后立即挂止损单（如 buy fill 后挂 stop-loss）
+        - 记录成交信息
+        - 更新策略内部状态
+
+        fill 对象属性：order_id, symbol, side, price, amount, fee, timestamp
+        注意：on_fill 中下的订单在下一根K线才成交。
+        """
+        pass
+
+    def on_order_done(self, order):
+        """订单完成回调 — 订单到达终态时调用（FILLED 或 CANCELLED）。
+
+        用途：
+        - OCO 管理：一侧成交/取消后取消另一侧
+        - 记录订单完成状态
+        - 根据成交结果调整策略状态
+
+        order 对象属性：id, symbol, side, type, amount, price, stop_price,
+                       status, filled_amount, filled_price, filled_at
         """
         pass
 
@@ -94,11 +120,17 @@ class MinimalStrategy(Strategy):
 4. 过期检查 → 倒计时 bars_remaining，到期则取消
 5. 设置当前K线 + 加入历史缓冲区
 6. 记录权益快照（在策略回调之前，捕获决策前的状态）
+6.5. 回调通知：
+     - 调用 on_fill(fill) — 逐个通知本轮所有成交
+     - 调用 on_order_done(order) — 逐个通知已完成/已取消订单
 7. 调用 strategy.on_bar(bar)（带 CPU/内存限制）
 ```
 
 **关键含义**：`on_bar()` 中下的市价单，在**下一根K线**才成交（使用下一根的 open 价格），
 这是为了防止未来数据偷看（look-ahead bias）。
+
+**回调顺序**：`on_fill()` → `on_order_done()` → `on_bar()`，同一根K线内按此顺序执行。
+回调中下的订单同样在下一根K线成交。
 
 ### 模拟交易模式（每次K线更新）
 
@@ -112,6 +144,7 @@ class MinimalStrategy(Strategy):
   4. 设置当前K线 + 加入历史缓冲区
   5. 过期检查
   6. 记录权益快照
+  6.5. 回调通知：on_fill → on_order_done（累积自上一次收盘以来的所有成交/完成）
   7. 调用 strategy.on_bar(bar)
   8. 持久化状态（用于崩溃恢复）
 ```
@@ -517,6 +550,54 @@ order_id = self.ctx.buy(bar.symbol, Decimal("0.1"),
 大单可能无法在一根K线内全部成交，剩余部分保持 `PARTIAL` 状态，
 在后续K线中继续尝试成交。
 
+### 事件回调 (on_fill / on_order_done)
+
+策略可通过覆写 `on_fill` 和 `on_order_done` 方法来响应成交和订单完成事件。
+这些回调在每根K线的 `on_bar()` **之前**被调用，调用顺序为：
+`on_fill()` → `on_order_done()` → `on_bar()`。
+
+**on_fill(fill)** — 每次成交触发一次：
+
+```python
+def on_fill(self, fill):
+    """fill 属性：
+    - fill.order_id: 关联的订单 ID
+    - fill.symbol: 交易标的
+    - fill.side: OrderSide.BUY 或 OrderSide.SELL
+    - fill.price: 实际成交价格
+    - fill.amount: 成交数量
+    - fill.fee: 手续费
+    - fill.timestamp: 成交时间
+    """
+    # 示例：买入成交后立即挂止损单
+    if fill.side == OrderSide.BUY:
+        stop_price = fill.price * Decimal("0.95")  # 5% 止损
+        self.ctx.sell(fill.symbol, fill.amount, stop_price=stop_price)
+```
+
+**on_order_done(order)** — 订单到达终态（FILLED 或 CANCELLED）时触发：
+
+```python
+def on_order_done(self, order):
+    """order 属性：
+    - order.id: 订单 ID
+    - order.status: OrderStatus.FILLED 或 OrderStatus.CANCELLED
+    - order.symbol, order.side, order.type
+    - order.filled_amount, order.filled_price, order.filled_at
+    """
+    # 示例：OCO 管理 — 一侧完成后取消另一侧
+    if order.status == OrderStatus.FILLED and order.id == self.take_profit_id:
+        self.ctx.cancel_order(self.stop_loss_id)
+    elif order.status == OrderStatus.FILLED and order.id == self.stop_loss_id:
+        self.ctx.cancel_order(self.take_profit_id)
+```
+
+**注意事项**：
+- 回调中下的订单同样在**下一根K线**成交
+- 回调中抛出的异常会被捕获并记录，**不会**导致策略崩溃
+- 沙箱中可使用 `Fill` 和 `OrderStatus` 类型进行类型检查
+- RestrictedPython 限制：不能使用 `+=` 等增量赋值，需写成 `self.x = self.x + 1`
+
 ---
 
 ## 11. 成交价格机制
@@ -612,8 +693,10 @@ if order_id is None:
 | `Strategy` | 策略基类 |
 | `Bar` | K线数据类型 |
 | `Position` | 持仓信息类型 |
+| `Fill` | 成交记录类型（用于 `on_fill` 回调）|
 | `OrderSide` | `OrderSide.BUY`, `OrderSide.SELL` |
 | `OrderType` | `OrderType.MARKET`, `LIMIT`, `STOP`, `STOP_LIMIT` |
+| `OrderStatus` | `OrderStatus.PENDING`, `FILLED`, `CANCELLED`（用于 `on_order_done`）|
 | `Decimal` | 精确小数 |
 | `math` | 数学函数模块（部分函数） |
 

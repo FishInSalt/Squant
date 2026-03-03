@@ -107,12 +107,13 @@ class BacktestContext:
         # Logging
         self._logs: deque[str] = deque(maxlen=max_logs)
 
-        # Cumulative counters for incremental WebSocket tracking.
+        # Cumulative counters for incremental WebSocket tracking and callback delivery.
         # Deque maxlen causes old items to be evicted, so len(deque) plateaus.
         # These counters track total items ever added, enabling correct delta calculation.
         self._total_fills_added: int = 0
         self._total_trades_added: int = 0
         self._total_logs_added: int = 0
+        self._total_completed_added: int = 0
 
         # Total fees paid
         self._total_fees = Decimal("0")
@@ -448,6 +449,7 @@ class BacktestContext:
             if order.id == order_id:
                 order.status = OrderStatus.CANCELLED
                 self._completed_orders.append(order)
+                self._total_completed_added += 1
                 self._pending_orders.pop(i)
                 return True
         return False
@@ -772,6 +774,7 @@ class BacktestContext:
         for order in self._pending_orders:
             if order.is_complete:
                 self._completed_orders.append(order)
+                self._total_completed_added += 1
             else:
                 still_pending.append(order)
         self._pending_orders = still_pending
@@ -1151,6 +1154,7 @@ class BacktestContext:
 
         # Restore completed orders count (content not serialized, only count)
         self._restored_completed_orders_count = state.get("completed_orders_count", 0)
+        self._total_completed_added = self._restored_completed_orders_count
 
         # Restore logs
         if "logs" in state:

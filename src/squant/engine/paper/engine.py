@@ -211,6 +211,10 @@ class PaperTradingEngine:
         self._last_emitted_trade_total = 0
         self._last_emitted_log_total = 0
 
+        # Strategy callback tracking (on_fill / on_order_done)
+        self._last_callback_fill_total = 0
+        self._last_callback_completed_total = 0
+
     @property
     def run_id(self) -> UUID:
         """Get the strategy run ID."""
@@ -509,6 +513,38 @@ class PaperTradingEngine:
                 # when ask exceeds close*(1+slippage).
                 self._context._ref_ask = self._latest_ask
 
+                # 6c. Notify strategy of fills and completed orders (before on_bar)
+                fill_delta = (
+                    self._context._total_fills_added - self._last_callback_fill_total
+                )
+                if fill_delta > 0:
+                    recent_fills = list(self._context._fills)[-fill_delta:]
+                    for fill in recent_fills:
+                        try:
+                            self._strategy.on_fill(fill)
+                        except Exception as e:
+                            self._context.log(f"ERROR in on_fill: {e}")
+                            logger.warning(f"Strategy on_fill error: {e}")
+                self._last_callback_fill_total = self._context._total_fills_added
+
+                completed_delta = (
+                    self._context._total_completed_added
+                    - self._last_callback_completed_total
+                )
+                if completed_delta > 0:
+                    recent_completed = list(self._context._completed_orders)[
+                        -completed_delta:
+                    ]
+                    for order in recent_completed:
+                        try:
+                            self._strategy.on_order_done(order)
+                        except Exception as e:
+                            self._context.log(f"ERROR in on_order_done: {e}")
+                            logger.warning(f"Strategy on_order_done error: {e}")
+                self._last_callback_completed_total = (
+                    self._context._total_completed_added
+                )
+
                 # 7. Call strategy on_bar with resource limits (STR-013)
                 from squant.config import get_settings
 
@@ -776,6 +812,7 @@ class PaperTradingEngine:
                 if order.bars_remaining <= 0:
                     order.status = OrderStatus.CANCELLED
                     self._context._completed_orders.append(order)
+                    self._context._total_completed_added += 1
                     logger.debug(f"Order {order.id} expired (TTL reached)")
                     short_id = order.id[:8]
                     price_info = f"@{order.price}" if order.price else ""
