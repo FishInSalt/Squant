@@ -450,15 +450,26 @@ class PaperTradingService:
             # Compile with RestrictedPython
             compiled = compile_strategy(code)
 
-            # Inject Strategy base class into globals
+            # Inject Strategy base class and types into globals
+            from squant.engine.backtest import indicators as ta_module
             from squant.engine.backtest.strategy_base import Strategy as StrategyBase
-            from squant.engine.backtest.types import Bar, OrderSide, OrderType, Position
+            from squant.engine.backtest.types import (
+                Bar,
+                Fill,
+                OrderSide,
+                OrderStatus,
+                OrderType,
+                Position,
+            )
 
             compiled.restricted_globals["Strategy"] = StrategyBase
             compiled.restricted_globals["Bar"] = Bar
             compiled.restricted_globals["Position"] = Position
             compiled.restricted_globals["OrderSide"] = OrderSide
             compiled.restricted_globals["OrderType"] = OrderType
+            compiled.restricted_globals["Fill"] = Fill
+            compiled.restricted_globals["OrderStatus"] = OrderStatus
+            compiled.restricted_globals["ta"] = ta_module
 
             # Execute the code to define the class
             local_namespace: dict[str, Any] = {}

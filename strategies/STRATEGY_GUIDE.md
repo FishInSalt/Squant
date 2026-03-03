@@ -456,6 +456,11 @@ order_id = self.ctx.close_position(symbol)
 ```python
 pos = self.ctx.get_position(bar.symbol)
 if pos:
+    # 先取消该标的所有挂单卖出订单（释放可卖数量）
+    for order in self.ctx.pending_orders:
+        if order.symbol == bar.symbol and order.side == OrderSide.SELL:
+            self.ctx.cancel_order(order.id)
+    # 再市价卖出全部持仓
     self.ctx.sell(bar.symbol, pos.amount)
 ```
 
@@ -886,7 +891,7 @@ class MACrossStrategy(Strategy):
         self.prev_slow_ma = slow_ma
 ```
 
-### 15.2 带止损止盈的策略
+### 15.2 带止损止盈的策略（使用 on_fill + on_order_done）
 
 ```python
 class StopLossStrategy(Strategy):
@@ -897,57 +902,51 @@ class StopLossStrategy(Strategy):
         self.stop_order_id = None
         self.tp_order_id = None
 
+    def on_fill(self, fill):
+        # 买入成交后立即挂止损 + 止盈（OCO 配对）
+        if fill.side == OrderSide.BUY:
+            stop_price = fill.price * (1 - self.stop_loss_pct)
+            self.stop_order_id = self.ctx.sell(
+                fill.symbol, fill.amount, stop_price=stop_price,
+            )
+            tp_price = fill.price * (1 + self.take_profit_pct)
+            self.tp_order_id = self.ctx.sell(
+                fill.symbol, fill.amount, price=tp_price,
+            )
+            self.ctx.log(f"设置止损 @ {stop_price}, 止盈 @ {tp_price}")
+
+    def on_order_done(self, order):
+        # OCO 管理：一侧完成后取消另一侧
+        if order.status == OrderStatus.FILLED:
+            if order.id == self.stop_order_id:
+                if self.tp_order_id:
+                    self.ctx.cancel_order(self.tp_order_id)
+                self.ctx.log(f"止损触发 @ {order.filled_price}")
+            elif order.id == self.tp_order_id:
+                if self.stop_order_id:
+                    self.ctx.cancel_order(self.stop_order_id)
+                self.ctx.log(f"止盈触发 @ {order.filled_price}")
+
+        # 不论成交还是取消，重置 ID
+        if order.id == self.stop_order_id:
+            self.stop_order_id = None
+        if order.id == self.tp_order_id:
+            self.tp_order_id = None
+
     def on_bar(self, bar):
-        pos = self.ctx.get_position(bar.symbol)
+        # 无持仓且无挂单 → 寻找买入信号
+        if self.ctx.has_position(bar.symbol) or self.stop_order_id or self.tp_order_id:
+            return
 
-        if not pos:
-            # 无持仓 → 寻找买入信号
-            closes = self.ctx.get_closes(20)
-            if len(closes) < 20:
-                return
-            ma20 = sum(closes) / 20
+        closes = self.ctx.get_closes(20)
+        if len(closes) < 20:
+            return
 
-            if bar.close > ma20:
-                order_id = self.ctx.buy(bar.symbol, self.amount)
-                if order_id:
-                    self.ctx.log(f"买入信号触发 @ {bar.close}")
-        else:
-            # 有持仓 → 检查是否需要设置止损止盈
-            if self.stop_order_id is None and self.tp_order_id is None:
-                # 设置止损单（价格跌破入场价 × (1 - 止损比例)时卖出）
-                stop_price = pos.avg_entry_price * (1 - self.stop_loss_pct)
-                self.stop_order_id = self.ctx.sell(
-                    bar.symbol, pos.amount,
-                    stop_price=stop_price,
-                )
-
-                # 设置止盈限价单
-                tp_price = pos.avg_entry_price * (1 + self.take_profit_pct)
-                self.tp_order_id = self.ctx.sell(
-                    bar.symbol, pos.amount,
-                    price=tp_price,
-                )
-
-                self.ctx.log(f"设置止损 @ {stop_price}, 止盈 @ {tp_price}")
-
-            # 检查止损/止盈是否已成交，取消另一个
-            if self.stop_order_id:
-                stop_order = self.ctx.get_order(self.stop_order_id)
-                if stop_order and stop_order.status == "filled":
-                    if self.tp_order_id:
-                        self.ctx.cancel_order(self.tp_order_id)
-                    self.stop_order_id = None
-                    self.tp_order_id = None
-                    self.ctx.log(f"止损触发 @ {stop_order.avg_fill_price}")
-
-            if self.tp_order_id:
-                tp_order = self.ctx.get_order(self.tp_order_id)
-                if tp_order and tp_order.status == "filled":
-                    if self.stop_order_id:
-                        self.ctx.cancel_order(self.stop_order_id)
-                    self.stop_order_id = None
-                    self.tp_order_id = None
-                    self.ctx.log(f"止盈触发 @ {tp_order.avg_fill_price}")
+        ma20 = ta.sma(closes, 20)
+        if ma20 is not None and bar.close > ma20:
+            order_id = self.ctx.buy(bar.symbol, self.amount)
+            if order_id:
+                self.ctx.log(f"买入信号触发 @ {bar.close}")
 ```
 
 ### 15.3 基于权益比例的仓位管理
@@ -1194,87 +1193,100 @@ if order_id is None:
 
 ### 16.7 止损/止盈配对管理
 
-同时挂止损和止盈单时，一个成交后必须手动取消另一个，
-否则可能导致意外交易（见 14.2 示例）。
+同时挂止损和止盈单时，一个成交后必须取消另一个，
+否则可能导致意外交易。推荐使用 `on_order_done` 回调自动管理
+（见[第 11 节](#11-订单生命周期)的 OCO 示例和[第 15.2 节](#152-带止损止盈的策略使用-on_fill--on_order_done)）。
 
 ---
 
 ## 17. 完整策略模板
 
 ```python
-"""策略名称和简要描述。
+"""均线突破 + 追踪止损策略。
+
+使用 ta 模块计算 EMA，突破时入场，on_fill 设置止损，
+on_order_done 管理 OCO，on_bar 更新追踪止损。
 
 参数:
-    param1 (type): 描述，默认值
-    param2 (type): 描述，默认值
+    ema_period (int): EMA 周期，默认 20
+    alloc_pct (str): 目标仓位比例，默认 "0.5"（50% 权益）
+    trail_pct (str): 追踪止损百分比，默认 "0.03"（3%）
 """
-from decimal import Decimal
 
 
-class MyStrategy(Strategy):
-    """策略类 — 继承自 Strategy。
-
-    类名会显示在系统界面中，建议使用有意义的名称。
-    """
+class EMATrailingStrategy(Strategy):
+    """EMA 突破 + 追踪止损策略。"""
 
     def on_init(self):
         """初始化：读取参数，设置状态变量。"""
-        # === 策略参数 ===
-        self.lookback = self.ctx.params.get("lookback", 20)
-        self.amount = Decimal(str(self.ctx.params.get("amount", "0.01")))
-        self.stop_loss = Decimal(str(self.ctx.params.get("stop_loss", "0.02")))
+        self.ema_period = self.ctx.params.get("ema_period", 20)
+        self.alloc_pct = Decimal(str(self.ctx.params.get("alloc_pct", "0.5")))
+        self.trail_pct = Decimal(str(self.ctx.params.get("trail_pct", "0.03")))
 
-        # === 状态变量 ===
-        self.signal = None
         self.stop_order_id = None
+        self.highest_since_entry = None
+
+    def on_fill(self, fill):
+        """买入成交后立即设置初始止损。"""
+        if fill.side == OrderSide.BUY:
+            self.highest_since_entry = fill.price
+            stop_price = fill.price * (1 - self.trail_pct)
+            self.stop_order_id = self.ctx.sell(
+                fill.symbol, fill.amount, stop_price=stop_price,
+            )
+            self.ctx.log(f"入场 @ {fill.price}, 初始止损 @ {stop_price}")
+
+    def on_order_done(self, order):
+        """止损触发后重置状态。"""
+        if order.id == self.stop_order_id:
+            if order.status == OrderStatus.FILLED:
+                self.ctx.log(f"止损触发 @ {order.filled_price}")
+            self.stop_order_id = None
+            self.highest_since_entry = None
 
     def on_bar(self, bar):
-        """核心逻辑：每根K线执行。"""
-        # --- 1. 数据准备 ---
-        closes = self.ctx.get_closes(self.lookback)
-        if len(closes) < self.lookback:
-            return  # 等待数据积累
+        """核心逻辑：EMA 趋势判断 + 追踪止损更新。"""
+        closes = self.ctx.get_closes(self.ema_period + 1)
+        if len(closes) < self.ema_period:
+            return
 
-        # --- 2. 指标计算 ---
-        ma = sum(closes) / self.lookback
+        ema_val = ta.ema(closes, self.ema_period)
+        if ema_val is None:
+            return
 
-        # --- 3. 信号判断 ---
         pos = self.ctx.get_position(bar.symbol)
 
-        # --- 4. 交易执行 ---
         if not pos:
-            # 无持仓 → 寻找入场机会
-            if bar.close > ma:
-                order_id = self.ctx.buy(bar.symbol, self.amount)
-                if order_id:
-                    self.ctx.log(f"买入 @ {bar.close}")
+            # 无持仓 → EMA 突破买入
+            if bar.close > ema_val and self.stop_order_id is None:
+                self.ctx.target_percent(bar.symbol, self.alloc_pct)
         else:
-            # 有持仓 → 管理仓位
-            # 设置止损（首次）
-            if self.stop_order_id is None:
-                stop_price = pos.avg_entry_price * (1 - self.stop_loss)
-                self.stop_order_id = self.ctx.sell(
-                    bar.symbol, pos.amount, stop_price=stop_price
-                )
+            # 有持仓 → 更新追踪止损
+            if self.highest_since_entry is not None:
+                self.highest_since_entry = max(self.highest_since_entry, bar.high)
+                new_stop = self.highest_since_entry * (1 - self.trail_pct)
 
-            # 检查止损是否已触发
-            if self.stop_order_id:
-                order = self.ctx.get_order(self.stop_order_id)
-                if order and order.is_complete:
-                    self.stop_order_id = None
+                if self.stop_order_id:
+                    old = self.ctx.get_order(self.stop_order_id)
+                    if old and old.stop_price and new_stop > old.stop_price:
+                        self.ctx.cancel_order(self.stop_order_id)
+                        self.stop_order_id = self.ctx.sell(
+                            bar.symbol, pos.amount, stop_price=new_stop,
+                        )
 
-            # 出场信号
-            if bar.close < ma and pos:
+            # EMA 跌破 → 直接平仓
+            if bar.close < ema_val:
                 if self.stop_order_id:
                     self.ctx.cancel_order(self.stop_order_id)
                     self.stop_order_id = None
-                self.ctx.sell(bar.symbol, pos.amount)
-                self.ctx.log(f"卖出 @ {bar.close}")
+                self.ctx.close_position(bar.symbol)
+                self.ctx.log(f"趋势反转平仓 @ {bar.close}")
 
     def on_stop(self):
-        """策略停止：输出最终状态。"""
+        """策略停止：输出最终统计。"""
         self.ctx.log(f"最终权益: {self.ctx.equity}")
-        self.ctx.log(f"总手续费: {self.ctx.total_fees}")
+        self.ctx.log(f"收益率: {self.ctx.return_pct:.2%}")
+        self.ctx.log(f"最大回撤: {self.ctx.max_drawdown:.2%}")
 ```
 
 ---
