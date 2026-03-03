@@ -67,7 +67,7 @@ class RSIMeanReversionStrategy(Strategy):  # noqa: F821
 
     def on_fill(self, fill):
         """成交回调：记录每笔成交"""
-        self.trade_count += 1
+        self.trade_count = self.trade_count + 1
         self.ctx.log(
             f"成交 #{self.trade_count}: {fill.side.value} "
             f"{fill.amount} @ {fill.price}"
