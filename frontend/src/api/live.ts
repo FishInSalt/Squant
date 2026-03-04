@@ -1,5 +1,5 @@
 import { get, post } from './index'
-import type { LiveSession, LiveSessionOrder, LiveTradingStatus, RiskConfig, PaginatedData, EquityCurvePoint } from '@/types'
+import type { LiveSession, LiveSessionOrder, LiveTradingStatus, RiskConfig, PaginatedData, EquityCurvePoint, EmergencyCloseResult } from '@/types'
 
 // 启动实盘交易
 export const startLiveTrading = (config: {
@@ -19,7 +19,7 @@ export const stopLiveTrading = (id: string, cancel_orders?: boolean) =>
 
 // 紧急平仓
 export const emergencyClosePositions = (id: string) =>
-  post<void>(`/live/${id}/emergency-close`)
+  post<EmergencyCloseResult>(`/live/${id}/emergency-close`)
 
 // 获取会话状态
 export const getLiveSession = (id: string) =>

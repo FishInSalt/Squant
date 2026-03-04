@@ -352,7 +352,7 @@ import { getAccounts } from '@/api/account'
 import { startLiveTrading, getLiveSessions, getLiveSessionStatus, stopLiveTrading, emergencyClosePositions } from '@/api/live'
 import { getRiskRules } from '@/api/risk'
 import { useNotification } from '@/composables/useNotification'
-import { confirmStopLive, confirmEmergencyClose, toPositionRows, type PositionRow } from '@/composables/useTradingConfirm'
+import { confirmStopLive, confirmEmergencyClose, showEmergencyCloseResult, toPositionRows, type PositionRow } from '@/composables/useTradingConfirm'
 import type { LiveSession, ExchangeAccount } from '@/types'
 
 const router = useRouter()
@@ -366,7 +366,7 @@ const sessionsLoading = ref(false)
 const symbols = ref<string[]>([])
 const accounts = ref<ExchangeAccount[]>([])
 const sessions = ref<LiveSession[]>([])
-const hasRiskRules = ref(true) // 是否已配置风控规则
+const hasRiskRules = ref(false) // 是否已配置风控规则（默认 false，加载后更新）
 
 const form = reactive({
   strategy_id: (route.query.strategy_id as string) || '',
@@ -544,8 +544,8 @@ async function handleEmergencyClose(id: string) {
   if (!confirmed) return
 
   try {
-    await emergencyClosePositions(id)
-    toastSuccess('紧急平仓执行中')
+    const resp = await emergencyClosePositions(id)
+    showEmergencyCloseResult(resp.data)
     loadSessions()
   } catch (error) {
     toastError('执行失败')

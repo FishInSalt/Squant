@@ -295,7 +295,7 @@ export interface LiveTradingStatus {
   unrealized_pnl: number
   realized_pnl: number
   positions: Record<string, Position>
-  pending_orders: Record<string, unknown>[]
+  pending_orders: PendingOrderInfo[]
   live_orders: LiveOrderInfo[]
   completed_orders_count: number
   trades_count: number
@@ -377,4 +377,15 @@ export interface LiveSessionOrder {
   trades: LiveSessionTrade[]
   created_at: string
   updated_at: string
+}
+
+// 紧急平仓响应（匹配后端 EmergencyCloseResponse）
+export interface EmergencyCloseResult {
+  run_id: string
+  status: string
+  message?: string
+  orders_cancelled?: number
+  positions_closed?: number
+  remaining_positions?: Array<{ symbol: string; amount: string; reason: string }>
+  errors?: Array<Record<string, unknown>>
 }

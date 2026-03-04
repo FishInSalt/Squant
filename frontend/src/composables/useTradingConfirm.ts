@@ -1,6 +1,7 @@
 import { h, ref } from 'vue'
 import { ElMessageBox } from 'element-plus'
 import { formatNumber, formatPrice } from '@/utils/format'
+import type { EmergencyCloseResult } from '@/types'
 
 export interface PositionRow {
   symbol: string
@@ -116,6 +117,78 @@ export async function confirmEmergencyClose(
   } catch {
     return false
   }
+}
+
+/**
+ * 紧急平仓结果展示对话框
+ * 根据后端返回的 EmergencyCloseResponse 展示操作结果
+ */
+export function showEmergencyCloseResult(result: EmergencyCloseResult): void {
+  const isPartial = result.status === 'partial'
+  const isNotActive = result.status === 'not_active'
+
+  const children = []
+
+  // Summary line
+  if (isNotActive) {
+    children.push(h('p', { style: 'color:#909399' }, result.message || '会话未运行'))
+  } else {
+    const summaryParts: string[] = []
+    if (result.orders_cancelled != null) {
+      summaryParts.push(`取消挂单: ${result.orders_cancelled}`)
+    }
+    if (result.positions_closed != null) {
+      summaryParts.push(`平仓数量: ${result.positions_closed}`)
+    }
+    if (summaryParts.length) {
+      children.push(h('p', { style: 'margin-bottom:8px' }, summaryParts.join('，')))
+    }
+  }
+
+  // Remaining positions (partial failure)
+  if (result.remaining_positions?.length) {
+    children.push(
+      h('p', { style: 'color:#E6A23C;font-weight:500;margin-top:8px' }, '以下持仓未能平仓:'),
+    )
+    const rows = result.remaining_positions.map((p) =>
+      h('tr', { style: 'border-bottom:1px solid #f5f7fa' }, [
+        h('td', { style: 'padding:4px 8px' }, p.symbol),
+        h('td', { style: 'padding:4px 8px;text-align:right' }, p.amount),
+        h('td', { style: 'padding:4px 8px;color:#909399' }, p.reason),
+      ]),
+    )
+    children.push(
+      h('table', { style: 'width:100%;border-collapse:collapse;margin-top:4px;font-size:13px' }, [
+        h('tr', { style: 'border-bottom:1px solid #ebeef5;color:#909399' }, [
+          h('td', { style: 'padding:4px 8px' }, '币对'),
+          h('td', { style: 'padding:4px 8px;text-align:right' }, '数量'),
+          h('td', { style: 'padding:4px 8px' }, '原因'),
+        ]),
+        ...rows,
+      ]),
+    )
+  }
+
+  // Errors
+  if (result.errors?.length) {
+    children.push(
+      h('p', { style: 'color:#F56C6C;margin-top:8px' }, '错误:'),
+    )
+    result.errors.forEach((err) => {
+      children.push(
+        h('p', { style: 'color:#F56C6C;font-size:12px;margin:2px 0' },
+          String(err.message || err.error || JSON.stringify(err))),
+      )
+    })
+  }
+
+  ElMessageBox({
+    title: isPartial ? '紧急平仓 — 部分完成' : isNotActive ? '紧急平仓' : '紧急平仓完成',
+    message: h('div', null, children),
+    type: isPartial ? 'warning' : isNotActive ? 'info' : 'success',
+    confirmButtonText: '确定',
+    showCancelButton: false,
+  })
 }
 
 /**

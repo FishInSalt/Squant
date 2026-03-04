@@ -89,7 +89,7 @@ import { formatExchangeName, formatNumber, formatRelativeTime } from '@/utils/fo
 import { stopPaperTrading, stopAllPaperTrading } from '@/api/paper'
 import { stopLiveTrading, emergencyClosePositions, getLiveSessionStatus } from '@/api/live'
 import { useNotification } from '@/composables/useNotification'
-import { confirmStopLive, confirmEmergencyClose, toPositionRows, type PositionRow } from '@/composables/useTradingConfirm'
+import { confirmStopLive, confirmEmergencyClose, showEmergencyCloseResult, toPositionRows, type PositionRow } from '@/composables/useTradingConfirm'
 import type { BacktestRun, PaperSession, LiveSession } from '@/types'
 
 // SessionCard component
@@ -289,8 +289,8 @@ async function handleEmergencyCloseLive(id: string) {
   if (!confirmed) return
 
   try {
-    await emergencyClosePositions(id)
-    toastSuccess('紧急平仓执行中')
+    const resp = await emergencyClosePositions(id)
+    showEmergencyCloseResult(resp.data)
     tradingStore.loadRunningLiveSessions()
   } catch (error) {
     toastError('执行失败')

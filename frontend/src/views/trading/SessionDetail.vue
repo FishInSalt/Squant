@@ -563,9 +563,9 @@
             </div>
           </el-tab-pane>
 
-          <el-tab-pane v-if="isLive && riskState" name="risk">
+          <el-tab-pane v-if="isLive" name="risk">
             <template #label>风控</template>
-            <div class="risk-grid">
+            <div v-if="riskState" class="risk-grid">
               <div class="risk-item">
                 <span class="label">日盈亏</span>
                 <PriceCell
@@ -575,9 +575,23 @@
                   class="value"
                 />
               </div>
-              <div class="risk-item">
+              <div class="risk-item wide">
+                <span class="label">日亏损限额</span>
+                <el-progress
+                  :percentage="dailyLossPercent"
+                  :color="riskProgressColor(dailyLossPercent)"
+                  :stroke-width="14"
+                  :format="() => `${formatNumber(Math.abs(riskState!.daily_pnl), 2)} / ${formatNumber(dailyLossLimitAbs, 2)}`"
+                />
+              </div>
+              <div class="risk-item wide">
                 <span class="label">日交易次数</span>
-                <span class="value">{{ riskState.daily_trade_count }}</span>
+                <el-progress
+                  :percentage="dailyTradePercent"
+                  :color="riskProgressColor(dailyTradePercent)"
+                  :stroke-width="14"
+                  :format="() => `${riskState!.daily_trade_count} / ${riskState!.daily_trade_limit}`"
+                />
               </div>
               <div class="risk-item">
                 <span class="label">连续亏损</span>
@@ -585,11 +599,20 @@
               </div>
               <div class="risk-item">
                 <span class="label">熔断状态</span>
-                <StatusBadge
-                  :status="riskState.circuit_breaker_active ? 'active' : 'inactive'"
-                />
+                <el-tag :type="riskState.circuit_breaker_active ? 'danger' : 'success'" size="small">
+                  {{ riskState.circuit_breaker_active ? '已触发' : '正常' }}
+                </el-tag>
+              </div>
+              <div class="risk-item">
+                <span class="label">最大持仓比例</span>
+                <span class="value">{{ (riskState.max_position_size * 100).toFixed(0) }}%</span>
+              </div>
+              <div class="risk-item">
+                <span class="label">最大下单比例</span>
+                <span class="value">{{ (riskState.max_order_size * 100).toFixed(0) }}%</span>
               </div>
             </div>
+            <el-empty v-else description="暂无风控数据" :image-size="80" />
           </el-tab-pane>
         </el-tabs>
       </div>
@@ -618,7 +641,7 @@ import {
 } from '@/api/live'
 import { useWebSocketStore } from '@/stores/websocket'
 import { useNotification } from '@/composables/useNotification'
-import { confirmStopLive, confirmEmergencyClose, type PositionRow } from '@/composables/useTradingConfirm'
+import { confirmStopLive, confirmEmergencyClose, showEmergencyCloseResult, type PositionRow } from '@/composables/useTradingConfirm'
 import type {
   PaperSession,
   LiveSession,
@@ -775,6 +798,7 @@ const liveAuditTotal = ref(0)
 const liveAuditPage = ref(1)
 const liveAuditPageSize = ref(20)
 const liveAuditLoading = ref(false)
+const prevCompletedOrdersCount = ref(0)
 
 async function loadLiveAuditOrders() {
   if (!isLive.value) return
@@ -802,6 +826,21 @@ const riskState = computed<RiskState | null>(() => {
   if (!status.value || !isLive.value) return null
   return (status.value as LiveTradingStatus).risk_state || null
 })
+
+const dailyLossLimitAbs = computed(() =>
+  (riskState.value?.daily_loss_limit ?? 0) * (status.value?.initial_capital ?? 0))
+
+const dailyLossPercent = computed(() =>
+  dailyLossLimitAbs.value ? Math.min(100, (Math.abs(riskState.value!.daily_pnl) / dailyLossLimitAbs.value) * 100) : 0)
+
+const dailyTradePercent = computed(() =>
+  riskState.value?.daily_trade_limit ? Math.min(100, (riskState.value.daily_trade_count / riskState.value.daily_trade_limit) * 100) : 0)
+
+function riskProgressColor(pct: number): string {
+  if (pct >= 90) return '#F56C6C'
+  if (pct >= 70) return '#E6A23C'
+  return '#67C23A'
+}
 
 // Equity curve fallback: always show at least a flat line
 const equityCurveWithFallback = computed<EquityPoint[]>(() => {
@@ -875,6 +914,13 @@ function handleTradingEvent(data: Record<string, unknown>) {
     if (data.risk_state) {
       (status.value as LiveTradingStatus).risk_state = data.risk_state as RiskState
     }
+
+    // Auto-refresh audit orders when new orders complete
+    const newCount = data.completed_orders_count as number
+    if (isLive.value && newCount > prevCompletedOrdersCount.value) {
+      loadLiveAuditOrders()
+    }
+    prevCompletedOrdersCount.value = newCount
 
     // Trigger incremental equity curve load
     loadEquityCurve(true)
@@ -1119,12 +1165,15 @@ async function handleStop() {
 async function handleResume() {
   resuming.value = true
   try {
+    let resumeMsg = '已恢复'
     if (isPaper.value) {
-      await resumePaperTrading(props.id)
+      const resp = await resumePaperTrading(props.id)
+      if (resp.message && resp.message !== 'success') resumeMsg = resp.message
     } else {
-      await resumeLiveTrading(props.id)
+      const resp = await resumeLiveTrading(props.id)
+      if (resp.message && resp.message !== 'success') resumeMsg = resp.message
     }
-    toastSuccess('已恢复')
+    toastSuccess(resumeMsg)
     await loadSession()
     await loadStatus()
     subscribeTradingChannel()
@@ -1150,8 +1199,8 @@ async function handleEmergencyClose() {
   if (!confirmed) return
 
   try {
-    await emergencyClosePositions(props.id)
-    toastSuccess('紧急平仓执行中')
+    const resp = await emergencyClosePositions(props.id)
+    showEmergencyCloseResult(resp.data)
     stopPolling()
     await loadSession()
   } catch (error) {
@@ -1163,6 +1212,8 @@ onMounted(async () => {
   await loadSession()
   // Always load status (backend returns historical data from DB for stopped sessions)
   await loadStatus()
+  // Init counter for auto-refresh tracking
+  prevCompletedOrdersCount.value = status.value?.completed_orders_count ?? 0
   // Load audit orders for live sessions
   if (isLive.value) {
     loadLiveAuditOrders()
@@ -1452,6 +1503,10 @@ onUnmounted(() => {
     display: flex;
     flex-direction: column;
     gap: 8px;
+
+    &.wide {
+      grid-column: span 2;
+    }
 
     .label {
       font-size: 12px;

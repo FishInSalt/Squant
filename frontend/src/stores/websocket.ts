@@ -420,19 +420,19 @@ export const useWebSocketStore = defineStore('websocket', () => {
         break
 
       case 'trade':
-        // TODO: 处理成交数据
+        // Deferred: trade stream data not consumed by current UI
         break
 
       case 'orderbook':
-        // TODO: 处理订单簿数据
+        // Deferred: orderbook data not consumed by current UI
         break
 
       case 'order_update':
-        // TODO: 处理订单更新
+        // Deferred: private order updates handled via trading channel events
         break
 
       case 'account_update':
-        // TODO: 处理账户更新
+        // Deferred: private account balance updates not yet integrated
         break
 
       case 'service_ready':
