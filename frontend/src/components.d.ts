@@ -53,6 +53,7 @@ declare module 'vue' {
     ElUpload: typeof import('element-plus/es')['ElUpload']
     EquityCurve: typeof import('./components/charts/EquityCurve.vue')['default']
     KLineChart: typeof import('./components/charts/KLineChart.vue')['default']
+    NotificationBell: typeof import('./components/layout/NotificationBell.vue')['default']
     PieChart: typeof import('./components/charts/PieChart.vue')['default']
     PriceCell: typeof import('./components/common/PriceCell.vue')['default']
     RouterLink: typeof import('vue-router')['RouterLink']

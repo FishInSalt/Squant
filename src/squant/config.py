@@ -301,6 +301,33 @@ class CircuitBreakerSettings(BaseSettings):
     )
 
 
+class NotificationSettings(BaseSettings):
+    """Notification system settings."""
+
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_prefix="NOTIFICATION_",
+        extra="ignore",
+    )
+
+    enabled: bool = Field(default=True, description="Enable notification system")
+    webhook_url: str | None = Field(
+        default=None, description="Webhook URL for alert notifications (HTTP POST)"
+    )
+    webhook_timeout_seconds: int = Field(
+        default=10, ge=1, le=60, description="Webhook HTTP request timeout"
+    )
+    webhook_max_retries: int = Field(
+        default=3, ge=0, le=5, description="Max retry attempts for webhook delivery"
+    )
+    cooldown_seconds: int = Field(
+        default=60, ge=0, description="Minimum seconds between same event type notifications"
+    )
+    max_history: int = Field(
+        default=1000, ge=100, le=10000, description="Max notification records to retain"
+    )
+
+
 # =============================================================================
 # Main Settings Class
 # =============================================================================
@@ -418,6 +445,11 @@ class Settings(BaseSettings):
     def circuit_breaker(self) -> CircuitBreakerSettings:
         """Circuit breaker settings."""
         return CircuitBreakerSettings()
+
+    @cached_property
+    def notification(self) -> NotificationSettings:
+        """Notification settings."""
+        return NotificationSettings()
 
     # -------------------------------------------------------------------------
     # Backward Compatibility Aliases

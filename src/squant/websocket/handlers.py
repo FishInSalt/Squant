@@ -219,7 +219,7 @@ class WebSocketGateway:
 
     # Valid channel prefixes for subscription (R3-017)
     VALID_CHANNEL_PREFIXES = ("ticker:", "candle:", "orderbook:", "trade:", "trading:")
-    VALID_EXACT_CHANNELS = ("orders", "account")
+    VALID_EXACT_CHANNELS = ("orders", "account", "notifications")
     MAX_CHANNEL_LENGTH = 64
     # Frontend max pageSize is 200 tickers + system channel + headroom for other channel types
     MAX_SUBSCRIPTIONS = 250

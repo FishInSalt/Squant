@@ -129,6 +129,36 @@ def _serialize_live_order(order: LiveOrder) -> dict[str, Any]:
     }
 
 
+def _fire_notification(
+    run_id: UUID | str,
+    level: str,
+    event_type: str,
+    title: str,
+    message: str,
+    details: dict[str, Any] | None = None,
+) -> None:
+    """Fire-and-forget notification from engine context.
+
+    Safe to call from any async context — never raises, never blocks.
+    """
+    try:
+        from squant.services.notification import emit_notification
+
+        loop = asyncio.get_running_loop()
+        loop.create_task(
+            emit_notification(
+                level=level,
+                event_type=event_type,
+                title=title,
+                message=message,
+                details=details,
+                run_id=str(run_id),
+            )
+        )
+    except Exception:
+        pass
+
+
 class LiveTradingEngine:
     """Real-time live trading engine.
 
@@ -478,6 +508,16 @@ class LiveTradingEngine:
 
         self._stopped_at = datetime.now(UTC)
 
+        # Notification: engine stopped (LIVE-011)
+        _fire_notification(
+            self._run_id,
+            level="critical" if self._error_message else "info",
+            event_type="engine_crashed" if self._error_message else "engine_stopped",
+            title="引擎异常停止" if self._error_message else "引擎已停止",
+            message=self._error_message or f"实盘会话 {self._symbol} 已正常停止",
+            details={"symbol": self._symbol, "bar_count": self._bar_count},
+        )
+
         # Emit engine_stopped event via WebSocket
         if self._on_event:
             try:
@@ -522,6 +562,16 @@ class LiveTradingEngine:
             # Update activity timestamp to prevent health check timeout during close (LV-6)
             self._last_active_at = datetime.now(UTC)
             logger.warning(f"Emergency close triggered for run {self._run_id}")
+
+            # Notification: emergency close (LIVE-011)
+            _fire_notification(
+                self._run_id,
+                level="critical",
+                event_type="emergency_close",
+                title="紧急平仓触发",
+                message=f"实盘会话 {self._symbol} 开始执行紧急平仓",
+                details={"symbol": self._symbol},
+            )
 
             results: dict[str, Any] = {
                 "run_id": str(self._run_id),
@@ -646,6 +696,17 @@ class LiveTradingEngine:
         # Check if circuit breaker was triggered by order update (RSK-012)
         if self._circuit_breaker_triggered:
             logger.warning(f"Circuit breaker active for session {self._run_id}, stopping trading")
+
+            # Notification: circuit breaker (LIVE-011)
+            _fire_notification(
+                self._run_id,
+                level="critical",
+                event_type="circuit_breaker_triggered",
+                title="熔断触发",
+                message=f"实盘会话 {self._symbol} 因连续亏损触发熔断，已停止交易",
+                details={"symbol": self._symbol},
+            )
+
             await self.stop(error="Circuit breaker triggered due to consecutive losses")
 
             # Trigger global circuit breaker to stop all sessions (Issue 033 fix)
@@ -704,6 +765,23 @@ class LiveTradingEngine:
                     )
                     logger.warning(f"Live engine {self._run_id}: {msg}")
                     self._context.log(msg)
+
+                    # Notification: total loss limit (LIVE-011)
+                    _fire_notification(
+                        self._run_id,
+                        level="critical",
+                        event_type="total_loss_limit",
+                        title="总亏损限额触发",
+                        message=f"实盘会话 {self._symbol} 已触发总亏损限额自动停止",
+                        details={
+                            "symbol": self._symbol,
+                            "total_pnl": float(self._risk_manager.state.total_pnl),
+                            "unrealized_pnl": float(
+                                self._risk_manager.state.unrealized_pnl
+                            ),
+                        },
+                    )
+
                     await self.stop(error=msg)
                     return
 
@@ -770,6 +848,17 @@ class LiveTradingEngine:
                         self._strategy.on_bar(bar)
                 except ResourceLimitExceededError as e:
                     logger.error(f"Strategy resource limit exceeded: {e}")
+
+                    # Notification: resource limit (LIVE-011)
+                    _fire_notification(
+                        self._run_id,
+                        level="critical",
+                        event_type="strategy_resource_exceeded",
+                        title="策略资源超限",
+                        message=f"实盘会话 {self._symbol} 策略资源超限: {e}",
+                        details={"symbol": self._symbol, "error": str(e)},
+                    )
+
                     await self.stop(error=f"Strategy resource limit exceeded: {e}")
                     raise
 
@@ -981,6 +1070,24 @@ class LiveTradingEngine:
                         f"local={local_amount}, exchange={exchange_amount}, diff={diff}"
                     )
 
+                    # Notification: position mismatch (LIVE-011)
+                    _fire_notification(
+                        self._run_id,
+                        level="warning",
+                        event_type="position_mismatch",
+                        title="仓位不匹配",
+                        message=(
+                            f"{self._symbol} 本地={local_amount}, "
+                            f"交易所={exchange_amount}, 差异={diff}"
+                        ),
+                        details={
+                            "symbol": self._symbol,
+                            "local": str(local_amount),
+                            "exchange": str(exchange_amount),
+                            "diff": str(diff),
+                        },
+                    )
+
             self._balance_consecutive_failures = 0
         except Exception as e:
             self._balance_consecutive_failures += 1
@@ -994,9 +1101,17 @@ class LiveTradingEngine:
                     f"consecutive balance sync failures"
                 )
                 logger.error(f"Engine {self._run_id} stopping: {msg}")
-                # Raise instead of setting _is_running=False directly so that
-                # process_candle's outer handler calls stop() with proper cleanup
-                # (cancel orders, call strategy.on_stop, set timestamps) (ISSUE-202 fix)
+
+                # Notification: balance sync failure (LIVE-011)
+                _fire_notification(
+                    self._run_id,
+                    level="critical",
+                    event_type="balance_sync_failure",
+                    title="余额同步失败",
+                    message=f"实盘会话 {self._symbol} 连续{self._balance_consecutive_failures}次余额同步失败",
+                    details={"symbol": self._symbol, "failures": self._balance_consecutive_failures},
+                )
+
                 raise RuntimeError(msg)
 
     async def _sync_pending_orders(self) -> None:
@@ -1056,8 +1171,20 @@ class LiveTradingEngine:
                         f"consecutive order sync failures"
                     )
                     logger.error(f"Engine {self._run_id} stopping: {msg}")
-                    # Raise instead of setting _is_running=False so process_candle
-                    # calls stop() with proper cleanup (ISSUE-202 fix)
+
+                    # Notification: order sync failure (LIVE-011)
+                    _fire_notification(
+                        self._run_id,
+                        level="critical",
+                        event_type="order_sync_failure",
+                        title="订单同步失败",
+                        message=f"实盘会话 {self._symbol} 连续{self._order_sync_consecutive_failures}次订单同步失败",
+                        details={
+                            "symbol": self._symbol,
+                            "failures": self._order_sync_consecutive_failures,
+                        },
+                    )
+
                     raise RuntimeError(msg)
 
         if polled_count > 0 or skipped_count > 0:

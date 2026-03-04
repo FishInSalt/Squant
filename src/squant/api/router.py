@@ -10,6 +10,7 @@ from squant.api.v1 import (
     health,
     live_trading,
     market,
+    notifications,
     orders,
     paper_trading,
     risk,
@@ -60,6 +61,11 @@ api_router.include_router(risk_triggers.router, prefix="/risk-triggers", tags=["
 # Circuit breaker endpoints
 api_router.include_router(
     circuit_breaker.router, prefix="/circuit-breaker", tags=["Circuit Breaker"]
+)
+
+# Notification endpoints
+api_router.include_router(
+    notifications.router, prefix="/notifications", tags=["Notifications"]
 )
 
 # Watchlist endpoints

@@ -187,6 +187,22 @@ class BackgroundTaskManager:
         )
         if cleaned_ids:
             logger.warning(f"Cleaned up {len(cleaned_ids)} stale paper trading sessions")
+
+            # Notification: stale sessions cleaned (LIVE-011)
+            try:
+                from squant.services.notification import emit_notification
+
+                asyncio.get_running_loop().create_task(
+                    emit_notification(
+                        level="warning",
+                        event_type="stale_sessions_cleaned",
+                        title="过时会话清理",
+                        message=f"清理了 {len(cleaned_ids)} 个超时的模拟交易会话",
+                        details={"session_ids": [str(sid) for sid in cleaned_ids]},
+                    )
+                )
+            except Exception:
+                pass
             # Update DB status for actually cleaned sessions, including result data
             try:
                 async with get_session_context() as db_session:
@@ -264,6 +280,22 @@ class BackgroundTaskManager:
         cleaned_ids, keys_to_unsub = await live_manager.cleanup_stale_sessions(timeout_seconds)
         if cleaned_ids:
             logger.warning(f"Cleaned up {len(cleaned_ids)} stale live trading sessions")
+
+            # Notification: stale live sessions cleaned (LIVE-011)
+            try:
+                from squant.services.notification import emit_notification
+
+                asyncio.get_running_loop().create_task(
+                    emit_notification(
+                        level="warning",
+                        event_type="stale_sessions_cleaned",
+                        title="过时会话清理",
+                        message=f"清理了 {len(cleaned_ids)} 个超时的实盘交易会话",
+                        details={"session_ids": [str(sid) for sid in cleaned_ids]},
+                    )
+                )
+            except Exception:
+                pass
             try:
                 async with get_session_context() as db_session:
                     service = LiveTradingService(db_session)

@@ -165,6 +165,12 @@ export const useWebSocketStore = defineStore('websocket', () => {
         subscribedChannels.value.add(channel)
       })
       pendingSubscriptions.value.clear()
+
+      // 自动订阅通知频道 (LIVE-011)
+      if (!subscribedChannels.value.has('notifications')) {
+        sendSubscribe('notifications')
+        subscribedChannels.value.add('notifications')
+      }
     }
 
     socket.value.onmessage = (event) => {
@@ -456,6 +462,17 @@ export const useWebSocketStore = defineStore('websocket', () => {
           } else if (switchData.status === 'completed') {
             ElMessage.success(`WebSocket 已切换到 ${switchData.to.toUpperCase()}`)
           }
+        }
+        break
+
+      case 'notification':
+        if (message.data) {
+          import('@/stores/notification').then(({ useNotificationStore }) => {
+            const notificationStore = useNotificationStore()
+            notificationStore.handleRealtimeNotification(
+              message.data as unknown as import('@/types').NotificationRecord,
+            )
+          })
         }
         break
 
