@@ -4,9 +4,9 @@ import asyncio
 import contextlib
 import logging
 from collections.abc import AsyncGenerator
+from contextlib import asynccontextmanager
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
-from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -135,12 +135,13 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                         f"{paper_recovered} recovered, {paper_failed} marked INTERRUPTED"
                     )
 
-                # Live trading — always mark as INTERRUPTED (no auto-recovery)
+                # Live trading — auto-recovery if enabled, otherwise mark INTERRUPTED
                 live_service = LiveTradingService(session)
-                live_count = await live_service.mark_orphaned_sessions()
-                if live_count > 0:
-                    logger.warning(
-                        f"Marked {live_count} orphaned live trading sessions as INTERRUPTED"
+                live_recovered, live_failed = await live_service.recover_orphaned_sessions()
+                if live_recovered > 0 or live_failed > 0:
+                    logger.info(
+                        f"Live trading orphan recovery: "
+                        f"{live_recovered} recovered, {live_failed} marked INTERRUPTED/ERROR"
                     )
 
         stream_manager_task = asyncio.create_task(

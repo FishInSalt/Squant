@@ -106,6 +106,27 @@ class LiveOrder:
         )
 
 
+def _serialize_live_order(order: LiveOrder) -> dict[str, Any]:
+    """Serialize a LiveOrder for persistence."""
+    return {
+        "internal_id": order.internal_id,
+        "exchange_order_id": order.exchange_order_id,
+        "symbol": order.symbol,
+        "side": order.side.value,
+        "order_type": order.order_type,
+        "amount": str(order.amount),
+        "price": str(order.price) if order.price else None,
+        "status": order.status.value,
+        "filled_amount": str(order.filled_amount),
+        "avg_fill_price": str(order.avg_fill_price) if order.avg_fill_price else None,
+        "fee": str(order.fee),
+        "fee_currency": order.fee_currency,
+        "created_at": order.created_at.isoformat() if order.created_at else None,
+        "updated_at": order.updated_at.isoformat() if order.updated_at else None,
+        "error_message": order.error_message,
+    }
+
+
 class LiveTradingEngine:
     """Real-time live trading engine.
 
@@ -191,6 +212,7 @@ class LiveTradingEngine:
         self._bar_count = 0
         self._last_active_at: datetime | None = None
         self._circuit_breaker_triggered = False  # Set when risk manager triggers circuit breaker
+        self._warming_up = False  # True during strategy warmup on resume (IMP-009)
 
         # Live order tracking
         self._live_orders: dict[str, LiveOrder] = {}  # internal_id -> LiveOrder
@@ -603,7 +625,7 @@ class LiveTradingEngine:
         Args:
             candle: WebSocket candle data.
         """
-        if not self._is_running:
+        if not self._is_running or self._warming_up:
             return
 
         # Block new candle processing during emergency close (C-DEFER-3)
@@ -1480,7 +1502,64 @@ class LiveTradingEngine:
         result = self._context.build_result_snapshot()
         result["bar_count"] = self._bar_count
         result["risk_state"] = self._risk_manager.get_state_summary()
+        result["risk_config"] = self._risk_manager.config.model_dump(mode="json")
+        result["live_orders"] = {
+            oid: _serialize_live_order(lo) for oid, lo in self._live_orders.items()
+        }
+        result["exchange_order_map"] = dict(self._exchange_order_map)
         return result
+
+    def restore_live_orders(self, state: dict[str, Any]) -> None:
+        """Restore live order tracking state from persisted result.
+
+        Called during resume to rebuild _live_orders and _exchange_order_map.
+        Terminal orders (FILLED/CANCELLED/REJECTED) are skipped.
+
+        Args:
+            state: Result dict from StrategyRun.result JSONB.
+        """
+        self._live_orders.clear()
+        self._exchange_order_map.clear()
+
+        saved_orders = state.get("live_orders", {})
+        saved_map = state.get("exchange_order_map", {})
+
+        for internal_id, order_data in saved_orders.items():
+            status = OrderStatus(order_data["status"])
+            if status in (OrderStatus.FILLED, OrderStatus.CANCELLED, OrderStatus.REJECTED):
+                continue
+
+            live_order = LiveOrder(
+                internal_id=order_data["internal_id"],
+                exchange_order_id=order_data.get("exchange_order_id"),
+                symbol=order_data["symbol"],
+                side=OrderSide(order_data["side"]),
+                order_type=order_data["order_type"],
+                amount=Decimal(str(order_data["amount"])),
+                price=Decimal(str(order_data["price"])) if order_data.get("price") else None,
+                status=status,
+            )
+            live_order.filled_amount = Decimal(str(order_data.get("filled_amount", "0")))
+            if order_data.get("avg_fill_price"):
+                live_order.avg_fill_price = Decimal(str(order_data["avg_fill_price"]))
+            live_order.fee = Decimal(str(order_data.get("fee", "0")))
+            live_order.fee_currency = order_data.get("fee_currency")
+            if order_data.get("created_at"):
+                live_order.created_at = datetime.fromisoformat(order_data["created_at"])
+            if order_data.get("updated_at"):
+                live_order.updated_at = datetime.fromisoformat(order_data["updated_at"])
+            live_order.error_message = order_data.get("error_message")
+
+            self._live_orders[internal_id] = live_order
+
+        for exchange_id, internal_id in saved_map.items():
+            if internal_id in self._live_orders:
+                self._exchange_order_map[exchange_id] = internal_id
+
+        logger.info(
+            f"Restored {len(self._live_orders)} live orders and "
+            f"{len(self._exchange_order_map)} exchange mappings"
+        )
 
     def _build_bar_update_event(self) -> dict[str, Any]:
         """Build incremental bar update event for WebSocket push."""

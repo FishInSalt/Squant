@@ -20,6 +20,7 @@ from squant.schemas.live_trading import (
     LiveTradingListItem,
     LiveTradingRunResponse,
     LiveTradingStatusResponse,
+    ResumeLiveTradingRequest,
     RiskStateResponse,
     StartLiveTradingRequest,
     StopLiveTradingRequest,
@@ -31,6 +32,7 @@ from squant.services.live_trading import (
     LiveTradingService,
     RiskConfigurationError,
     SessionNotFoundError,
+    SessionNotResumableError,
     StrategyInstantiationError,
 )
 from squant.services.strategy import StrategyNotFoundError
@@ -133,6 +135,50 @@ async def stop_live_trading(
         return ApiResponse(data=LiveTradingRunResponse.model_validate(run))
     except SessionNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
+
+
+@router.post("/{run_id}/resume", response_model=ApiResponse[LiveTradingRunResponse])
+async def resume_live_trading(
+    run_id: UUID,
+    request: ResumeLiveTradingRequest | None = None,
+    session: AsyncSession = Depends(get_session),
+) -> ApiResponse[LiveTradingRunResponse]:
+    """Resume a stopped/errored/interrupted live trading session.
+
+    Reconnects to the exchange, reconciles orders and positions,
+    restores trading state, and resumes.
+
+    Args:
+        run_id: Live trading run ID.
+        request: Resume configuration (optional).
+        session: Database session.
+
+    Returns:
+        Updated live trading run record.
+    """
+    service = LiveTradingService(session)
+    warmup_bars = request.warmup_bars if request else 200
+
+    try:
+        run, reconciliation = await service.resume(run_id, warmup_bars=warmup_bars)
+        return ApiResponse(
+            data=LiveTradingRunResponse.model_validate(run),
+            message=(
+                f"Session resumed. Orders reconciled: "
+                f"{reconciliation.get('orders_reconciled', 0)}, "
+                f"fills processed: {reconciliation.get('fills_processed', 0)}"
+            ),
+        )
+    except SessionNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except SessionNotResumableError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    except ExchangeAccountNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except ExchangeConnectionError as e:
+        raise HTTPException(status_code=503, detail=str(e))
+    except LiveTradingError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 @router.post("/{run_id}/emergency-close", response_model=ApiResponse[EmergencyCloseResponse])

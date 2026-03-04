@@ -72,6 +72,17 @@ class StartLiveTradingRequest(BaseModel):
     params: dict[str, Any] | None = Field(None, description="Strategy parameters")
 
 
+class ResumeLiveTradingRequest(BaseModel):
+    """Request to resume a stopped/errored live trading session."""
+
+    warmup_bars: int = Field(
+        default=200,
+        ge=0,
+        le=5000,
+        description="Number of historical bars to replay for strategy warmup",
+    )
+
+
 class LiveTradingRunResponse(BaseModel):
     """Live trading run response."""
 

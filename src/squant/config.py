@@ -263,6 +263,27 @@ class PaperTradingSettings(BaseSettings):
     )
 
 
+class LiveTradingSettings(BaseSettings):
+    """Live trading engine settings."""
+
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_prefix="LIVE_",
+        extra="ignore",
+    )
+
+    max_sessions: int = Field(
+        default=10, ge=1, le=50, description="Max concurrent live trading sessions"
+    )
+    warmup_bars: int = Field(
+        default=200, ge=0, le=5000, description="Bars to replay for strategy warmup on resume"
+    )
+    auto_recovery: bool = Field(
+        default=False,
+        description="Auto-recover orphaned sessions on startup (default off for safety)",
+    )
+
+
 class CircuitBreakerSettings(BaseSettings):
     """Circuit breaker settings."""
 
@@ -387,6 +408,11 @@ class Settings(BaseSettings):
     def paper(self) -> PaperTradingSettings:
         """Paper trading settings."""
         return PaperTradingSettings()
+
+    @cached_property
+    def live(self) -> LiveTradingSettings:
+        """Live trading settings."""
+        return LiveTradingSettings()
 
     @cached_property
     def circuit_breaker(self) -> CircuitBreakerSettings:

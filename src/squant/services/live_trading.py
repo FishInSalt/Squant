@@ -28,7 +28,7 @@ from squant.infra.exchange.binance.adapter import BinanceAdapter
 from squant.infra.exchange.ccxt import CCXTRestAdapter, ExchangeCredentials
 from squant.infra.exchange.okx.adapter import OKXAdapter
 from squant.infra.repository import BaseRepository
-from squant.models.enums import RunMode, RunStatus
+from squant.models.enums import OrderStatus, RunMode, RunStatus
 from squant.models.exchange import ExchangeAccount
 from squant.models.metrics import EquityCurve
 from squant.models.strategy import StrategyRun
@@ -99,6 +99,23 @@ class CircuitBreakerActiveError(LiveTradingError):
         if reason:
             message += f" (reason: {reason})"
         super().__init__(message)
+
+
+class SessionNotResumableError(LiveTradingError):
+    """Session cannot be resumed."""
+
+    def __init__(self, run_id: str | UUID, reason: str):
+        self.run_id = str(run_id)
+        self.reason = reason
+        super().__init__(f"Session {run_id} cannot be resumed: {reason}")
+
+
+class MaxSessionsReachedError(LiveTradingError):
+    """Maximum number of concurrent sessions reached."""
+
+    def __init__(self, max_sessions: int):
+        self.max_sessions = max_sessions
+        super().__init__(f"Maximum concurrent live sessions reached: {max_sessions}")
 
 
 class LiveStrategyRunRepository(BaseRepository[StrategyRun]):
@@ -355,6 +372,7 @@ class LiveTradingService:
         # Create run record
         run = await self.run_repo.create(
             strategy_id=str(strategy_id),
+            account_id=str(exchange_account_id),
             mode=RunMode.LIVE,
             symbol=symbol,
             exchange=exchange_account.exchange,
@@ -941,6 +959,497 @@ class LiveTradingService:
         logger.info(f"Stopped {stopped}/{len(active)} live trading sessions")
         return stopped
 
+    # -------------------------------------------------------------------------
+    # Resume: reconciliation, warmup, and session recovery
+    # -------------------------------------------------------------------------
+
+    async def _reconcile_orders(
+        self,
+        engine: LiveTradingEngine,
+        adapter: ExchangeAdapter,
+        symbol: str,
+    ) -> dict[str, Any]:
+        """Reconcile local order state with exchange during resume.
+
+        Queries exchange open orders and compares with saved local state.
+        Processes fills that occurred during downtime.
+
+        Args:
+            engine: Live trading engine with restored live_orders.
+            adapter: Connected exchange adapter.
+            symbol: Trading symbol.
+
+        Returns:
+            Reconciliation report dict.
+        """
+        from squant.infra.exchange.types import OrderResponse
+
+        report: dict[str, Any] = {
+            "orders_reconciled": 0,
+            "fills_processed": 0,
+            "orders_cancelled": 0,
+            "orders_unknown": 0,
+            "discrepancies": [],
+        }
+
+        try:
+            exchange_orders: list[OrderResponse] = await adapter.get_open_orders(symbol)
+        except Exception as e:
+            logger.error(f"Failed to query exchange open orders during reconciliation: {e}")
+            report["error"] = f"Could not query exchange: {e}"
+            return report
+
+        # Build lookup by exchange order ID
+        exchange_by_id: dict[str, OrderResponse] = {o.order_id: o for o in exchange_orders}
+
+        orders_to_remove: list[str] = []
+
+        for internal_id, live_order in list(engine._live_orders.items()):
+            exchange_oid = live_order.exchange_order_id
+            if not exchange_oid:
+                live_order.status = OrderStatus.REJECTED
+                orders_to_remove.append(internal_id)
+                report["orders_cancelled"] += 1
+                continue
+
+            if exchange_oid in exchange_by_id:
+                # Order still open on exchange — check for new fills
+                exchange_order = exchange_by_id[exchange_oid]
+                old_filled = live_order.filled_amount
+
+                if exchange_order.filled > old_filled:
+                    fill_delta = exchange_order.filled - old_filled
+                    fee_delta = (exchange_order.fee or Decimal("0")) - live_order.fee
+                    if fee_delta < 0:
+                        fee_delta = Decimal("0")
+                    engine._process_incremental_fill(
+                        live_order, fill_delta, exchange_order, fee_delta
+                    )
+                    report["fills_processed"] += 1
+
+                live_order.status = exchange_order.status
+                live_order.filled_amount = exchange_order.filled
+                live_order.avg_fill_price = exchange_order.avg_price
+                live_order.fee = exchange_order.fee or Decimal("0")
+                live_order.updated_at = datetime.now(UTC)
+                report["orders_reconciled"] += 1
+            else:
+                # Order not in open orders — query final state
+                try:
+                    final_state = await adapter.get_order(symbol, exchange_oid)
+                    old_filled = live_order.filled_amount
+
+                    if final_state.filled > old_filled:
+                        fill_delta = final_state.filled - old_filled
+                        fee_delta = (final_state.fee or Decimal("0")) - live_order.fee
+                        if fee_delta < 0:
+                            fee_delta = Decimal("0")
+                        engine._process_incremental_fill(
+                            live_order, fill_delta, final_state, fee_delta
+                        )
+                        report["fills_processed"] += 1
+
+                    live_order.status = final_state.status
+                    live_order.filled_amount = final_state.filled
+                    live_order.avg_fill_price = final_state.avg_price
+                    live_order.fee = final_state.fee or Decimal("0")
+                    orders_to_remove.append(internal_id)
+                    report["orders_reconciled"] += 1
+                except Exception as e:
+                    logger.warning(
+                        f"Failed to query order {internal_id} "
+                        f"(exchange_id={exchange_oid}): {e}"
+                    )
+                    live_order.status = OrderStatus.CANCELLED
+                    orders_to_remove.append(internal_id)
+                    report["orders_cancelled"] += 1
+
+        # Clean up completed orders from tracking
+        for internal_id in orders_to_remove:
+            order = engine._live_orders.pop(internal_id, None)
+            if order and order.exchange_order_id:
+                engine._exchange_order_map.pop(order.exchange_order_id, None)
+
+        # Check for untracked exchange orders
+        tracked_exchange_ids = set(engine._exchange_order_map.keys())
+        for order in exchange_orders:
+            if order.order_id not in tracked_exchange_ids:
+                logger.warning(
+                    f"Untracked exchange order during reconciliation: "
+                    f"id={order.order_id}, status={order.status.value}"
+                )
+                report["orders_unknown"] += 1
+                report["discrepancies"].append({
+                    "type": "untracked_exchange_order",
+                    "exchange_order_id": order.order_id,
+                    "status": order.status.value,
+                })
+
+        logger.info(
+            f"Order reconciliation: reconciled={report['orders_reconciled']}, "
+            f"fills={report['fills_processed']}, cancelled={report['orders_cancelled']}, "
+            f"unknown={report['orders_unknown']}"
+        )
+        return report
+
+    async def _reconcile_positions(
+        self,
+        engine: LiveTradingEngine,
+        adapter: ExchangeAdapter,
+        symbol: str,
+    ) -> dict[str, Any]:
+        """Reconcile local positions with exchange balance during resume.
+
+        Exchange balance is source of truth for cash. Position discrepancies
+        are logged but not auto-adjusted (preserves avg_entry_price).
+
+        Args:
+            engine: Live trading engine with restored context.
+            adapter: Connected exchange adapter.
+            symbol: Trading symbol.
+
+        Returns:
+            Reconciliation report dict.
+        """
+        report: dict[str, Any] = {
+            "cash_adjusted": False,
+            "position_adjusted": False,
+            "discrepancies": [],
+        }
+
+        try:
+            balance = await adapter.get_balance()
+        except Exception as e:
+            logger.error(f"Failed to query balance during reconciliation: {e}")
+            report["error"] = f"Could not query balance: {e}"
+            return report
+
+        # Reconcile quote currency (cash)
+        quote_currency = symbol.split("/")[1]
+        quote_balance = balance.get_balance(quote_currency)
+        if quote_balance:
+            exchange_cash = quote_balance.available
+            local_cash = engine.context._cash
+            diff = abs(exchange_cash - local_cash)
+            threshold = max(local_cash * Decimal("0.01"), Decimal("1"))
+
+            if diff > threshold:
+                logger.warning(
+                    f"Cash discrepancy: local={local_cash}, exchange={exchange_cash}"
+                )
+                report["discrepancies"].append({
+                    "type": "cash_mismatch",
+                    "local": str(local_cash),
+                    "exchange": str(exchange_cash),
+                })
+                engine.context._cash = exchange_cash
+                report["cash_adjusted"] = True
+
+        # Reconcile base currency (position)
+        base_currency = symbol.split("/")[0]
+        base_balance = balance.get_balance(base_currency)
+        exchange_amount = base_balance.available if base_balance else Decimal("0")
+        local_pos = engine.context.get_position(symbol)
+        local_amount = local_pos.amount if local_pos else Decimal("0")
+
+        if local_amount > 0 or exchange_amount > 0:
+            diff = abs(exchange_amount - local_amount)
+            threshold = max(abs(local_amount) * Decimal("0.001"), Decimal("0.00001"))
+
+            if diff > threshold:
+                logger.warning(
+                    f"Position discrepancy for {symbol}: "
+                    f"local={local_amount}, exchange={exchange_amount}"
+                )
+                report["discrepancies"].append({
+                    "type": "position_mismatch",
+                    "symbol": symbol,
+                    "local": str(local_amount),
+                    "exchange": str(exchange_amount),
+                })
+                report["position_adjusted"] = True
+
+        return report
+
+    async def _warmup_strategy(
+        self,
+        engine: LiveTradingEngine,
+        run: StrategyRun,
+        warmup_bars: int,
+    ) -> None:
+        """Replay historical bars through strategy to rebuild internal state.
+
+        During warmup, bars are fed to strategy.on_bar() but no orders
+        are processed. Rebuilds strategy indicators and internal state.
+
+        Args:
+            engine: The live trading engine.
+            run: The strategy run record.
+            warmup_bars: Number of bars to replay.
+        """
+        from datetime import timedelta
+
+        from squant.config import get_settings
+        from squant.engine.resource_limits import resource_limiter
+        from squant.services.data_loader import DataLoader
+
+        settings = get_settings()
+
+        tf_durations = {
+            "1m": 60, "5m": 300, "15m": 900, "30m": 1800,
+            "1h": 3600, "4h": 14400, "1d": 86400, "1w": 604800,
+        }
+        tf_seconds = tf_durations.get(run.timeframe, 60)
+        end_time = datetime.now(UTC)
+        start_time = end_time - timedelta(seconds=int(tf_seconds * warmup_bars * 1.2))
+
+        loader = DataLoader(self.session)
+        bar_count = 0
+
+        logs_snapshot = list(engine.context._logs)
+
+        async for bar in loader.load_bars(
+            exchange=run.exchange,
+            symbol=run.symbol,
+            timeframe=run.timeframe,
+            start=start_time,
+            end=end_time,
+        ):
+            engine.context._set_current_bar(bar)
+            engine.context._add_bar_to_history(bar)
+            try:
+                with resource_limiter(
+                    cpu_seconds=settings.strategy.cpu_limit_seconds,
+                    memory_mb=settings.strategy.memory_limit_mb,
+                ):
+                    engine._strategy.on_bar(bar)
+            except Exception as e:
+                logger.debug(f"Warmup bar error (ignored): {e}")
+            bar_count += 1
+            if bar_count >= warmup_bars:
+                break
+
+        # Clear pending orders generated during warmup
+        engine.context._pending_orders.clear()
+
+        # Restore pre-warmup logs
+        engine.context._logs.clear()
+        for entry in logs_snapshot:
+            engine.context._logs.append(entry)
+
+        logger.info(
+            f"Warmup completed for live session {engine.run_id}: "
+            f"{bar_count}/{warmup_bars} bars replayed"
+        )
+
+    async def resume(
+        self,
+        run_id: UUID,
+        warmup_bars: int = 200,
+        redis: Any | None = None,
+    ) -> tuple[StrategyRun, dict[str, Any]]:
+        """Resume a stopped/errored/interrupted live trading session.
+
+        Reconnects to exchange, reconciles orders and positions,
+        restores trading state, warms up strategy, and resumes trading.
+
+        Args:
+            run_id: Run ID of the session to resume.
+            warmup_bars: Number of historical bars for strategy warmup.
+            redis: Redis client for circuit breaker check.
+
+        Returns:
+            Tuple of (updated StrategyRun, reconciliation_report).
+
+        Raises:
+            SessionNotFoundError: If session not found.
+            SessionNotResumableError: If session cannot be resumed.
+            SessionAlreadyRunningError: If duplicate session running.
+            CircuitBreakerActiveError: If circuit breaker active.
+            MaxSessionsReachedError: If max sessions reached.
+            ExchangeConnectionError: If exchange connection fails.
+        """
+        from squant.config import get_settings
+        from squant.services.account import ExchangeAccountRepository
+        from squant.services.strategy import StrategyRepository
+        from squant.websocket.manager import get_stream_manager
+
+        # 1. Circuit breaker check
+        if redis is not None:
+            await self._check_circuit_breaker(redis)
+
+        # 2. Load and validate run
+        run = await self.run_repo.get(run_id)
+        if not run:
+            raise SessionNotFoundError(run_id)
+
+        if run.status not in (RunStatus.ERROR, RunStatus.STOPPED, RunStatus.INTERRUPTED):
+            raise SessionNotResumableError(
+                run_id,
+                f"status is {run.status.value}, must be error, stopped, or interrupted",
+            )
+
+        if not run.result or "cash" not in run.result:
+            raise SessionNotResumableError(
+                run_id, "no saved state; session cannot be resumed"
+            )
+
+        if not run.account_id:
+            raise SessionNotResumableError(
+                run_id, "no exchange account ID; session predates resume support"
+            )
+
+        # 3. Check session limits
+        settings = get_settings()
+        session_manager = get_live_session_manager()
+        if session_manager.session_count >= settings.live.max_sessions:
+            raise MaxSessionsReachedError(settings.live.max_sessions)
+
+        # 4. Check for duplicate running session
+        has_running = await self.run_repo.has_running_session(
+            strategy_id=run.strategy_id,
+            symbol=run.symbol,
+            mode=RunMode.LIVE,
+        )
+        if has_running:
+            raise SessionAlreadyRunningError(
+                message=f"A live session for strategy {run.strategy_id} "
+                f"on {run.symbol} is already running"
+            )
+
+        # 5. Load and instantiate strategy
+        strategy_repo = StrategyRepository(self.session)
+        strategy_model = await strategy_repo.get(UUID(run.strategy_id))
+        if not strategy_model:
+            raise SessionNotResumableError(run_id, "strategy no longer exists")
+
+        strategy_instance = self._instantiate_strategy(strategy_model.code)
+
+        # 6. Reconnect to exchange
+        account_repo = ExchangeAccountRepository(self.session)
+        exchange_account = await account_repo.get(UUID(run.account_id))
+        if not exchange_account:
+            raise ExchangeAccountNotFoundError(run.account_id, "not found")
+        if not exchange_account.is_active:
+            raise ExchangeAccountNotFoundError(run.account_id, "account is not active")
+
+        adapter = self._create_adapter(exchange_account)
+        try:
+            await adapter.connect()
+        except Exception as e:
+            raise ExchangeConnectionError(
+                f"Failed to reconnect to exchange: {e}"
+            ) from e
+
+        # 7. Restore risk config
+        risk_config = None
+        if run.result.get("risk_config"):
+            risk_config = RiskConfig(**run.result["risk_config"])
+        if risk_config is None:
+            raise SessionNotResumableError(
+                run_id, "no risk config in saved state"
+            )
+
+        # 8. Create engine
+        engine = LiveTradingEngine(
+            run_id=UUID(run.id),
+            strategy=strategy_instance,
+            symbol=run.symbol,
+            timeframe=run.timeframe,
+            adapter=adapter,
+            risk_config=risk_config,
+            initial_equity=run.initial_capital or Decimal("0"),
+            params=run.params,
+            on_snapshot=self._create_snapshot_callback(),
+            on_result=self._create_result_callback(),
+            on_event=self._create_event_callback(UUID(run.id)),
+        )
+
+        # 9. Restore trading state
+        engine.context.restore_state(run.result)
+        engine._bar_count = run.result.get("bar_count", 0)
+
+        if run.result.get("risk_state"):
+            engine._risk_manager.restore_state(run.result["risk_state"])
+
+        # 10. Restore live order tracking
+        engine.restore_live_orders(run.result)
+
+        # 11. Order reconciliation
+        reconciliation_report = await self._reconcile_orders(
+            engine, adapter, run.symbol
+        )
+        logger.info(f"Order reconciliation for {run_id}: {reconciliation_report}")
+
+        # 12. Position/balance reconciliation
+        position_report = await self._reconcile_positions(
+            engine, adapter, run.symbol
+        )
+        reconciliation_report["position_reconciliation"] = position_report
+
+        # 13. Register with session manager
+        await session_manager.register(engine)
+
+        subscribed = False
+        try:
+            # 14. Subscribe to WebSocket
+            stream_manager = get_stream_manager()
+            await stream_manager.subscribe_candles(run.symbol, run.timeframe)
+            subscribed = True
+
+            try:
+                await stream_manager.subscribe_orders()
+            except Exception as e:
+                logger.warning(f"Failed to subscribe to order updates: {e}")
+
+            # 15. Start engine
+            await engine.start()
+
+            # 16. Warmup strategy
+            if warmup_bars > 0:
+                engine._warming_up = True
+                try:
+                    await self._warmup_strategy(engine, run, warmup_bars)
+                finally:
+                    engine._warming_up = False
+
+            # 17. Update DB status
+            run = await self.run_repo.update(
+                run.id,
+                status=RunStatus.RUNNING,
+                error_message=None,
+                stopped_at=None,
+            )
+            await self.session.commit()
+
+            logger.info(
+                f"Resumed live session {run.id} "
+                f"(warmup={warmup_bars}, "
+                f"orders_reconciled={reconciliation_report.get('orders_reconciled', 0)})"
+            )
+            return run, reconciliation_report
+
+        except Exception as e:
+            # Cleanup on failure
+            if engine.is_running:
+                try:
+                    await engine.stop(error=f"Resume failed: {e}")
+                except Exception:
+                    pass
+
+            try:
+                await session_manager.unregister(engine.run_id)
+            except Exception:
+                pass
+
+            if subscribed:
+                try:
+                    await self._check_unsubscribe(run.symbol, run.timeframe)
+                except Exception:
+                    pass
+
+            raise
+
     async def list_runs(
         self,
         page: int = 1,
@@ -1168,3 +1677,82 @@ class LiveTradingService:
 
         await self.session.commit()
         return len(orphaned)
+
+    async def recover_orphaned_sessions(self) -> tuple[int, int]:
+        """Attempt to recover orphaned live trading sessions.
+
+        For each orphaned session with saved state, attempts resume().
+        Sessions that fail are marked ERROR to prevent infinite retry.
+
+        Live auto-recovery is opt-in (LIVE_AUTO_RECOVERY=true) because
+        it involves real money and exchange connections.
+
+        Returns:
+            Tuple of (recovered_count, failed_count).
+        """
+        from squant.config import get_settings
+
+        settings = get_settings()
+        if not settings.live.auto_recovery:
+            count = await self.mark_orphaned_sessions()
+            return 0, count
+
+        orphaned = await self.run_repo.get_orphaned_sessions()
+        if not orphaned:
+            return 0, 0
+
+        recovered = 0
+        failed = 0
+
+        for run in orphaned:
+            if run.result and run.result.get("cash") and run.account_id:
+                try:
+                    # Mark INTERRUPTED so resume() accepts it
+                    await self.run_repo.update(
+                        run.id,
+                        status=RunStatus.INTERRUPTED,
+                        error_message="Recovering from application restart...",
+                    )
+                    await self.session.commit()
+
+                    await self.resume(
+                        UUID(run.id),
+                        warmup_bars=settings.live.warmup_bars,
+                    )
+                    recovered += 1
+                    logger.info(f"Auto-recovered live session {run.id}")
+                    continue
+                except Exception as e:
+                    logger.warning(f"Auto-recovery failed for live session {run.id}: {e}")
+                    await self.run_repo.update(
+                        run.id,
+                        status=RunStatus.ERROR,
+                        error_message=f"Auto-recovery failed: {e}",
+                        stopped_at=datetime.now(UTC),
+                    )
+                    await self.session.commit()
+                    failed += 1
+                    continue
+
+            # No saved state or no account_id — mark INTERRUPTED
+            result_data = run.result
+            if not result_data:
+                last_point = await self.equity_repo.get_last_by_run(str(run.id))
+                if last_point:
+                    result_data = {
+                        "equity": str(last_point.equity),
+                        "cash": str(last_point.cash),
+                        "unrealized_pnl": str(last_point.unrealized_pnl),
+                    }
+
+            await self.run_repo.update(
+                run.id,
+                status=RunStatus.INTERRUPTED,
+                result=result_data,
+                error_message="Session terminated due to application restart",
+                stopped_at=datetime.now(UTC),
+            )
+            await self.session.commit()
+            failed += 1
+
+        return recovered, failed
