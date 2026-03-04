@@ -283,6 +283,9 @@ class CCXTRestAdapter(ExchangeAdapter):
             candles = []
             for item in ohlcv:
                 if len(item) >= 6:
+                    # Filter by end_time if specified (CCXT doesn't support it natively)
+                    if end_time is not None and item[0] > end_time:
+                        continue
                     candles.append(
                         Candlestick(
                             timestamp=datetime.fromtimestamp(item[0] / 1000, tz=UTC),
