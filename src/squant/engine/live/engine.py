@@ -647,31 +647,35 @@ class LiveTradingEngine:
                             }
                         )
 
-            # Wait for close orders to fill
-            for symbol, response in pending_close_orders:
+            # Wait for close orders to fill in parallel (LIVE-OP-002)
+            async def _wait_single(sym: str, resp: OrderResponse) -> None:
                 try:
-                    final = await self._wait_for_order_fill(symbol, response)
+                    final = await self._wait_for_order_fill(sym, resp)
                     if final.status == OrderStatus.FILLED:
                         results["positions_closed"] += 1
                     else:
                         logger.warning(
-                            f"Emergency close order not filled: {symbol} "
+                            f"Emergency close order not filled: {sym} "
                             f"status={final.status.value}"
                         )
                         results["errors"].append(
                             {
-                                "symbol": symbol,
+                                "symbol": sym,
                                 "error": f"Order not filled: status={final.status.value}",
                             }
                         )
                 except Exception as e:
-                    logger.exception(f"Error waiting for close order fill: {symbol}: {e}")
+                    logger.exception(f"Error waiting for close order fill: {sym}: {e}")
                     results["errors"].append(
                         {
-                            "symbol": symbol,
+                            "symbol": sym,
                             "error": f"Fill wait failed: {e}",
                         }
                     )
+
+            await asyncio.gather(
+                *[_wait_single(sym, resp) for sym, resp in pending_close_orders]
+            )
 
             # TRD-038#5: Collect remaining positions based on unfilled orders
             error_symbols = {err["symbol"] for err in results["errors"]}
