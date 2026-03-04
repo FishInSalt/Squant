@@ -40,6 +40,11 @@ logger = logging.getLogger(__name__)
 # Retry config for read-only and idempotent operations (LIVE-007)
 _READ_RETRY = RetryConfig(max_retries=3, base_delay=0.5, max_delay=10.0)
 
+# Retry config for order placement — safe when client_order_id is set
+# (exchanges treat duplicate client_order_id as idempotent). Single retry
+# to avoid extended delays while protecting against transient network errors.
+_PLACE_ORDER_RETRY = RetryConfig(max_retries=1, base_delay=0.5, max_delay=5.0)
+
 
 class CCXTRestAdapter(ExchangeAdapter):
     """CCXT-based REST adapter supporting multiple exchanges.
@@ -384,7 +389,10 @@ class CCXTRestAdapter(ExchangeAdapter):
     # ==================== Order Methods ====================
 
     async def place_order(self, request: OrderRequest) -> OrderResponse:
-        """Place a new order."""
+        """Place a new order with retry for transient errors (LIVE-EX-001).
+
+        Uses client_order_id for idempotency — safe to retry on network errors.
+        """
         if not self._exchange:
             raise ExchangeConnectionError(
                 message="Exchange not connected. Call connect() first.",
@@ -397,6 +405,13 @@ class CCXTRestAdapter(ExchangeAdapter):
                 exchange=self._exchange_id,
             )
 
+        return await with_retry(
+            self._place_order_impl, request,
+            config=_PLACE_ORDER_RETRY, operation_name="place_order",
+        )
+
+    async def _place_order_impl(self, request: OrderRequest) -> OrderResponse:
+        """Internal place_order implementation."""
         try:
             order_type = request.type.value.lower()
             side = request.side.value.lower()
