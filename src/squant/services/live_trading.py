@@ -394,12 +394,17 @@ class LiveTradingService:
             # Register with session manager
             await session_manager.register(engine)
 
-            # Subscribe to WebSocket candles
+            # Subscribe to WebSocket candles and private order updates
             from squant.websocket.manager import get_stream_manager
 
             stream_manager = get_stream_manager()
             await stream_manager.subscribe_candles(symbol, timeframe)
             subscribed = True
+
+            try:
+                await stream_manager.subscribe_orders()
+            except Exception as e:
+                logger.warning(f"Failed to subscribe to order updates: {e}")
 
             # Start engine
             await engine.start()

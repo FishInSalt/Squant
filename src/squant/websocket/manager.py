@@ -867,6 +867,12 @@ class StreamManager:
                 session_manager = get_session_manager()
                 await session_manager.dispatch_candle(candle)
 
+                # Dispatch to live trading sessions
+                from squant.engine.live.manager import get_live_session_manager
+
+                live_manager = get_live_session_manager()
+                await live_manager.dispatch_candle(candle)
+
             elif data_type == "trade":
                 trade: WSTrade = data
                 await self._publish(
@@ -890,6 +896,12 @@ class StreamManager:
                     "orders",
                     order.model_dump(mode="json"),
                 )
+
+                # Dispatch to live trading sessions
+                from squant.engine.live.manager import get_live_session_manager
+
+                live_manager = get_live_session_manager()
+                live_manager.dispatch_order_update(order)
 
             elif data_type == "account":
                 account: WSAccountUpdate = data
@@ -972,6 +984,12 @@ class StreamManager:
 
                 session_manager = get_session_manager()
                 await session_manager.dispatch_candle(candle)
+
+                # Dispatch to live trading sessions
+                from squant.engine.live.manager import get_live_session_manager
+
+                live_manager = get_live_session_manager()
+                await live_manager.dispatch_candle(candle)
 
     async def _process_trades(self, arg: dict, data: list) -> None:
         """Process trade data and publish to Redis."""
@@ -1057,6 +1075,12 @@ class StreamManager:
                 "orders",
                 order.model_dump(mode="json"),
             )
+
+            # Dispatch to live trading sessions
+            from squant.engine.live.manager import get_live_session_manager
+
+            live_manager = get_live_session_manager()
+            live_manager.dispatch_order_update(order)
 
     async def _process_account(self, data: list) -> None:
         """Process account balance updates and publish to Redis."""
