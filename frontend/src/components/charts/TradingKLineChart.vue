@@ -35,7 +35,9 @@
                   v-if="indicatorParams[ind.key].length > 1"
                   class="remove-btn"
                   @click="removeParam(ind.key, i)"
-                ><CircleClose /></el-icon>
+                >
+                  <CircleClose />
+                </el-icon>
               </div>
               <el-button
                 v-if="indicatorParams[ind.key].length < (ind.maxCount ?? 8)"

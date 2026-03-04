@@ -219,8 +219,8 @@ function updateData(data: EquityPoint[]) {
     : []
 
   // Build trade markers
-  let buyData: any[] = []
-  let sellData: any[] = []
+  const buyData: any[] = []
+  const sellData: any[] = []
   const trades = props.trades
   if (trades && trades.length > 0) {
     const returnMap = buildReturnMap(data, initialEquity)
