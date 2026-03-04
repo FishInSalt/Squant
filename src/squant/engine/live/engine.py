@@ -895,7 +895,7 @@ class LiveTradingEngine:
         )
 
     async def _sync_balance(self) -> None:
-        """Sync account balance from exchange."""
+        """Sync account balance from exchange and reconcile positions."""
         try:
             balance = await self._adapter.get_balance()
             # Update context cash from quote currency balance
@@ -903,6 +903,24 @@ class LiveTradingEngine:
             quote_balance = balance.get_balance(quote_currency)
             if quote_balance:
                 self._context._cash = quote_balance.available
+
+            # Reconcile base currency position (LIVE-005)
+            base_currency = self._symbol.split("/")[0]  # e.g., "BTC" from "BTC/USDT"
+            base_balance = balance.get_balance(base_currency)
+            exchange_amount = base_balance.available if base_balance else Decimal("0")
+            local_pos = self._context.get_position(self._symbol)
+            local_amount = local_pos.amount if local_pos else Decimal("0")
+
+            # Allow small precision differences (< 0.1% or < 0.00001)
+            if local_amount > 0 or exchange_amount > 0:
+                diff = abs(exchange_amount - local_amount)
+                threshold = max(local_amount * Decimal("0.001"), Decimal("0.00001"))
+                if diff > threshold:
+                    logger.warning(
+                        f"Position mismatch for {self._symbol}: "
+                        f"local={local_amount}, exchange={exchange_amount}, diff={diff}"
+                    )
+
             self._balance_consecutive_failures = 0
         except Exception as e:
             self._balance_consecutive_failures += 1
