@@ -950,6 +950,16 @@ class PaperTradingService:
             if engine._risk_manager and run.result.get("risk_state"):
                 engine._risk_manager.restore_state(run.result["risk_state"])
 
+        # Sync delta tracking counters to restored totals so that
+        # already-persisted fills/trades/logs are not re-delivered as new
+        # deltas to strategy callbacks or WebSocket events.
+        ctx = engine.context
+        engine._last_callback_fill_total = ctx._total_fills_added
+        engine._last_callback_completed_total = ctx._total_completed_added
+        engine._last_emitted_fill_total = ctx._total_fills_added
+        engine._last_emitted_trade_total = ctx._total_trades_added
+        engine._last_emitted_log_total = ctx._total_logs_added
+
         # Register with session manager
         await session_manager.register(engine)
 

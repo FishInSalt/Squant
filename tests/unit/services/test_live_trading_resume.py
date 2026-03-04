@@ -276,6 +276,77 @@ class TestBuildResultForPersistence:
 
 
 # ---------------------------------------------------------------------------
+# Delta counter sync tests
+# ---------------------------------------------------------------------------
+
+
+class TestDeltaCounterSync:
+    """Tests that resume syncs delta tracking counters to prevent re-delivery."""
+
+    @patch("squant.config.get_settings")
+    def test_counters_synced_after_restore(self, mock_settings):
+        """After restore_state, delta counters should match context totals."""
+        from squant.engine.backtest.strategy_base import Strategy
+
+        mock_settings.return_value = MagicMock(
+            paper_max_equity_curve_size=100,
+            paper_max_completed_orders=100,
+            paper_max_fills=100,
+            paper_max_trades=100,
+            paper_max_logs=100,
+        )
+
+        class DummyStrategy(Strategy):
+            def on_init(self): pass
+            def on_bar(self, bar): pass
+            def on_stop(self): pass
+
+        engine = LiveTradingEngine(
+            run_id=uuid4(),
+            strategy=DummyStrategy(),
+            symbol="BTC/USDT",
+            timeframe="1m",
+            adapter=AsyncMock(),
+            risk_config=RiskConfig(
+                max_position_size=Decimal("0.5"),
+                max_order_size=Decimal("0.1"),
+            ),
+            initial_equity=Decimal("10000"),
+        )
+
+        # Simulate restored state with historical data
+        engine.context._total_fills_added = 10
+        engine.context._total_completed_added = 8
+        engine.context._total_trades_added = 5
+        engine.context._total_logs_added = 20
+
+        # Before sync — counters are at 0 (from __init__)
+        assert engine._last_callback_fill_total == 0
+        assert engine._last_emitted_fill_total == 0
+
+        # Simulate what resume() does after restore_state
+        ctx = engine.context
+        engine._last_callback_fill_total = ctx._total_fills_added
+        engine._last_callback_completed_total = ctx._total_completed_added
+        engine._last_emitted_fill_total = ctx._total_fills_added
+        engine._last_emitted_trade_total = ctx._total_trades_added
+        engine._last_emitted_log_total = ctx._total_logs_added
+
+        # After sync — deltas should be 0
+        assert engine._last_callback_fill_total == 10
+        assert engine._last_callback_completed_total == 8
+        assert engine._last_emitted_fill_total == 10
+        assert engine._last_emitted_trade_total == 5
+        assert engine._last_emitted_log_total == 20
+
+        # Delta computation should yield 0 (no new data)
+        fill_delta = ctx._total_fills_added - engine._last_emitted_fill_total
+        trade_delta = ctx._total_trades_added - engine._last_emitted_trade_total
+        assert fill_delta == 0
+        assert trade_delta == 0
+
+
+# ---------------------------------------------------------------------------
 # restore_live_orders tests
 # ---------------------------------------------------------------------------
 

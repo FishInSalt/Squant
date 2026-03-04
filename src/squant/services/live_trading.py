@@ -1372,6 +1372,16 @@ class LiveTradingService:
         if run.result.get("risk_state"):
             engine._risk_manager.restore_state(run.result["risk_state"])
 
+        # 9b. Sync delta tracking counters to restored totals so that
+        # already-persisted fills/trades/logs are not re-delivered as new
+        # deltas to strategy callbacks or WebSocket events.
+        ctx = engine.context
+        engine._last_callback_fill_total = ctx._total_fills_added
+        engine._last_callback_completed_total = ctx._total_completed_added
+        engine._last_emitted_fill_total = ctx._total_fills_added
+        engine._last_emitted_trade_total = ctx._total_trades_added
+        engine._last_emitted_log_total = ctx._total_logs_added
+
         # 10. Restore live order tracking
         engine.restore_live_orders(run.result)
 
