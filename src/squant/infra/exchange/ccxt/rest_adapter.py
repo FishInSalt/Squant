@@ -552,7 +552,7 @@ class CCXTRestAdapter(ExchangeAdapter):
             ) from e
 
     async def get_open_orders(self, symbol: str | None = None) -> list[OrderResponse]:
-        """Get all open (unfilled) orders."""
+        """Get all open (unfilled) orders with retry (LIVE-CN-004)."""
         if not self._exchange:
             raise ExchangeConnectionError(
                 message="Exchange not connected. Call connect() first.",
@@ -565,6 +565,13 @@ class CCXTRestAdapter(ExchangeAdapter):
                 exchange=self._exchange_id,
             )
 
+        return await with_retry(
+            self._get_open_orders_impl, symbol,
+            config=_READ_RETRY, operation_name="get_open_orders",
+        )
+
+    async def _get_open_orders_impl(self, symbol: str | None = None) -> list[OrderResponse]:
+        """Internal get_open_orders implementation."""
         try:
             orders = await self._exchange.fetch_open_orders(symbol)
             return [self._transform_order(order) for order in orders]
