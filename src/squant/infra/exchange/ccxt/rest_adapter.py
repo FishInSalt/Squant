@@ -667,8 +667,12 @@ class CCXTRestAdapter(ExchangeAdapter):
         }
         return status_map.get(lower_status, OrderStatus.SUBMITTED)
 
-    def _parse_timestamp(self, ts: int | None) -> datetime:
-        """Parse CCXT timestamp (milliseconds) to datetime."""
+    def _parse_timestamp(self, ts: int | None) -> datetime | None:
+        """Parse CCXT timestamp (milliseconds) to datetime.
+
+        Returns None when the exchange omits the timestamp instead of
+        silently substituting the current wall-clock time (LIVE-CN-006).
+        """
         if ts is None:
-            return datetime.now(UTC)
+            return None
         return datetime.fromtimestamp(ts / 1000, tz=UTC)

@@ -301,6 +301,9 @@ class CCXTDataTransformer:
     def _parse_timestamp(ts: int | None) -> datetime:
         """Parse CCXT timestamp (milliseconds) to datetime.
 
+        Falls back to current time when the exchange omits the timestamp,
+        since WS message types require non-None datetime fields.
+
         Args:
             ts: Timestamp in milliseconds.
 
