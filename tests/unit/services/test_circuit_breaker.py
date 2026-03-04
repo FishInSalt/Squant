@@ -482,6 +482,7 @@ class TestCircuitBreakerBlocksNewSessions:
     ) -> None:
         """Test live trading start is blocked when circuit breaker is active."""
         from decimal import Decimal
+        from unittest.mock import patch
         from uuid import uuid4
 
         from squant.services.live_trading import (
@@ -499,15 +500,19 @@ class TestCircuitBreakerBlocksNewSessions:
             daily_loss_limit=Decimal("100"),
         )
 
-        with pytest.raises(CircuitBreakerActiveError) as exc_info:
-            await service.start(
-                strategy_id=uuid4(),
-                symbol="BTC/USDT",
-                exchange_account_id=uuid4(),
-                timeframe="1h",
-                risk_config=risk_config,
-                redis=mock_redis_active,
-            )
+        with patch(
+            "squant.infra.redis.get_redis_client",
+            new_callable=AsyncMock,
+            return_value=mock_redis_active,
+        ):
+            with pytest.raises(CircuitBreakerActiveError) as exc_info:
+                await service.start(
+                    strategy_id=uuid4(),
+                    symbol="BTC/USDT",
+                    exchange_account_id=uuid4(),
+                    timeframe="1h",
+                    risk_config=risk_config,
+                )
 
         assert "circuit breaker is active" in str(exc_info.value).lower()
 
@@ -535,7 +540,14 @@ class TestCircuitBreakerBlocksNewSessions:
         )
 
         # Mock the strategy repository to return None (strategy not found)
-        with patch("squant.services.strategy.StrategyRepository") as mock_repo_class:
+        with (
+            patch("squant.services.strategy.StrategyRepository") as mock_repo_class,
+            patch(
+                "squant.infra.redis.get_redis_client",
+                new_callable=AsyncMock,
+                return_value=mock_redis_inactive,
+            ),
+        ):
             mock_repo = MagicMock()
             mock_repo.get = AsyncMock(return_value=None)
             mock_repo_class.return_value = mock_repo
@@ -550,7 +562,6 @@ class TestCircuitBreakerBlocksNewSessions:
                     exchange_account_id=uuid4(),
                     timeframe="1h",
                     risk_config=risk_config,
-                    redis=mock_redis_inactive,
                 )
 
             # No CircuitBreakerActiveError means it passed the check

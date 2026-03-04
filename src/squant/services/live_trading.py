@@ -294,7 +294,6 @@ class LiveTradingService:
         risk_config: RiskConfig,
         initial_equity: Decimal | None = None,
         params: dict[str, Any] | None = None,
-        redis: Any | None = None,
     ) -> StrategyRun:
         """Start a live trading session.
 
@@ -306,7 +305,6 @@ class LiveTradingService:
             risk_config: Risk management configuration.
             initial_equity: Initial equity for risk calculations (fetched from exchange if None).
             params: Strategy parameters.
-            redis: Redis client for circuit breaker check (optional).
 
         Returns:
             Created StrategyRun.
@@ -322,9 +320,8 @@ class LiveTradingService:
         from squant.services.account import ExchangeAccountRepository
         from squant.services.strategy import StrategyNotFoundError, StrategyRepository
 
-        # Check circuit breaker state before starting
-        if redis is not None:
-            await self._check_circuit_breaker(redis)
+        # Check circuit breaker state before starting (LIVE-OP-001)
+        await self._check_circuit_breaker()
 
         # Check session limits (LIVE-EX-005)
         from squant.config import get_settings as _get_settings
@@ -472,25 +469,29 @@ class LiveTradingService:
             await self.session.commit()
             raise
 
-    async def _check_circuit_breaker(self, redis: Any) -> None:
+    async def _check_circuit_breaker(self) -> None:
         """Check if circuit breaker is active and raise error if so.
 
-        Args:
-            redis: Redis client.
+        Fetches Redis client internally so callers never accidentally skip the check.
 
         Raises:
             CircuitBreakerActiveError: If circuit breaker is active.
         """
         import json
 
+        from squant.infra.redis import get_redis_client
+
         try:
+            redis = await get_redis_client()
             state_data = await redis.get("squant:circuit_breaker:state")
             if state_data:
                 state = json.loads(state_data)
                 if state.get("is_active", False):
                     raise CircuitBreakerActiveError(state.get("trigger_reason"))
-        except json.JSONDecodeError:
-            pass  # Invalid state, allow trading
+        except CircuitBreakerActiveError:
+            raise
+        except Exception:
+            logger.warning("Failed to check circuit breaker state in Redis", exc_info=True)
 
     def _validate_risk_config(self, config: RiskConfig) -> None:
         """Validate risk configuration.
@@ -1340,7 +1341,6 @@ class LiveTradingService:
         self,
         run_id: UUID,
         warmup_bars: int = 200,
-        redis: Any | None = None,
     ) -> tuple[StrategyRun, dict[str, Any]]:
         """Resume a stopped/errored/interrupted live trading session.
 
@@ -1350,7 +1350,6 @@ class LiveTradingService:
         Args:
             run_id: Run ID of the session to resume.
             warmup_bars: Number of historical bars for strategy warmup.
-            redis: Redis client for circuit breaker check.
 
         Returns:
             Tuple of (updated StrategyRun, reconciliation_report).
@@ -1368,9 +1367,8 @@ class LiveTradingService:
         from squant.services.strategy import StrategyRepository
         from squant.websocket.manager import get_stream_manager
 
-        # 1. Circuit breaker check
-        if redis is not None:
-            await self._check_circuit_breaker(redis)
+        # 1. Circuit breaker check (LIVE-OP-001)
+        await self._check_circuit_breaker()
 
         # 2. Load and validate run
         run = await self.run_repo.get(run_id)
