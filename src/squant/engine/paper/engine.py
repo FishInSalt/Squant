@@ -476,6 +476,9 @@ class PaperTradingEngine:
 
                 # 5a. Update risk manager equity (after snapshot, mirrors live engine)
                 if self._risk_manager:
+                    # Check daily risk stats reset on each bar (LIVE-RM-005)
+                    self._risk_manager.check_daily_reset()
+
                     self._risk_manager.update_equity(self._context.equity)
                     # 5b. Update unrealized PnL so daily loss limit includes open positions
                     self._risk_manager.update_unrealized_pnl(self._context._get_unrealized_pnl())

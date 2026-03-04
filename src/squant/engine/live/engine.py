@@ -448,9 +448,10 @@ class LiveTradingEngine:
         """Check if engine is healthy (recently active).
 
         The effective timeout adapts to the candle timeframe: it uses
-        max(timeout_seconds, timeframe_seconds * 3) so that longer
+        max(timeout_seconds, timeframe_seconds * 2) so that longer
         timeframes (e.g., 1h, 4h) are not incorrectly marked as stale
-        between candle intervals.
+        between candle intervals, while still detecting genuine failures
+        within a reasonable window (LIVE-MO-001: reduced from 3x to 2x).
 
         Args:
             timeout_seconds: Base timeout in seconds since last activity.
@@ -463,7 +464,7 @@ class LiveTradingEngine:
         if self._last_active_at is None:
             return True
         tf_seconds = self._TIMEFRAME_SECONDS.get(self._timeframe, 300)
-        effective_timeout = max(timeout_seconds, tf_seconds * 3)
+        effective_timeout = max(timeout_seconds, tf_seconds * 2)
         elapsed = (datetime.now(UTC) - self._last_active_at).total_seconds()
         return elapsed < effective_timeout
 
@@ -781,6 +782,9 @@ class LiveTradingEngine:
                 # Cash tracked incrementally via fill processing (LIVE-012).
                 await self._sync_balance()
                 await self._sync_pending_orders()
+
+                # Check daily risk stats reset on each bar (LIVE-RM-005)
+                self._risk_manager.check_daily_reset()
 
                 # Update risk manager with equity computed from consistent state
                 self._risk_manager.update_equity(self._context.equity)
