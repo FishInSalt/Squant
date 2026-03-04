@@ -1426,6 +1426,37 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/live/{run_id}/resume": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Resume Live Trading
+         * @description Resume a stopped/errored/interrupted live trading session.
+         *
+         *     Reconnects to the exchange, reconciles orders and positions,
+         *     restores trading state, and resumes.
+         *
+         *     Args:
+         *         run_id: Live trading run ID.
+         *         request: Resume configuration (optional).
+         *         session: Database session.
+         *
+         *     Returns:
+         *         Updated live trading run record.
+         */
+        post: operations["resume_live_trading_api_v1_live__run_id__resume_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/live/{run_id}/emergency-close": {
         parameters: {
             query?: never;
@@ -4838,6 +4869,18 @@ export interface components {
             cooldown_remaining_minutes?: number | null;
         };
         /**
+         * ResumeLiveTradingRequest
+         * @description Request to resume a stopped/errored live trading session.
+         */
+        ResumeLiveTradingRequest: {
+            /**
+             * Warmup Bars
+             * @description Number of historical bars to replay for strategy warmup
+             * @default 200
+             */
+            warmup_bars: number;
+        };
+        /**
          * ResumePaperTradingRequest
          * @description Request to resume a stopped/errored paper trading session.
          */
@@ -7428,6 +7471,41 @@ export interface operations {
         requestBody?: {
             content: {
                 "application/json": components["schemas"]["StopLiveTradingRequest"] | null;
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_LiveTradingRunResponse_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    resume_live_trading_api_v1_live__run_id__resume_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["ResumeLiveTradingRequest"] | null;
             };
         };
         responses: {

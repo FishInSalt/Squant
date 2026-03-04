@@ -2764,6 +2764,67 @@
         }
       }
     },
+    "/api/v1/live/{run_id}/resume": {
+      "post": {
+        "tags": [
+          "Live Trading"
+        ],
+        "summary": "Resume Live Trading",
+        "description": "Resume a stopped/errored/interrupted live trading session.\n\nReconnects to the exchange, reconciles orders and positions,\nrestores trading state, and resumes.\n\nArgs:\n    run_id: Live trading run ID.\n    request: Resume configuration (optional).\n    session: Database session.\n\nReturns:\n    Updated live trading run record.",
+        "operationId": "resume_live_trading_api_v1_live__run_id__resume_post",
+        "parameters": [
+          {
+            "name": "run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Run Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/ResumeLiveTradingRequest"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Request"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_LiveTradingRunResponse_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/live/{run_id}/emergency-close": {
       "post": {
         "tags": [
@@ -9364,6 +9425,21 @@
         ],
         "title": "ResetCircuitBreakerResponse",
         "description": "Response after resetting the circuit breaker."
+      },
+      "ResumeLiveTradingRequest": {
+        "properties": {
+          "warmup_bars": {
+            "type": "integer",
+            "maximum": 5000.0,
+            "minimum": 0.0,
+            "title": "Warmup Bars",
+            "description": "Number of historical bars to replay for strategy warmup",
+            "default": 200
+          }
+        },
+        "type": "object",
+        "title": "ResumeLiveTradingRequest",
+        "description": "Request to resume a stopped/errored live trading session."
       },
       "ResumePaperTradingRequest": {
         "properties": {
