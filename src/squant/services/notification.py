@@ -25,6 +25,8 @@ class NotificationService:
 
     # In-memory cooldown cache: event_type -> last_send_time (monotonic)
     _cooldown_cache: dict[str, float] = {}
+    # Counter for periodic history pruning (avoid checking DB every call)
+    _notify_count: int = 0
 
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
@@ -109,6 +111,11 @@ class NotificationService:
                 )
             )
 
+        # Periodically prune old notifications beyond max_history
+        NotificationService._notify_count += 1
+        if NotificationService._notify_count % 50 == 0:
+            asyncio.create_task(_prune_old_notifications(self._settings.max_history))
+
         return record
 
     async def list_notifications(
@@ -144,17 +151,14 @@ class NotificationService:
     async def get_unread_count(self) -> int:
         """Get count of unread notifications."""
         query = (
-            select(func.count())
-            .select_from(Notification)
-            .where(Notification.is_read == False)  # noqa: E712
+            select(func.count()).select_from(Notification).where(Notification.is_read == False)  # noqa: E712
         )
         return (await self._session.execute(query)).scalar() or 0
 
     async def mark_read(self, notification_ids: list[str] | None = None) -> int:
         """Mark notifications as read. None = mark all unread as read."""
         stmt = (
-            update(Notification)
-            .where(Notification.is_read == False)  # noqa: E712
+            update(Notification).where(Notification.is_read == False)  # noqa: E712
         )
         if notification_ids is not None:
             stmt = stmt.where(Notification.id.in_(notification_ids))
@@ -199,6 +203,37 @@ async def emit_notification(
         logger.warning("Failed to emit notification", exc_info=True)
 
 
+async def _prune_old_notifications(max_history: int) -> None:
+    """Delete oldest notifications beyond max_history limit."""
+    try:
+        from squant.infra.database import get_session_context
+
+        async with get_session_context() as session:
+            # Find the cutoff: get created_at of the Nth newest record
+            cutoff_query = (
+                select(Notification.created_at)
+                .order_by(Notification.created_at.desc())
+                .offset(max_history)
+                .limit(1)
+            )
+            result = await session.execute(cutoff_query)
+            cutoff = result.scalar()
+            if cutoff is not None:
+                from sqlalchemy import delete as sa_delete
+
+                stmt = sa_delete(Notification).where(Notification.created_at <= cutoff)
+                deleted = await session.execute(stmt)
+                await session.commit()
+                if deleted.rowcount:
+                    logger.info(
+                        "Pruned %d old notifications (max_history=%d)",
+                        deleted.rowcount,
+                        max_history,
+                    )
+    except Exception:
+        logger.warning("Failed to prune old notifications", exc_info=True)
+
+
 async def _push_to_websocket(payload: dict[str, Any]) -> None:
     """Publish notification to Redis for WebSocket gateway."""
     try:
@@ -230,10 +265,22 @@ async def _deliver_webhook(
         try:
             async with httpx.AsyncClient(timeout=timeout) as client:
                 response = await client.post(url, json=payload)
+                response.raise_for_status()
                 await _update_webhook_status(
                     notification_id, "delivered", status_code=response.status_code
                 )
                 return
+        except httpx.HTTPStatusError as e:
+            if attempt < max_retries:
+                await asyncio.sleep(2**attempt)
+                continue
+            await _update_webhook_status(
+                notification_id,
+                "failed",
+                status_code=e.response.status_code,
+                error=str(e),
+                retry_count=attempt + 1,
+            )
         except Exception as e:
             if attempt < max_retries:
                 await asyncio.sleep(2**attempt)
@@ -267,6 +314,4 @@ async def _update_webhook_status(
             )
             await session.execute(stmt)
     except Exception:
-        logger.warning(
-            f"Failed to update notification {notification_id} status", exc_info=True
-        )
+        logger.warning(f"Failed to update notification {notification_id} status", exc_info=True)
