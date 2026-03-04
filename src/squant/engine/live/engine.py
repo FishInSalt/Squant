@@ -793,6 +793,7 @@ class LiveTradingEngine:
                 # Update risk manager with equity computed from consistent state
                 self._risk_manager.update_equity(self._context.equity)
                 self._risk_manager.update_unrealized_pnl(self._context._get_unrealized_pnl())
+                self._risk_manager.update_position_value(self._context._get_position_value())
 
                 # Auto-stop if total loss limit triggered (IMP-005)
                 if self._risk_manager.check_total_loss_limit():
