@@ -6,6 +6,7 @@ Drives strategy execution with actual order placement via exchange adapter.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
@@ -375,6 +376,9 @@ class LiveTradingEngine:
         Called when this session's local circuit breaker triggers due to
         consecutive losses. This ensures all sessions stop for safety,
         implementing the global risk synchronization (Issue 033 fix).
+
+        Also persists the circuit breaker state to Redis so it survives
+        restarts and prevents new sessions from starting (LIVE-RM-002).
         """
         from squant.engine.live.manager import get_live_session_manager
         from squant.engine.paper.manager import get_session_manager
@@ -387,6 +391,32 @@ class LiveTradingEngine:
         logger.critical(
             f"GLOBAL CIRCUIT BREAKER TRIGGERED: {reason} | Stopping all trading sessions for safety"
         )
+
+        # Persist circuit breaker state to Redis (LIVE-RM-002)
+        # This prevents new sessions from starting after restart.
+        try:
+            from squant.infra.redis import get_redis_client
+            from squant.services.circuit_breaker import (
+                CIRCUIT_BREAKER_STATE_KEY,
+                CircuitBreakerState,
+            )
+
+            redis = get_redis_client()
+            now = datetime.now(UTC)
+            cooldown_minutes = self._risk_manager.config.circuit_breaker_cooldown_minutes
+            cooldown_until = datetime.fromtimestamp(
+                now.timestamp() + cooldown_minutes * 60, tz=UTC
+            )
+            state = CircuitBreakerState(
+                is_active=True,
+                triggered_at=now,
+                trigger_type="auto",
+                trigger_reason=reason,
+                cooldown_until=cooldown_until,
+            )
+            await redis.set(CIRCUIT_BREAKER_STATE_KEY, json.dumps(state.to_dict()))
+        except Exception:
+            logger.warning("Failed to persist circuit breaker state to Redis", exc_info=True)
 
         # Stop all live sessions (except this one which is already stopped)
         live_manager = get_live_session_manager()
@@ -1320,6 +1350,9 @@ class LiveTradingEngine:
         self._context._process_fill(fill, force=True)
         self._context._move_completed_orders()
 
+        # Record fill for daily trade count limit (LIVE-RM-001)
+        self._risk_manager.record_order_fill()
+
         # Buffer "fill" event for audit persistence (LIVE-013)
         self._pending_order_events.append({
             "type": "fill",
@@ -1370,6 +1403,9 @@ class LiveTradingEngine:
         # force=True: live fills are already executed on the exchange (ISSUE-201 fix)
         self._context._process_fill(fill, force=True)
         self._context._move_completed_orders()
+
+        # Record fill for daily trade count limit (LIVE-RM-001)
+        self._risk_manager.record_order_fill()
 
         # Buffer "fill" event for audit persistence (LIVE-013)
         self._pending_order_events.append({
