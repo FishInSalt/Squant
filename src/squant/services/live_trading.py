@@ -332,7 +332,7 @@ class LiveTradingService:
         session_manager = get_live_session_manager()
         _settings = _get_settings()
         if session_manager.session_count >= _settings.live.max_sessions:
-            raise MaxSessionsReachedError(settings.live.max_sessions)
+            raise MaxSessionsReachedError(_settings.live.max_sessions)
 
         # Validate risk configuration
         self._validate_risk_config(risk_config)

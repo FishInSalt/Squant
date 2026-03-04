@@ -1448,8 +1448,8 @@ class LiveTradingEngine:
             # Guard: STOP/STOP_LIMIT not yet supported in live trading
             if order.type in (BacktestOrderType.STOP, BacktestOrderType.STOP_LIMIT):
                 reason = (
-                    f"STOP/STOP_LIMIT orders not supported in live trading yet. "
-                    f"Use LIMIT or MARKET orders instead."
+                    "STOP/STOP_LIMIT orders not supported in live trading yet. "
+                    "Use LIMIT or MARKET orders instead."
                 )
                 logger.warning(f"Order {order.id} rejected: {reason}")
                 order.status = OrderStatus.REJECTED
