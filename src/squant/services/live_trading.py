@@ -326,6 +326,14 @@ class LiveTradingService:
         if redis is not None:
             await self._check_circuit_breaker(redis)
 
+        # Check session limits (LIVE-EX-005)
+        from squant.config import get_settings as _get_settings
+
+        session_manager = get_live_session_manager()
+        _settings = _get_settings()
+        if session_manager.session_count >= _settings.live.max_sessions:
+            raise MaxSessionsReachedError(settings.live.max_sessions)
+
         # Validate risk configuration
         self._validate_risk_config(risk_config)
 
