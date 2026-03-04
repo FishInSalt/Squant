@@ -131,7 +131,7 @@ class BackgroundTaskManager:
                         logger.error(f"Failed to persist live snapshots for run {run_id}: {e}")
 
     async def _health_check(self) -> None:
-        """Check and cleanup stale sessions.
+        """Check and cleanup stale sessions (paper + live).
 
         Before cleaning up:
         1. Persist any pending snapshots for unhealthy sessions (PP-C07)
@@ -143,10 +143,14 @@ class BackgroundTaskManager:
         from squant.services.paper_trading import PaperTradingService
 
         settings = get_settings()
-        session_manager = get_session_manager()
 
-        # Persist snapshots for unhealthy sessions before cleanup (PP-C07)
+        # --- Paper trading health check ---
+        session_manager = get_session_manager()
         unhealthy_ids = await session_manager.check_health(settings.paper_session_timeout_seconds)
+
+        # --- Live trading health check (LIVE-004) ---
+        await self._health_check_live(settings.paper_session_timeout_seconds)
+
         if not unhealthy_ids:
             return
 
@@ -209,6 +213,73 @@ class BackgroundTaskManager:
                     logger.info(f"Unsubscribed from candles {key} after stale session cleanup")
                 except Exception as e:
                     logger.warning(f"Failed to unsubscribe candles {key}: {e}")
+
+
+    async def _health_check_live(self, timeout_seconds: int) -> None:
+        """Check and cleanup stale live trading sessions (LIVE-004).
+
+        Mirrors paper trading health check: persist snapshots, capture state,
+        clean up stale sessions, and update DB records.
+        """
+        from squant.engine.live.manager import get_live_session_manager
+        from squant.infra.database import get_session_context
+        from squant.services.live_trading import LiveTradingService
+
+        live_manager = get_live_session_manager()
+        unhealthy_ids = await live_manager.check_health(timeout_seconds)
+        if not unhealthy_ids:
+            return
+
+        logger.warning(f"Found {len(unhealthy_ids)} unhealthy live sessions: {unhealthy_ids}")
+
+        # Capture engine state before cleanup
+        engine_states: dict[str, dict] = {}
+        for run_id in unhealthy_ids:
+            engine = live_manager.get(run_id)
+            if engine:
+                try:
+                    engine_states[str(run_id)] = engine.build_result_for_persistence()
+                except Exception as e:
+                    logger.error(f"Failed to capture state for live session {run_id}: {e}")
+
+        # Persist pending snapshots before cleanup
+        try:
+            async with get_session_context() as db_session:
+                service = LiveTradingService(db_session)
+                for run_id in unhealthy_ids:
+                    try:
+                        count = await service.persist_snapshots(run_id)
+                        if count > 0:
+                            logger.info(
+                                f"Persisted {count} snapshots for stale live session {run_id}"
+                            )
+                    except Exception as e:
+                        logger.error(
+                            f"Failed to persist snapshots for stale live session {run_id}: {e}"
+                        )
+        except Exception as e:
+            logger.error(f"Failed to open DB session for live pre-cleanup persistence: {e}")
+
+        # Clean up stale sessions (stop engines + unregister)
+        cleaned_ids = await live_manager.cleanup_stale_sessions(timeout_seconds)
+        if cleaned_ids:
+            logger.warning(f"Cleaned up {len(cleaned_ids)} stale live trading sessions")
+            try:
+                async with get_session_context() as db_session:
+                    service = LiveTradingService(db_session)
+                    for run_id in cleaned_ids:
+                        try:
+                            await service.mark_session_interrupted(
+                                run_id,
+                                error_message="Session timeout: no activity detected",
+                                result=engine_states.get(str(run_id)),
+                            )
+                        except Exception as e:
+                            logger.error(
+                                f"Failed to update DB for stale live session {run_id}: {e}"
+                            )
+            except Exception as e:
+                logger.error(f"Failed to open DB session for stale live session update: {e}")
 
 
 # Global instance

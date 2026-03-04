@@ -1103,6 +1103,34 @@ class LiveTradingService:
 
         return len(triggers)
 
+    async def mark_session_interrupted(
+        self,
+        run_id: UUID,
+        error_message: str,
+        result: dict[str, Any] | None = None,
+    ) -> None:
+        """Mark a session as interrupted in the database.
+
+        Used by background health checks when a session is cleaned up
+        due to timeout or stale state.
+
+        Args:
+            run_id: Run ID of the session to mark.
+            error_message: Interruption description.
+            result: Optional engine state snapshot to save as final result.
+        """
+        run = await self.run_repo.get(run_id)
+        if run and run.status in (RunStatus.RUNNING, RunStatus.INTERRUPTED):
+            await self.run_repo.update(
+                run.id,
+                status=RunStatus.INTERRUPTED,
+                error_message=error_message,
+                result=result,
+                stopped_at=datetime.now(UTC),
+            )
+            await self.session.commit()
+            logger.info(f"Marked live session {run_id} as interrupted: {error_message}")
+
     async def mark_orphaned_sessions(self) -> int:
         """Mark orphaned RUNNING sessions as INTERRUPTED with equity recovery.
 
