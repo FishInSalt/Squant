@@ -46,13 +46,15 @@ EventCallback = Callable[[dict[str, Any]], Awaitable[None]]
 
 logger = logging.getLogger(__name__)
 
-# OKX WebSocket order status mapping (string -> OrderStatus enum)
+# WebSocket order status mapping (internal string -> OrderStatus enum).
+# Both CCXT transformer and native OKX StreamManager mapper normalize to
+# these internal status strings before dispatching to the engine.
 _WS_STATUS_MAP: dict[str, OrderStatus] = {
-    "live": OrderStatus.SUBMITTED,
-    "partially_filled": OrderStatus.PARTIAL,
+    "submitted": OrderStatus.SUBMITTED,
+    "partial": OrderStatus.PARTIAL,
     "filled": OrderStatus.FILLED,
-    "canceled": OrderStatus.CANCELLED,
-    "mmp_canceled": OrderStatus.CANCELLED,
+    "cancelled": OrderStatus.CANCELLED,
+    "rejected": OrderStatus.REJECTED,
 }
 
 
