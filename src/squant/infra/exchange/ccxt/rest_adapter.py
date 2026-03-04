@@ -388,13 +388,17 @@ class CCXTRestAdapter(ExchangeAdapter):
             order_type = request.type.value.lower()
             side = request.side.value.lower()
 
-            order = await self._exchange.create_order(
-                symbol=request.symbol,
-                type=order_type,
-                side=side,
-                amount=str(request.amount),
-                price=str(request.price) if request.price else None,
-            )
+            kwargs: dict[str, Any] = {
+                "symbol": request.symbol,
+                "type": order_type,
+                "side": side,
+                "amount": str(request.amount),
+                "price": str(request.price) if request.price else None,
+            }
+            if request.client_order_id:
+                kwargs["params"] = {"clientOrderId": request.client_order_id}
+
+            order = await self._exchange.create_order(**kwargs)
 
             return self._transform_order(order)
         except ccxt.InsufficientFunds as e:
