@@ -144,6 +144,54 @@ class OrderRepository(BaseRepository[Order]):
         result = await self.session.execute(stmt)
         return result.scalar_one()
 
+    async def list_by_run(
+        self,
+        run_id: str | UUID,
+        *,
+        status: OrderStatus | None = None,
+        offset: int = 0,
+        limit: int = 100,
+    ) -> list[Order]:
+        """List orders for a strategy run.
+
+        Args:
+            run_id: Strategy run ID.
+            status: Optional status filter.
+            offset: Pagination offset.
+            limit: Pagination limit.
+
+        Returns:
+            List of Order records ordered by created_at desc.
+        """
+        stmt = select(Order).where(Order.run_id == str(run_id))
+        if status is not None:
+            stmt = stmt.where(Order.status == status)
+        stmt = stmt.order_by(Order.created_at.desc()).offset(offset).limit(limit)
+        result = await self.session.execute(stmt)
+        return list(result.scalars().all())
+
+    async def count_by_run(
+        self,
+        run_id: str | UUID,
+        status: OrderStatus | None = None,
+    ) -> int:
+        """Count orders for a strategy run.
+
+        Args:
+            run_id: Strategy run ID.
+            status: Optional status filter.
+
+        Returns:
+            Order count.
+        """
+        from sqlalchemy import func
+
+        stmt = select(func.count()).select_from(Order).where(Order.run_id == str(run_id))
+        if status is not None:
+            stmt = stmt.where(Order.status == status)
+        result = await self.session.execute(stmt)
+        return result.scalar_one()
+
     async def get_stats_by_status(
         self,
         account_id: str | UUID,

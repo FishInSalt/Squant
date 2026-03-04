@@ -28,7 +28,7 @@ from squant.infra.exchange.binance.adapter import BinanceAdapter
 from squant.infra.exchange.ccxt import CCXTRestAdapter, ExchangeCredentials
 from squant.infra.exchange.okx.adapter import OKXAdapter
 from squant.infra.repository import BaseRepository
-from squant.models.enums import OrderStatus, RunMode, RunStatus
+from squant.models.enums import OrderSide, OrderStatus, OrderType, RunMode, RunStatus
 from squant.models.exchange import ExchangeAccount
 from squant.models.metrics import EquityCurve
 from squant.models.strategy import StrategyRun
@@ -407,6 +407,10 @@ class LiveTradingService:
                 on_snapshot=self._create_snapshot_callback(),
                 on_result=self._create_result_callback(),
                 on_event=self._create_event_callback(UUID(run.id)),
+                on_order_persist=self._create_order_persist_callback(
+                    account_id=str(exchange_account_id),
+                    exchange=exchange_account.exchange,
+                ),
             )
 
             # Register with session manager
@@ -654,6 +658,78 @@ class LiveTradingService:
                 await repo.update(run_id, result=result)
 
         return _persist_result
+
+    @staticmethod
+    def _create_order_persist_callback(account_id: str, exchange: str) -> Any:
+        """Create a callback for order/trade audit persistence (LIVE-013).
+
+        Returns a closure that opens its own DB session to persist order
+        placement and fill events to the orders/trades audit tables.
+        """
+        # Map engine internal_id → DB order UUID (kept across events)
+        order_id_map: dict[str, str] = {}
+
+        async def _persist_orders(run_id: str, events: list[dict]) -> None:
+            from squant.infra.database import get_session_context
+            from squant.services.order import OrderRepository, TradeRepository
+
+            async with get_session_context() as db_session:
+                order_repo = OrderRepository(db_session)
+                trade_repo = TradeRepository(db_session)
+
+                for event in events:
+                    try:
+                        if event["type"] == "placed":
+                            order = await order_repo.create(
+                                run_id=run_id,
+                                account_id=account_id,
+                                exchange=exchange,
+                                exchange_oid=event.get("exchange_order_id"),
+                                symbol=event["symbol"],
+                                side=OrderSide(event["side"]),
+                                type=OrderType(event["order_type"]),
+                                amount=Decimal(event["amount"]),
+                                price=Decimal(event["price"])
+                                if event.get("price")
+                                else None,
+                                status=OrderStatus(event["status"]),
+                            )
+                            order_id_map[event["internal_id"]] = order.id
+
+                        elif event["type"] == "fill":
+                            db_order_id = order_id_map.get(event["internal_id"])
+                            if not db_order_id:
+                                logger.warning(
+                                    f"No DB order for internal_id={event['internal_id']}, "
+                                    f"skipping fill"
+                                )
+                                continue
+
+                            await trade_repo.create(
+                                order_id=db_order_id,
+                                price=Decimal(event["fill_price"]),
+                                amount=Decimal(event["fill_amount"]),
+                                fee=Decimal(event["fee"]),
+                                fee_currency=event.get("fee_currency"),
+                                timestamp=datetime.fromisoformat(event["timestamp"]),
+                            )
+                            # Update order with cumulative fill info
+                            update_kwargs: dict[str, Any] = {
+                                "filled": Decimal(event["total_filled"]),
+                                "status": OrderStatus(event["status"]),
+                            }
+                            if event.get("avg_fill_price"):
+                                update_kwargs["avg_price"] = Decimal(
+                                    event["avg_fill_price"]
+                                )
+                            await order_repo.update(db_order_id, **update_kwargs)
+
+                    except Exception as e:
+                        logger.warning(
+                            f"Failed to persist order event {event.get('type')}: {e}"
+                        )
+
+        return _persist_orders
 
     @staticmethod
     def _create_event_callback(run_id: UUID) -> Any:
@@ -1363,6 +1439,10 @@ class LiveTradingService:
             on_snapshot=self._create_snapshot_callback(),
             on_result=self._create_result_callback(),
             on_event=self._create_event_callback(UUID(run.id)),
+            on_order_persist=self._create_order_persist_callback(
+                account_id=str(run.account_id),
+                exchange=exchange_account.exchange,
+            ),
         )
 
         # 9. Restore trading state

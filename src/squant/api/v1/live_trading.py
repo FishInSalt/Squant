@@ -17,6 +17,7 @@ from squant.schemas.live_trading import (
     EmergencyCloseResponse,
     LiveOrderInfo,
     LivePositionInfo,
+    LiveSessionOrderResponse,
     LiveTradingListItem,
     LiveTradingRunResponse,
     LiveTradingStatusResponse,
@@ -417,6 +418,49 @@ async def list_live_trading_runs(
     )
 
     items = [LiveTradingRunResponse.model_validate(r) for r in runs]
+
+    return ApiResponse(
+        data=PaginatedData(
+            items=items,
+            total=total,
+            page=page,
+            page_size=page_size,
+        )
+    )
+
+
+@router.get(
+    "/{run_id}/orders",
+    response_model=ApiResponse[PaginatedData[LiveSessionOrderResponse]],
+)
+async def get_session_orders(
+    run_id: UUID,
+    page: int = Query(1, ge=1, description="Page number"),
+    page_size: int = Query(20, ge=1, le=100, description="Page size"),
+    session: AsyncSession = Depends(get_session),
+) -> ApiResponse[PaginatedData[LiveSessionOrderResponse]]:
+    """Get orders from the audit table for a live trading session.
+
+    Returns orders placed by the strategy engine, with their trade fills.
+
+    Args:
+        run_id: Live trading run ID.
+        page: Page number (1-indexed).
+        page_size: Items per page.
+        session: Database session.
+
+    Returns:
+        Paginated list of order records with trades.
+    """
+    from squant.services.order import OrderRepository
+
+    order_repo = OrderRepository(session)
+    offset = (page - 1) * page_size
+
+    orders = await order_repo.list_by_run(run_id, offset=offset, limit=page_size)
+    total = await order_repo.count_by_run(run_id)
+
+    items = [LiveSessionOrderResponse.model_validate(o) for o in orders]
 
     return ApiResponse(
         data=PaginatedData(

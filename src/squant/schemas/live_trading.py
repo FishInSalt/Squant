@@ -208,6 +208,39 @@ class RemainingPosition(BaseModel):
     side: str  # "long" or "short"
 
 
+class LiveSessionTradeResponse(BaseModel):
+    """Trade execution record for a live session order."""
+
+    id: UUID
+    price: NumberDecimal
+    amount: NumberDecimal
+    fee: NumberDecimal
+    fee_currency: str | None = None
+    timestamp: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class LiveSessionOrderResponse(BaseModel):
+    """Order record from the audit table for a live session."""
+
+    id: UUID
+    exchange_oid: str | None = None
+    symbol: str
+    side: str
+    type: str
+    amount: NumberDecimal
+    filled: NumberDecimal
+    avg_price: NumberDecimal | None = None
+    price: NumberDecimal | None = None
+    status: str
+    trades: list[LiveSessionTradeResponse] = Field(default_factory=list)
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
 class EmergencyCloseResponse(BaseModel):
     """Response from emergency close operation."""
 

@@ -43,6 +43,8 @@ SnapshotPersistCallback = Callable[[str, EquitySnapshot], Awaitable[None]]
 ResultPersistCallback = Callable[[str, dict[str, Any]], Awaitable[None]]
 # Callback type for WebSocket event emission
 EventCallback = Callable[[dict[str, Any]], Awaitable[None]]
+# Callback type for order/trade audit persistence (LIVE-013)
+OrderPersistCallback = Callable[[str, list[dict[str, Any]]], Awaitable[None]]
 
 logger = logging.getLogger(__name__)
 
@@ -153,6 +155,7 @@ class LiveTradingEngine:
         on_snapshot: SnapshotPersistCallback | None = None,
         on_result: ResultPersistCallback | None = None,
         on_event: EventCallback | None = None,
+        on_order_persist: OrderPersistCallback | None = None,
     ):
         """Initialize live trading engine.
 
@@ -168,6 +171,7 @@ class LiveTradingEngine:
             on_snapshot: Optional callback for synchronous snapshot persistence.
             on_result: Optional callback for synchronous result state persistence.
             on_event: Optional callback for WebSocket event emission.
+            on_order_persist: Optional callback for order/trade audit persistence.
         """
         self._run_id = run_id
         self._strategy = strategy
@@ -264,6 +268,10 @@ class LiveTradingEngine:
 
         # Last exchange balance for diagnostics (LIVE-012)
         self._last_exchange_balance: Decimal | None = None
+
+        # Order/trade audit persistence (LIVE-013)
+        self._on_order_persist = on_order_persist
+        self._pending_order_events: list[dict[str, Any]] = []
 
         # Exchange connection failure tracking (LV-3)
         # Separate counters for balance and order sync (R3-011)
@@ -778,6 +786,17 @@ class LiveTradingEngine:
                     except Exception as e:
                         logger.warning(f"Result persist callback failed for {self._run_id}: {e}")
 
+                # Flush order/trade audit events (LIVE-013)
+                if self._on_order_persist and self._pending_order_events:
+                    events_to_persist = self._pending_order_events.copy()
+                    self._pending_order_events.clear()
+                    try:
+                        await self._on_order_persist(
+                            str(self._run_id), events_to_persist
+                        )
+                    except Exception as e:
+                        logger.warning(f"Order persist callback failed for {self._run_id}: {e}")
+
                 # Emit bar update event via WebSocket
                 if self._on_event:
                     try:
@@ -1174,6 +1193,22 @@ class LiveTradingEngine:
         self._context._process_fill(fill, force=True)
         self._context._move_completed_orders()
 
+        # Buffer "fill" event for audit persistence (LIVE-013)
+        self._pending_order_events.append({
+            "type": "fill",
+            "internal_id": live_order.internal_id,
+            "fill_price": str(update.avg_price),
+            "fill_amount": str(fill_delta),
+            "fee": str(fill_fee),
+            "fee_currency": live_order.fee_currency,
+            "total_filled": str(live_order.filled_amount),
+            "avg_fill_price": str(live_order.avg_fill_price)
+            if live_order.avg_fill_price
+            else None,
+            "status": live_order.status.value,
+            "timestamp": datetime.now(UTC).isoformat(),
+        })
+
     def _process_incremental_fill(
         self,
         live_order: LiveOrder,
@@ -1208,6 +1243,22 @@ class LiveTradingEngine:
         # force=True: live fills are already executed on the exchange (ISSUE-201 fix)
         self._context._process_fill(fill, force=True)
         self._context._move_completed_orders()
+
+        # Buffer "fill" event for audit persistence (LIVE-013)
+        self._pending_order_events.append({
+            "type": "fill",
+            "internal_id": live_order.internal_id,
+            "fill_price": str(response.avg_price),
+            "fill_amount": str(fill_amount),
+            "fee": str(fill_fee),
+            "fee_currency": live_order.fee_currency,
+            "total_filled": str(live_order.filled_amount),
+            "avg_fill_price": str(live_order.avg_fill_price)
+            if live_order.avg_fill_price
+            else None,
+            "status": live_order.status.value,
+            "timestamp": datetime.now(UTC).isoformat(),
+        })
 
     async def _process_order_requests(self) -> None:
         """Process pending order requests from strategy context.
@@ -1349,6 +1400,22 @@ class LiveTradingEngine:
                 f"Order submitted: {order.id} -> exchange:{response.order_id}, "
                 f"status={response.status.value}"
             )
+
+            # Buffer "placed" event for audit persistence (LIVE-013)
+            self._pending_order_events.append({
+                "type": "placed",
+                "internal_id": live_order.internal_id,
+                "exchange_order_id": live_order.exchange_order_id,
+                "symbol": live_order.symbol,
+                "side": live_order.side.value,
+                "order_type": live_order.order_type,
+                "amount": str(live_order.amount),
+                "price": str(live_order.price) if live_order.price else None,
+                "status": live_order.status.value,
+                "created_at": live_order.created_at.isoformat()
+                if live_order.created_at
+                else datetime.now(UTC).isoformat(),
+            })
 
         except Exception as e:
             logger.exception(f"Failed to submit order {order.id}: {e}")

@@ -2992,6 +2992,77 @@
         }
       }
     },
+    "/api/v1/live/{run_id}/orders": {
+      "get": {
+        "tags": [
+          "Live Trading"
+        ],
+        "summary": "Get Session Orders",
+        "description": "Get orders from the audit table for a live trading session.\n\nReturns orders placed by the strategy engine, with their trade fills.\n\nArgs:\n    run_id: Live trading run ID.\n    page: Page number (1-indexed).\n    page_size: Items per page.\n    session: Database session.\n\nReturns:\n    Paginated list of order records with trades.",
+        "operationId": "get_session_orders_api_v1_live__run_id__orders_get",
+        "parameters": [
+          {
+            "name": "run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Run Id"
+            }
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "Page number",
+              "default": 1,
+              "title": "Page"
+            },
+            "description": "Page number"
+          },
+          {
+            "name": "page_size",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "description": "Page size",
+              "default": 20,
+              "title": "Page Size"
+            },
+            "description": "Page size"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_PaginatedData_LiveSessionOrderResponse__"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/live/{run_id}": {
       "get": {
         "tags": [
@@ -4785,6 +4856,28 @@
           "data"
         ],
         "title": "ApiResponse[PaginatedData[BacktestListItem]]"
+      },
+      "ApiResponse_PaginatedData_LiveSessionOrderResponse__": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "default": 0
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "success"
+          },
+          "data": {
+            "$ref": "#/components/schemas/PaginatedData_LiveSessionOrderResponse_"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "title": "ApiResponse[PaginatedData[LiveSessionOrderResponse]]"
       },
       "ApiResponse_PaginatedData_LiveTradingRunResponse__": {
         "properties": {
@@ -7633,6 +7726,150 @@
         "title": "LivePositionInfo",
         "description": "Position information for live trading."
       },
+      "LiveSessionOrderResponse": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "exchange_oid": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Exchange Oid"
+          },
+          "symbol": {
+            "type": "string",
+            "title": "Symbol"
+          },
+          "side": {
+            "type": "string",
+            "title": "Side"
+          },
+          "type": {
+            "type": "string",
+            "title": "Type"
+          },
+          "amount": {
+            "type": "number",
+            "title": "Amount"
+          },
+          "filled": {
+            "type": "number",
+            "title": "Filled"
+          },
+          "avg_price": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Avg Price"
+          },
+          "price": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Price"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "trades": {
+            "items": {
+              "$ref": "#/components/schemas/LiveSessionTradeResponse"
+            },
+            "type": "array",
+            "title": "Trades"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Updated At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "symbol",
+          "side",
+          "type",
+          "amount",
+          "filled",
+          "status",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "LiveSessionOrderResponse",
+        "description": "Order record from the audit table for a live session."
+      },
+      "LiveSessionTradeResponse": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "price": {
+            "type": "number",
+            "title": "Price"
+          },
+          "amount": {
+            "type": "number",
+            "title": "Amount"
+          },
+          "fee": {
+            "type": "number",
+            "title": "Fee"
+          },
+          "fee_currency": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fee Currency"
+          },
+          "timestamp": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Timestamp"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "price",
+          "amount",
+          "fee",
+          "timestamp"
+        ],
+        "title": "LiveSessionTradeResponse",
+        "description": "Trade execution record for a live session order."
+      },
       "LiveTradingListItem": {
         "properties": {
           "id": {
@@ -8634,6 +8871,37 @@
           "page_size"
         ],
         "title": "PaginatedData[BacktestListItem]"
+      },
+      "PaginatedData_LiveSessionOrderResponse_": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/LiveSessionOrderResponse"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          },
+          "page": {
+            "type": "integer",
+            "title": "Page"
+          },
+          "page_size": {
+            "type": "integer",
+            "title": "Page Size"
+          }
+        },
+        "type": "object",
+        "required": [
+          "items",
+          "total",
+          "page",
+          "page_size"
+        ],
+        "title": "PaginatedData[LiveSessionOrderResponse]"
       },
       "PaginatedData_LiveTradingRunResponse_": {
         "properties": {

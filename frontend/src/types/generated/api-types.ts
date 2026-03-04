@@ -1556,6 +1556,37 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/live/{run_id}/orders": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Session Orders
+         * @description Get orders from the audit table for a live trading session.
+         *
+         *     Returns orders placed by the strategy engine, with their trade fills.
+         *
+         *     Args:
+         *         run_id: Live trading run ID.
+         *         page: Page number (1-indexed).
+         *         page_size: Items per page.
+         *         session: Database session.
+         *
+         *     Returns:
+         *         Paginated list of order records with trades.
+         */
+        get: operations["get_session_orders_api_v1_live__run_id__orders_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/live/{run_id}": {
         parameters: {
             query?: never;
@@ -2518,6 +2549,20 @@ export interface components {
              */
             message: string;
             data: components["schemas"]["PaginatedData_BacktestListItem_"];
+        };
+        /** ApiResponse[PaginatedData[LiveSessionOrderResponse]] */
+        ApiResponse_PaginatedData_LiveSessionOrderResponse__: {
+            /**
+             * Code
+             * @default 0
+             */
+            code: number;
+            /**
+             * Message
+             * @default success
+             */
+            message: string;
+            data: components["schemas"]["PaginatedData_LiveSessionOrderResponse_"];
         };
         /** ApiResponse[PaginatedData[LiveTradingRunResponse]] */
         ApiResponse_PaginatedData_LiveTradingRunResponse__: {
@@ -4045,6 +4090,71 @@ export interface components {
             unrealized_pnl?: number | null;
         };
         /**
+         * LiveSessionOrderResponse
+         * @description Order record from the audit table for a live session.
+         */
+        LiveSessionOrderResponse: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Exchange Oid */
+            exchange_oid?: string | null;
+            /** Symbol */
+            symbol: string;
+            /** Side */
+            side: string;
+            /** Type */
+            type: string;
+            /** Amount */
+            amount: number;
+            /** Filled */
+            filled: number;
+            /** Avg Price */
+            avg_price?: number | null;
+            /** Price */
+            price?: number | null;
+            /** Status */
+            status: string;
+            /** Trades */
+            trades?: components["schemas"]["LiveSessionTradeResponse"][];
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+        };
+        /**
+         * LiveSessionTradeResponse
+         * @description Trade execution record for a live session order.
+         */
+        LiveSessionTradeResponse: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Price */
+            price: number;
+            /** Amount */
+            amount: number;
+            /** Fee */
+            fee: number;
+            /** Fee Currency */
+            fee_currency?: string | null;
+            /**
+             * Timestamp
+             * Format: date-time
+             */
+            timestamp: string;
+        };
+        /**
          * LiveTradingListItem
          * @description Live trading list item (active session summary).
          */
@@ -4549,6 +4659,17 @@ export interface components {
         PaginatedData_BacktestListItem_: {
             /** Items */
             items: components["schemas"]["BacktestListItem"][];
+            /** Total */
+            total: number;
+            /** Page */
+            page: number;
+            /** Page Size */
+            page_size: number;
+        };
+        /** PaginatedData[LiveSessionOrderResponse] */
+        PaginatedData_LiveSessionOrderResponse_: {
+            /** Items */
+            items: components["schemas"]["LiveSessionOrderResponse"][];
             /** Total */
             total: number;
             /** Page */
@@ -7614,6 +7735,42 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ApiResponse_PaginatedData_LiveTradingRunResponse__"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_session_orders_api_v1_live__run_id__orders_get: {
+        parameters: {
+            query?: {
+                /** @description Page number */
+                page?: number;
+                /** @description Page size */
+                page_size?: number;
+            };
+            header?: never;
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_PaginatedData_LiveSessionOrderResponse__"];
                 };
             };
             /** @description Validation Error */
