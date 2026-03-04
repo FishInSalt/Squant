@@ -459,6 +459,110 @@
             </div>
           </el-tab-pane>
 
+          <el-tab-pane v-if="isLive" name="audit_orders">
+            <template #label>
+              历史订单
+              <el-badge v-if="liveAuditTotal" :value="liveAuditTotal" class="tab-badge" />
+            </template>
+            <el-table
+              v-loading="liveAuditLoading"
+              :data="liveAuditOrders"
+              stripe
+              empty-text="暂无历史订单"
+              row-key="id"
+            >
+              <el-table-column type="expand">
+                <template #default="{ row }">
+                  <div v-if="row.trades && row.trades.length" class="expand-trades">
+                    <el-table :data="row.trades" size="small" :show-header="true">
+                      <el-table-column label="时间" min-width="140">
+                        <template #default="{ row: trade }">
+                          {{ formatTradeTime(trade.timestamp) }}
+                        </template>
+                      </el-table-column>
+                      <el-table-column label="价格" min-width="110" align="right">
+                        <template #default="{ row: trade }">
+                          {{ formatPrice(trade.price) }}
+                        </template>
+                      </el-table-column>
+                      <el-table-column label="数量" min-width="100" align="right">
+                        <template #default="{ row: trade }">
+                          {{ formatNumber(trade.amount, 4) }}
+                        </template>
+                      </el-table-column>
+                      <el-table-column label="成交额" min-width="120" align="right">
+                        <template #default="{ row: trade }">
+                          {{ formatNumber(trade.price * trade.amount, 2) }}
+                        </template>
+                      </el-table-column>
+                      <el-table-column label="手续费" min-width="90" align="right">
+                        <template #default="{ row: trade }">
+                          {{ formatNumber(trade.fee, 4) }}
+                          <span v-if="trade.fee_currency" class="fee-currency">{{ trade.fee_currency }}</span>
+                        </template>
+                      </el-table-column>
+                    </el-table>
+                  </div>
+                  <div v-else class="expand-empty">暂无成交明细</div>
+                </template>
+              </el-table-column>
+              <el-table-column prop="side" label="方向" min-width="80">
+                <template #default="{ row }">
+                  <el-tag
+                    :type="row.side === 'buy' ? 'success' : 'danger'"
+                    size="small"
+                  >
+                    {{ row.side === 'buy' ? '买入' : '卖出' }}
+                  </el-tag>
+                </template>
+              </el-table-column>
+              <el-table-column prop="type" label="类型" min-width="90">
+                <template #default="{ row }">
+                  {{ formatOrderType(row.type) }}
+                </template>
+              </el-table-column>
+              <el-table-column prop="amount" label="委托量" min-width="100" align="right">
+                <template #default="{ row }">
+                  {{ formatNumber(row.amount, 4) }}
+                </template>
+              </el-table-column>
+              <el-table-column prop="filled" label="已成交" min-width="100" align="right">
+                <template #default="{ row }">
+                  {{ formatNumber(row.filled, 4) }}
+                </template>
+              </el-table-column>
+              <el-table-column prop="price" label="委托价" min-width="120" align="right">
+                <template #default="{ row }">
+                  {{ row.price != null ? formatPrice(row.price) : '市价' }}
+                </template>
+              </el-table-column>
+              <el-table-column prop="avg_price" label="均价" min-width="120" align="right">
+                <template #default="{ row }">
+                  {{ row.avg_price != null ? formatPrice(row.avg_price) : '-' }}
+                </template>
+              </el-table-column>
+              <el-table-column prop="status" label="状态" min-width="90">
+                <template #default="{ row }">
+                  <StatusBadge :status="row.status" context="order" />
+                </template>
+              </el-table-column>
+              <el-table-column prop="created_at" label="时间" min-width="140">
+                <template #default="{ row }">
+                  {{ formatTradeTime(row.created_at) }}
+                </template>
+              </el-table-column>
+            </el-table>
+            <div v-if="liveAuditTotal > liveAuditPageSize" class="pagination-wrapper">
+              <el-pagination
+                :current-page="liveAuditPage"
+                :page-size="liveAuditPageSize"
+                :total="liveAuditTotal"
+                layout="total, prev, pager, next"
+                @current-change="handleAuditPageChange"
+              />
+            </div>
+          </el-tab-pane>
+
           <el-tab-pane v-if="isLive && riskState" name="risk">
             <template #label>风控</template>
             <div class="risk-grid">
@@ -509,6 +613,8 @@ import {
   stopLiveTrading,
   emergencyClosePositions,
   getLiveEquityCurve,
+  resumeLiveTrading,
+  getLiveSessionOrders,
 } from '@/api/live'
 import { useWebSocketStore } from '@/stores/websocket'
 import { useNotification } from '@/composables/useNotification'
@@ -516,6 +622,7 @@ import { confirmStopLive, confirmEmergencyClose, type PositionRow } from '@/comp
 import type {
   PaperSession,
   LiveSession,
+  LiveSessionOrder,
   PaperTradingStatus,
   LiveTradingStatus,
   PendingOrderInfo,
@@ -554,8 +661,8 @@ const isPaper = computed(() => props.type === 'paper')
 const isLive = computed(() => props.type === 'live')
 const isRunning = computed(() => session.value?.status === 'running')
 const canResume = computed(() => {
-  const status = session.value?.status
-  return isPaper.value && (status === 'error' || status === 'stopped' || status === 'interrupted')
+  const s = session.value?.status
+  return s === 'error' || s === 'stopped' || s === 'interrupted'
 })
 const resuming = ref(false)
 
@@ -661,6 +768,35 @@ const paperLogs = computed<string[]>(() => {
   if (!status.value || !isPaper.value) return []
   return (status.value as PaperTradingStatus).logs || []
 })
+
+// Live audit orders (from DB audit table)
+const liveAuditOrders = ref<LiveSessionOrder[]>([])
+const liveAuditTotal = ref(0)
+const liveAuditPage = ref(1)
+const liveAuditPageSize = ref(20)
+const liveAuditLoading = ref(false)
+
+async function loadLiveAuditOrders() {
+  if (!isLive.value) return
+  liveAuditLoading.value = true
+  try {
+    const resp = await getLiveSessionOrders(props.id, {
+      page: liveAuditPage.value,
+      page_size: liveAuditPageSize.value,
+    })
+    liveAuditOrders.value = resp.data.items
+    liveAuditTotal.value = resp.data.total
+  } catch {
+    // non-critical, don't block UI
+  } finally {
+    liveAuditLoading.value = false
+  }
+}
+
+function handleAuditPageChange(page: number) {
+  liveAuditPage.value = page
+  loadLiveAuditOrders()
+}
 
 const riskState = computed<RiskState | null>(() => {
   if (!status.value || !isLive.value) return null
@@ -774,6 +910,10 @@ function handleTradingEvent(data: Record<string, unknown>) {
     }
     // Refresh session to get final DB state
     loadSession()
+    // Reload audit orders for final state
+    if (isLive.value) {
+      loadLiveAuditOrders()
+    }
     unsubscribeTradingChannel()
   }
 }
@@ -979,7 +1119,11 @@ async function handleStop() {
 async function handleResume() {
   resuming.value = true
   try {
-    await resumePaperTrading(props.id)
+    if (isPaper.value) {
+      await resumePaperTrading(props.id)
+    } else {
+      await resumeLiveTrading(props.id)
+    }
     toastSuccess('已恢复')
     await loadSession()
     await loadStatus()
@@ -1019,6 +1163,10 @@ onMounted(async () => {
   await loadSession()
   // Always load status (backend returns historical data from DB for stopped sessions)
   await loadStatus()
+  // Load audit orders for live sessions
+  if (isLive.value) {
+    loadLiveAuditOrders()
+  }
   if (isRunning.value && status.value?.is_running) {
     // Subscribe to WebSocket for real-time updates + fallback polling (30s)
     subscribeTradingChannel()
@@ -1269,6 +1417,28 @@ onUnmounted(() => {
     color: #c0c4cc;
     text-align: center;
     padding: 24px 0;
+  }
+
+  .expand-trades {
+    padding: 8px 16px;
+  }
+
+  .expand-empty {
+    padding: 12px 16px;
+    color: #c0c4cc;
+    font-size: 13px;
+  }
+
+  .fee-currency {
+    font-size: 11px;
+    color: #909399;
+    margin-left: 2px;
+  }
+
+  .pagination-wrapper {
+    display: flex;
+    justify-content: flex-end;
+    margin-top: 12px;
   }
 
   .risk-grid {

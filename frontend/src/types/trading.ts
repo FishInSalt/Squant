@@ -150,7 +150,7 @@ export interface PaperSession {
   unrealized_pnl?: number
 }
 
-// 实盘交易会话（匹配后端 LiveTradingRunResponse）
+// 实盘交易会话（匹配后端 LiveTradingRunResponse / LiveTradingListItem）
 export interface LiveSession {
   id: string
   strategy_id: string
@@ -170,6 +170,8 @@ export interface LiveSession {
   started_at?: string
   stopped_at?: string
   updated_at: string
+  equity?: number
+  cash?: number
 }
 
 export interface RiskConfig {
@@ -349,3 +351,30 @@ export interface TradingFillEvent {
 }
 
 export type TradingStatusEvent = TradingBarUpdate | TradingEngineStopped | TradingFillEvent
+
+// 实盘会话成交记录（匹配后端 LiveSessionTradeResponse）
+export interface LiveSessionTrade {
+  id: string
+  price: number
+  amount: number
+  fee: number
+  fee_currency?: string
+  timestamp: string
+}
+
+// 实盘会话订单记录（匹配后端 LiveSessionOrderResponse，审计表）
+export interface LiveSessionOrder {
+  id: string
+  exchange_oid?: string
+  symbol: string
+  side: string
+  type: string
+  amount: number
+  filled: number
+  avg_price?: number
+  price?: number
+  status: string
+  trades: LiveSessionTrade[]
+  created_at: string
+  updated_at: string
+}

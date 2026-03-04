@@ -296,6 +296,19 @@
                 <span class="label">初始资金</span>
                 <span class="value">{{ formatNumber(session.initial_capital ?? 0, 2) }}</span>
               </div>
+              <div v-if="session.equity != null" class="stat">
+                <span class="label">当前权益</span>
+                <span class="value">{{ formatNumber(session.equity, 2) }}</span>
+              </div>
+              <div v-if="session.equity != null && session.initial_capital" class="stat">
+                <span class="label">收益率</span>
+                <span
+                  class="value"
+                  :class="getReturnClass(session.equity, session.initial_capital)"
+                >
+                  {{ formatReturn(session.equity, session.initial_capital) }}
+                </span>
+              </div>
             </div>
             <div class="item-actions" @click.stop>
               <el-button
@@ -492,6 +505,19 @@ function goToMonitor(id: string) {
   router.push(`/trading/monitor/live/${id}`)
 }
 
+function formatReturn(equity: number, initialCapital: number): string {
+  const ret = ((equity - initialCapital) / initialCapital) * 100
+  const sign = ret >= 0 ? '+' : ''
+  return `${sign}${ret.toFixed(2)}%`
+}
+
+function getReturnClass(equity: number, initialCapital: number): string {
+  const ret = equity - initialCapital
+  if (ret > 0) return 'profit'
+  if (ret < 0) return 'loss'
+  return ''
+}
+
 async function handleStop(id: string) {
   const { confirmed, cancelOrders } = await confirmStopLive()
   if (!confirmed) return
@@ -618,6 +644,14 @@ onMounted(async () => {
         .value {
           font-size: 14px;
           font-weight: 500;
+
+          &.profit {
+            color: #67c23a;
+          }
+
+          &.loss {
+            color: #f56c6c;
+          }
         }
       }
     }

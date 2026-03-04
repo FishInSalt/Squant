@@ -1,5 +1,5 @@
 import { get, post } from './index'
-import type { LiveSession, LiveTradingStatus, RiskConfig, PaginatedData, EquityCurvePoint } from '@/types'
+import type { LiveSession, LiveSessionOrder, LiveTradingStatus, RiskConfig, PaginatedData, EquityCurvePoint } from '@/types'
 
 // 启动实盘交易
 export const startLiveTrading = (config: {
@@ -46,3 +46,11 @@ export const getRunningLiveSessions = () =>
 // 获取收益曲线
 export const getLiveEquityCurve = (id: string, since?: string) =>
   get<EquityCurvePoint[]>(`/live/${id}/equity-curve`, since ? { since } : undefined)
+
+// 恢复实盘交易
+export const resumeLiveTrading = (id: string, warmup_bars?: number) =>
+  post<LiveSession>(`/live/${id}/resume`, warmup_bars != null ? { warmup_bars } : undefined)
+
+// 获取会话历史订单（审计表）
+export const getLiveSessionOrders = (id: string, params?: { page?: number; page_size?: number }) =>
+  get<PaginatedData<LiveSessionOrder>>(`/live/${id}/orders`, params)
