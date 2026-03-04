@@ -22,6 +22,10 @@ from squant.infra.exchange.exceptions import (
     InvalidOrderError,
     OrderNotFoundError,
 )
+from squant.infra.exchange.retry import RetryConfig, with_retry
+
+# Retry config for read-only and idempotent operations (LIVE-007)
+_READ_RETRY = RetryConfig(max_retries=3, base_delay=0.5, max_delay=10.0)
 from squant.infra.exchange.types import (
     AccountBalance,
     Balance,
@@ -311,6 +315,12 @@ class CCXTRestAdapter(ExchangeAdapter):
 
     async def get_balance(self) -> AccountBalance:
         """Get account balance for all currencies."""
+        return await with_retry(
+            self._get_balance_impl, config=_READ_RETRY, operation_name="get_balance"
+        )
+
+    async def _get_balance_impl(self) -> AccountBalance:
+        """Internal get_balance implementation (retryable)."""
         if not self._exchange:
             raise ExchangeConnectionError(
                 message="Exchange not connected. Call connect() first.",
@@ -430,6 +440,13 @@ class CCXTRestAdapter(ExchangeAdapter):
 
     async def cancel_order(self, request: CancelOrderRequest) -> OrderResponse:
         """Cancel an existing order."""
+        return await with_retry(
+            self._cancel_order_impl, request,
+            config=_READ_RETRY, operation_name="cancel_order",
+        )
+
+    async def _cancel_order_impl(self, request: CancelOrderRequest) -> OrderResponse:
+        """Internal cancel_order implementation (retryable)."""
         if not self._exchange:
             raise ExchangeConnectionError(
                 message="Exchange not connected. Call connect() first.",
@@ -473,6 +490,13 @@ class CCXTRestAdapter(ExchangeAdapter):
 
     async def get_order(self, symbol: str, order_id: str) -> OrderResponse:
         """Get order details by ID."""
+        return await with_retry(
+            self._get_order_impl, symbol, order_id,
+            config=_READ_RETRY, operation_name="get_order",
+        )
+
+    async def _get_order_impl(self, symbol: str, order_id: str) -> OrderResponse:
+        """Internal get_order implementation (retryable)."""
         if not self._exchange:
             raise ExchangeConnectionError(
                 message="Exchange not connected. Call connect() first.",
