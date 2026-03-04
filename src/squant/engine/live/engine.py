@@ -262,6 +262,9 @@ class LiveTradingEngine:
         self._order_last_poll: dict[str, datetime] = {}  # exchange_order_id -> last poll time
         self._order_poll_min_interval = 30.0  # Minimum seconds between polls for same order
 
+        # Last exchange balance for diagnostics (LIVE-012)
+        self._last_exchange_balance: Decimal | None = None
+
         # Exchange connection failure tracking (LV-3)
         # Separate counters for balance and order sync (R3-011)
         self._balance_consecutive_failures: int = 0
@@ -675,8 +678,8 @@ class LiveTradingEngine:
                 # consistent state (ISSUE-203 fix: no concurrent mutation)
                 self._drain_ws_updates()
 
-                # Sync balance as baseline, then sync orders so fills adjust
-                # cash incrementally on top of exchange truth (C-DEFER-8)
+                # Validate exchange balance (monitoring only, no cash overwrite).
+                # Cash tracked incrementally via fill processing (LIVE-012).
                 await self._sync_balance()
                 await self._sync_pending_orders()
 
@@ -919,14 +922,28 @@ class LiveTradingEngine:
         )
 
     async def _sync_balance(self) -> None:
-        """Sync account balance from exchange and reconcile positions."""
+        """Validate account balance against local state and reconcile positions.
+
+        Cash is NOT overwritten from exchange (LIVE-012). Local cash is tracked
+        incrementally via fill processing only. Exchange balance serves as a
+        health-check baseline — large discrepancies are logged as warnings.
+        """
         try:
             balance = await self._adapter.get_balance()
-            # Update context cash from quote currency balance
+            # Compare exchange cash vs local (monitoring only, no overwrite)
             quote_currency = self._symbol.split("/")[1]  # e.g., "USDT" from "BTC/USDT"
             quote_balance = balance.get_balance(quote_currency)
             if quote_balance:
-                self._context._cash = quote_balance.available
+                exchange_cash = quote_balance.available
+                self._last_exchange_balance = exchange_cash
+                local_cash = self._context._cash
+                diff = abs(exchange_cash - local_cash)
+                threshold = max(local_cash * Decimal("0.05"), Decimal("10"))
+                if diff > threshold:
+                    logger.warning(
+                        f"Cash discrepancy for {self._symbol}: "
+                        f"local={local_cash}, exchange={exchange_cash}, diff={diff}"
+                    )
 
             # Reconcile base currency position (LIVE-005)
             base_currency = self._symbol.split("/")[0]  # e.g., "BTC" from "BTC/USDT"

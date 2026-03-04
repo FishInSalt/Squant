@@ -2305,8 +2305,26 @@ class TestBalanceSyncFailure:
         assert engine.context.cash == initial_cash
 
     @pytest.mark.asyncio
-    async def test_balance_sync_updates_cash_correctly(self, engine, mock_adapter):
-        """Test balance sync correctly updates cash from quote currency."""
+    async def test_balance_sync_does_not_overwrite_cash(self, engine, mock_adapter):
+        """Test balance sync does NOT overwrite local cash (LIVE-012)."""
+        await engine.start()
+        initial_cash = engine.context.cash
+
+        mock_adapter.get_balance.return_value = AccountBalance(
+            exchange="okx",
+            balances=[
+                Balance(currency="USDT", available=Decimal("9500"), frozen=Decimal("500")),
+            ],
+        )
+
+        await engine._sync_balance()
+
+        # Cash should remain at initial_equity, not overwritten to 9500
+        assert engine.context.cash == initial_cash
+
+    @pytest.mark.asyncio
+    async def test_balance_sync_stores_exchange_balance(self, engine, mock_adapter):
+        """Test that exchange balance is stored for diagnostics."""
         await engine.start()
 
         mock_adapter.get_balance.return_value = AccountBalance(
@@ -2318,8 +2336,49 @@ class TestBalanceSyncFailure:
 
         await engine._sync_balance()
 
-        # Should update to available balance
-        assert engine.context.cash == Decimal("9500")
+        assert engine._last_exchange_balance == Decimal("9500")
+
+    @pytest.mark.asyncio
+    async def test_balance_sync_logs_cash_discrepancy(self, engine, mock_adapter, caplog):
+        """Test that large cash discrepancy is logged as warning."""
+        await engine.start()
+        # Engine initial_equity = 10000, set exchange to very different value
+        mock_adapter.get_balance.return_value = AccountBalance(
+            exchange="okx",
+            balances=[
+                Balance(currency="USDT", available=Decimal("5000"), frozen=Decimal("0")),
+            ],
+        )
+
+        import logging
+
+        with caplog.at_level(logging.WARNING):
+            await engine._sync_balance()
+
+        assert any("Cash discrepancy" in msg for msg in caplog.messages)
+        # Cash should still be original value
+        assert engine.context.cash == engine._initial_equity
+
+    @pytest.mark.asyncio
+    async def test_balance_sync_no_warning_for_small_discrepancy(self, engine, mock_adapter, caplog):
+        """Test that small cash discrepancy does not trigger warning."""
+        await engine.start()
+        # Exchange balance close to initial_equity (within 5%)
+        mock_adapter.get_balance.return_value = AccountBalance(
+            exchange="okx",
+            balances=[
+                Balance(
+                    currency="USDT", available=Decimal("9800"), frozen=Decimal("0")
+                ),
+            ],
+        )
+
+        import logging
+
+        with caplog.at_level(logging.WARNING):
+            await engine._sync_balance()
+
+        assert not any("Cash discrepancy" in msg for msg in caplog.messages)
 
 
 class TestCircuitBreakerOrderProcessing:
