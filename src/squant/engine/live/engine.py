@@ -1181,16 +1181,30 @@ class LiveTradingEngine:
 
         # Get pending orders from context that haven't been submitted
         for order in self._context._get_pending_orders():
-            # Guard: STOP/STOP_LIMIT not supported in live trading yet
+            # Guard: STOP/STOP_LIMIT not yet supported in live trading
             if order.type in (BacktestOrderType.STOP, BacktestOrderType.STOP_LIMIT):
-                logger.warning(
-                    f"STOP/STOP_LIMIT orders not supported in live trading, "
-                    f"cancelling order {order.id}"
+                reason = (
+                    f"STOP/STOP_LIMIT orders not supported in live trading yet. "
+                    f"Use LIMIT or MARKET orders instead."
                 )
-                order.status = OrderStatus.CANCELLED
+                logger.warning(f"Order {order.id} rejected: {reason}")
+                order.status = OrderStatus.REJECTED
                 self._context._completed_orders.append(order)
                 if order in self._context._pending_orders:
                     self._context._pending_orders.remove(order)
+                self._pending_risk_triggers.append(
+                    {
+                        "rule_type": "unsupported_order_type",
+                        "trigger_type": "order_rejected",
+                        "details": {
+                            "reason": reason,
+                            "order_symbol": order.symbol,
+                            "order_side": order.side.value,
+                            "order_type": order.type.value,
+                            "order_amount": str(order.amount),
+                        },
+                    }
+                )
                 continue
 
             # Skip if already tracked as live order
