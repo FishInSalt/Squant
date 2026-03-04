@@ -386,6 +386,6 @@ export interface EmergencyCloseResult {
   message?: string
   orders_cancelled?: number
   positions_closed?: number
-  remaining_positions?: Array<{ symbol: string; amount: string; reason: string }>
+  remaining_positions?: Array<{ symbol: string; amount: string; side: string }>
   errors?: Array<Record<string, unknown>>
 }

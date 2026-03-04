@@ -150,19 +150,21 @@ export function showEmergencyCloseResult(result: EmergencyCloseResult): void {
     children.push(
       h('p', { style: 'color:#E6A23C;font-weight:500;margin-top:8px' }, '以下持仓未能平仓:'),
     )
-    const rows = result.remaining_positions.map((p) =>
-      h('tr', { style: 'border-bottom:1px solid #f5f7fa' }, [
+    const rows = result.remaining_positions.map((p) => {
+      const sideLabel = p.side === 'long' ? '多' : '空'
+      const sideColor = p.side === 'long' ? '#00C853' : '#FF1744'
+      return h('tr', { style: 'border-bottom:1px solid #f5f7fa' }, [
         h('td', { style: 'padding:4px 8px' }, p.symbol),
+        h('td', { style: `padding:4px 8px;color:${sideColor}` }, sideLabel),
         h('td', { style: 'padding:4px 8px;text-align:right' }, p.amount),
-        h('td', { style: 'padding:4px 8px;color:#909399' }, p.reason),
-      ]),
-    )
+      ])
+    })
     children.push(
       h('table', { style: 'width:100%;border-collapse:collapse;margin-top:4px;font-size:13px' }, [
         h('tr', { style: 'border-bottom:1px solid #ebeef5;color:#909399' }, [
           h('td', { style: 'padding:4px 8px' }, '币对'),
+          h('td', { style: 'padding:4px 8px' }, '方向'),
           h('td', { style: 'padding:4px 8px;text-align:right' }, '数量'),
-          h('td', { style: 'padding:4px 8px' }, '原因'),
         ]),
         ...rows,
       ]),
