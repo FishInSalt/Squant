@@ -140,6 +140,36 @@ class CCXTStreamProvider:
         jitter = delay * 0.1 * (random.random() * 2 - 1)
         return float(delay + jitter)
 
+    def _fire_reconnect_exhausted_alert(self, subscription_key: str) -> None:
+        """Fire a critical notification when reconnect attempts are exhausted (LIVE-CN-002).
+
+        This prevents silent failure — the system alerts operators that a
+        WebSocket subscription has permanently stopped.
+        """
+        try:
+            from squant.services.notification import emit_notification
+
+            loop = asyncio.get_running_loop()
+            loop.create_task(
+                emit_notification(
+                    level="critical",
+                    event_type="ws_reconnect_exhausted",
+                    title="WebSocket connection permanently lost",
+                    message=(
+                        f"Subscription '{subscription_key}' on {self._exchange_id} stopped "
+                        f"after {self._reconnect_attempt} reconnect attempts. "
+                        f"Live trading engines may not receive market data."
+                    ),
+                    details={
+                        "exchange": self._exchange_id,
+                        "subscription_key": subscription_key,
+                        "reconnect_attempts": self._reconnect_attempt,
+                    },
+                )
+            )
+        except Exception:
+            logger.warning("Failed to fire reconnect exhausted alert", exc_info=True)
+
     @property
     def is_connected(self) -> bool:
         """Check if connected to exchange.
@@ -358,6 +388,8 @@ class CCXTStreamProvider:
                     logger.error(
                         f"Max reconnection attempts ({self._reconnect_attempt}) reached, stopping {key}"
                     )
+                    # Fire critical alert so the issue is not silent (LIVE-CN-002)
+                    self._fire_reconnect_exhausted_alert(key)
                     return False
                 # Otherwise keep trying with backoff
                 return True
@@ -703,6 +735,8 @@ class CCXTStreamProvider:
                                 f"Max reconnection attempts ({self._reconnect_attempt}) reached, "
                                 "stopping batch tickers loop"
                             )
+                            # Fire critical alert (LIVE-CN-002)
+                            self._fire_reconnect_exhausted_alert("batch_tickers")
                             break
                         # Otherwise keep trying with backoff
                 else:
