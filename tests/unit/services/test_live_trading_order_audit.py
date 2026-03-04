@@ -633,3 +633,65 @@ class TestOrderPersistCallback:
 
         # Both creates attempted
         assert mock_order_repo.create.call_count == 2
+
+    async def test_seed_map_links_fill_to_existing_db_order(self):
+        """With seed_map, a fill for a pre-existing order should create a Trade."""
+        from squant.services.live_trading import LiveTradingService
+
+        mock_order_repo = AsyncMock()
+        mock_order_repo.update = AsyncMock()
+
+        mock_trade_repo = AsyncMock()
+        mock_trade_repo.create = AsyncMock()
+
+        # Seed map: engine internal_id → DB UUID (simulating resume scenario)
+        seed_map = {"engine-order-1": "db-uuid-from-before-crash"}
+
+        callback = LiveTradingService._create_order_persist_callback(
+            account_id="acc-123",
+            exchange="okx",
+            seed_map=seed_map,
+        )
+
+        # Only a fill event — no "placed" event (order was placed before crash)
+        events = [
+            {
+                "type": "fill",
+                "internal_id": "engine-order-1",
+                "fill_price": "50000",
+                "fill_amount": "0.005",
+                "fee": "0.003",
+                "fee_currency": "USDT",
+                "total_filled": "0.005",
+                "avg_fill_price": "50000",
+                "status": "partial",
+                "timestamp": "2025-01-01T00:00:05+00:00",
+            },
+        ]
+
+        with patch("squant.infra.database.get_session_context") as mock_ctx:
+            mock_session = AsyncMock()
+            mock_ctx.return_value.__aenter__ = AsyncMock(return_value=mock_session)
+            mock_ctx.return_value.__aexit__ = AsyncMock(return_value=False)
+
+            with (
+                patch(
+                    "squant.services.order.OrderRepository",
+                    return_value=mock_order_repo,
+                ),
+                patch(
+                    "squant.services.order.TradeRepository",
+                    return_value=mock_trade_repo,
+                ),
+            ):
+                await callback("run-123", events)
+
+        # Trade should be created using the seeded DB order UUID
+        mock_trade_repo.create.assert_called_once()
+        trade_kwargs = mock_trade_repo.create.call_args[1]
+        assert trade_kwargs["order_id"] == "db-uuid-from-before-crash"
+        assert trade_kwargs["price"] == Decimal("50000")
+
+        # Order should be updated
+        mock_order_repo.update.assert_called_once()
+        assert mock_order_repo.update.call_args[0][0] == "db-uuid-from-before-crash"

@@ -660,14 +660,24 @@ class LiveTradingService:
         return _persist_result
 
     @staticmethod
-    def _create_order_persist_callback(account_id: str, exchange: str) -> Any:
+    def _create_order_persist_callback(
+        account_id: str,
+        exchange: str,
+        seed_map: dict[str, str] | None = None,
+    ) -> Any:
         """Create a callback for order/trade audit persistence (LIVE-013).
 
         Returns a closure that opens its own DB session to persist order
         placement and fill events to the orders/trades audit tables.
+
+        Args:
+            account_id: Exchange account ID.
+            exchange: Exchange name (e.g. "okx").
+            seed_map: Optional pre-populated internal_id → DB order UUID mapping.
+                Used on resume to link existing DB orders to restored engine orders.
         """
         # Map engine internal_id → DB order UUID (kept across events)
-        order_id_map: dict[str, str] = {}
+        order_id_map: dict[str, str] = dict(seed_map) if seed_map else {}
 
         async def _persist_orders(run_id: str, events: list[dict]) -> None:
             from squant.infra.database import get_session_context
@@ -1426,7 +1436,7 @@ class LiveTradingService:
                 run_id, "no risk config in saved state"
             )
 
-        # 8. Create engine
+        # 8. Create engine (on_order_persist wired after step 10 with seed map)
         engine = LiveTradingEngine(
             run_id=UUID(run.id),
             strategy=strategy_instance,
@@ -1439,10 +1449,6 @@ class LiveTradingService:
             on_snapshot=self._create_snapshot_callback(),
             on_result=self._create_result_callback(),
             on_event=self._create_event_callback(UUID(run.id)),
-            on_order_persist=self._create_order_persist_callback(
-                account_id=str(run.account_id),
-                exchange=exchange_account.exchange,
-            ),
         )
 
         # 9. Restore trading state
@@ -1464,6 +1470,34 @@ class LiveTradingService:
 
         # 10. Restore live order tracking
         engine.restore_live_orders(run.result)
+
+        # 10b. Wire order audit callback with seed map from DB (F-1 fix).
+        # After restoring live orders, query existing DB audit records for
+        # this run and build internal_id → DB UUID mapping so that fills
+        # for orders placed before the crash can be linked correctly.
+        seed_map: dict[str, str] = {}
+        from squant.services.order import OrderRepository
+
+        order_repo = OrderRepository(self.session)
+        existing_orders = await order_repo.list_by_run(run.id, limit=1000)
+        # Build reverse lookup: exchange_oid → DB order UUID
+        oid_to_db: dict[str, str] = {
+            o.exchange_oid: o.id for o in existing_orders if o.exchange_oid
+        }
+        # Match against restored live orders via exchange_order_id
+        for internal_id, live_order in engine._live_orders.items():
+            if live_order.exchange_order_id in oid_to_db:
+                seed_map[internal_id] = oid_to_db[live_order.exchange_order_id]
+
+        engine._on_order_persist = self._create_order_persist_callback(
+            account_id=str(run.account_id),
+            exchange=exchange_account.exchange,
+            seed_map=seed_map,
+        )
+        if seed_map:
+            logger.info(
+                f"Resume: seeded order audit map with {len(seed_map)} orders"
+            )
 
         # 11. Order reconciliation
         reconciliation_report = await self._reconcile_orders(
