@@ -23,9 +23,6 @@ from squant.infra.exchange.exceptions import (
     OrderNotFoundError,
 )
 from squant.infra.exchange.retry import RetryConfig, with_retry
-
-# Retry config for read-only and idempotent operations (LIVE-007)
-_READ_RETRY = RetryConfig(max_retries=3, base_delay=0.5, max_delay=10.0)
 from squant.infra.exchange.types import (
     AccountBalance,
     Balance,
@@ -39,6 +36,9 @@ from squant.infra.exchange.types import (
 from squant.models.enums import OrderSide, OrderStatus, OrderType
 
 logger = logging.getLogger(__name__)
+
+# Retry config for read-only and idempotent operations (LIVE-007)
+_READ_RETRY = RetryConfig(max_retries=3, base_delay=0.5, max_delay=10.0)
 
 
 class CCXTRestAdapter(ExchangeAdapter):

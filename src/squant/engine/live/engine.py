@@ -1192,6 +1192,7 @@ class LiveTradingEngine:
                 logger.warning(f"Order {order.id} rejected: {reason}")
                 order.status = OrderStatus.REJECTED
                 self._context._completed_orders.append(order)
+                self._context._total_completed_added += 1
                 if order in self._context._pending_orders:
                     self._context._pending_orders.remove(order)
                 self._pending_risk_triggers.append(
@@ -1236,6 +1237,7 @@ class LiveTradingEngine:
                 # Mark as rejected in context
                 order.status = OrderStatus.REJECTED
                 self._context._completed_orders.append(order)
+                self._context._total_completed_added += 1
                 if order in self._context._pending_orders:
                     self._context._pending_orders.remove(order)
 
@@ -1314,6 +1316,7 @@ class LiveTradingEngine:
             # Mark as rejected
             order.status = OrderStatus.REJECTED
             self._context._completed_orders.append(order)
+            self._context._total_completed_added += 1
             if order in self._context._pending_orders:
                 self._context._pending_orders.remove(order)
 

@@ -261,7 +261,7 @@ class BackgroundTaskManager:
             logger.error(f"Failed to open DB session for live pre-cleanup persistence: {e}")
 
         # Clean up stale sessions (stop engines + unregister)
-        cleaned_ids = await live_manager.cleanup_stale_sessions(timeout_seconds)
+        cleaned_ids, keys_to_unsub = await live_manager.cleanup_stale_sessions(timeout_seconds)
         if cleaned_ids:
             logger.warning(f"Cleaned up {len(cleaned_ids)} stale live trading sessions")
             try:
@@ -280,6 +280,19 @@ class BackgroundTaskManager:
                             )
             except Exception as e:
                 logger.error(f"Failed to open DB session for stale live session update: {e}")
+
+            # Unsubscribe from candles for keys with no remaining sessions
+            for key in keys_to_unsub:
+                try:
+                    from squant.websocket.manager import get_stream_manager
+
+                    stream_manager = get_stream_manager()
+                    await stream_manager.unsubscribe_candles(*key)
+                    logger.info(
+                        f"Unsubscribed from candles {key} after stale live session cleanup"
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to unsubscribe candles {key}: {e}")
 
 
 # Global instance
