@@ -1143,8 +1143,10 @@ class LiveTradingService:
                     fee_delta = (exchange_order.fee or Decimal("0")) - live_order.fee
                     if fee_delta < 0:
                         fee_delta = Decimal("0")
-                    engine._process_incremental_fill(
-                        live_order, fill_delta, exchange_order, fee_delta
+                    engine._record_fill(
+                        live_order, exchange_order.avg_price, fill_delta,
+                        fee_delta, exchange_order.fee or Decimal("0"),
+                        source="reconcile",
                     )
                     report["fills_processed"] += 1
 
@@ -1165,8 +1167,10 @@ class LiveTradingService:
                         fee_delta = (final_state.fee or Decimal("0")) - live_order.fee
                         if fee_delta < 0:
                             fee_delta = Decimal("0")
-                        engine._process_incremental_fill(
-                            live_order, fill_delta, final_state, fee_delta
+                        engine._record_fill(
+                            live_order, final_state.avg_price, fill_delta,
+                            fee_delta, final_state.fee or Decimal("0"),
+                            source="reconcile",
                         )
                         report["fills_processed"] += 1
 

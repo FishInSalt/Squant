@@ -489,7 +489,7 @@ class TestReconcileOrders:
             ),
         }
         engine._exchange_order_map = {"ex-1": "ord-1"}
-        engine._process_incremental_fill = MagicMock()
+        engine._record_fill = MagicMock()
 
         adapter = AsyncMock()
         adapter.get_open_orders = AsyncMock(return_value=[
@@ -510,7 +510,7 @@ class TestReconcileOrders:
 
         assert report["orders_reconciled"] == 1
         assert report["fills_processed"] == 1
-        engine._process_incremental_fill.assert_called_once()
+        engine._record_fill.assert_called_once()
 
     async def test_order_filled_during_downtime(self, service):
         """Order completed while session was down."""
@@ -527,7 +527,7 @@ class TestReconcileOrders:
         engine = MagicMock(spec=LiveTradingEngine)
         engine._live_orders = {"ord-1": lo}
         engine._exchange_order_map = {"ex-1": "ord-1"}
-        engine._process_incremental_fill = MagicMock()
+        engine._record_fill = MagicMock()
 
         adapter = AsyncMock()
         # Not in open orders

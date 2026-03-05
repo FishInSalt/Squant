@@ -1898,8 +1898,8 @@ class TestOrderSyncRateLimiting:
         assert "exchange-1" in engine._order_last_poll
 
 
-class TestIncrementalFillProcessing:
-    """Tests for _process_incremental_fill from polling path."""
+class TestFillProcessing:
+    """Tests for _record_fill and _check_trade_completion."""
 
     @pytest.fixture
     def engine_with_buy_order(self, engine):
@@ -1918,31 +1918,21 @@ class TestIncrementalFillProcessing:
         return engine
 
     @pytest.mark.asyncio
-    async def test_incremental_fill_updates_context(self, engine_with_buy_order, mock_adapter):
-        """Test that incremental fill processes correctly via _process_incremental_fill."""
+    async def test_record_fill_updates_context(self, engine_with_buy_order, mock_adapter):
+        """Test that _record_fill processes correctly."""
         engine = engine_with_buy_order
         await engine.start()
 
         live_order = engine._live_orders["order-1"]
-        response = OrderResponse(
-            order_id="exchange-1",
-            symbol="BTC/USDT",
-            side=OrderSide.BUY,
-            type=OrderType.MARKET,
-            status=OrderStatus.PARTIAL,
-            price=None,
-            amount=Decimal("1.0"),
-            filled=Decimal("0.5"),
-            avg_price=Decimal("45000"),
-            fee=Decimal("0.225"),
-            fee_currency="USDT",
-        )
 
         with (
             patch.object(engine._context, "_process_fill") as mock_fill,
             patch.object(engine._context, "_move_completed_orders"),
         ):
-            engine._process_incremental_fill(live_order, Decimal("0.5"), response, Decimal("0.225"))
+            engine._record_fill(
+                live_order, Decimal("45000"), Decimal("0.5"),
+                Decimal("0.225"), Decimal("0.225"), source="poll",
+            )
 
             mock_fill.assert_called_once()
             fill_arg = mock_fill.call_args[0][0]
@@ -1951,33 +1941,7 @@ class TestIncrementalFillProcessing:
             assert fill_arg.price == Decimal("45000")
 
     @pytest.mark.asyncio
-    async def test_incremental_fill_skipped_when_no_avg_price(
-        self, engine_with_buy_order, mock_adapter
-    ):
-        """Test that fill processing is skipped when avg_price is None."""
-        engine = engine_with_buy_order
-        await engine.start()
-
-        live_order = engine._live_orders["order-1"]
-        response = OrderResponse(
-            order_id="exchange-1",
-            symbol="BTC/USDT",
-            side=OrderSide.BUY,
-            type=OrderType.MARKET,
-            status=OrderStatus.PARTIAL,
-            price=None,
-            amount=Decimal("1.0"),
-            filled=Decimal("0.5"),
-            avg_price=None,  # No avg price
-        )
-
-        with patch.object(engine._context, "_process_fill") as mock_fill:
-            engine._process_incremental_fill(live_order, Decimal("0.5"), response)
-
-            mock_fill.assert_not_called()
-
-    @pytest.mark.asyncio
-    async def test_incremental_fill_uses_total_fee_when_no_delta(
+    async def test_record_fill_uses_total_fee_when_no_delta(
         self, engine_with_buy_order, mock_adapter
     ):
         """Test fallback to total fee when fee_delta is None."""
@@ -1985,25 +1949,15 @@ class TestIncrementalFillProcessing:
         await engine.start()
 
         live_order = engine._live_orders["order-1"]
-        response = OrderResponse(
-            order_id="exchange-1",
-            symbol="BTC/USDT",
-            side=OrderSide.BUY,
-            type=OrderType.MARKET,
-            status=OrderStatus.FILLED,
-            price=None,
-            amount=Decimal("1.0"),
-            filled=Decimal("1.0"),
-            avg_price=Decimal("45000"),
-            fee=Decimal("0.45"),
-        )
 
         with (
             patch.object(engine._context, "_process_fill") as mock_fill,
             patch.object(engine._context, "_move_completed_orders"),
         ):
-            # No fee_delta provided
-            engine._process_incremental_fill(live_order, Decimal("1.0"), response)
+            engine._record_fill(
+                live_order, Decimal("45000"), Decimal("1.0"),
+                None, Decimal("0.45"), source="poll",
+            )
 
             fill_arg = mock_fill.call_args[0][0]
             # Should use total fee as fallback

@@ -11,7 +11,7 @@ from squant.engine.backtest.strategy_base import Strategy
 from squant.engine.backtest.types import Bar
 from squant.engine.live.engine import LiveOrder, LiveTradingEngine
 from squant.engine.risk import RiskConfig
-from squant.infra.exchange.okx.ws_types import WSCandle, WSOrderUpdate
+from squant.infra.exchange.okx.ws_types import WSCandle
 from squant.infra.exchange.types import (
     AccountBalance,
     Balance,
@@ -208,28 +208,16 @@ class TestOrderEventBuffering:
         assert evt["order_type"] == "market"
         assert evt["amount"] == "0.01"
 
-    def test_process_order_fill_buffers_fill_event(self):
-        """_process_order_fill (WS path) should buffer a 'fill' event."""
+    def test_record_fill_buffers_ws_event(self):
+        """_record_fill (WS path) should buffer a 'fill' event."""
         engine = _make_engine()
         live_order = _make_live_order()
         engine._live_orders[live_order.internal_id] = live_order
 
-        update = WSOrderUpdate(
-            order_id="exchange-123",
-            symbol="BTC/USDT",
-            side="buy",
-            order_type="market",
-            status="filled",
-            price=Decimal("50000"),
-            size=Decimal("0.01"),
-            filled_size=Decimal("0.01"),
-            avg_price=Decimal("50000"),
-            fee=Decimal("0.005"),
-            fee_currency="USDT",
-            timestamp=datetime.now(UTC),
+        engine._record_fill(
+            live_order, Decimal("50000"), Decimal("0.01"),
+            Decimal("0.005"), Decimal("0.005"), source="ws",
         )
-
-        engine._process_order_fill(live_order, update, Decimal("0.01"), Decimal("0.005"))
 
         assert len(engine._pending_order_events) == 1
         evt = engine._pending_order_events[0]
@@ -238,28 +226,16 @@ class TestOrderEventBuffering:
         assert evt["fill_price"] == "50000"
         assert evt["fill_amount"] == "0.01"
         assert evt["fee"] == "0.005"
+        assert evt["fill_source"] == "ws"
 
-    def test_process_incremental_fill_buffers_fill_event(self):
-        """_process_incremental_fill (polling path) should buffer a 'fill' event."""
+    def test_record_fill_buffers_poll_event(self):
+        """_record_fill (polling path) should buffer a 'fill' event."""
         engine = _make_engine()
         live_order = _make_live_order()
 
-        response = OrderResponse(
-            order_id="exchange-123",
-            symbol="BTC/USDT",
-            side=OrderSide.BUY,
-            type=OrderType.MARKET,
-            status=OrderStatus.FILLED,
-            price=None,
-            amount=Decimal("0.01"),
-            filled=Decimal("0.01"),
-            avg_price=Decimal("49500"),
-            fee=Decimal("0.004"),
-            fee_currency="USDT",
-        )
-
-        engine._process_incremental_fill(
-            live_order, Decimal("0.01"), response, Decimal("0.004")
+        engine._record_fill(
+            live_order, Decimal("49500"), Decimal("0.01"),
+            Decimal("0.004"), Decimal("0.004"), source="poll",
         )
 
         assert len(engine._pending_order_events) == 1
@@ -268,6 +244,7 @@ class TestOrderEventBuffering:
         assert evt["fill_price"] == "49500"
         assert evt["fill_amount"] == "0.01"
         assert evt["fee"] == "0.004"
+        assert evt["fill_source"] == "poll"
 
     async def test_process_candle_flushes_events(self, risk_config, mock_adapter):
         """process_candle should flush pending events via on_order_persist."""

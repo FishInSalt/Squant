@@ -1153,44 +1153,24 @@ class LiveTradingEngine:
         # Only process if there's new fill amount (incremental delta)
         fill_delta = update.filled_size - old_filled
         if new_status in (OrderStatus.PARTIAL, OrderStatus.FILLED) and fill_delta > 0:
-            # Detect trade completion via _open_trade state change (not deque length,
-            # which fails when _trades deque is at maxlen).
+            if update.avg_price is None:
+                return
+
             had_open_trade = self._context._open_trade is not None
             circuit_breaker_before = self._risk_manager.state.circuit_breaker_triggered
 
-            # Calculate incremental fee (not cumulative)
-            # Only compute delta if exchange provides fee info; otherwise pass None
-            # to avoid negative deltas when fee is temporarily unavailable (LV-2)
+            # Calculate incremental fee (not cumulative) (LV-2)
             fee_delta = None
             if update.fee is not None:
                 fee_delta = update.fee - old_fee
                 if fee_delta < 0:
-                    fee_delta = Decimal("0")  # Fee went backwards; skip this increment
-            self._process_order_fill(live_order, update, fill_delta, fee_delta)
+                    fee_delta = Decimal("0")
 
-            # Check if a trade was completed and record its PnL
-            if had_open_trade and self._context._open_trade is None:
-                # A new trade was completed - get its PnL
-                completed_trade = self._context.trades[-1]
-                if completed_trade.pnl is not None:
-                    self._risk_manager.record_trade_result(completed_trade.pnl)
-                    logger.info(
-                        f"Recorded trade result: PnL={completed_trade.pnl}, "
-                        f"consecutive_losses={self._risk_manager.state.consecutive_losses}"
-                    )
-
-                    # Check if circuit breaker was just triggered (RSK-012)
-                    if (
-                        not circuit_breaker_before
-                        and self._risk_manager.state.circuit_breaker_triggered
-                    ):
-                        logger.warning(
-                            f"Circuit breaker triggered for session {self._run_id} "
-                            f"after {self._risk_manager.state.consecutive_losses} "
-                            f"consecutive losses"
-                        )
-                        # Set flag for async handling - actual stop happens in main loop
-                        self._circuit_breaker_triggered = True
+            self._record_fill(
+                live_order, update.avg_price, fill_delta, fee_delta,
+                update.fee or Decimal("0"), source="ws",
+            )
+            self._check_trade_completion(had_open_trade, circuit_breaker_before, "ws")
 
     def _candle_to_bar(self, candle: WSCandle) -> Bar:
         """Convert WSCandle to Bar."""
@@ -1419,134 +1399,62 @@ class LiveTradingEngine:
 
         # Process new fills
         if response.filled > old_filled:
+            if response.avg_price is None:
+                return
+
             fill_amount = response.filled - old_filled
             # Only compute fee delta if fee info is available (LV-2)
             fee_delta = None
             if response.fee is not None:
                 fee_delta = response.fee - old_fee
                 if fee_delta < 0:
-                    fee_delta = Decimal("0")  # Fee went backwards; skip this increment
+                    fee_delta = Decimal("0")
 
-            # Detect trade completion via _open_trade state change (not deque length,
-            # which fails when _trades deque is at maxlen).
             had_open_trade = self._context._open_trade is not None
             circuit_breaker_before = self._risk_manager.state.circuit_breaker_triggered
 
-            self._process_incremental_fill(live_order, fill_amount, response, fee_delta)
+            self._record_fill(
+                live_order, response.avg_price, fill_amount, fee_delta,
+                response.fee or Decimal("0"), source="poll",
+            )
+            self._check_trade_completion(had_open_trade, circuit_breaker_before, "polling")
 
-            # Check if a trade was completed and record its PnL for risk management
-            if had_open_trade and self._context._open_trade is None:
-                completed_trade = self._context.trades[-1]
-                if completed_trade.pnl is not None:
-                    self._risk_manager.record_trade_result(completed_trade.pnl)
-                    logger.info(
-                        f"[polling] Recorded trade result: PnL={completed_trade.pnl}, "
-                        f"consecutive_losses="
-                        f"{self._risk_manager.state.consecutive_losses}"
-                    )
-
-                    # Check if circuit breaker was just triggered
-                    if (
-                        not circuit_breaker_before
-                        and self._risk_manager.state.circuit_breaker_triggered
-                    ):
-                        logger.warning(
-                            f"Circuit breaker triggered for session {self._run_id} "
-                            f"after {self._risk_manager.state.consecutive_losses} "
-                            f"consecutive losses (detected via polling)"
-                        )
-                        self._circuit_breaker_triggered = True
-
-    def _process_order_fill(
+    def _record_fill(
         self,
         live_order: LiveOrder,
-        update: WSOrderUpdate,
-        fill_delta: Decimal,
-        fee_delta: Decimal | None = None,
-    ) -> None:
-        """Process order fill from WebSocket update.
-
-        Args:
-            live_order: The live order being filled.
-            update: WebSocket order update with current state.
-            fill_delta: The incremental fill amount (new fills only).
-            fee_delta: The incremental fee (new fees only). If None, uses total fee.
-        """
-        if update.avg_price is None:
-            return
-
-        # Use incremental fee if provided, otherwise fall back to total
-        fill_fee = fee_delta if fee_delta is not None else (update.fee or Decimal("0"))
-
-        # Create fill record with incremental amount (not total)
-        fill = Fill(
-            order_id=live_order.internal_id,
-            symbol=live_order.symbol,
-            side=live_order.side,
-            price=update.avg_price,
-            amount=fill_delta,
-            fee=fill_fee,
-            timestamp=datetime.now(UTC),
-        )
-
-        # Process in context with force=True: in live trading, fills are already
-        # executed on the exchange and must be recorded regardless of local
-        # cash/position tracking discrepancies (ISSUE-201 fix)
-        self._context._process_fill(fill, force=True)
-        self._context._move_completed_orders()
-
-        # Record fill for daily trade count limit (LIVE-RM-001)
-        self._risk_manager.record_order_fill()
-
-        # Buffer "fill" event for audit persistence (LIVE-013)
-        self._pending_order_events.append({
-            "type": "fill",
-            "internal_id": live_order.internal_id,
-            "fill_price": str(update.avg_price),
-            "fill_amount": str(fill_delta),
-            "fee": str(fill_fee),
-            "fee_currency": live_order.fee_currency,
-            "total_filled": str(live_order.filled_amount),
-            "avg_fill_price": str(live_order.avg_fill_price)
-            if live_order.avg_fill_price
-            else None,
-            "status": live_order.status.value,
-            "timestamp": datetime.now(UTC).isoformat(),
-            "fill_source": "ws",
-        })
-
-    def _process_incremental_fill(
-        self,
-        live_order: LiveOrder,
+        fill_price: Decimal,
         fill_amount: Decimal,
-        response: OrderResponse,
-        fee_delta: Decimal | None = None,
+        fee_delta: Decimal | None,
+        total_fee: Decimal,
+        source: str,
     ) -> None:
-        """Process incremental fill from polling.
+        """Record an incremental fill from any source (WebSocket or polling).
+
+        Unified fill processing path — creates a Fill record, updates context
+        state, records risk metrics, and buffers audit events.
 
         Args:
             live_order: The live order being filled.
-            fill_amount: The incremental fill amount.
-            response: Order response from exchange.
-            fee_delta: The incremental fee. If None, uses total fee from response.
+            fill_price: Average fill price for this increment.
+            fill_amount: Incremental fill amount (new fills only).
+            fee_delta: Incremental fee, or None to use total_fee as fallback.
+            total_fee: Total cumulative fee (used as fallback when fee_delta is None).
+            source: Fill source identifier for audit trail ("ws" or "poll").
         """
-        if response.avg_price is None:
-            return
-
-        # Use incremental fee if provided, otherwise fall back to total
-        fill_fee = fee_delta if fee_delta is not None else (response.fee or Decimal("0"))
+        fill_fee = fee_delta if fee_delta is not None else total_fee
 
         fill = Fill(
             order_id=live_order.internal_id,
             symbol=live_order.symbol,
             side=live_order.side,
-            price=response.avg_price,
+            price=fill_price,
             amount=fill_amount,
             fee=fill_fee,
             timestamp=datetime.now(UTC),
         )
 
-        # force=True: live fills are already executed on the exchange (ISSUE-201 fix)
+        # force=True: live fills are already executed on the exchange and must
+        # be recorded regardless of local cash/position tracking (ISSUE-201 fix)
         self._context._process_fill(fill, force=True)
         self._context._move_completed_orders()
 
@@ -1557,7 +1465,7 @@ class LiveTradingEngine:
         self._pending_order_events.append({
             "type": "fill",
             "internal_id": live_order.internal_id,
-            "fill_price": str(response.avg_price),
+            "fill_price": str(fill_price),
             "fill_amount": str(fill_amount),
             "fee": str(fill_fee),
             "fee_currency": live_order.fee_currency,
@@ -1567,8 +1475,46 @@ class LiveTradingEngine:
             else None,
             "status": live_order.status.value,
             "timestamp": datetime.now(UTC).isoformat(),
-            "fill_source": "poll",
+            "fill_source": source,
         })
+
+    def _check_trade_completion(
+        self,
+        had_open_trade: bool,
+        circuit_breaker_before: bool,
+        source: str,
+    ) -> None:
+        """Check if a fill closed a trade and update risk state accordingly.
+
+        Called after _record_fill() to detect trade completion and circuit
+        breaker triggers. Separated from fill recording so callers can
+        snapshot pre-fill state and pass it in.
+
+        Args:
+            had_open_trade: Whether _open_trade existed before the fill.
+            circuit_breaker_before: Whether circuit breaker was already triggered.
+            source: Log tag for the detection source ("ws" or "polling").
+        """
+        if not (had_open_trade and self._context._open_trade is None):
+            return
+
+        completed_trade = self._context.trades[-1]
+        if completed_trade.pnl is None:
+            return
+
+        self._risk_manager.record_trade_result(completed_trade.pnl)
+        logger.info(
+            f"[{source}] Recorded trade result: PnL={completed_trade.pnl}, "
+            f"consecutive_losses={self._risk_manager.state.consecutive_losses}"
+        )
+
+        if not circuit_breaker_before and self._risk_manager.state.circuit_breaker_triggered:
+            logger.warning(
+                f"Circuit breaker triggered for session {self._run_id} "
+                f"after {self._risk_manager.state.consecutive_losses} "
+                f"consecutive losses (detected via {source})"
+            )
+            self._circuit_breaker_triggered = True
 
     async def _process_order_requests(self) -> None:
         """Process pending order requests from strategy context.
