@@ -91,6 +91,7 @@ class LiveOrder:
         self.created_at: datetime | None = None
         self.updated_at: datetime | None = None
         self.error_message: str | None = None
+        self.bars_remaining: int | None = None  # None = GTC, positive int = expire after N bars
 
     @property
     def remaining_amount(self) -> Decimal:
@@ -709,6 +710,10 @@ class LiveTradingEngine:
     async def emergency_close(self) -> dict[str, Any]:
         """Emergency close all positions at market price.
 
+        Note: DMS is NOT refreshed here — market orders fill in seconds, well within
+        the 60s DMS window. If the process crashes mid-close, DMS will cancel any
+        remaining open orders on the exchange as intended.
+
         Returns:
             Dict with close operation results including:
             - run_id: Strategy run ID
@@ -929,6 +934,7 @@ class LiveTradingEngine:
                 # Cash tracked incrementally via fill processing (LIVE-012).
                 await self._sync_balance()
                 await self._sync_pending_orders()
+                await self._expire_ttl_orders()
 
                 # Check daily risk stats reset on each bar (LIVE-RM-005)
                 self._risk_manager.check_daily_reset()
@@ -1043,6 +1049,14 @@ class LiveTradingEngine:
 
                     await self.stop(error=f"Strategy resource limit exceeded: {e}")
                     raise
+                except Exception as e:
+                    # Strategy errors (KeyError, IndexError, etc.) should be isolated
+                    # — consistent with paper engine and backtest runner behavior.
+                    # Only system-level errors (exchange, data integrity) should stop the engine.
+                    logger.warning(
+                        f"Strategy on_bar error in live engine {self._run_id}: {e}"
+                    )
+                    self._context.log(f"ERROR in on_bar: {e}")
 
                 # Process pending order requests from strategy
                 await self._process_order_requests()
@@ -1522,6 +1536,45 @@ class LiveTradingEngine:
             if order.exchange_order_id and order.exchange_order_id in self._exchange_order_map:
                 del self._exchange_order_map[order.exchange_order_id]
 
+    async def _expire_ttl_orders(self) -> None:
+        """Cancel live orders whose bars_remaining TTL has expired.
+
+        Decrements bars_remaining for each pending limit order with a TTL.
+        Orders reaching zero are cancelled on the exchange.
+        Mirrors paper engine's _expire_stale_orders() logic.
+        """
+        to_cancel: list[str] = []
+
+        for internal_id, live_order in self._live_orders.items():
+            if live_order.is_complete:
+                continue
+            if live_order.bars_remaining is None:
+                continue
+
+            live_order.bars_remaining -= 1
+            if live_order.bars_remaining <= 0:
+                to_cancel.append(internal_id)
+
+        for internal_id in to_cancel:
+            live_order = self._live_orders.get(internal_id)
+            if not live_order or not live_order.exchange_order_id:
+                continue
+
+            try:
+                response = await self._adapter.cancel_order(
+                    CancelOrderRequest(
+                        symbol=live_order.symbol,
+                        order_id=live_order.exchange_order_id,
+                    )
+                )
+                self._update_order_from_response(live_order, response)
+                logger.info(
+                    f"Order {internal_id} expired (TTL reached), "
+                    f"cancel status={live_order.status.value}"
+                )
+            except Exception as e:
+                logger.warning(f"Failed to cancel expired order {internal_id}: {e}")
+
     def _update_order_from_response(self, live_order: LiveOrder, response: OrderResponse) -> None:
         """Update live order from exchange response."""
         old_filled = live_order.filled_amount
@@ -1789,6 +1842,7 @@ class LiveTradingEngine:
                 status=response.status,
             )
             live_order.created_at = datetime.now(UTC)
+            live_order.bars_remaining = getattr(order, "bars_remaining", None)
 
             self._live_orders[order.id] = live_order
             self._exchange_order_map[response.order_id] = order.id

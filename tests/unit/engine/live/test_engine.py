@@ -2961,3 +2961,180 @@ class TestOrderEventPersistRetry:
         assert len(engine._pending_order_events) == 2
         assert engine._pending_order_events[0]["order_id"] == "1"
         assert engine._pending_order_events[1]["order_id"] == "2"
+
+
+class TestOnBarExceptionIsolation:
+    """Tests for ISSUE-3: on_bar() exceptions should not stop the live engine."""
+
+    @pytest.mark.asyncio
+    async def test_strategy_exception_does_not_stop_engine(self, engine, mock_adapter):
+        """A strategy on_bar() error should be caught and logged, not stop the engine."""
+        await engine.start()
+
+        # Make strategy raise a KeyError
+        engine._strategy.on_bar = MagicMock(side_effect=KeyError("missing_key"))
+
+        candle = WSCandle(
+            symbol="BTC/USDT",
+            timeframe="1m",
+            timestamp=datetime(2025, 1, 1, 0, 1, tzinfo=UTC),
+            open=Decimal("50000"),
+            high=Decimal("50100"),
+            low=Decimal("49900"),
+            close=Decimal("50050"),
+            volume=Decimal("100"),
+            is_closed=True,
+        )
+
+        with patch("squant.config.get_settings") as mock_settings:
+            mock_settings.return_value = MagicMock(
+                strategy=MagicMock(cpu_limit_seconds=5, memory_limit_mb=256),
+            )
+            # Should NOT raise — strategy error is isolated
+            await engine.process_candle(candle)
+
+        # Engine should still be running
+        assert engine._is_running is True
+
+    @pytest.mark.asyncio
+    async def test_strategy_exception_logged_to_context(self, engine, mock_adapter):
+        """Strategy error should be recorded in context logs."""
+        await engine.start()
+
+        engine._strategy.on_bar = MagicMock(side_effect=ValueError("bad calculation"))
+
+        candle = WSCandle(
+            symbol="BTC/USDT",
+            timeframe="1m",
+            timestamp=datetime(2025, 1, 1, 0, 1, tzinfo=UTC),
+            open=Decimal("50000"),
+            high=Decimal("50100"),
+            low=Decimal("49900"),
+            close=Decimal("50050"),
+            volume=Decimal("100"),
+            is_closed=True,
+        )
+
+        with patch("squant.config.get_settings") as mock_settings:
+            mock_settings.return_value = MagicMock(
+                strategy=MagicMock(cpu_limit_seconds=5, memory_limit_mb=256),
+            )
+            await engine.process_candle(candle)
+
+        # Error should be in context logs
+        logs = list(engine._context._logs)
+        assert any("ERROR in on_bar" in log for log in logs)
+
+
+class TestOrderTTLExpiry:
+    """Tests for ISSUE-8: limit orders with bars_remaining TTL."""
+
+    @pytest.mark.asyncio
+    async def test_ttl_order_cancelled_after_expiry(self, engine, mock_adapter):
+        """Limit order with bars_remaining=1 should be cancelled after 1 bar."""
+        await engine.start()
+
+        # Create a live order with TTL
+        live_order = LiveOrder(
+            internal_id="test-ttl-1",
+            exchange_order_id="exc-123",
+            symbol="BTC/USDT",
+            side=OrderSide.BUY,
+            order_type="limit",
+            amount=Decimal("0.01"),
+            price=Decimal("45000"),
+        )
+        live_order.bars_remaining = 1
+        live_order.created_at = datetime(2025, 1, 1, tzinfo=UTC)
+        engine._live_orders["test-ttl-1"] = live_order
+        engine._exchange_order_map["exc-123"] = "test-ttl-1"
+
+        # Mock cancel response
+        mock_adapter.cancel_order.return_value = OrderResponse(
+            order_id="exc-123",
+            symbol="BTC/USDT",
+            side=OrderSide.BUY,
+            type=OrderType.LIMIT,
+            amount=Decimal("0.01"),
+            status=OrderStatus.CANCELLED,
+            filled=Decimal("0"),
+            avg_price=None,
+            fee=Decimal("0"),
+        )
+
+        await engine._expire_ttl_orders()
+
+        assert live_order.bars_remaining == 0
+        mock_adapter.cancel_order.assert_called_once()
+        assert live_order.status == OrderStatus.CANCELLED
+
+    @pytest.mark.asyncio
+    async def test_ttl_order_not_cancelled_before_expiry(self, engine, mock_adapter):
+        """Limit order with bars_remaining=3 should not be cancelled after 1 bar."""
+        await engine.start()
+
+        live_order = LiveOrder(
+            internal_id="test-ttl-2",
+            exchange_order_id="exc-456",
+            symbol="BTC/USDT",
+            side=OrderSide.BUY,
+            order_type="limit",
+            amount=Decimal("0.01"),
+            price=Decimal("45000"),
+        )
+        live_order.bars_remaining = 3
+        live_order.created_at = datetime(2025, 1, 1, tzinfo=UTC)
+        engine._live_orders["test-ttl-2"] = live_order
+
+        await engine._expire_ttl_orders()
+
+        assert live_order.bars_remaining == 2
+        mock_adapter.cancel_order.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_gtc_order_not_affected(self, engine, mock_adapter):
+        """GTC order (bars_remaining=None) should never expire."""
+        await engine.start()
+
+        live_order = LiveOrder(
+            internal_id="test-gtc",
+            exchange_order_id="exc-789",
+            symbol="BTC/USDT",
+            side=OrderSide.BUY,
+            order_type="limit",
+            amount=Decimal("0.01"),
+            price=Decimal("45000"),
+        )
+        live_order.bars_remaining = None
+        live_order.created_at = datetime(2025, 1, 1, tzinfo=UTC)
+        engine._live_orders["test-gtc"] = live_order
+
+        await engine._expire_ttl_orders()
+
+        assert live_order.bars_remaining is None
+        mock_adapter.cancel_order.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_ttl_cancel_failure_handled_gracefully(self, engine, mock_adapter):
+        """Exchange cancel failure should not crash the engine."""
+        await engine.start()
+
+        live_order = LiveOrder(
+            internal_id="test-ttl-fail",
+            exchange_order_id="exc-999",
+            symbol="BTC/USDT",
+            side=OrderSide.BUY,
+            order_type="limit",
+            amount=Decimal("0.01"),
+            price=Decimal("45000"),
+        )
+        live_order.bars_remaining = 1
+        live_order.created_at = datetime(2025, 1, 1, tzinfo=UTC)
+        engine._live_orders["test-ttl-fail"] = live_order
+
+        mock_adapter.cancel_order.side_effect = Exception("Network error")
+
+        # Should not raise
+        await engine._expire_ttl_orders()
+
+        assert live_order.bars_remaining == 0
