@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
 from sqlalchemy import and_, select
@@ -24,6 +24,9 @@ from squant.schemas.account import (
     UpdateExchangeAccountRequest,
 )
 from squant.utils.crypto import DecryptionError, get_crypto_manager
+
+if TYPE_CHECKING:
+    from squant.utils.crypto import CryptoManager
 
 logger = logging.getLogger(__name__)
 
@@ -562,7 +565,7 @@ class ExchangeAccountService:
 
     @staticmethod
     def _decrypt_with_manager(
-        crypto: "CryptoManager", account: ExchangeAccount
+        crypto: CryptoManager, account: ExchangeAccount
     ) -> dict[str, str]:
         """Decrypt credentials using a specific CryptoManager."""
         result = {
