@@ -362,6 +362,9 @@ class LiveTradingService:
         # Create exchange adapter with credentials
         adapter = self._create_adapter(exchange_account)
 
+        # Build WS credentials for private order push (LIVE-CN-001)
+        ws_credentials = self._build_ws_credentials(exchange_account)
+
         # Connect to exchange and get initial equity if not provided
         try:
             await adapter.connect()
@@ -416,22 +419,20 @@ class LiveTradingService:
                     account_id=str(exchange_account_id),
                     exchange=exchange_account.exchange,
                 ),
+                credentials=ws_credentials,
+                exchange_id=exchange_account.exchange.lower(),
             )
 
             # Register with session manager
             await session_manager.register(engine)
 
-            # Subscribe to WebSocket candles and private order updates
+            # Subscribe to WebSocket candles (public data via global StreamManager)
             from squant.websocket.manager import get_stream_manager
 
             stream_manager = get_stream_manager()
             await stream_manager.subscribe_candles(symbol, timeframe)
             subscribed = True
-
-            try:
-                await stream_manager.subscribe_orders()
-            except Exception as e:
-                logger.warning(f"Failed to subscribe to order updates: {e}")
+            # Note: private order WS is handled by engine's own CCXTStreamProvider (LIVE-CN-001)
 
             # Start engine
             await engine.start()
@@ -559,6 +560,30 @@ class LiveTradingService:
             )
             return CCXTRestAdapter("bybit", ccxt_credentials)
         raise ValueError(f"Unsupported exchange: {exchange}")
+
+    def _build_ws_credentials(
+        self, account: ExchangeAccount
+    ) -> ExchangeCredentials | None:
+        """Build ExchangeCredentials for private WS order push (LIVE-CN-001).
+
+        Returns None if credentials cannot be decrypted (engine falls back to polling).
+        """
+        from squant.services.account import ExchangeAccountService
+        from squant.utils.crypto import DecryptionError
+
+        try:
+            account_service = ExchangeAccountService(self.session)
+            creds = account_service.get_decrypted_credentials(account)
+        except DecryptionError as e:
+            logger.warning(f"Cannot build WS credentials: {e}. Order updates via polling only.")
+            return None
+
+        return ExchangeCredentials(
+            api_key=creds["api_key"],
+            api_secret=creds["api_secret"],
+            passphrase=creds.get("passphrase"),
+            sandbox=account.testnet,
+        )
 
     def _instantiate_strategy(self, code: str) -> Strategy:
         """Compile strategy code and instantiate the strategy class.
@@ -1427,6 +1452,7 @@ class LiveTradingService:
             raise ExchangeAccountNotFoundError(run.account_id, "account is not active")
 
         adapter = self._create_adapter(exchange_account)
+        ws_credentials = self._build_ws_credentials(exchange_account)
         try:
             await adapter.connect()
         except Exception as e:
@@ -1456,6 +1482,8 @@ class LiveTradingService:
             on_snapshot=self._create_snapshot_callback(),
             on_result=self._create_result_callback(),
             on_event=self._create_event_callback(UUID(run.id)),
+            credentials=ws_credentials,
+            exchange_id=exchange_account.exchange.lower(),
         )
 
         # 9. Restore trading state
@@ -1523,15 +1551,11 @@ class LiveTradingService:
 
         subscribed = False
         try:
-            # 14. Subscribe to WebSocket
+            # 14. Subscribe to WebSocket candles (public data via global StreamManager)
             stream_manager = get_stream_manager()
             await stream_manager.subscribe_candles(run.symbol, run.timeframe)
             subscribed = True
-
-            try:
-                await stream_manager.subscribe_orders()
-            except Exception as e:
-                logger.warning(f"Failed to subscribe to order updates: {e}")
+            # Note: private order WS is handled by engine's own CCXTStreamProvider (LIVE-CN-001)
 
             # 15. Start engine
             await engine.start()

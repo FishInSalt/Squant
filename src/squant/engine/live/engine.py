@@ -36,6 +36,7 @@ from squant.models.enums import OrderSide, OrderStatus
 
 if TYPE_CHECKING:
     from squant.infra.exchange.base import ExchangeAdapter
+    from squant.infra.exchange.ccxt.types import ExchangeCredentials
     from squant.infra.exchange.okx.ws_types import WSCandle, WSOrderUpdate
 
 # Callback type for synchronous snapshot persistence
@@ -187,6 +188,8 @@ class LiveTradingEngine:
         on_result: ResultPersistCallback | None = None,
         on_event: EventCallback | None = None,
         on_order_persist: OrderPersistCallback | None = None,
+        credentials: ExchangeCredentials | None = None,
+        exchange_id: str = "okx",
     ):
         """Initialize live trading engine.
 
@@ -203,6 +206,8 @@ class LiveTradingEngine:
             on_result: Optional callback for synchronous result state persistence.
             on_event: Optional callback for WebSocket event emission.
             on_order_persist: Optional callback for order/trade audit persistence.
+            credentials: Optional exchange credentials for private WS order push (LIVE-CN-001).
+            exchange_id: Exchange identifier for WS provider (default "okx").
         """
         self._run_id = run_id
         self._strategy = strategy
@@ -210,6 +215,11 @@ class LiveTradingEngine:
         self._timeframe = timeframe
         self._adapter = adapter
         self._initial_equity = initial_equity
+
+        # Private WS provider for real-time order updates (LIVE-CN-001)
+        self._credentials = credentials
+        self._exchange_id = exchange_id
+        self._private_ws: Any = None  # CCXTStreamProvider, lazy import to avoid circular
 
         # Get settings dynamically for testability
         from squant.config import get_settings
@@ -490,6 +500,9 @@ class LiveTradingEngine:
             self._started_at = datetime.now(UTC)
             self._last_active_at = datetime.now(UTC)
 
+            # Start private WS for real-time order updates (LIVE-CN-001)
+            await self._start_private_ws()
+
             # Call strategy initialization
             self._strategy.on_init()
             logger.info(f"Strategy initialized for live run {self._run_id}")
@@ -523,6 +536,9 @@ class LiveTradingEngine:
 
         if error:
             self._error_message = error
+
+        # Close private WS provider (LIVE-CN-001)
+        await self._stop_private_ws()
 
         # Cancel open orders if requested
         if cancel_orders:
@@ -562,6 +578,63 @@ class LiveTradingEngine:
                 loop.create_task(self._on_event(event))
             except Exception:
                 pass
+
+    async def _start_private_ws(self) -> None:
+        """Start private WS provider for real-time order updates (LIVE-CN-001).
+
+        Creates an authenticated CCXTStreamProvider per engine to receive
+        order status push from the exchange, replacing 30s REST polling.
+        Falls back silently to polling if WS connection fails.
+        """
+        if not self._credentials:
+            logger.debug(f"No credentials for {self._run_id}, using REST polling for orders")
+            return
+
+        try:
+            from squant.infra.exchange.ccxt import CCXTStreamProvider
+
+            self._private_ws = CCXTStreamProvider(self._exchange_id, self._credentials)
+            self._private_ws.add_handler(self._handle_private_ws_message)
+            await self._private_ws.connect()
+            await self._private_ws.watch_orders(self._symbol)
+            logger.info(
+                f"Private WS connected for {self._run_id} orders on {self._symbol}"
+            )
+        except Exception as e:
+            logger.warning(
+                f"Failed to start private WS for {self._run_id}: {e}. "
+                "Falling back to REST polling for order updates."
+            )
+            if self._private_ws:
+                try:
+                    await self._private_ws.close()
+                except Exception:
+                    pass
+                self._private_ws = None
+
+    async def _stop_private_ws(self) -> None:
+        """Stop and cleanup private WS provider."""
+        if self._private_ws is None:
+            return
+
+        try:
+            await self._private_ws.close()
+            logger.info(f"Private WS closed for {self._run_id}")
+        except Exception as e:
+            logger.warning(f"Error closing private WS for {self._run_id}: {e}")
+        finally:
+            self._private_ws = None
+
+    async def _handle_private_ws_message(self, msg: dict[str, Any]) -> None:
+        """Handle messages from private WS provider.
+
+        Routes order updates into the existing _pending_ws_updates buffer,
+        which is drained synchronously within process_candle.
+        """
+        if msg.get("type") == "order":
+            data = msg.get("data")
+            if data:
+                self.on_order_update(data)
 
     async def emergency_close(self) -> dict[str, Any]:
         """Emergency close all positions at market price.
