@@ -1067,6 +1067,8 @@ class LiveTradingEngine:
                         )
                     except Exception as e:
                         logger.warning(f"Order persist callback failed for {self._run_id}: {e}")
+                        # Put events back for retry on next bar
+                        self._pending_order_events = events_to_persist + self._pending_order_events
 
                 # Emit bar update event via WebSocket
                 if self._on_event:

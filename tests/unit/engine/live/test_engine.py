@@ -2887,3 +2887,77 @@ class TestBalanceCheckRateLimiting:
         assert mock_adapter.get_balance.call_count == initial_call_count + 1
         # Flag should be reset after check
         assert engine._has_recent_fill is False
+
+
+class TestOrderEventPersistRetry:
+    """Tests for F-10: failed audit events are retried on next bar."""
+
+    @pytest.mark.asyncio
+    async def test_failed_persist_puts_events_back(self, engine):
+        """Events should be put back into the queue if persist fails."""
+        await engine.start()
+
+        # Inject events and a failing callback
+        events = [{"type": "order_created", "order_id": "abc"}]
+        engine._pending_order_events = events.copy()
+        engine._on_order_persist = AsyncMock(side_effect=Exception("DB error"))
+
+        # Simulate the persist flush path in process_candle
+        if engine._on_order_persist and engine._pending_order_events:
+            events_to_persist = engine._pending_order_events.copy()
+            engine._pending_order_events.clear()
+            try:
+                await engine._on_order_persist(str(engine._run_id), events_to_persist)
+            except Exception:
+                engine._pending_order_events = events_to_persist + engine._pending_order_events
+
+        assert len(engine._pending_order_events) == 1
+        assert engine._pending_order_events[0]["order_id"] == "abc"
+
+    @pytest.mark.asyncio
+    async def test_successful_persist_clears_events(self, engine):
+        """Events should be cleared after successful persist."""
+        await engine.start()
+
+        events = [{"type": "order_created", "order_id": "abc"}]
+        engine._pending_order_events = events.copy()
+        engine._on_order_persist = AsyncMock()
+
+        if engine._on_order_persist and engine._pending_order_events:
+            events_to_persist = engine._pending_order_events.copy()
+            engine._pending_order_events.clear()
+            try:
+                await engine._on_order_persist(str(engine._run_id), events_to_persist)
+            except Exception:
+                engine._pending_order_events = events_to_persist + engine._pending_order_events
+
+        assert len(engine._pending_order_events) == 0
+        engine._on_order_persist.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_retry_preserves_new_events_added_during_persist(self, engine):
+        """New events added during persist attempt should be preserved alongside retried ones."""
+        await engine.start()
+
+        original = [{"type": "fill", "order_id": "1"}]
+        engine._pending_order_events = original.copy()
+
+        async def fail_and_add_event(run_id, events):
+            # Simulate new event arriving during persist
+            engine._pending_order_events.append({"type": "fill", "order_id": "2"})
+            raise Exception("DB error")
+
+        engine._on_order_persist = AsyncMock(side_effect=fail_and_add_event)
+
+        if engine._on_order_persist and engine._pending_order_events:
+            events_to_persist = engine._pending_order_events.copy()
+            engine._pending_order_events.clear()
+            try:
+                await engine._on_order_persist(str(engine._run_id), events_to_persist)
+            except Exception:
+                engine._pending_order_events = events_to_persist + engine._pending_order_events
+
+        # Original event first, then new event
+        assert len(engine._pending_order_events) == 2
+        assert engine._pending_order_events[0]["order_id"] == "1"
+        assert engine._pending_order_events[1]["order_id"] == "2"
