@@ -1978,6 +1978,86 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/notifications": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Notifications
+         * @description List notifications with pagination and filters.
+         */
+        get: operations["list_notifications_api_v1_notifications_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/notifications/unread-count": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Unread Count
+         * @description Get count of unread notifications.
+         */
+        get: operations["get_unread_count_api_v1_notifications_unread_count_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/notifications/mark-read": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Mark Read
+         * @description Mark notifications as read.
+         */
+        post: operations["mark_read_api_v1_notifications_mark_read_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/notifications/{notification_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Delete Notification
+         * @description Delete a notification.
+         */
+        delete: operations["delete_notification_api_v1_notifications__notification_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/watchlist": {
         parameters: {
             query?: never;
@@ -2578,6 +2658,20 @@ export interface components {
             message: string;
             data: components["schemas"]["PaginatedData_LiveTradingRunResponse_"];
         };
+        /** ApiResponse[PaginatedData[NotificationResponse]] */
+        ApiResponse_PaginatedData_NotificationResponse__: {
+            /**
+             * Code
+             * @default 0
+             */
+            code: number;
+            /**
+             * Message
+             * @default success
+             */
+            message: string;
+            data: components["schemas"]["PaginatedData_NotificationResponse_"];
+        };
         /** ApiResponse[PaginatedData[PaperTradingRunResponse]] */
         ApiResponse_PaginatedData_PaperTradingRunResponse__: {
             /**
@@ -2759,6 +2853,20 @@ export interface components {
              */
             message: string;
             data: components["schemas"]["BalanceItem"] | null;
+        };
+        /** ApiResponse[UnreadCountResponse] */
+        ApiResponse_UnreadCountResponse_: {
+            /**
+             * Code
+             * @default 0
+             */
+            code: number;
+            /**
+             * Message
+             * @default success
+             */
+            message: string;
+            data: components["schemas"]["UnreadCountResponse"];
         };
         /** ApiResponse[ValidationResultResponse] */
         ApiResponse_ValidationResultResponse_: {
@@ -4314,6 +4422,53 @@ export interface components {
             risk_state: components["schemas"]["RiskStateResponse"] | null;
         };
         /**
+         * MarkReadRequest
+         * @description Mark notifications as read.
+         */
+        MarkReadRequest: {
+            /**
+             * Notification Ids
+             * @description Notification IDs to mark as read. None = mark all as read.
+             */
+            notification_ids?: string[] | null;
+        };
+        /**
+         * NotificationResponse
+         * @description Notification record response.
+         */
+        NotificationResponse: {
+            /** Id */
+            id: string;
+            /** Level */
+            level: string;
+            /** Event Type */
+            event_type: string;
+            /** Title */
+            title: string;
+            /** Message */
+            message: string;
+            /** Details */
+            details: {
+                [key: string]: unknown;
+            };
+            /** Run Id */
+            run_id: string | null;
+            /** Status */
+            status: string;
+            /** Is Read */
+            is_read: boolean;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+        };
+        /**
          * OpenTradeInfo
          * @description Currently open trade (position entry info for chart markers).
          */
@@ -4681,6 +4836,17 @@ export interface components {
         PaginatedData_LiveTradingRunResponse_: {
             /** Items */
             items: components["schemas"]["LiveTradingRunResponse"][];
+            /** Total */
+            total: number;
+            /** Page */
+            page: number;
+            /** Page Size */
+            page_size: number;
+        };
+        /** PaginatedData[NotificationResponse] */
+        PaginatedData_NotificationResponse_: {
+            /** Items */
+            items: components["schemas"]["NotificationResponse"][];
             /** Total */
             total: number;
             /** Page */
@@ -5660,6 +5826,14 @@ export interface components {
              * @description Any errors encountered
              */
             errors?: string[];
+        };
+        /**
+         * UnreadCountResponse
+         * @description Unread notification count.
+         */
+        UnreadCountResponse: {
+            /** Count */
+            count: number;
         };
         /**
          * UpdateExchangeAccountRequest
@@ -8227,6 +8401,130 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ApiResponse_ResetCircuitBreakerResponse_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_notifications_api_v1_notifications_get: {
+        parameters: {
+            query?: {
+                /** @description Page number */
+                page?: number;
+                /** @description Page size */
+                page_size?: number;
+                /** @description Filter by level: critical/warning/info */
+                level?: string | null;
+                /** @description Filter by read status */
+                is_read?: boolean | null;
+                /** @description Filter by event type */
+                event_type?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_PaginatedData_NotificationResponse__"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_unread_count_api_v1_notifications_unread_count_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_UnreadCountResponse_"];
+                };
+            };
+        };
+    };
+    mark_read_api_v1_notifications_mark_read_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MarkReadRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_dict_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_notification_api_v1_notifications__notification_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                notification_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_dict_"];
                 };
             };
             /** @description Validation Error */
