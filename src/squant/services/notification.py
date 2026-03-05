@@ -67,6 +67,12 @@ class NotificationService:
 
         status = "skipped" if is_rate_limited else "pending"
 
+        # Update cooldown cache before await to prevent race condition:
+        # without this, a concurrent coroutine could pass the rate-limit
+        # check while this coroutine is yielded at flush().
+        if not is_rate_limited:
+            self._cooldown_cache[event_type] = now
+
         record = Notification(
             level=level,
             event_type=event_type,
@@ -81,8 +87,6 @@ class NotificationService:
 
         if is_rate_limited:
             return record
-
-        self._cooldown_cache[event_type] = now
 
         # Build payload for WebSocket and webhook
         payload = {
@@ -221,7 +225,7 @@ async def _prune_old_notifications(max_history: int) -> None:
             if cutoff is not None:
                 from sqlalchemy import delete as sa_delete
 
-                stmt = sa_delete(Notification).where(Notification.created_at <= cutoff)
+                stmt = sa_delete(Notification).where(Notification.created_at < cutoff)
                 deleted = await session.execute(stmt)
                 await session.commit()
                 if deleted.rowcount:

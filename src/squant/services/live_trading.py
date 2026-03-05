@@ -830,17 +830,18 @@ class LiveTradingService:
         result_data = None
 
         if engine:
-            # Capture final result using single source of truth
-            result_data = engine.build_result_for_persistence()
-
             # Persist any pending snapshots
             await self._persist_snapshots(str(run_id), engine.get_pending_snapshots())
 
             # Persist any pending risk triggers (Issue 010)
             await self.persist_risk_triggers(run_id)
 
-            # Stop engine
+            # Stop engine (may trigger final fills from cancel responses)
             await engine.stop(cancel_orders=cancel_orders)
+
+            # Capture result AFTER stop so final fills from order cancellation
+            # are included in the persisted state (crash recovery accuracy)
+            result_data = engine.build_result_for_persistence()
 
             # Unregister from session manager
             await session_manager.unregister(run_id)
