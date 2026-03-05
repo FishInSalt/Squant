@@ -54,6 +54,14 @@ class Order(Base, UUIDMixin, TimestampMixin):
         Index("idx_orders_created", "created_at"),
         Index("idx_orders_exchange_oid", "exchange_oid"),
         Index("idx_orders_symbol", "symbol"),
+        # LIVE-AU-002: prevent duplicate exchange orders per exchange
+        Index(
+            "uq_orders_exchange_oid",
+            "exchange",
+            "exchange_oid",
+            unique=True,
+            postgresql_where="exchange_oid IS NOT NULL",
+        ),
     )
 
     def __repr__(self) -> str:
@@ -62,7 +70,7 @@ class Order(Base, UUIDMixin, TimestampMixin):
         )
 
 
-class Trade(Base, UUIDMixin):
+class Trade(Base, UUIDMixin, TimestampMixin):
     """Trade execution record."""
 
     __tablename__ = "trades"
@@ -78,6 +86,9 @@ class Trade(Base, UUIDMixin):
     fee_currency: Mapped[str | None] = mapped_column(String(16), nullable=True)
 
     timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    # Fill source: "ws" (WebSocket push) or "poll" (REST polling) — LIVE-EX-003
+    fill_source: Mapped[str | None] = mapped_column(String(8), nullable=True)
 
     # Relationships
     order: Mapped["Order"] = relationship(back_populates="trades")

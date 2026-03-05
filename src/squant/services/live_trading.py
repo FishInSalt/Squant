@@ -731,6 +731,7 @@ class LiveTradingService:
                                 fee=Decimal(event["fee"]),
                                 fee_currency=event.get("fee_currency"),
                                 timestamp=datetime.fromisoformat(event["timestamp"]),
+                                fill_source=event.get("fill_source"),
                             )
                             # Update order with cumulative fill info
                             update_kwargs: dict[str, Any] = {

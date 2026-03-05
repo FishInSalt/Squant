@@ -1376,6 +1376,7 @@ class LiveTradingEngine:
             else None,
             "status": live_order.status.value,
             "timestamp": datetime.now(UTC).isoformat(),
+            "fill_source": "ws",
         })
 
     def _process_incremental_fill(
@@ -1430,6 +1431,7 @@ class LiveTradingEngine:
             else None,
             "status": live_order.status.value,
             "timestamp": datetime.now(UTC).isoformat(),
+            "fill_source": "poll",
         })
 
     async def _process_order_requests(self) -> None:
