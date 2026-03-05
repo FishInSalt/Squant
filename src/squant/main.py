@@ -252,6 +252,11 @@ def create_app() -> FastAPI:
     )
 
     # CORS middleware
+    if settings.debug:
+        logger.warning(
+            "CORS allow_origins=['*'] — debug mode is ON. "
+            "Do NOT use debug=True in production."
+        )
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["*"] if settings.debug else settings.allowed_origins,
