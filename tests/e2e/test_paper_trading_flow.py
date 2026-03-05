@@ -261,7 +261,7 @@ class TestPaperTradingBasicFlow:
         assert isinstance(sessions, list)
 
         # 验证我们创建的会话在列表中
-        session_ids = [s["run_id"] for s in sessions]
+        session_ids = [s["id"] for s in sessions]
         for run_id in run_ids:
             assert run_id in session_ids, f"Session {run_id} not in active list"
 

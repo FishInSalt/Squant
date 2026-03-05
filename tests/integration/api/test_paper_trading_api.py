@@ -238,6 +238,8 @@ class TestPaperTradingStatus:
             "equity": "11200.00",
             "initial_capital": "10000.00",
             "total_fees": "12.50",
+            "unrealized_pnl": "200.00",
+            "realized_pnl": "1000.00",
             "positions": {
                 "BTC/USDT": {
                     "amount": "0.05",
@@ -284,6 +286,8 @@ class TestPaperTradingStatus:
             "equity": "10200.00",
             "initial_capital": "10000.00",
             "total_fees": "5.00",
+            "unrealized_pnl": "0",
+            "realized_pnl": "200.00",
             "positions": {},
             "pending_orders": [
                 {
@@ -354,6 +358,8 @@ class TestPaperTradingStatus:
             "equity": "10500.00",
             "initial_capital": "10000.00",
             "total_fees": "0.00",
+            "unrealized_pnl": "0",
+            "realized_pnl": "0",
             "positions": {},
             "pending_orders": [],
             "completed_orders_count": 0,

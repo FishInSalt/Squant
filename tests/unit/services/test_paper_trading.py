@@ -691,13 +691,13 @@ class TestPaperTradingService:
             # Check positional + keyword args
             if not kwargs:
                 # Args are positional: (run_id, status=..., result=..., ...)
-                kwargs = {
-                    k: v
-                    for k, v in zip(
+                kwargs = dict(
+                    zip(
                         ["status", "result", "stopped_at", "error_message"],
                         update_call.args[1:] if len(update_call.args) > 1 else [],
+                        strict=False,
                     )
-                }
+                )
                 kwargs.update(update_call.kwargs or {})
 
             assert "result" in kwargs

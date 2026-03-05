@@ -6,9 +6,8 @@ from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
-from sqlalchemy.exc import IntegrityError
-
 import pytest
+from sqlalchemy.exc import IntegrityError
 
 from squant.models.enums import RunStatus, StrategyStatus
 from squant.models.strategy import Strategy, StrategyRun
