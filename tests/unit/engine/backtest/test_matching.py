@@ -1086,7 +1086,7 @@ class TestStopLimitOrders:
         self, engine: MatchingEngine
     ) -> None:
         """Previously triggered STOP_LIMIT fills with gap-open price improvement."""
-        order = SimulatedOrder.create(
+        SimulatedOrder.create(
             symbol="BTC/USDT",
             side=OrderSide.BUY,
             order_type=OrderType.STOP_LIMIT,
