@@ -103,8 +103,9 @@ export const getTicker = async (symbol: string) => {
 
 // 获取多个行情
 export const getTickers = async (symbols?: string[]) => {
+  const uniqueSymbols = symbols ? [...new Set(symbols)] : undefined
   const response = await get<TickerResponse[]>('/market/tickers', {
-    symbols: symbols?.join(','),
+    symbols: uniqueSymbols?.join(','),
   })
   return {
     ...response,
@@ -125,11 +126,13 @@ export const getAllTickers = async () => {
 export const getCandles = async (
   symbol: string,
   timeframe: Timeframe,
-  limit?: number
+  limit?: number,
+  endTime?: number
 ) => {
   const response = await get<CandlestickResponse>(`/market/candles/${encodeURIComponent(symbol)}`, {
     timeframe,
     limit,
+    end_time: endTime,
   })
   return {
     ...response,

@@ -36,6 +36,7 @@ class WSMessageType(str, Enum):
     ORDER_UPDATE = "order_update"
     ACCOUNT_UPDATE = "account_update"
     EXCHANGE_SWITCHING = "exchange_switching"  # Notify clients of exchange switch
+    SERVICE_READY = "service_ready"  # Notify clients that stream manager is ready
 
 
 class Balance(BaseModel):
@@ -99,17 +100,30 @@ class OrderRequest(BaseModel):
 
     symbol: str = Field(..., description="Trading pair (e.g., BTC/USDT)")
     side: OrderSide = Field(..., description="Order side (buy/sell)")
-    type: OrderType = Field(..., description="Order type (market/limit)")
+    type: OrderType = Field(..., description="Order type (market/limit/stop/stop_limit)")
     amount: Decimal = Field(..., gt=0, description="Order amount in base currency")
     price: Decimal | None = Field(
-        default=None, description="Limit price (required for limit orders)"
+        default=None, description="Limit price (required for limit and stop_limit orders)"
+    )
+    stop_price: Decimal | None = Field(
+        default=None, description="Trigger price (required for stop and stop_limit orders)"
     )
     client_order_id: str | None = Field(default=None, description="Client-specified order ID")
 
     def model_post_init(self, __context: object) -> None:
-        """Validate that limit orders have a price."""
+        """Validate order type constraints."""
         if self.type == OrderType.LIMIT and self.price is None:
             raise ValueError("Limit orders must have a price")
+        if self.type == OrderType.STOP:
+            if self.stop_price is None:
+                raise ValueError("Stop orders must have a stop_price")
+            if self.price is not None:
+                raise ValueError("Stop orders must not have a limit price (use STOP_LIMIT)")
+        if self.type == OrderType.STOP_LIMIT:
+            if self.stop_price is None:
+                raise ValueError("Stop-limit orders must have a stop_price")
+            if self.price is None:
+                raise ValueError("Stop-limit orders must have a limit price")
 
 
 class OrderResponse(BaseModel):

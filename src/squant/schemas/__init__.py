@@ -17,6 +17,7 @@ from squant.schemas.backtest import (
     CreateBacktestRequest,
     DataAvailabilityResponse,
     EquityCurvePoint,
+    FillRecordResponse,
     RunBacktestRequest,
     TradeRecordResponse,
 )
@@ -144,6 +145,7 @@ __all__ = [
     "BacktestMetrics",
     "EquityCurvePoint",
     "TradeRecordResponse",
+    "FillRecordResponse",
     "DataAvailabilityResponse",
     "AvailableSymbolResponse",
     # Watchlist schemas

@@ -34,7 +34,7 @@ export const useStrategyStore = defineStore('strategy', () => {
       const response = await strategyApi.getStrategies({
         page: params?.page || pagination.value.page,
         page_size: params?.pageSize || pagination.value.pageSize,
-        status: params?.status,
+        status: params?.status ?? 'active',
       })
       const data = response.data as PaginatedData<Strategy>
       strategies.value = data.items
@@ -62,6 +62,21 @@ export const useStrategyStore = defineStore('strategy', () => {
     } finally {
       loading.value = false
     }
+  }
+
+  async function updateStrategy(id: string, data: Partial<Strategy>) {
+    const response = await strategyApi.updateStrategy(id, data)
+    const updated = response.data
+    // Update in list
+    const idx = strategies.value.findIndex((s) => s.id === id)
+    if (idx !== -1) {
+      strategies.value[idx] = updated
+    }
+    // Update current if viewing
+    if (currentStrategy.value?.id === id) {
+      currentStrategy.value = updated
+    }
+    return updated
   }
 
   async function deleteStrategy(id: string) {
@@ -98,6 +113,7 @@ export const useStrategyStore = defineStore('strategy', () => {
     // Actions
     loadStrategies,
     loadStrategy,
+    updateStrategy,
     deleteStrategy,
     setPage,
     clearCurrentStrategy,

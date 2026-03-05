@@ -50,6 +50,12 @@ class TestProgress:
         run.status = RunStatus.STOPPED
         assert run.progress == 1.0
 
+    def test_interrupted_returns_1(self):
+        """Test INTERRUPTED status returns progress 1.0."""
+        run = StrategyRun()
+        run.status = RunStatus.INTERRUPTED
+        assert run.progress == 1.0
+
     def test_pending_returns_0(self):
         """Test PENDING status returns progress 0.0."""
         run = StrategyRun()
@@ -64,7 +70,7 @@ class TestProgress:
 
     def test_all_terminal_statuses_return_1(self):
         """Test all terminal statuses return 1.0."""
-        terminal = [RunStatus.COMPLETED, RunStatus.ERROR, RunStatus.CANCELLED, RunStatus.STOPPED]
+        terminal = [RunStatus.COMPLETED, RunStatus.ERROR, RunStatus.INTERRUPTED, RunStatus.CANCELLED, RunStatus.STOPPED]
         for status in terminal:
             run = StrategyRun()
             run.status = status

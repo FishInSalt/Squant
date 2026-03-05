@@ -498,7 +498,7 @@ class TestStrategyDeletion:
 
     @pytest.mark.asyncio
     async def test_delete_strategy_success(self, client, db_session):
-        """Test STR-024-2: Strategy removed from library after deletion."""
+        """Test STR-024-2: Strategy removed from library after deletion (soft-delete/archive)."""
         strategy_id = uuid4()
         strategy = Strategy(
             id=strategy_id,
@@ -513,10 +513,12 @@ class TestStrategyDeletion:
 
         assert response.status_code == 200
 
-        # Verify deleted from database
+        # Verify soft-deleted (archived) — record still exists but status is ARCHIVED
+        db_session.expire_all()
         db_result = await db_session.execute(select(Strategy).where(Strategy.id == strategy_id))
         db_strategy = db_result.scalar_one_or_none()
-        assert db_strategy is None
+        assert db_strategy is not None
+        assert db_strategy.status == StrategyStatus.ARCHIVED
 
     @pytest.mark.asyncio
     @pytest.mark.skip(

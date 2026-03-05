@@ -49,6 +49,7 @@ services:
       dockerfile: Dockerfile
       target: production
     container_name: squant-backend
+    init: true
     restart: unless-stopped
     environment:
       - DATABASE_URL=postgresql+asyncpg://${DB_USER:-squant}:${DB_PASSWORD:-squant123}@postgres:5432/${DB_NAME:-squant}

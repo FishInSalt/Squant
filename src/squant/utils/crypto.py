@@ -202,13 +202,41 @@ class CryptoManager:
         return self.decrypt(ciphertext, nonce)
 
 
+def _parse_key(key: str) -> bytes:
+    """Parse encryption key string to 32-byte key.
+
+    Supports both raw 32-char ASCII and base64-encoded 32-byte keys.
+
+    Args:
+        key: Key string.
+
+    Returns:
+        32-byte key.
+
+    Raises:
+        ValueError: If key format is invalid.
+    """
+    if len(key) == 44 and key.endswith("="):
+        try:
+            key_bytes = base64.b64decode(key)
+            if len(key_bytes) != 32:
+                raise ValueError(f"Base64-decoded key must be 32 bytes, got {len(key_bytes)}")
+            return key_bytes
+        except Exception as e:
+            raise ValueError(f"Invalid base64 encryption key: {e}") from e
+    elif len(key) == 32:
+        return key.encode("ascii")
+    else:
+        raise ValueError(
+            f"ENCRYPTION_KEY must be 32 ASCII characters or 44-char base64 "
+            f"(32 bytes encoded), got {len(key)} characters. "
+            f'Generate with: python -c "import secrets; print(secrets.token_urlsafe(32)[:32])"'
+        )
+
+
 @lru_cache
 def get_crypto_manager() -> CryptoManager:
     """Get cached CryptoManager instance using settings.encryption_key.
-
-    The encryption key should be either:
-    - A 32-character ASCII string (will be encoded as UTF-8)
-    - A 44-character base64-encoded 32-byte key
 
     Returns:
         CryptoManager initialized with the application's encryption key.
@@ -218,27 +246,24 @@ def get_crypto_manager() -> CryptoManager:
     """
     settings = get_settings()
     key = settings.encryption_key.get_secret_value()
+    return CryptoManager(_parse_key(key))
 
-    # Support both raw 32-char ASCII and base64-encoded keys
-    if len(key) == 44 and key.endswith("="):
-        # Likely base64-encoded 32-byte key
-        try:
-            key_bytes = base64.b64decode(key)
-            if len(key_bytes) != 32:
-                raise ValueError(f"Base64-decoded key must be 32 bytes, got {len(key_bytes)}")
-        except Exception as e:
-            raise ValueError(f"Invalid base64 encryption key: {e}") from e
-    elif len(key) == 32:
-        # 32-character ASCII key
-        key_bytes = key.encode("ascii")
-    else:
-        raise ValueError(
-            f"ENCRYPTION_KEY must be 32 ASCII characters or 44-char base64 "
-            f"(32 bytes encoded), got {len(key)} characters. "
-            f'Generate with: python -c "import secrets; print(secrets.token_urlsafe(32)[:32])"'
-        )
 
-    return CryptoManager(key_bytes)
+@lru_cache
+def get_old_crypto_manager() -> CryptoManager | None:
+    """Get cached CryptoManager for the previous encryption key (key rotation).
+
+    Returns:
+        CryptoManager for old key, or None if ENCRYPTION_KEY_OLD is not set.
+    """
+    settings = get_settings()
+    old_key = settings.security.encryption_key_old
+    if old_key is None:
+        return None
+    value = old_key.get_secret_value()
+    if not value:
+        return None
+    return CryptoManager(_parse_key(value))
 
 
 def encrypt_string(plaintext: str) -> str:

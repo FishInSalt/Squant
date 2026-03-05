@@ -13,8 +13,8 @@
         <el-tag v-else-if="wsExchangeSwitching" type="warning" size="small">
           切换中...
         </el-tag>
-        <el-tag v-else :type="wsConnected ? 'success' : 'danger'" size="small">
-          {{ wsConnected ? '实时' : '离线' }}
+        <el-tag v-else :type="wsConnected ? 'success' : 'warning'" size="small">
+          {{ wsConnected ? '实时' : '重连中...' }}
         </el-tag>
         <el-select
           :model-value="selectedExchange"
@@ -63,17 +63,9 @@
         @row-click="handleRowClick"
         @sort-change="handleSortChange"
       >
-        <el-table-column prop="symbol" label="交易对" width="150" fixed sortable="custom">
+        <el-table-column prop="symbol" label="交易对" width="120" fixed sortable="custom">
           <template #default="{ row }">
-            <div class="symbol-cell">
-              <span class="symbol-name">{{ row.symbol }}</span>
-              <el-button
-                :icon="isInWatchlist(row.exchange, row.symbol) ? 'StarFilled' : 'Star'"
-                link
-                :type="isInWatchlist(row.exchange, row.symbol) ? 'warning' : 'default'"
-                @click.stop="toggleWatchlist(row)"
-              />
-            </div>
+            <span class="symbol-name">{{ row.symbol }}</span>
           </template>
         </el-table-column>
 
@@ -118,8 +110,15 @@
           </template>
         </el-table-column>
 
-        <el-table-column label="操作" width="100" fixed="right">
+        <el-table-column label="操作" width="120" fixed="right">
           <template #default="{ row }">
+            <el-button
+              :icon="isInWatchlist(row.exchange, row.symbol) ? 'StarFilled' : 'Star'"
+              link
+              class="watchlist-btn"
+              :type="isInWatchlist(row.exchange, row.symbol) ? 'warning' : 'default'"
+              @click.stop="toggleWatchlist(row)"
+            />
             <el-button type="primary" link @click.stop="goToChart(row)">
               K线
             </el-button>
@@ -344,10 +343,13 @@ function updateWsSubscriptions() {
   }
 }
 
-// 监听当前页数据变化，更新订阅
-// Note: deep option is not needed here since subscribedSymbols is a computed
-// property that returns a new array reference when values change
-watch(subscribedSymbols, () => {
+// 监听当前页 symbol 列表变化，更新订阅
+// 仅在 symbol 集合真正变化时才重订阅（避免 ticker 数据更新触发无意义的全量重订阅）
+let lastSubscribedKey = ''
+watch(subscribedSymbols, (symbols) => {
+  const key = [...symbols].sort().join(',')
+  if (key === lastSubscribedKey) return
+  lastSubscribedKey = key
   updateWsSubscriptions()
 })
 
@@ -415,14 +417,13 @@ onUnmounted(() => {
     flex-wrap: wrap;
   }
 
-  .symbol-cell {
-    display: flex;
-    align-items: center;
-    gap: 8px;
+  .symbol-name {
+    font-weight: 500;
+  }
 
-    .symbol-name {
-      font-weight: 500;
-    }
+  .watchlist-btn {
+    font-size: 18px;
+    padding: 4px 8px;
   }
 
   .pagination-wrapper {

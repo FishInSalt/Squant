@@ -19,6 +19,7 @@ class RunStatus(str, enum.Enum):
     STOPPED = "stopped"
     CANCELLED = "cancelled"  # TRD-008#3: User cancelled the run
     ERROR = "error"
+    INTERRUPTED = "interrupted"  # Infrastructure interruption (restart, health timeout)
     COMPLETED = "completed"
 
 
@@ -34,6 +35,8 @@ class OrderType(str, enum.Enum):
 
     MARKET = "market"
     LIMIT = "limit"
+    STOP = "stop"
+    STOP_LIMIT = "stop_limit"
 
 
 class OrderStatus(str, enum.Enum):

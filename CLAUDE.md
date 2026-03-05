@@ -176,6 +176,25 @@ All three engines (backtest, paper, live) process bars in the same order:
 6. Call `strategy.on_bar(bar)` with resource limits
 7. Collect new order requests from strategy
 
+### Trade State Model (`engine/backtest/context.py`)
+
+`BacktestContext` tracks trades using two distinct fields — mixing them causes bugs:
+
+- **`_trades`** (`deque[TradeRecord]`): Completed (closed) trades only. Used for realized PnL, win rate, and metrics. A trade enters this list only when `new_amount == 0` (position fully closed).
+- **`_open_trade`** (`TradeRecord | None`): Current open position's entry info. Mutable staging area — updated on position increase (avg price recalc), partial exit (accumulate `_partial_exit_pnl`), and full close (finalize PnL, move to `_trades`).
+- **`_partial_exit_pnl`** (`Decimal`): Accumulated PnL from partial exits of the current position. Reset to 0 on new position open. Used in final PnL calculation: `total_pnl = _partial_exit_pnl - fees`.
+
+**Snapshot pattern**: `build_result_snapshot()` serializes both `_trades` and `_open_trade` (with `partial_exit_pnl`) for DB persistence. `get_state_snapshot()` does the same for API responses. `restore_state()` reads both back. The `open_trade` field is separate from `trades` in the snapshot — never mix them into a single list.
+
+### Session Recovery
+
+Sessions use a `RUNNING → INTERRUPTED → (auto-recover) → RUNNING` or `→ ERROR` lifecycle:
+
+1. **Graceful shutdown** (`main.py` lifespan): calls `service.stop()` which saves engine state to `StrategyRun.result` JSONB.
+2. **Crash/restart**: `mark_orphaned_sessions()` finds RUNNING sessions with no active engine, marks them INTERRUPTED.
+3. **Auto-recovery** (`recover_orphaned_sessions()`): for INTERRUPTED sessions with saved `result`, calls `service.resume()` which restores state via `context.restore_state()`, warmups strategy, and re-subscribes to market data. Failures are marked ERROR (not left as INTERRUPTED, to prevent infinite retry).
+4. **Manual recovery**: `POST /api/v1/paper/{run_id}/resume` endpoint for ERROR/STOPPED sessions.
+
 ### Data Flow
 
 - Real-time market data: WebSocket → Redis pub/sub → Frontend WebSocket
@@ -193,6 +212,10 @@ All three engines (backtest, paper, live) process bars in the same order:
 Settings loaded from `.env` via nested Pydantic Settings classes in `config.py`. Each sub-settings class has its own `env_prefix` (e.g., `DATABASE_`, `REDIS_`, `OKX_`, `STRATEGY_`, `RISK_`, `PAPER_`, `CIRCUIT_BREAKER_`). Access via `get_settings()` which is `@lru_cache`d. See `.env.example` for all available settings.
 
 Nested access: `settings.database.url`, `settings.okx.api_key`, `settings.risk.max_position_ratio`, etc. Flat aliases exist for backward compatibility (e.g., `settings.okx_api_key` → `settings.okx.api_key`). Sensitive fields (`url`, `api_key`, `secret_key`, etc.) use `SecretStr` — call `.get_secret_value()` to access the actual value. **Testing gotcha**: `get_settings()` is `@lru_cache`d — call `get_settings.cache_clear()` when overriding settings in tests.
+
+### Logging
+
+Application logging uses Python's `RotatingFileHandler` (configured in `main.py` `_configure_logging()`). Settings via `LOG_FILE`, `LOG_MAX_BYTES` (default 10MB), `LOG_BACKUP_COUNT` (default 5). Service management scripts (`backend.sh`, `frontend.sh`) capture stdout/stderr to `logs/backend.out` and `logs/frontend.out` separately — these are script-level output logs, not application logs.
 
 ### Database
 
@@ -215,6 +238,13 @@ Nested access: `settings.database.url`, `settings.okx.api_key`, `settings.risk.m
 
 All API error responses use the uniform shape `{"code": <http_status>, "message": <str>, "data": null}`. This applies to exchange errors, validation errors, and circuit breaker responses.
 
+### Service Management Scripts
+
+`scripts/backend.sh` and `scripts/frontend.sh` use `setsid` to create dedicated process groups. Key design:
+- **Start**: `setsid uv run uvicorn ... < /dev/null >> logs/backend.out 2>&1 &` — `setsid` makes PID == PGID == SID; `< /dev/null` prevents SIGTTIN from Vite's interactive prompts
+- **Stop**: `kill -TERM -- -$PGID` signals entire process tree; `is_group_alive()` filters zombie processes (`ps -o stat= | grep -v '^Z'`) to avoid false "still alive" detection
+- **Zombie reaping**: All Docker Compose files use `init: true` on application containers (tini as PID 1)
+
 ### Common Constructor Signatures
 
 These constructors have been frequent sources of errors in tests and fixtures:
@@ -223,6 +253,12 @@ These constructors have been frequent sources of errors in tests and fixtures:
 - `StreamManager()` — takes NO arguments; redis is set internally via `get_settings()`
 - `LiveTradingEngine(run_id, symbol, strategy, adapter, risk_config, ...)` — `adapter` is an `ExchangeAdapter`
 - `RiskManager(config: RiskConfig)` — uses `threading.RLock()` internally for thread safety
+
+### Known Gotchas
+
+- **`RedisClient` type alias**: Defined as `Annotated[Redis, Depends(...)]` in `api/deps.py`. Using `RedisClient | None` as a type annotation in non-FastAPI contexts breaks dependency resolution — FastAPI can't parse the `|` union with `Annotated` types
+- **`ps -g` on Linux**: Selects by **session ID** (not PGID) in procps-ng. Works in our scripts because `setsid` makes SID == PGID, but would break in non-setsid contexts
+- **Pydantic `Field(default=...)` silently applies**: If a response model field has a default and you forget to pass it in the constructor, Pydantic won't error — it quietly uses the default. This caused unrealized_pnl/realized_pnl to always show 0 in API responses
 
 ### API Routes
 

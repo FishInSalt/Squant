@@ -61,16 +61,24 @@ class StreamManager:
         self._running = False
         self._settings = get_settings()
 
-        # Track active subscriptions
-        self._ticker_subscriptions: set[str] = set()
-        self._candle_subscriptions: set[tuple[str, str]] = set()  # (symbol, timeframe)
-        self._trade_subscriptions: set[str] = set()
-        self._orderbook_subscriptions: set[str] = set()
+        # Track active subscriptions with reference counting.
+        # Multiple WebSocket clients can subscribe to the same channel;
+        # we only unsubscribe from the exchange when the count reaches zero.
+        self._ticker_subscriptions: dict[str, int] = {}
+        self._candle_subscriptions: dict[tuple[str, str], int] = {}  # (symbol, timeframe)
+        self._trade_subscriptions: dict[str, int] = {}
+        self._orderbook_subscriptions: dict[str, int] = {}
 
         # Batch publishing buffer
         self._publish_buffer: deque[tuple[str, str]] = deque()  # (channel, message_json)
         self._flush_task: asyncio.Task | None = None
         self._buffer_lock = asyncio.Lock()
+
+        # Throughput stats (for periodic logging)
+        self._stats_messages_published = 0
+        self._stats_flushes = 0
+        self._stats_task: asyncio.Task | None = None
+        self._stats_interval = 60.0  # Log throughput every 60 seconds
 
         # Health check task
         self._health_check_task: asyncio.Task | None = None
@@ -134,10 +142,16 @@ class StreamManager:
         # Start the batch publishing flush task
         self._flush_task = asyncio.create_task(self._flush_loop())
 
+        # Start throughput stats logging task
+        self._stats_task = asyncio.create_task(self._stats_loop())
+
         # Start the health check task
         self._health_check_task = asyncio.create_task(self._health_check_loop())
 
         logger.info("Stream manager started")
+
+        # Notify connected WebSocket clients that the service is ready
+        await self._publish_service_ready()
 
     async def try_start(self) -> bool:
         """Attempt to start the stream manager without raising exceptions.
@@ -201,11 +215,13 @@ class StreamManager:
         exchange_id = self._settings.default_exchange.lower()
         logger.info(f"Starting CCXT provider for {exchange_id}...")
 
-        # Build credentials based on exchange
-        credentials = self._get_exchange_credentials(exchange_id)
+        # Don't pass credentials for public market data streams — use production
+        # servers to get accurate real-time data, consistent with REST API
+        # (see api/deps.py get_exchange()). Sandbox/testnet credentials would
+        # route to demo environments with inaccurate or stale data.
 
         # Create and connect CCXT provider
-        self._ccxt_provider = CCXTStreamProvider(exchange_id, credentials)
+        self._ccxt_provider = CCXTStreamProvider(exchange_id, credentials=None)
         self._ccxt_provider.add_handler(self._handle_ccxt_message)
         await self._ccxt_provider.connect()
 
@@ -267,26 +283,26 @@ class StreamManager:
         # Notify clients that exchange is switching
         await self._publish_exchange_switching(current_exchange, exchange_id, "switching")
 
-        # Store current subscriptions before closing
-        ticker_subs = set(self._ticker_subscriptions)
-        candle_subs = set(self._candle_subscriptions)
-        trade_subs = set(self._trade_subscriptions)
-        orderbook_subs = set(self._orderbook_subscriptions)
+        # Snapshot current subscriptions with ref counts before closing
+        ticker_subs = dict(self._ticker_subscriptions)
+        candle_subs = dict(self._candle_subscriptions)
+        trade_subs = dict(self._trade_subscriptions)
+        orderbook_subs = dict(self._orderbook_subscriptions)
 
         # Close current CCXT provider
         if self._ccxt_provider:
             await self._ccxt_provider.close()
             self._ccxt_provider = None
 
-        # Clear subscription tracking (will be rebuilt)
+        # Clear subscription tracking (will be rebuilt with correct ref counts)
         self._ticker_subscriptions.clear()
         self._candle_subscriptions.clear()
         self._trade_subscriptions.clear()
         self._orderbook_subscriptions.clear()
 
         # Create new CCXT provider for the new exchange
-        credentials = self._get_exchange_credentials(exchange_id)
-        self._ccxt_provider = CCXTStreamProvider(exchange_id, credentials)
+        # No credentials for public market data — always use production servers
+        self._ccxt_provider = CCXTStreamProvider(exchange_id, credentials=None)
         self._ccxt_provider.add_handler(self._handle_ccxt_message)
         await self._ccxt_provider.connect()
 
@@ -330,6 +346,22 @@ class StreamManager:
                 f"Exchange switch to {exchange_id}: {len(failed_subs)} subscriptions failed: "
                 f"{', '.join(failed_subs)}"
             )
+
+        # Restore original ref counts (subscribe_* set count to 1, but
+        # multiple clients may still be subscribed)
+        for sym, cnt in ticker_subs.items():
+            if sym in self._ticker_subscriptions:
+                self._ticker_subscriptions[sym] = cnt
+        for key, cnt in candle_subs.items():
+            if key in self._candle_subscriptions:
+                self._candle_subscriptions[key] = cnt
+        for sym, cnt in trade_subs.items():
+            if sym in self._trade_subscriptions:
+                self._trade_subscriptions[sym] = cnt
+        for sym, cnt in orderbook_subs.items():
+            if sym in self._orderbook_subscriptions:
+                self._orderbook_subscriptions[sym] = cnt
+
         logger.info(f"Switched to {exchange_id} ({len(failed_subs)} failures)")
 
         # Notify clients that exchange switch is complete
@@ -436,6 +468,13 @@ class StreamManager:
                 await self._health_check_task
             self._health_check_task = None
 
+        # Stop stats task
+        if self._stats_task:
+            self._stats_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._stats_task
+            self._stats_task = None
+
         # Stop flush task
         if self._flush_task:
             self._flush_task.cancel()
@@ -475,13 +514,14 @@ class StreamManager:
         Args:
             symbol: Trading pair (e.g., "BTC/USDT" or "BTC-USDT").
         """
-        # Normalize symbol format (use "/" for internal tracking, CCXT uses "/")
         normalized_symbol = self._normalize_symbol(symbol)
 
-        if normalized_symbol in self._ticker_subscriptions:
-            logger.debug(f"Already subscribed to ticker: {normalized_symbol}")
+        count = self._ticker_subscriptions.get(normalized_symbol, 0)
+        if count > 0:
+            self._ticker_subscriptions[normalized_symbol] = count + 1
             return
 
+        # First subscriber: subscribe to exchange, then record ref count
         if self._settings.use_ccxt_provider:
             if not self._ccxt_provider:
                 raise RuntimeError("CCXT provider not started. Call start() first.")
@@ -494,15 +534,24 @@ class StreamManager:
                 [{"channel": OKXChannel.TICKERS.value, "instId": okx_symbol}]
             )
 
-        self._ticker_subscriptions.add(normalized_symbol)
+        self._ticker_subscriptions[normalized_symbol] = 1
         logger.info(f"Subscribed to ticker: {normalized_symbol}")
 
     async def unsubscribe_ticker(self, symbol: str) -> None:
         """Unsubscribe from ticker updates."""
         normalized_symbol = self._normalize_symbol(symbol)
 
-        if normalized_symbol not in self._ticker_subscriptions:
+        count = self._ticker_subscriptions.get(normalized_symbol, 0)
+        if count <= 0:
             return
+
+        # Decrement reference count; only unsubscribe from exchange when zero
+        count -= 1
+        if count > 0:
+            self._ticker_subscriptions[normalized_symbol] = count
+            return
+
+        del self._ticker_subscriptions[normalized_symbol]
 
         if self._settings.use_ccxt_provider:
             if self._ccxt_provider:
@@ -514,8 +563,6 @@ class StreamManager:
                     [{"channel": OKXChannel.TICKERS.value, "instId": okx_symbol}]
                 )
 
-        self._ticker_subscriptions.discard(normalized_symbol)
-
     async def subscribe_candles(self, symbol: str, timeframe: str = "1m") -> None:
         """Subscribe to candlestick updates.
 
@@ -523,14 +570,15 @@ class StreamManager:
             symbol: Trading pair.
             timeframe: Candle timeframe (1m, 5m, 15m, 30m, 1h, 4h, 1d, 1w).
         """
-        logger.debug(f"subscribe_candles called: symbol={symbol}, timeframe={timeframe}")
         normalized_symbol = self._normalize_symbol(symbol)
         key = (normalized_symbol, timeframe)
 
-        if key in self._candle_subscriptions:
-            logger.debug(f"Already subscribed to candles: {normalized_symbol} {timeframe}")
+        count = self._candle_subscriptions.get(key, 0)
+        if count > 0:
+            self._candle_subscriptions[key] = count + 1
             return
 
+        # First subscriber: subscribe to exchange, then record ref count
         if self._settings.use_ccxt_provider:
             if not self._ccxt_provider:
                 logger.error("CCXT provider not started!")
@@ -559,7 +607,7 @@ class StreamManager:
                 [{"channel": channel.value, "instId": okx_symbol}]
             )
 
-        self._candle_subscriptions.add(key)
+        self._candle_subscriptions[key] = 1
         logger.info(f"Subscribed to candles: {normalized_symbol} {timeframe}")
 
     async def unsubscribe_candles(self, symbol: str, timeframe: str = "1m") -> None:
@@ -567,8 +615,16 @@ class StreamManager:
         normalized_symbol = self._normalize_symbol(symbol)
         key = (normalized_symbol, timeframe)
 
-        if key not in self._candle_subscriptions:
+        count = self._candle_subscriptions.get(key, 0)
+        if count <= 0:
             return
+
+        count -= 1
+        if count > 0:
+            self._candle_subscriptions[key] = count
+            return
+
+        del self._candle_subscriptions[key]
 
         if self._settings.use_ccxt_provider:
             if self._ccxt_provider:
@@ -582,15 +638,16 @@ class StreamManager:
                         [{"channel": channel.value, "instId": okx_symbol}]
                     )
 
-        self._candle_subscriptions.discard(key)
-
     async def subscribe_trades(self, symbol: str) -> None:
         """Subscribe to trade updates for a symbol."""
         normalized_symbol = self._normalize_symbol(symbol)
 
-        if normalized_symbol in self._trade_subscriptions:
+        count = self._trade_subscriptions.get(normalized_symbol, 0)
+        if count > 0:
+            self._trade_subscriptions[normalized_symbol] = count + 1
             return
 
+        # First subscriber: subscribe to exchange, then record ref count
         if self._settings.use_ccxt_provider:
             if not self._ccxt_provider:
                 raise RuntimeError("CCXT provider not started. Call start() first.")
@@ -603,15 +660,23 @@ class StreamManager:
                 [{"channel": OKXChannel.TRADES.value, "instId": okx_symbol}]
             )
 
-        self._trade_subscriptions.add(normalized_symbol)
+        self._trade_subscriptions[normalized_symbol] = 1
         logger.info(f"Subscribed to trades: {normalized_symbol}")
 
     async def unsubscribe_trades(self, symbol: str) -> None:
         """Unsubscribe from trade updates."""
         normalized_symbol = self._normalize_symbol(symbol)
 
-        if normalized_symbol not in self._trade_subscriptions:
+        count = self._trade_subscriptions.get(normalized_symbol, 0)
+        if count <= 0:
             return
+
+        count -= 1
+        if count > 0:
+            self._trade_subscriptions[normalized_symbol] = count
+            return
+
+        del self._trade_subscriptions[normalized_symbol]
 
         if self._settings.use_ccxt_provider:
             if self._ccxt_provider:
@@ -623,15 +688,16 @@ class StreamManager:
                     [{"channel": OKXChannel.TRADES.value, "instId": okx_symbol}]
                 )
 
-        self._trade_subscriptions.discard(normalized_symbol)
-
     async def subscribe_orderbook(self, symbol: str) -> None:
         """Subscribe to order book updates (5-level depth)."""
         normalized_symbol = self._normalize_symbol(symbol)
 
-        if normalized_symbol in self._orderbook_subscriptions:
+        count = self._orderbook_subscriptions.get(normalized_symbol, 0)
+        if count > 0:
+            self._orderbook_subscriptions[normalized_symbol] = count + 1
             return
 
+        # First subscriber: subscribe to exchange, then record ref count
         if self._settings.use_ccxt_provider:
             if not self._ccxt_provider:
                 raise RuntimeError("CCXT provider not started. Call start() first.")
@@ -644,15 +710,23 @@ class StreamManager:
                 [{"channel": OKXChannel.BOOKS5.value, "instId": okx_symbol}]
             )
 
-        self._orderbook_subscriptions.add(normalized_symbol)
+        self._orderbook_subscriptions[normalized_symbol] = 1
         logger.info(f"Subscribed to orderbook: {normalized_symbol}")
 
     async def unsubscribe_orderbook(self, symbol: str) -> None:
         """Unsubscribe from order book updates."""
         normalized_symbol = self._normalize_symbol(symbol)
 
-        if normalized_symbol not in self._orderbook_subscriptions:
+        count = self._orderbook_subscriptions.get(normalized_symbol, 0)
+        if count <= 0:
             return
+
+        count -= 1
+        if count > 0:
+            self._orderbook_subscriptions[normalized_symbol] = count
+            return
+
+        del self._orderbook_subscriptions[normalized_symbol]
 
         if self._settings.use_ccxt_provider:
             if self._ccxt_provider:
@@ -663,8 +737,6 @@ class StreamManager:
                 await self._public_client.unsubscribe(
                     [{"channel": OKXChannel.BOOKS5.value, "instId": okx_symbol}]
                 )
-
-        self._orderbook_subscriptions.discard(normalized_symbol)
 
     # ==================== Private Channel Subscriptions ====================
 
@@ -761,8 +833,6 @@ class StreamManager:
             data_type = msg.get("type", "")
             data = msg.get("data")
 
-            logger.debug(f"_handle_ccxt_message called: type={data_type}, data={data}")
-
             if not data:
                 logger.warning(f"_handle_ccxt_message: no data for type={data_type}")
                 return
@@ -775,14 +845,16 @@ class StreamManager:
                     ticker.model_dump(mode="json"),
                 )
 
+                # Dispatch to paper trading sessions for spread simulation
+                from squant.engine.paper.manager import get_session_manager
+
+                session_manager = get_session_manager()
+                session_manager.dispatch_ticker(ticker)
+
             elif data_type == "candle":
                 candle: WSCandle = data
-                logger.debug(
-                    f"Processing candle from CCXT: symbol={candle.symbol}, timeframe={candle.timeframe}, close={candle.close}"
-                )
                 # Publish to Redis for WebSocket clients
                 channel = f"candle:{candle.symbol}:{candle.timeframe}"
-                logger.debug(f"Publishing candle to Redis channel: {channel}")
                 await self._publish(
                     WSMessageType.CANDLE,
                     channel,
@@ -794,6 +866,12 @@ class StreamManager:
 
                 session_manager = get_session_manager()
                 await session_manager.dispatch_candle(candle)
+
+                # Dispatch to live trading sessions
+                from squant.engine.live.manager import get_live_session_manager
+
+                live_manager = get_live_session_manager()
+                await live_manager.dispatch_candle(candle)
 
             elif data_type == "trade":
                 trade: WSTrade = data
@@ -818,6 +896,12 @@ class StreamManager:
                     "orders",
                     order.model_dump(mode="json"),
                 )
+
+                # Dispatch to live trading sessions
+                from squant.engine.live.manager import get_live_session_manager
+
+                live_manager = get_live_session_manager()
+                live_manager.dispatch_order_update(order)
 
             elif data_type == "account":
                 account: WSAccountUpdate = data
@@ -855,6 +939,12 @@ class StreamManager:
                 f"ticker:{symbol}",
                 ticker.model_dump(mode="json"),
             )
+
+            # Dispatch to paper trading sessions for spread simulation
+            from squant.engine.paper.manager import get_session_manager
+
+            session_manager = get_session_manager()
+            session_manager.dispatch_ticker(ticker)
 
     async def _process_candle(self, arg: dict, data: list, channel: str) -> None:
         """Process candlestick data and publish to Redis."""
@@ -894,6 +984,12 @@ class StreamManager:
 
                 session_manager = get_session_manager()
                 await session_manager.dispatch_candle(candle)
+
+                # Dispatch to live trading sessions
+                from squant.engine.live.manager import get_live_session_manager
+
+                live_manager = get_live_session_manager()
+                await live_manager.dispatch_candle(candle)
 
     async def _process_trades(self, arg: dict, data: list) -> None:
         """Process trade data and publish to Redis."""
@@ -980,6 +1076,12 @@ class StreamManager:
                 order.model_dump(mode="json"),
             )
 
+            # Dispatch to live trading sessions
+            from squant.engine.live.manager import get_live_session_manager
+
+            live_manager = get_live_session_manager()
+            live_manager.dispatch_order_update(order)
+
     async def _process_account(self, data: list) -> None:
         """Process account balance updates and publish to Redis."""
         for item in data:
@@ -1005,6 +1107,18 @@ class StreamManager:
             )
 
     # ==================== Helper Methods ====================
+
+    async def _publish_service_ready(self) -> None:
+        """Publish service_ready event to notify clients that the stream manager is ready.
+
+        Clients receiving this can re-subscribe to OKX channels that may have
+        failed during stream manager downtime.
+        """
+        await self._publish(
+            WSMessageType.SERVICE_READY,
+            "system",
+            {"status": "ready"},
+        )
 
     async def _publish_exchange_switching(
         self, from_exchange: str, to_exchange: str, status: str
@@ -1047,8 +1161,6 @@ class StreamManager:
         redis_channel = f"{self.REDIS_CHANNEL_PREFIX}{channel}"
         message_json = message.model_dump_json()
 
-        logger.debug(f"Queueing message to Redis: channel={redis_channel}, type={msg_type}")
-
         # Add to buffer
         async with self._buffer_lock:
             self._publish_buffer.append((redis_channel, message_json))
@@ -1067,6 +1179,29 @@ class StreamManager:
                 break
             except Exception as e:
                 logger.exception(f"Error in flush loop: {e}")
+
+    async def _stats_loop(self) -> None:
+        """Background task that periodically logs throughput statistics."""
+        while self._running:
+            try:
+                await asyncio.sleep(self._stats_interval)
+                # Safe without lock: asyncio single-threaded event loop,
+                # no await between read and reset so no interleaving possible.
+                msgs = self._stats_messages_published
+                flushes = self._stats_flushes
+                self._stats_messages_published = 0
+                self._stats_flushes = 0
+                if msgs > 0:
+                    logger.info(
+                        f"Stream throughput: {msgs} msgs in {flushes} flushes "
+                        f"({msgs / self._stats_interval:.1f} msgs/s), "
+                        f"subscriptions: {len(self._ticker_subscriptions)} tickers, "
+                        f"{len(self._candle_subscriptions)} candles"
+                    )
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.exception(f"Error in stats loop: {e}")
 
     async def _flush_buffer(self) -> None:
         """Flush the message buffer using Redis pipeline."""
@@ -1098,8 +1233,9 @@ class StreamManager:
             async with self._redis.pipeline(transaction=False) as pipe:
                 for channel, message_json in messages:
                     pipe.publish(channel, message_json)
-                results = await pipe.execute()
-                logger.debug(f"Published {len(messages)} messages to Redis, results: {results}")
+                await pipe.execute()
+            self._stats_messages_published += len(messages)
+            self._stats_flushes += 1
         except Exception as e:
             # Log dropped messages for monitoring, but don't retry
             # (stale market data is worse than no data)
@@ -1162,6 +1298,7 @@ class StreamManager:
                 success = await self._ccxt_provider.reconnect()
                 if success:
                     logger.info("CCXT provider reconnection successful")
+                    await self._publish_service_ready()
                     return True
                 else:
                     logger.error("CCXT provider reconnection failed")
@@ -1176,6 +1313,7 @@ class StreamManager:
                 if self._business_client and not self._business_client.is_connected:
                     await self._business_client.connect()
                 logger.info("Native OKX clients reconnection attempted")
+                await self._publish_service_ready()
                 return True
             except Exception as e:
                 logger.exception(f"Failed to reconnect native OKX clients: {e}")

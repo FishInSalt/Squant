@@ -9,15 +9,16 @@ describe('DataManagement', () => {
     expect(wrapper.text()).toContain('数据管理')
   })
 
-  it('shows coming soon message', async () => {
+  it('renders download form section', async () => {
     const wrapper = mountView(DataManagement)
     await flushPromises()
-    expect(wrapper.text()).toContain('功能开发中')
+    expect(wrapper.text()).toContain('下载历史数据')
+    expect(wrapper.text()).toContain('开始下载')
   })
 
-  it('shows feature description', async () => {
+  it('renders historical data table section', async () => {
     const wrapper = mountView(DataManagement)
     await flushPromises()
-    expect(wrapper.text()).toContain('历史数据下载与管理功能将在后续版本中提供')
+    expect(wrapper.text()).toContain('已下载数据')
   })
 })

@@ -202,6 +202,20 @@
             </el-col>
           </el-row>
 
+          <el-row :gutter="16">
+            <el-col :span="12">
+              <el-form-item label="最小下单金额 (USDT)">
+                <el-input-number
+                  v-model="form.risk_config.min_order_value"
+                  :min="1"
+                  :max="100000"
+                  :step="5"
+                  style="width: 100%"
+                />
+              </el-form-item>
+            </el-col>
+          </el-row>
+
           <div v-if="selectedStrategy?.params_schema?.properties" class="params-section">
             <el-divider>策略参数</el-divider>
             <el-row :gutter="16">
@@ -282,6 +296,19 @@
                 <span class="label">初始资金</span>
                 <span class="value">{{ formatNumber(session.initial_capital ?? 0, 2) }}</span>
               </div>
+              <div v-if="session.equity != null" class="stat">
+                <span class="label">当前权益</span>
+                <span class="value">{{ formatNumber(session.equity, 2) }}</span>
+              </div>
+              <div v-if="session.equity != null && session.initial_capital" class="stat">
+                <span class="label">收益率</span>
+                <span
+                  class="value"
+                  :class="getReturnClass(session.equity, session.initial_capital)"
+                >
+                  {{ formatReturn(session.equity, session.initial_capital) }}
+                </span>
+              </div>
             </div>
             <div class="item-actions" @click.stop>
               <el-button
@@ -325,7 +352,7 @@ import { getAccounts } from '@/api/account'
 import { startLiveTrading, getLiveSessions, getLiveSessionStatus, stopLiveTrading, emergencyClosePositions } from '@/api/live'
 import { getRiskRules } from '@/api/risk'
 import { useNotification } from '@/composables/useNotification'
-import { confirmStopLive, confirmEmergencyClose, toPositionRows, type PositionRow } from '@/composables/useTradingConfirm'
+import { confirmStopLive, confirmEmergencyClose, showEmergencyCloseResult, toPositionRows, type PositionRow } from '@/composables/useTradingConfirm'
 import type { LiveSession, ExchangeAccount } from '@/types'
 
 const router = useRouter()
@@ -339,7 +366,7 @@ const sessionsLoading = ref(false)
 const symbols = ref<string[]>([])
 const accounts = ref<ExchangeAccount[]>([])
 const sessions = ref<LiveSession[]>([])
-const hasRiskRules = ref(true) // 是否已配置风控规则
+const hasRiskRules = ref(false) // 是否已配置风控规则（默认 false，加载后更新）
 
 const form = reactive({
   strategy_id: (route.query.strategy_id as string) || '',
@@ -356,6 +383,7 @@ const form = reactive({
     daily_loss_limit: 0.05,
     price_deviation_limit: 0.02,
     circuit_breaker_threshold: 3,
+    min_order_value: 10,
   },
 })
 
@@ -477,6 +505,19 @@ function goToMonitor(id: string) {
   router.push(`/trading/monitor/live/${id}`)
 }
 
+function formatReturn(equity: number, initialCapital: number): string {
+  const ret = ((equity - initialCapital) / initialCapital) * 100
+  const sign = ret >= 0 ? '+' : ''
+  return `${sign}${ret.toFixed(2)}%`
+}
+
+function getReturnClass(equity: number, initialCapital: number): string {
+  const ret = equity - initialCapital
+  if (ret > 0) return 'profit'
+  if (ret < 0) return 'loss'
+  return ''
+}
+
 async function handleStop(id: string) {
   const { confirmed, cancelOrders } = await confirmStopLive()
   if (!confirmed) return
@@ -503,8 +544,8 @@ async function handleEmergencyClose(id: string) {
   if (!confirmed) return
 
   try {
-    await emergencyClosePositions(id)
-    toastSuccess('紧急平仓执行中')
+    const resp = await emergencyClosePositions(id)
+    showEmergencyCloseResult(resp.data)
     loadSessions()
   } catch (error) {
     toastError('执行失败')
@@ -603,6 +644,14 @@ onMounted(async () => {
         .value {
           font-size: 14px;
           font-weight: 500;
+
+          &.profit {
+            color: #67c23a;
+          }
+
+          &.loss {
+            color: #f56c6c;
+          }
         }
       }
     }

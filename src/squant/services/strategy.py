@@ -162,6 +162,8 @@ class StrategyService:
         if not strategy:
             raise StrategyNotFoundError(strategy_id)
 
+        original_name = strategy.name
+
         # Check name uniqueness if name is being changed
         if request.name and request.name != strategy.name:
             existing = await self.repository.get_by_name(request.name)
@@ -199,11 +201,21 @@ class StrategyService:
                 raise StrategyNotFoundError(strategy_id)
             strategy = updated
 
-        await self.session.commit()
+        try:
+            await self.session.commit()
+        except IntegrityError:
+            await self.session.rollback()
+            if request.name and request.name != original_name:
+                raise StrategyNameExistsError(request.name)
+            raise
         return strategy
 
     async def delete(self, strategy_id: UUID) -> None:
-        """Delete a strategy.
+        """Soft-delete a strategy by archiving it.
+
+        Preserves associated strategy runs (backtest results, trading history)
+        for historical analysis. The strategy is marked as archived rather than
+        physically removed from the database.
 
         Args:
             strategy_id: Strategy ID.
@@ -212,9 +224,13 @@ class StrategyService:
             StrategyNotFoundError: If strategy not found.
             StrategyInUseError: If strategy has running sessions.
         """
-        exists = await self.repository.exists(strategy_id)
-        if not exists:
+        strategy = await self.repository.get(strategy_id)
+        if not strategy:
             raise StrategyNotFoundError(strategy_id)
+
+        # Guard against re-archiving an already archived strategy
+        if strategy.status == StrategyStatus.ARCHIVED:
+            return
 
         # Check for running sessions (STR-024: cannot delete running strategy)
         running_stmt = (
@@ -228,7 +244,17 @@ class StrategyService:
         if running_sessions:
             raise StrategyInUseError(strategy_id, len(running_sessions))
 
-        await self.repository.delete(strategy_id)
+        # Soft delete: archive and rename to free up the name for reuse.
+        # Suffix is "_archived_<id[:8]>" (18 chars). Truncate name to fit 128-char DB limit.
+        suffix = f"_archived_{str(strategy_id)[:8]}"
+        max_name_len = 128 - len(suffix)
+        truncated_name = strategy.name[:max_name_len]
+        archived_name = f"{truncated_name}{suffix}"
+        await self.repository.update(
+            strategy_id,
+            name=archived_name,
+            status=StrategyStatus.ARCHIVED,
+        )
         await self.session.commit()
 
     async def get(self, strategy_id: UUID) -> Strategy:

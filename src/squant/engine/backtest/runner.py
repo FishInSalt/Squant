@@ -205,14 +205,25 @@ class BacktestRunner:
             compiled = compile_strategy(self.strategy_code)
 
             # Inject Strategy base class into globals
+            from squant.engine.backtest import indicators as ta_module
             from squant.engine.backtest.strategy_base import Strategy as StrategyBase
-            from squant.engine.backtest.types import Bar, OrderSide, OrderType, Position
+            from squant.engine.backtest.types import (
+                Bar,
+                Fill,
+                OrderSide,
+                OrderStatus,
+                OrderType,
+                Position,
+            )
 
             compiled.restricted_globals["Strategy"] = StrategyBase
             compiled.restricted_globals["Bar"] = Bar
             compiled.restricted_globals["Position"] = Position
             compiled.restricted_globals["OrderSide"] = OrderSide
             compiled.restricted_globals["OrderType"] = OrderType
+            compiled.restricted_globals["Fill"] = Fill
+            compiled.restricted_globals["OrderStatus"] = OrderStatus
+            compiled.restricted_globals["ta"] = ta_module
 
             # Execute the code to define the class
             local_namespace: dict[str, Any] = {}
@@ -267,9 +278,11 @@ class BacktestRunner:
         fills = self._matching_engine.process_bar(bar, pending_orders)
 
         # 2. Process fills (catch ValueError for gap scenarios where cost exceeds cash)
+        processed_fills = []
         for fill in fills:
             try:
                 self._context._process_fill(fill)
+                processed_fills.append(fill)
             except ValueError as e:
                 # Order can't be filled (e.g., gap-up made market buy too expensive)
                 # Cancel the order instead of crashing the backtest
@@ -280,8 +293,20 @@ class BacktestRunner:
                         self._context.cancel_order(order.id)
                         break
 
-        # 3. Move completed orders
+        # 2a. Move completed orders (before expiry, so FILLED orders are removed first)
+        completed_before = self._context._total_completed_added
         self._context._move_completed_orders()
+
+        # 2b. Expire stale limit orders (decrement bars_remaining, cancel if <= 0)
+        self._expire_stale_orders()
+
+        # Collect newly completed orders (from fills + expiry) for on_order_done
+        completed_delta = self._context._total_completed_added - completed_before
+        newly_completed = (
+            list(self._context._completed_orders)[-completed_delta:]
+            if completed_delta > 0
+            else []
+        )
 
         # 4. Update current bar
         self._context._set_current_bar(bar)
@@ -291,6 +316,21 @@ class BacktestRunner:
 
         # 6. Record equity snapshot (before strategy, consistent with live engine P0-1)
         self._context._record_equity_snapshot(bar.time)
+
+        # 6.5 Notify strategy of fills and completed orders (before on_bar)
+        for fill in processed_fills:
+            try:
+                self._strategy.on_fill(fill)
+            except Exception as e:
+                self._context.log(f"ERROR in on_fill: {e}")
+                logger.warning(f"Strategy on_fill error: {e}")
+
+        for order in newly_completed:
+            try:
+                self._strategy.on_order_done(order)
+            except Exception as e:
+                self._context.log(f"ERROR in on_order_done: {e}")
+                logger.warning(f"Strategy on_order_done error: {e}")
 
         # 7. Call strategy with resource limits (STR-013)
         # Get settings dynamically for testability
@@ -311,6 +351,44 @@ class BacktestRunner:
         except Exception as e:
             self._context.log(f"ERROR in on_bar: {e}")
             logger.warning(f"Strategy on_bar error: {e}")
+
+    def _expire_stale_orders(self) -> None:
+        """Expire limit orders whose bars_remaining has reached zero.
+
+        Decrements bars_remaining for each pending limit order. Orders that
+        reach zero are cancelled and moved to completed orders.
+        Mirrors PaperTradingEngine._expire_stale_orders().
+        """
+        from squant.engine.backtest.types import OrderStatus, OrderType
+
+        expired = []
+        remaining = []
+        for order in self._context._pending_orders:
+            # Skip already-completed orders (FILLED/CANCELLED) to avoid overwriting status
+            if order.status in (OrderStatus.FILLED, OrderStatus.CANCELLED):
+                remaining.append(order)
+                continue
+            if (
+                order.type in (OrderType.LIMIT, OrderType.STOP, OrderType.STOP_LIMIT)
+                and order.bars_remaining is not None
+            ):
+                order.bars_remaining -= 1
+                if order.bars_remaining <= 0:
+                    order.status = OrderStatus.CANCELLED
+                    self._context._completed_orders.append(order)
+                    self._context._total_completed_added += 1
+                    price_info = f"@{order.price}" if order.price else ""
+                    stop_info = f"止损@{order.stop_price}" if order.stop_price else ""
+                    self._context.log(
+                        f"订单过期: {order.side.value} {order.symbol} "
+                        f"{order.amount}{stop_info}{price_info}"
+                    )
+                    expired.append(order)
+                    continue
+            remaining.append(order)
+
+        if expired:
+            self._context._pending_orders = remaining
 
     def _build_result(self) -> BacktestResult:
         """Build the final backtest result.
@@ -342,6 +420,7 @@ class BacktestRunner:
             metrics=metrics.to_dict(),
             equity_curve=self._context.equity_curve,
             trades=self._context.trades,
+            fills=self._context.fills,
             orders=self._context.completed_orders,
             logs=self._context.logs,
         )

@@ -1,6 +1,6 @@
 """Unit tests for paper trading engine."""
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from unittest.mock import MagicMock, patch
 from uuid import uuid4
@@ -136,21 +136,6 @@ class TestCandleProcessing:
             is_closed=True,
         )
 
-    @pytest.fixture
-    def unclosed_candle(self):
-        """Create an unclosed candle for testing."""
-        return WSCandle(
-            symbol="BTC/USDT",
-            timeframe="1m",
-            timestamp=datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC),
-            open=Decimal("45000"),
-            high=Decimal("46000"),
-            low=Decimal("44000"),
-            close=Decimal("45500"),
-            volume=Decimal("100"),
-            is_closed=False,
-        )
-
     @pytest.mark.asyncio
     async def test_process_closed_candle(self, engine, strategy, closed_candle):
         """Test that closed candles are processed."""
@@ -164,12 +149,46 @@ class TestCandleProcessing:
         assert strategy.buy_executed is True
 
     @pytest.mark.asyncio
-    async def test_skip_unclosed_candle(self, engine, unclosed_candle):
-        """Test that unclosed candles are skipped."""
+    async def test_unclosed_candle_matches_orders_but_no_on_bar(self, engine, strategy):
+        """Test that unclosed candles trigger order matching but don't call on_bar."""
         await engine.start()
-        await engine.process_candle(unclosed_candle)
 
-        assert engine.bar_count == 0
+        # First closed candle: strategy places buy order
+        candle1 = WSCandle(
+            symbol="BTC/USDT",
+            timeframe="1m",
+            timestamp=datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC),
+            open=Decimal("45000"),
+            high=Decimal("46000"),
+            low=Decimal("44000"),
+            close=Decimal("45500"),
+            volume=Decimal("100"),
+            is_closed=True,
+        )
+        await engine.process_candle(candle1)
+        assert engine.bar_count == 1
+        assert strategy.buy_executed is True
+        assert len(engine.context.pending_orders) == 1
+
+        # Unclosed candle update: should fill the market order but NOT call on_bar
+        unclosed = WSCandle(
+            symbol="BTC/USDT",
+            timeframe="1m",
+            timestamp=datetime(2024, 1, 1, 12, 1, 0, tzinfo=UTC),
+            open=Decimal("45500"),
+            high=Decimal("46000"),
+            low=Decimal("45000"),
+            close=Decimal("45700"),
+            volume=Decimal("50"),
+            is_closed=False,
+        )
+        await engine.process_candle(unclosed)
+
+        # Order should be filled (tick-level matching)
+        assert len(engine.context.pending_orders) == 0
+        assert engine.context.has_position("BTC/USDT")
+        # But bar_count should NOT increase (on_bar not called)
+        assert engine.bar_count == 1
 
     @pytest.mark.asyncio
     async def test_skip_when_not_running(self, engine, closed_candle):
@@ -203,11 +222,16 @@ class TestOrderMatching:
     """Tests for order matching during candle processing."""
 
     @pytest.mark.asyncio
-    async def test_market_order_filled_on_next_bar(self, engine, strategy):
-        """Test that market orders are filled on the next bar."""
+    async def test_market_order_filled_immediately(self, engine, strategy):
+        """Test that market orders are filled on the next candle update (tick-level).
+
+        With tick-level matching, a market order placed in on_bar() of bar N
+        gets filled on the very next candle update (even an unclosed one),
+        not at bar N+1's open.
+        """
         await engine.start()
 
-        # First bar: strategy places order (price < threshold)
+        # First closed bar: strategy places buy order in on_bar
         candle1 = WSCandle(
             symbol="BTC/USDT",
             timeframe="1m",
@@ -221,10 +245,10 @@ class TestOrderMatching:
         )
         await engine.process_candle(candle1)
 
-        # Should have pending orders
+        # Strategy placed order, but it's pending until next candle update
         assert len(engine.context.pending_orders) == 1
 
-        # Second bar: order gets filled at open
+        # Next candle update (even unclosed): market order fills immediately
         candle2 = WSCandle(
             symbol="BTC/USDT",
             timeframe="1m",
@@ -234,14 +258,139 @@ class TestOrderMatching:
             low=Decimal("45000"),
             close=Decimal("46500"),
             volume=Decimal("100"),
-            is_closed=True,
+            is_closed=False,
         )
         await engine.process_candle(candle2)
 
-        # Order should be filled now
+        # Order should be filled now (on the unclosed candle update)
         assert len(engine.context.pending_orders) == 0
         assert len(engine.context.completed_orders) == 1
         assert engine.context.has_position("BTC/USDT")
+
+    @pytest.mark.asyncio
+    async def test_limit_order_fills_on_interim_update(self, run_id):
+        """Test that limit orders trigger on unclosed candle price updates."""
+
+        class LimitBuyStrategy(Strategy):
+            def on_init(self):
+                self.bar_num = 0
+
+            def on_bar(self, bar):
+                self.bar_num += 1
+                if self.bar_num == 1:
+                    # Place a limit buy below current price
+                    self.ctx.buy(bar.symbol, Decimal("0.1"), price=Decimal("44000"))
+
+            def on_stop(self):
+                pass
+
+        strategy = LimitBuyStrategy()
+        engine = PaperTradingEngine(
+            run_id=run_id,
+            strategy=strategy,
+            symbol="BTC/USDT",
+            timeframe="1m",
+            initial_capital=Decimal("10000"),
+            commission_rate=Decimal("0.001"),
+            slippage=Decimal("0"),
+        )
+        await engine.start()
+
+        # Bar 1: strategy places limit buy at 44000
+        candle1 = WSCandle(
+            symbol="BTC/USDT",
+            timeframe="1m",
+            timestamp=datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC),
+            open=Decimal("45000"),
+            high=Decimal("46000"),
+            low=Decimal("44500"),
+            close=Decimal("45500"),
+            volume=Decimal("100"),
+            is_closed=True,
+        )
+        await engine.process_candle(candle1)
+        assert len(engine.context.pending_orders) == 1
+
+        # Unclosed candle: price drops to 43500, should trigger limit buy
+        interim = WSCandle(
+            symbol="BTC/USDT",
+            timeframe="1m",
+            timestamp=datetime(2024, 1, 1, 12, 1, 0, tzinfo=UTC),
+            open=Decimal("45500"),
+            high=Decimal("45500"),
+            low=Decimal("43000"),
+            close=Decimal("43500"),
+            volume=Decimal("50"),
+            is_closed=False,
+        )
+        await engine.process_candle(interim)
+
+        # Limit order should be filled at limit price (44000), not current price
+        assert len(engine.context.pending_orders) == 0
+        assert engine.context.has_position("BTC/USDT")
+        # Fill price should be the limit price
+        assert len(engine.context.fills) == 1
+        assert engine.context.fills[0].price == Decimal("44000")
+
+    @pytest.mark.asyncio
+    async def test_on_bar_only_called_on_closed(self, run_id):
+        """Verify on_bar() is only called when is_closed=True."""
+
+        class CountingStrategy(Strategy):
+            def on_init(self):
+                self.on_bar_count = 0
+
+            def on_bar(self, bar):
+                self.on_bar_count += 1
+
+            def on_stop(self):
+                pass
+
+        strategy = CountingStrategy()
+        engine = PaperTradingEngine(
+            run_id=run_id,
+            strategy=strategy,
+            symbol="BTC/USDT",
+            timeframe="1m",
+            initial_capital=Decimal("10000"),
+            slippage=Decimal("0"),
+        )
+        await engine.start()
+
+        ts = datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC)
+
+        # Send 3 unclosed updates
+        for i in range(3):
+            candle = WSCandle(
+                symbol="BTC/USDT",
+                timeframe="1m",
+                timestamp=ts,
+                open=Decimal("45000"),
+                high=Decimal("46000"),
+                low=Decimal("44000"),
+                close=Decimal("45500"),
+                volume=Decimal("50"),
+                is_closed=False,
+            )
+            await engine.process_candle(candle)
+
+        assert strategy.on_bar_count == 0
+
+        # Send 1 closed candle
+        closed = WSCandle(
+            symbol="BTC/USDT",
+            timeframe="1m",
+            timestamp=ts,
+            open=Decimal("45000"),
+            high=Decimal("46000"),
+            low=Decimal("44000"),
+            close=Decimal("45500"),
+            volume=Decimal("100"),
+            is_closed=True,
+        )
+        await engine.process_candle(closed)
+
+        assert strategy.on_bar_count == 1
 
 
 class TestStateSnapshot:
@@ -266,10 +415,14 @@ class TestStateSnapshot:
 
     @pytest.mark.asyncio
     async def test_state_snapshot_with_position(self, engine, strategy):
-        """Test snapshot includes position data after trading."""
+        """Test snapshot includes position data after trading.
+
+        With tick-level matching, the buy order placed in bar 1's on_bar
+        fills on the next candle update (bar 2).
+        """
         await engine.start()
 
-        # Process two candles to get a filled position
+        # Bar 1: strategy places buy order
         candle1 = WSCandle(
             symbol="BTC/USDT",
             timeframe="1m",
@@ -283,6 +436,7 @@ class TestStateSnapshot:
         )
         await engine.process_candle(candle1)
 
+        # Bar 2: market order fills immediately at candle.close
         candle2 = WSCandle(
             symbol="BTC/USDT",
             timeframe="1m",
@@ -300,6 +454,134 @@ class TestStateSnapshot:
 
         assert "BTC/USDT" in snapshot["positions"]
         assert Decimal(snapshot["positions"]["BTC/USDT"]["amount"]) == Decimal("0.1")
+
+        # Closed trades list should be empty (position still open)
+        assert len(snapshot["trades"]) == 0
+        # Open trade exposed as separate field for chart buy marker
+        assert snapshot["open_trade"] is not None
+        assert snapshot["open_trade"]["entry_time"] is not None
+        assert snapshot["open_trade"]["entry_price"] is not None
+        assert snapshot["open_trade"]["symbol"] == "BTC/USDT"
+
+    @pytest.mark.asyncio
+    async def test_state_snapshot_includes_trades_and_logs(self, engine, strategy):
+        """Test snapshot includes trades and logs fields."""
+        await engine.start()
+
+        snapshot = engine.get_state_snapshot()
+
+        assert "trades" in snapshot
+        assert "logs" in snapshot
+        assert isinstance(snapshot["trades"], list)
+        assert isinstance(snapshot["logs"], list)
+        assert snapshot["trades"] == []
+        assert snapshot["logs"] == []
+
+    @pytest.mark.asyncio
+    async def test_state_snapshot_with_completed_trade(self, run_id):
+        """Test snapshot includes trade records after a buy-sell cycle.
+
+        With tick-level matching:
+        - Bar 1: strategy buys → order pending
+        - Bar 2: buy fills at close, strategy sees position, sells on bar 2
+        - Bar 3: sell fills at close, trade completed
+        """
+
+        class BuySellStrategy(Strategy):
+            """Strategy that buys on first bar, sells on second."""
+
+            def on_init(self):
+                self.bar_num = 0
+
+            def on_bar(self, bar):
+                self.bar_num += 1
+                if self.bar_num == 1:
+                    self.ctx.buy(bar.symbol, Decimal("0.1"))
+                elif self.bar_num == 2 and self.ctx.has_position(bar.symbol):
+                    self.ctx.sell(bar.symbol, Decimal("0.1"))
+
+            def on_stop(self):
+                pass
+
+        strategy = BuySellStrategy()
+        engine = PaperTradingEngine(
+            run_id=run_id,
+            strategy=strategy,
+            symbol="BTC/USDT",
+            timeframe="1m",
+            initial_capital=Decimal("10000"),
+            commission_rate=Decimal("0.001"),
+            slippage=Decimal("0"),
+        )
+        await engine.start()
+
+        # Bar 1: strategy places buy order
+        candle1 = WSCandle(
+            symbol="BTC/USDT",
+            timeframe="1m",
+            timestamp=datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC),
+            open=Decimal("40000"),
+            high=Decimal("41000"),
+            low=Decimal("39000"),
+            close=Decimal("40500"),
+            volume=Decimal("100"),
+            is_closed=True,
+        )
+        await engine.process_candle(candle1)
+
+        # Bar 2: buy fills at close, then on_bar places sell
+        candle2 = WSCandle(
+            symbol="BTC/USDT",
+            timeframe="1m",
+            timestamp=datetime(2024, 1, 1, 12, 1, 0, tzinfo=UTC),
+            open=Decimal("40500"),
+            high=Decimal("41500"),
+            low=Decimal("40000"),
+            close=Decimal("41000"),
+            volume=Decimal("100"),
+            is_closed=True,
+        )
+        await engine.process_candle(candle2)
+
+        # Bar 3: sell fills at close, completing the trade
+        candle3 = WSCandle(
+            symbol="BTC/USDT",
+            timeframe="1m",
+            timestamp=datetime(2024, 1, 1, 12, 2, 0, tzinfo=UTC),
+            open=Decimal("41000"),
+            high=Decimal("42000"),
+            low=Decimal("40500"),
+            close=Decimal("41500"),
+            volume=Decimal("100"),
+            is_closed=True,
+        )
+        await engine.process_candle(candle3)
+
+        snapshot = engine.get_state_snapshot()
+
+        assert len(snapshot["trades"]) >= 1
+        trade = snapshot["trades"][0]
+        assert trade["symbol"] == "BTC/USDT"
+        assert trade["side"] in ("buy", "sell")
+        assert "entry_time" in trade
+        assert "entry_price" in trade
+        assert "amount" in trade
+        assert "pnl" in trade
+        assert "pnl_pct" in trade
+        assert "fees" in trade
+
+    @pytest.mark.asyncio
+    async def test_state_snapshot_logs_on_error(self, engine, strategy):
+        """Test snapshot logs field is populated when strategy logs messages."""
+        await engine.start()
+
+        # Manually add a log via context
+        engine.context.log("Test log message")
+
+        snapshot = engine.get_state_snapshot()
+
+        assert len(snapshot["logs"]) == 1
+        assert "Test log message" in snapshot["logs"][0]
 
 
 class TestPendingSnapshots:
@@ -446,16 +728,151 @@ class TestProcessingLock:
         assert engine.is_healthy(timeout_seconds=300) is False
 
     @pytest.mark.asyncio
-    async def test_is_healthy_with_zero_timeout(self, engine):
-        """Test is_healthy with very short timeout."""
+    async def test_is_healthy_adapts_to_timeframe(self, engine):
+        """Test is_healthy uses adaptive timeout based on timeframe.
+
+        For 1m timeframe, effective timeout = max(timeout_seconds, 60*3=180).
+        So even with timeout_seconds=0, a just-started engine is healthy.
+        """
+        await engine.start()
+        # Effective timeout = max(0, 180) = 180s, just started so healthy
+        assert engine.is_healthy(timeout_seconds=0) is True
+
+    @pytest.mark.asyncio
+    async def test_is_healthy_returns_false_when_expired(self, engine):
+        """Test is_healthy returns False when activity exceeds adaptive timeout."""
+        await engine.start()
+        # Set last_active_at far in the past (beyond adaptive timeout of 180s for 1m)
+        engine._last_active_at = datetime.now(UTC) - timedelta(seconds=600)
+        assert engine.is_healthy(timeout_seconds=300) is False
+
+
+class TestAskPriceCostEstimation:
+    """Tests for market order cost estimation using ticker ask price."""
+
+    @pytest.mark.asyncio
+    async def test_market_buy_fills_when_ask_exceeds_slippage(self):
+        """Test that market buy fills correctly when ask > close*(1+slippage).
+
+        Before the fix, buy() estimated cost using close*(1+slippage), which
+        could be lower than the actual ask-based fill price. If the user had
+        just enough cash for the slippage-based estimate but not for the ask,
+        the order would pass validation at buy() time but get cancelled at
+        fill time with "Insufficient cash".
+
+        The fix makes buy() use max(close*(1+slippage), ask) for estimation,
+        so the cash check at order creation time is consistent with the fill.
+        """
+        from squant.infra.exchange.okx.ws_types import WSTicker
+
+        class AllInBuyStrategy(Strategy):
+            """Strategy that uses most cash on a single buy."""
+
+            def on_init(self):
+                self.bought = False
+
+            def on_bar(self, bar):
+                if not self.bought and not self.ctx.has_position(bar.symbol):
+                    # Buy 0.19 BTC at ~50100 ask = ~9519 + ~9.5 fee ≈ 9529
+                    # Comfortably within 10000 capital when using ask-based estimate
+                    self.ctx.buy(bar.symbol, Decimal("0.19"))
+                    self.bought = True
+
+            def on_stop(self):
+                pass
+
+        strategy = AllInBuyStrategy()
+        engine = PaperTradingEngine(
+            run_id=uuid4(),
+            strategy=strategy,
+            symbol="BTC/USDT",
+            timeframe="1m",
+            initial_capital=Decimal("10000"),
+            commission_rate=Decimal("0.001"),
+            slippage=Decimal("0.0005"),  # 5bps
+        )
         await engine.start()
 
-        # With 0 second timeout, should be considered unhealthy
-        # since any elapsed time > 0
-        import asyncio
+        # Simulate ticker with ask price 20bps above close (exceeds 5bps slippage)
+        ticker = WSTicker(
+            symbol="BTC/USDT",
+            last=Decimal("50000"),
+            bid=Decimal("49950"),
+            ask=Decimal("50100"),
+        )
+        engine.on_ticker(ticker)
 
-        await asyncio.sleep(0.01)
-        assert engine.is_healthy(timeout_seconds=0) is False
+        # Bar 1: strategy places buy order — should pass with ask-based estimate
+        candle1 = WSCandle(
+            symbol="BTC/USDT",
+            timeframe="1m",
+            timestamp=datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC),
+            open=Decimal("49900"),
+            high=Decimal("50200"),
+            low=Decimal("49800"),
+            close=Decimal("50000"),
+            volume=Decimal("100"),
+            is_closed=True,
+        )
+        await engine.process_candle(candle1)
+        assert strategy.bought is True
+        assert len(engine.context.pending_orders) == 1
+
+        # Bar 2: market order fills at ask price (50100)
+        candle2 = WSCandle(
+            symbol="BTC/USDT",
+            timeframe="1m",
+            timestamp=datetime(2024, 1, 1, 12, 1, 0, tzinfo=UTC),
+            open=Decimal("50050"),
+            high=Decimal("50200"),
+            low=Decimal("49900"),
+            close=Decimal("50050"),
+            volume=Decimal("100"),
+            is_closed=True,
+        )
+        await engine.process_candle(candle2)
+
+        # Order should be filled at ask price, not cancelled
+        assert engine.context.has_position("BTC/USDT")
+        assert len(engine.context.pending_orders) == 0
+        assert len(engine.context.fills) == 1
+        assert engine.context.fills[0].price == Decimal("50100")
+
+    @pytest.mark.asyncio
+    async def test_ref_ask_not_set_without_ticker(self):
+        """Test that without ticker data, cost estimation falls back to slippage."""
+        strategy = SimpleStrategy()
+        engine = PaperTradingEngine(
+            run_id=uuid4(),
+            strategy=strategy,
+            symbol="BTC/USDT",
+            timeframe="1m",
+            initial_capital=Decimal("10000"),
+            commission_rate=Decimal("0.001"),
+            slippage=Decimal("0.0005"),
+            params={"threshold": Decimal("60000")},
+        )
+        await engine.start()
+
+        # No ticker set → _ref_ask should remain None
+        assert engine._context._ref_ask is None
+
+        candle = WSCandle(
+            symbol="BTC/USDT",
+            timeframe="1m",
+            timestamp=datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC),
+            open=Decimal("49900"),
+            high=Decimal("50200"),
+            low=Decimal("49800"),
+            close=Decimal("50000"),
+            volume=Decimal("100"),
+            is_closed=True,
+        )
+        await engine.process_candle(candle)
+
+        # Strategy placed a buy, should succeed with slippage-based estimate
+        assert engine.context.has_position("BTC/USDT") is False  # fills on next bar
+        assert len(engine.context.pending_orders) == 1  # order pending
 
 
 class FailingOnInitStrategy(Strategy):
@@ -523,6 +940,7 @@ class TestStrategyExceptionHandling:
             symbol="BTC/USDT",
             timeframe="1m",
             initial_capital=Decimal("10000"),
+            slippage=Decimal("0"),
         )
         with pytest.raises(ValueError, match="Strategy init failed"):
             await engine.start()
@@ -543,6 +961,7 @@ class TestStrategyExceptionHandling:
             symbol="BTC/USDT",
             timeframe="1m",
             initial_capital=Decimal("10000"),
+            slippage=Decimal("0"),
         )
         await engine.start()
         assert engine.is_running is True
@@ -564,6 +983,7 @@ class TestStrategyExceptionHandling:
             symbol="BTC/USDT",
             timeframe="1m",
             initial_capital=Decimal("10000"),
+            slippage=Decimal("0"),
         )
         await engine.start()
         await engine.stop()
@@ -581,6 +1001,7 @@ class TestStrategyExceptionHandling:
             symbol="BTC/USDT",
             timeframe="1m",
             initial_capital=Decimal("10000"),
+            slippage=Decimal("0"),
         )
         await engine.start()
         await engine.stop(error="Original error")
@@ -619,6 +1040,7 @@ class TestResourceLimitExceeded:
             symbol="BTC/USDT",
             timeframe="1m",
             initial_capital=Decimal("10000"),
+            slippage=Decimal("0"),
             params={"threshold": Decimal("50000")},
         )
         await engine.start()
@@ -688,7 +1110,10 @@ class TestInsufficientCashHandling:
 
     @pytest.mark.asyncio
     async def test_insufficient_cash_does_not_stop_engine(self):
-        """Engine should continue running when a fill is rejected due to insufficient cash."""
+        """Engine should continue running when a fill is rejected due to insufficient cash.
+
+        With tick-level matching, the order fills on the next candle update.
+        """
 
         class AggressiveBuyStrategy(Strategy):
             """Strategy that tries to buy more than available cash."""
@@ -713,6 +1138,7 @@ class TestInsufficientCashHandling:
             symbol="BTC/USDT",
             timeframe="1m",
             initial_capital=Decimal("100"),  # Very small capital
+            slippage=Decimal("0"),
         )
         await engine.start()
 
@@ -732,7 +1158,7 @@ class TestInsufficientCashHandling:
         assert engine.is_running is True
         assert engine.bar_count == 1
 
-        # Bar 2: order would be matched but fill should be rejected (insufficient cash)
+        # Bar 2: order fills immediately at close, but should be rejected (insufficient cash)
         candle2 = WSCandle(
             symbol="BTC/USDT",
             timeframe="1m",
@@ -770,6 +1196,7 @@ class TestInsufficientCashHandling:
             symbol="BTC/USDT",
             timeframe="1m",
             initial_capital=Decimal("10000"),
+            slippage=Decimal("0"),
             params={"threshold": Decimal("50000")},
         )
         await engine.start()
@@ -821,6 +1248,7 @@ class TestDeadlockFix:
                 symbol="BTC/USDT",
                 timeframe="1m",
                 initial_capital=Decimal("10000"),
+                slippage=Decimal("0"),
                 params={"threshold": Decimal("50000")},
             )
 
@@ -856,3 +1284,570 @@ class TestDeadlockFix:
         # Lock should be released — another stop() should be a no-op, not deadlock
         await engine.stop()
         assert engine.is_running is False
+
+
+class TestSnapshotCallback:
+    """Tests for on_snapshot callback (Phase 1: synchronous equity persistence)."""
+
+    @pytest.fixture
+    def callback(self):
+        """Create a mock snapshot persist callback."""
+        from unittest.mock import AsyncMock
+
+        return AsyncMock()
+
+    @pytest.fixture
+    def engine_with_callback(self, run_id, strategy, callback):
+        """Create engine with snapshot callback."""
+        return PaperTradingEngine(
+            run_id=run_id,
+            strategy=strategy,
+            symbol="BTC/USDT",
+            timeframe="1m",
+            initial_capital=Decimal("10000"),
+            commission_rate=Decimal("0.001"),
+            slippage=Decimal("0"),
+            params={"threshold": Decimal("50000")},
+            on_snapshot=callback,
+        )
+
+    @pytest.fixture
+    def closed_candle(self):
+        """Create a closed candle for testing."""
+        return WSCandle(
+            symbol="BTC/USDT",
+            timeframe="1m",
+            timestamp=datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC),
+            open=Decimal("45000"),
+            high=Decimal("46000"),
+            low=Decimal("44000"),
+            close=Decimal("45500"),
+            volume=Decimal("100"),
+            is_closed=True,
+        )
+
+    @pytest.mark.asyncio
+    async def test_callback_called_on_candle(self, engine_with_callback, callback, closed_candle):
+        """Test that on_snapshot callback is called after processing a candle."""
+        await engine_with_callback.start()
+        await engine_with_callback.process_candle(closed_candle)
+
+        callback.assert_called_once()
+        call_args = callback.call_args
+        assert call_args[0][0] == str(engine_with_callback.run_id)  # run_id
+
+    @pytest.mark.asyncio
+    async def test_callback_success_skips_pending(
+        self, engine_with_callback, callback, closed_candle
+    ):
+        """Test that successful callback means snapshot is NOT added to pending."""
+        await engine_with_callback.start()
+        await engine_with_callback.process_candle(closed_candle)
+
+        callback.assert_called_once()
+        # Should not be in pending since callback succeeded
+        assert len(engine_with_callback.get_pending_snapshots()) == 0
+
+    @pytest.mark.asyncio
+    async def test_callback_failure_adds_to_pending(
+        self, engine_with_callback, callback, closed_candle
+    ):
+        """Test that failed callback adds snapshot to pending as fallback."""
+        callback.side_effect = Exception("DB connection error")
+
+        await engine_with_callback.start()
+        await engine_with_callback.process_candle(closed_candle)
+
+        # Callback was attempted
+        callback.assert_called_once()
+        # Should be in pending since callback failed
+        assert len(engine_with_callback.get_pending_snapshots()) == 1
+
+    @pytest.mark.asyncio
+    async def test_no_callback_adds_to_pending(self, engine, closed_candle):
+        """Test that without callback, snapshots go to pending (default behavior)."""
+        await engine.start()
+        await engine.process_candle(closed_candle)
+
+        # Default engine has no callback, so snapshot goes to pending
+        assert len(engine.get_pending_snapshots()) >= 1
+
+    def test_engine_init_with_callback(self, engine_with_callback, callback):
+        """Test that engine stores the callback."""
+        assert engine_with_callback._on_snapshot is callback
+
+    def test_engine_init_without_callback(self, engine):
+        """Test that engine defaults to no callback."""
+        assert engine._on_snapshot is None
+
+
+class TestResultCallback:
+    """Tests for on_result callback (synchronous result state persistence)."""
+
+    @pytest.fixture
+    def result_callback(self):
+        """Create a mock result persist callback."""
+        from unittest.mock import AsyncMock
+
+        return AsyncMock()
+
+    @pytest.fixture
+    def engine_with_result_callback(self, run_id, strategy, result_callback):
+        """Create engine with result callback."""
+        return PaperTradingEngine(
+            run_id=run_id,
+            strategy=strategy,
+            symbol="BTC/USDT",
+            timeframe="1m",
+            initial_capital=Decimal("10000"),
+            commission_rate=Decimal("0.001"),
+            slippage=Decimal("0"),
+            params={"threshold": Decimal("50000")},
+            on_result=result_callback,
+        )
+
+    @pytest.fixture
+    def closed_candle(self):
+        """Create a closed candle for testing."""
+        return WSCandle(
+            symbol="BTC/USDT",
+            timeframe="1m",
+            timestamp=datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC),
+            open=Decimal("45000"),
+            high=Decimal("46000"),
+            low=Decimal("44000"),
+            close=Decimal("45500"),
+            volume=Decimal("100"),
+            is_closed=True,
+        )
+
+    @pytest.mark.asyncio
+    async def test_result_callback_called_on_candle(
+        self, engine_with_result_callback, result_callback, closed_candle
+    ):
+        """Test that on_result callback is called after processing a candle."""
+        await engine_with_result_callback.start()
+        await engine_with_result_callback.process_candle(closed_candle)
+
+        result_callback.assert_called_once()
+        call_args = result_callback.call_args
+        assert call_args[0][0] == str(engine_with_result_callback.run_id)
+        # Second arg should be a dict with result data
+        result_data = call_args[0][1]
+        assert "cash" in result_data
+        assert "equity" in result_data
+        assert "positions" in result_data
+        assert "trades" in result_data
+        assert "unrealized_pnl" in result_data
+        assert "realized_pnl" in result_data
+        assert "logs" in result_data
+        assert "bar_count" in result_data
+
+    @pytest.mark.asyncio
+    async def test_result_callback_failure_does_not_crash(
+        self, engine_with_result_callback, result_callback, closed_candle
+    ):
+        """Test that failed result callback does not crash the engine."""
+        result_callback.side_effect = Exception("DB write failed")
+
+        await engine_with_result_callback.start()
+        await engine_with_result_callback.process_candle(closed_candle)
+
+        # Engine should still be running despite callback failure
+        assert engine_with_result_callback.is_running is True
+        assert engine_with_result_callback.bar_count == 1
+
+    @pytest.mark.asyncio
+    async def test_no_result_callback_by_default(self, engine, closed_candle):
+        """Test that engine without result callback still processes candles."""
+        assert engine._on_result is None
+
+        await engine.start()
+        await engine.process_candle(closed_candle)
+
+        assert engine.bar_count == 1
+
+    def test_engine_stores_result_callback(self, engine_with_result_callback, result_callback):
+        """Test that engine stores the result callback."""
+        assert engine_with_result_callback._on_result is result_callback
+
+    @pytest.mark.asyncio
+    async def test_result_callback_called_on_each_candle(
+        self, engine_with_result_callback, result_callback
+    ):
+        """Test that on_result is called once per candle."""
+        await engine_with_result_callback.start()
+
+        for i in range(3):
+            candle = WSCandle(
+                symbol="BTC/USDT",
+                timeframe="1m",
+                timestamp=datetime(2024, 1, 1, 12, i, 0, tzinfo=UTC),
+                open=Decimal("45000"),
+                high=Decimal("46000"),
+                low=Decimal("44000"),
+                close=Decimal("45500"),
+                volume=Decimal("100"),
+                is_closed=True,
+            )
+            await engine_with_result_callback.process_candle(candle)
+
+        assert result_callback.call_count == 3
+
+
+class LimitOrderStrategy(Strategy):
+    """Strategy that places a limit order on first bar."""
+
+    def on_init(self) -> None:
+        self.order_placed = False
+        self.order_id = None
+
+    def on_bar(self, bar: Bar) -> None:
+        if not self.order_placed:
+            valid_for = self.ctx.params.get("valid_for_bars")
+            self.order_id = self.ctx.buy(
+                bar.symbol,
+                Decimal("0.01"),
+                price=Decimal("40000"),
+                valid_for_bars=valid_for,
+            )
+            self.order_placed = True
+
+    def on_stop(self) -> None:
+        pass
+
+
+class TestOrderExpiration:
+    """Tests for limit order TTL/expiration mechanism."""
+
+    def _make_engine(self, strategy, valid_for_bars=None):
+        return PaperTradingEngine(
+            run_id=uuid4(),
+            strategy=strategy,
+            symbol="BTC/USDT",
+            timeframe="1m",
+            initial_capital=Decimal("100000"),
+            commission_rate=Decimal("0.001"),
+            slippage=Decimal("0"),
+            params={"valid_for_bars": valid_for_bars},
+        )
+
+    def _make_candle(self, minute, close=Decimal("50000"), is_closed=True):
+        return WSCandle(
+            symbol="BTC/USDT",
+            timeframe="1m",
+            timestamp=datetime(2024, 1, 1, 12, minute, 0, tzinfo=UTC),
+            open=close - Decimal("100"),
+            high=close + Decimal("500"),
+            low=close - Decimal("500"),
+            close=close,
+            volume=Decimal("100"),
+            is_closed=is_closed,
+        )
+
+    @pytest.mark.asyncio
+    async def test_limit_order_expires_after_ttl(self):
+        """Limit order with valid_for_bars=2 should expire after 2 closed bars."""
+        strategy = LimitOrderStrategy()
+        engine = self._make_engine(strategy, valid_for_bars=2)
+        await engine.start()
+
+        # Bar 0: strategy places limit buy @$40k (won't fill, price at $50k)
+        await engine.process_candle(self._make_candle(0))
+        assert len(engine.context.pending_orders) == 1
+        assert engine.context.pending_orders[0].bars_remaining == 2
+
+        # Bar 1: decrement -> bars_remaining=1, still pending
+        await engine.process_candle(self._make_candle(1))
+        assert len(engine.context.pending_orders) == 1
+
+        # Bar 2: decrement -> bars_remaining=0 -> expired
+        await engine.process_candle(self._make_candle(2))
+        assert len(engine.context.pending_orders) == 0
+        # Should be in completed orders as CANCELLED
+        cancelled = [o for o in engine.context.completed_orders if o.status.value == "cancelled"]
+        assert len(cancelled) == 1
+
+    @pytest.mark.asyncio
+    async def test_gtc_order_does_not_expire(self):
+        """Limit order with no valid_for_bars (GTC) should never expire."""
+        strategy = LimitOrderStrategy()
+        engine = self._make_engine(strategy, valid_for_bars=None)
+        await engine.start()
+
+        # Bar 0: strategy places GTC limit buy @$40k
+        await engine.process_candle(self._make_candle(0))
+        assert len(engine.context.pending_orders) == 1
+        assert engine.context.pending_orders[0].bars_remaining is None
+
+        # Process 10 more bars — order should stay pending
+        for i in range(1, 11):
+            await engine.process_candle(self._make_candle(i))
+        assert len(engine.context.pending_orders) == 1
+
+    @pytest.mark.asyncio
+    async def test_order_filled_before_expiry(self):
+        """Order should fill if price reaches limit before TTL expires."""
+        strategy = LimitOrderStrategy()
+        engine = self._make_engine(strategy, valid_for_bars=5)
+        await engine.start()
+
+        # Bar 0: place limit buy @$40k
+        await engine.process_candle(self._make_candle(0, close=Decimal("50000")))
+        assert len(engine.context.pending_orders) == 1
+
+        # Bar 1: price drops to $39k — limit triggers (close < limit price)
+        await engine.process_candle(self._make_candle(1, close=Decimal("39000")))
+        # Order should have been filled
+        assert len(engine.context.pending_orders) == 0
+        assert engine.context.has_position("BTC/USDT")
+
+    @pytest.mark.asyncio
+    async def test_valid_for_bars_1_expires_immediately_on_next_bar(self):
+        """valid_for_bars=1 means expire after exactly 1 bar."""
+        strategy = LimitOrderStrategy()
+        engine = self._make_engine(strategy, valid_for_bars=1)
+        await engine.start()
+
+        # Bar 0: place order
+        await engine.process_candle(self._make_candle(0))
+        assert len(engine.context.pending_orders) == 1
+
+        # Bar 1: order expires
+        await engine.process_candle(self._make_candle(1))
+        assert len(engine.context.pending_orders) == 0
+
+
+class TestRejectedFillCancelsOrder:
+    """P0: Rejected fills should cancel the order to prevent infinite retry."""
+
+    @staticmethod
+    def _make_candle(
+        bar_idx: int, close: Decimal = Decimal("50000"), is_closed: bool = True
+    ) -> WSCandle:
+        return WSCandle(
+            symbol="BTC/USDT",
+            timeframe="1m",
+            timestamp=datetime(2024, 1, 1, 12, bar_idx, 0, tzinfo=UTC),
+            open=close - Decimal("100"),
+            high=close + Decimal("200"),
+            low=close - Decimal("200"),
+            close=close,
+            volume=Decimal("100"),
+            is_closed=is_closed,
+        )
+
+    @pytest.mark.asyncio
+    async def test_rejected_fill_cancels_market_order(self):
+        """Market order fill rejected due to insufficient cash is cancelled."""
+
+        class NearFullBuyStrategy(Strategy):
+            def on_init(self):
+                self.bought = False
+
+            def on_bar(self, bar):
+                if not self.bought:
+                    # Spend nearly all cash — leaves very little room for price increase
+                    self.ctx.buy(bar.symbol, Decimal("0.199"))
+                    self.bought = True
+
+            def on_stop(self):
+                pass
+
+        strategy = NearFullBuyStrategy()
+        engine = PaperTradingEngine(
+            run_id=uuid4(),
+            strategy=strategy,
+            symbol="BTC/USDT",
+            timeframe="1m",
+            initial_capital=Decimal("10000"),
+            commission_rate=Decimal("0.001"),
+            slippage=Decimal("0"),
+        )
+        await engine.start()
+
+        # Bar 0: strategy places market buy
+        await engine.process_candle(self._make_candle(0, close=Decimal("50000")))
+        # Market order placed, pending
+        assert len(engine.context.pending_orders) == 1
+
+        # Bar 1 (unclosed): price jumps to $60000, fill cost would be
+        # 0.199 * 60000 * 1.001 = $11,951.94 > $10,000 cash → fill rejected
+        await engine.process_candle(self._make_candle(1, close=Decimal("60000"), is_closed=False))
+        # Order should be CANCELLED, not left pending
+        assert len(engine.context.pending_orders) == 0
+        assert len(engine.context.completed_orders) == 1
+        assert engine.context.completed_orders[0].status.value == "cancelled"
+
+    @pytest.mark.asyncio
+    async def test_rejected_fill_does_not_retry(self):
+        """After fill rejection and cancellation, no further retry occurs."""
+
+        class OneBuyStrategy(Strategy):
+            def on_init(self):
+                self.bought = False
+
+            def on_bar(self, bar):
+                if not self.bought:
+                    self.ctx.buy(bar.symbol, Decimal("0.199"))
+                    self.bought = True
+
+            def on_stop(self):
+                pass
+
+        strategy = OneBuyStrategy()
+        engine = PaperTradingEngine(
+            run_id=uuid4(),
+            strategy=strategy,
+            symbol="BTC/USDT",
+            timeframe="1m",
+            initial_capital=Decimal("10000"),
+            commission_rate=Decimal("0.001"),
+            slippage=Decimal("0"),
+        )
+        await engine.start()
+
+        # Bar 0: strategy places market buy
+        await engine.process_candle(self._make_candle(0, close=Decimal("50000")))
+
+        # Bar 1: price gap up → fill rejected → order cancelled
+        await engine.process_candle(self._make_candle(1, close=Decimal("60000"), is_closed=False))
+        cancelled_count = len(engine.context.completed_orders)
+
+        # Bar 2: another unclosed tick — no new cancellations (order already gone)
+        await engine.process_candle(self._make_candle(2, close=Decimal("60000"), is_closed=False))
+        assert len(engine.context.completed_orders) == cancelled_count
+
+
+class TestUnclosedCandleHighLowMatching:
+    """P1-1: Unclosed candles should pass high/low for limit order matching."""
+
+    @staticmethod
+    def _make_candle(
+        bar_idx: int,
+        close: Decimal,
+        high: Decimal,
+        low: Decimal,
+        is_closed: bool = True,
+    ) -> WSCandle:
+        return WSCandle(
+            symbol="BTC/USDT",
+            timeframe="1m",
+            timestamp=datetime(2024, 1, 1, 12, bar_idx, 0, tzinfo=UTC),
+            open=close,
+            high=high,
+            low=low,
+            close=close,
+            volume=Decimal("100"),
+            is_closed=is_closed,
+        )
+
+    @pytest.mark.asyncio
+    async def test_limit_buy_triggers_on_unclosed_low(self):
+        """BUY LIMIT should trigger on unclosed candle's low, not just close."""
+
+        class LimitBuyStrategy(Strategy):
+            def on_init(self):
+                self.placed = False
+
+            def on_bar(self, bar):
+                if not self.placed:
+                    self.ctx.buy(bar.symbol, Decimal("0.1"), price=Decimal("49000"))
+                    self.placed = True
+
+            def on_stop(self):
+                pass
+
+        strategy = LimitBuyStrategy()
+        engine = PaperTradingEngine(
+            run_id=uuid4(),
+            strategy=strategy,
+            symbol="BTC/USDT",
+            timeframe="1m",
+            initial_capital=Decimal("100000"),
+            commission_rate=Decimal("0.001"),
+            slippage=Decimal("0"),
+        )
+        await engine.start()
+
+        # Bar 0: strategy places BUY LIMIT at $49,000
+        await engine.process_candle(
+            self._make_candle(
+                0, close=Decimal("50000"), high=Decimal("51000"), low=Decimal("49500")
+            )
+        )
+        assert len(engine.context.pending_orders) == 1
+
+        # Bar 1 (unclosed): close=$50000 (above limit), but low=$48500 (below limit)
+        # With the fix, this should trigger the limit order
+        await engine.process_candle(
+            self._make_candle(
+                1,
+                close=Decimal("50000"),
+                high=Decimal("51000"),
+                low=Decimal("48500"),
+                is_closed=False,
+            )
+        )
+        assert len(engine.context.pending_orders) == 0
+        assert engine.context.has_position("BTC/USDT")
+
+    @pytest.mark.asyncio
+    async def test_limit_sell_triggers_on_unclosed_high(self):
+        """SELL LIMIT should trigger on unclosed candle's high."""
+
+        class LimitSellStrategy(Strategy):
+            def on_init(self):
+                self.state = "buy"
+
+            def on_bar(self, bar):
+                if self.state == "buy":
+                    self.ctx.buy(bar.symbol, Decimal("0.1"))
+                    self.state = "wait_fill"
+                elif self.state == "wait_fill" and self.ctx.has_position(bar.symbol):
+                    self.ctx.sell(bar.symbol, Decimal("0.1"), price=Decimal("52000"))
+                    self.state = "done"
+
+            def on_stop(self):
+                pass
+
+        strategy = LimitSellStrategy()
+        engine = PaperTradingEngine(
+            run_id=uuid4(),
+            strategy=strategy,
+            symbol="BTC/USDT",
+            timeframe="1m",
+            initial_capital=Decimal("100000"),
+            commission_rate=Decimal("0.001"),
+            slippage=Decimal("0"),
+        )
+        await engine.start()
+
+        # Bar 0: strategy places market buy (not yet filled)
+        await engine.process_candle(
+            self._make_candle(
+                0, close=Decimal("50000"), high=Decimal("51000"), low=Decimal("49000")
+            )
+        )
+
+        # Bar 1: market buy fills, strategy sees position → places SELL LIMIT at $52,000
+        await engine.process_candle(
+            self._make_candle(
+                1, close=Decimal("51000"), high=Decimal("51500"), low=Decimal("50000")
+            )
+        )
+        assert engine.context.has_position("BTC/USDT")
+        assert len(engine.context.pending_orders) == 1
+
+        # Bar 2 (unclosed): close=$51000 (below limit), but high=$52500 (above limit)
+        await engine.process_candle(
+            self._make_candle(
+                2,
+                close=Decimal("51000"),
+                high=Decimal("52500"),
+                low=Decimal("50500"),
+                is_closed=False,
+            )
+        )
+        assert len(engine.context.pending_orders) == 0
+        assert not engine.context.has_position("BTC/USDT")

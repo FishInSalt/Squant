@@ -49,6 +49,7 @@ services:
       dockerfile: Dockerfile
       target: development
     container_name: squant-backend-dev
+    init: true
     environment:
       - DATABASE_URL=postgresql+asyncpg://squant:devpassword@postgres:5432/squant
       - REDIS_URL=redis://redis:6379/0
@@ -74,6 +75,7 @@ services:
   frontend:
     image: node:20-alpine
     container_name: squant-frontend-dev
+    init: true
     working_dir: /app
     command: sh -c "corepack enable && corepack prepare pnpm@latest --activate && pnpm install && pnpm dev --host 0.0.0.0"
     environment:

@@ -1,34 +1,38 @@
 """Backtest API endpoints."""
 
 import logging
+from datetime import datetime
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from squant.api.utils import ApiResponse, PaginatedData
 from squant.engine.backtest.runner import BacktestError
 from squant.infra.database import get_session
 from squant.models.enums import RunStatus
+from squant.models.market import Kline
 from squant.schemas.backtest import (
     AvailableSymbolResponse,
     BacktestDetailResponse,
     BacktestListItem,
     BacktestMetrics,
     BacktestRunResponse,
+    CandlesPageResponse,
+    CandlestickPoint,
     CheckDataRequest,
     CreateBacktestRequest,
     DataAvailabilityResponse,
     EquityCurvePoint,
     ExportFormat,
+    FillRecordResponse,
     RunBacktestRequest,
     TradeRecordResponse,
 )
 from squant.services.backtest import (
     BacktestNotFoundError,
     BacktestService,
-    IncompleteDataError,
-    InsufficientDataError,
     InvalidInitialCapitalError,
 )
 from squant.services.data_loader import DataLoader
@@ -44,25 +48,25 @@ async def run_backtest(
     request: RunBacktestRequest,
     session: AsyncSession = Depends(get_session),
 ) -> ApiResponse[BacktestRunResponse]:
-    """Create and run a backtest synchronously.
+    """Create a backtest and start execution in background.
 
-    This endpoint creates a backtest run and executes it immediately,
-    returning when the backtest completes.
+    Returns immediately with a PENDING run record. The backtest executes
+    asynchronously — poll GET /backtest/{run_id} for status updates.
 
     Args:
         request: Backtest configuration.
         session: Database session.
 
     Returns:
-        Backtest run with results.
+        Created backtest run (status: pending).
 
     Raises:
-        HTTPException: 400 if insufficient data, 404 if strategy not found.
+        HTTPException: 400 if invalid config, 404 if strategy not found.
     """
     service = BacktestService(session)
 
     try:
-        run = await service.create_and_run(
+        run = await service.create(
             strategy_id=request.strategy_id,
             symbol=request.symbol,
             exchange=request.exchange,
@@ -74,15 +78,15 @@ async def run_backtest(
             slippage=request.slippage,
             params=request.params,
         )
-        return ApiResponse(data=BacktestRunResponse.model_validate(run))
     except StrategyNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except InvalidInitialCapitalError as e:
         raise HTTPException(status_code=400, detail=str(e))
-    except InsufficientDataError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    except BacktestError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+
+    # Fire-and-forget: execution happens in background with independent DB session
+    BacktestService.run_in_background(str(run.id))
+
+    return ApiResponse(data=BacktestRunResponse.model_validate(run))
 
 
 @router.post("/async", response_model=ApiResponse[BacktestRunResponse], status_code=201)
@@ -132,33 +136,34 @@ async def execute_backtest(
     run_id: UUID,
     session: AsyncSession = Depends(get_session),
 ) -> ApiResponse[BacktestRunResponse]:
-    """Execute a pending backtest.
+    """Start execution of a pending backtest in background.
+
+    Returns immediately. Poll GET /backtest/{run_id} for status updates.
 
     Args:
         run_id: Backtest run ID.
         session: Database session.
 
     Returns:
-        Updated backtest run with results.
+        Current backtest run record.
 
     Raises:
-        HTTPException: 400 if execution fails or data incomplete, 404 if not found.
+        HTTPException: 404 if not found, 400 if not in pending state.
     """
     service = BacktestService(session)
 
-    try:
-        run = await service.run(run_id)
-        return ApiResponse(data=BacktestRunResponse.model_validate(run))
-    except BacktestNotFoundError as e:
-        raise HTTPException(status_code=404, detail=str(e))
-    except StrategyNotFoundError as e:
-        raise HTTPException(status_code=404, detail=str(e))
-    except InsufficientDataError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    except IncompleteDataError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    except BacktestError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+    run = await service.get(run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail=f"Backtest run not found: {run_id}")
+    if run.status != RunStatus.PENDING:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Backtest is not pending (status: {run.status.value})",
+        )
+
+    BacktestService.run_in_background(str(run_id))
+
+    return ApiResponse(data=BacktestRunResponse.model_validate(run))
 
 
 @router.post("/{run_id}/cancel", response_model=ApiResponse[BacktestRunResponse])
@@ -319,7 +324,11 @@ async def get_backtest(
 
     try:
         run = await service.get(run_id)
-        return ApiResponse(data=BacktestRunResponse.model_validate(run))
+        response = BacktestRunResponse.model_validate(run)
+        # Inject real-time progress for running backtests
+        if run.status == RunStatus.RUNNING:
+            response.progress = BacktestService.get_progress(str(run_id))
+        return ApiResponse(data=response)
     except BacktestNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
 
@@ -350,6 +359,7 @@ async def get_backtest_detail(
         # Extract strongly-typed metrics from run.result dict (BT-004)
         metrics = None
         trades: list[TradeRecordResponse] = []
+        fills: list[FillRecordResponse] = []
         if run.result:
             metrics = BacktestMetrics(
                 **{k: v for k, v in run.result.items() if k in BacktestMetrics.model_fields}
@@ -360,6 +370,12 @@ async def get_backtest_detail(
                 for t in raw_trades:
                     if isinstance(t, dict):
                         trades.append(TradeRecordResponse(**t))
+            # Extract fills if stored in result
+            raw_fills = run.result.get("fills", [])
+            if raw_fills and isinstance(raw_fills, list):
+                for f in raw_fills:
+                    if isinstance(f, dict):
+                        fills.append(FillRecordResponse(**f))
 
         return ApiResponse(
             data=BacktestDetailResponse(
@@ -367,6 +383,7 @@ async def get_backtest_detail(
                 metrics=metrics,
                 equity_curve=[EquityCurvePoint.model_validate(e) for e in equity_curve],
                 trades=trades,
+                fills=fills,
                 total_bars=len(equity_curve),
             )
         )
@@ -424,6 +441,111 @@ async def delete_backtest(
         return ApiResponse(data=None, message="Backtest deleted")
     except BacktestNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
+
+
+@router.get("/{run_id}/candles", response_model=ApiResponse[CandlesPageResponse])
+async def get_backtest_candles(
+    run_id: UUID,
+    before: datetime | None = Query(None, description="Fetch candles before this time"),
+    after: datetime | None = Query(None, description="Fetch candles after this time"),
+    limit: int = Query(1000, ge=1, le=2000, description="Max candles to return"),
+    session: AsyncSession = Depends(get_session),
+) -> ApiResponse[CandlesPageResponse]:
+    """Get paginated candlestick data for a backtest run's period.
+
+    Supports cursor-based pagination via `before` / `after` timestamps.
+    Default (no cursor): returns the last `limit` candles of the backtest period.
+
+    Args:
+        run_id: Backtest run ID.
+        before: Return candles with time < before (scroll left / older data).
+        after: Return candles with time > after (scroll right / newer data).
+        limit: Max number of candles to return (1-2000, default 1000).
+        session: Database session.
+
+    Returns:
+        Paginated candles with total_count metadata.
+
+    Raises:
+        HTTPException: 404 if backtest not found, 400 if no data available.
+    """
+    service = BacktestService(session)
+
+    try:
+        run = await service.get(run_id)
+    except BacktestNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+    if not run.backtest_start or not run.backtest_end:
+        raise HTTPException(status_code=400, detail="Backtest date range not set")
+
+    # Base filter: always within backtest date range
+    base_filters = [
+        Kline.exchange == run.exchange,
+        Kline.symbol == run.symbol,
+        Kline.timeframe == run.timeframe,
+        Kline.time >= run.backtest_start,
+        Kline.time <= run.backtest_end,
+    ]
+
+    # Total count (full backtest range, no cursor filter)
+    count_result = await session.execute(
+        select(func.count()).select_from(Kline).where(and_(*base_filters))
+    )
+    total_count = count_result.scalar() or 0
+
+    # Build paginated query with cursor
+    filters = list(base_filters)
+    if before:
+        filters.append(Kline.time < before)
+    if after:
+        filters.append(Kline.time > after)
+
+    if before:
+        # Fetch N newest candles before cursor → reverse to chronological order
+        stmt = (
+            select(Kline.time, Kline.open, Kline.high, Kline.low, Kline.close, Kline.volume)
+            .where(and_(*filters))
+            .order_by(Kline.time.desc())
+            .limit(limit)
+        )
+        result = await session.execute(stmt)
+        rows = list(reversed(result.all()))
+    else:
+        if after:
+            # Fetch N oldest candles after cursor
+            stmt = (
+                select(
+                    Kline.time, Kline.open, Kline.high, Kline.low, Kline.close, Kline.volume,
+                )
+                .where(and_(*filters))
+                .order_by(Kline.time.asc())
+                .limit(limit)
+            )
+        else:
+            # Default: last N candles of the backtest period
+            stmt = (
+                select(
+                    Kline.time, Kline.open, Kline.high, Kline.low, Kline.close, Kline.volume,
+                )
+                .where(and_(*filters))
+                .order_by(Kline.time.desc())
+                .limit(limit)
+            )
+        result = await session.execute(stmt)
+        rows = result.all()
+        if not after:
+            rows = list(reversed(rows))
+
+    candles = [
+        CandlestickPoint(
+            timestamp=row[0], open=row[1], high=row[2],
+            low=row[3], close=row[4], volume=row[5],
+        )
+        for row in rows
+    ]
+
+    return ApiResponse(data=CandlesPageResponse(candles=candles, total_count=total_count))
 
 
 @router.get("/{run_id}/export", response_model=ApiResponse[dict])

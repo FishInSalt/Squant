@@ -9,6 +9,7 @@ describe('StatusBadge', () => {
       ['completed', 'primary', '已完成'],
       ['failed', 'danger', '已失败'],
       ['stopped', 'warning', '已停止'],
+      ['interrupted', 'warning', '已中断'],
     ])('renders %s as %s tag with text %s', (status, expectedType, expectedText) => {
       const wrapper = mount(StatusBadge, { props: { status: status as any } })
       expect(wrapper.text()).toBe(expectedText)
@@ -23,9 +24,21 @@ describe('StatusBadge', () => {
       ['cancelled', 'info', '已取消'],
       ['rejected', 'danger', '已拒绝'],
     ])('renders %s as %s tag with text %s', (status, expectedType, expectedText) => {
-      const wrapper = mount(StatusBadge, { props: { status: status as any } })
+      const wrapper = mount(StatusBadge, { props: { status: status as any, context: 'order' } })
       expect(wrapper.text()).toBe(expectedText)
       expect(wrapper.find('.el-tag').classes()).toContain(`el-tag--${expectedType}`)
+    })
+
+    it('renders pending as "等待成交" in order context', () => {
+      const wrapper = mount(StatusBadge, { props: { status: 'pending' as any, context: 'order' } })
+      expect(wrapper.text()).toBe('等待成交')
+      expect(wrapper.find('.el-tag').classes()).toContain('el-tag--primary')
+    })
+
+    it('renders pending as "待启动" in default (session) context', () => {
+      const wrapper = mount(StatusBadge, { props: { status: 'pending' as any } })
+      expect(wrapper.text()).toBe('待启动')
+      expect(wrapper.find('.el-tag').classes()).toContain('el-tag--info')
     })
   })
 

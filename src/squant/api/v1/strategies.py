@@ -228,7 +228,7 @@ async def delete_strategy(
 
     try:
         await service.delete(strategy_id)
-        return ApiResponse(data=None, message="Strategy deleted")
+        return ApiResponse(data=None, message="Strategy archived")
     except StrategyNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except StrategyInUseError as e:

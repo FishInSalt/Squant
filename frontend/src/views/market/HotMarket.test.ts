@@ -52,10 +52,10 @@ describe('HotMarket', () => {
     expect(wrapper.text()).toContain('实时')
   })
 
-  it('shows offline status when WS disconnected', async () => {
+  it('shows reconnecting status when WS disconnected', async () => {
     const wrapper = mountView(HotMarket)
     await flushPromises()
-    expect(wrapper.text()).toContain('离线')
+    expect(wrapper.text()).toContain('重连中...')
   })
 
   it('shows operation column header', async () => {

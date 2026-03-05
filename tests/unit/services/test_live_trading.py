@@ -1063,6 +1063,7 @@ class TestGetStatus:
         mock_run.started_at = datetime.now(UTC)
         mock_run.stopped_at = None
         mock_run.error_message = None
+        mock_run.result = None  # No saved result
 
         with patch.object(service.run_repo, "get", new_callable=AsyncMock) as mock_get:
             mock_get.return_value = mock_run
@@ -1312,23 +1313,466 @@ class TestMarkOrphanedSessions:
     """Tests for marking orphaned sessions."""
 
     @pytest.fixture
-    def service(self) -> LiveTradingService:
+    def mock_session(self) -> MagicMock:
+        """Create mock database session."""
+        session = MagicMock()
+        session.commit = AsyncMock()
+        return session
+
+    @pytest.fixture
+    def service(self, mock_session: MagicMock) -> LiveTradingService:
         """Create service with mock session."""
-        mock_session = MagicMock()
         return LiveTradingService(mock_session)
 
     @pytest.mark.asyncio
     async def test_mark_orphaned_sessions(self, service: LiveTradingService) -> None:
-        """Test marking orphaned sessions."""
-        with patch.object(
-            service.run_repo, "mark_orphaned_sessions", new_callable=AsyncMock
-        ) as mock_mark:
-            mock_mark.return_value = 3
+        """Test marking orphaned sessions delegates to service-level recovery."""
+        mock_run_1 = MagicMock()
+        mock_run_1.id = str(uuid4())
+        mock_run_2 = MagicMock()
+        mock_run_2.id = str(uuid4())
+        mock_run_3 = MagicMock()
+        mock_run_3.id = str(uuid4())
+
+        with (
+            patch.object(
+                service.run_repo, "get_orphaned_sessions", new_callable=AsyncMock
+            ) as mock_get_orphaned,
+            patch.object(
+                service.equity_repo, "get_last_by_run", new_callable=AsyncMock
+            ) as mock_get_last,
+            patch.object(service.run_repo, "update", new_callable=AsyncMock) as mock_update,
+        ):
+            mock_get_orphaned.return_value = [mock_run_1, mock_run_2, mock_run_3]
+            mock_get_last.return_value = None
+            mock_update.return_value = MagicMock()
 
             result = await service.mark_orphaned_sessions()
 
             assert result == 3
-            mock_mark.assert_called_once()
+            assert mock_update.call_count == 3
+
+
+class TestStopSavesResult:
+    """Tests for stop() saving final state to result field."""
+
+    @pytest.fixture
+    def mock_session(self) -> MagicMock:
+        """Create mock database session."""
+        session = MagicMock()
+        session.commit = AsyncMock()
+        return session
+
+    @pytest.fixture
+    def service(self, mock_session: MagicMock) -> LiveTradingService:
+        """Create service with mock session."""
+        return LiveTradingService(mock_session)
+
+    @pytest.mark.asyncio
+    async def test_stop_saves_result_to_db(self, service: LiveTradingService) -> None:
+        """Test that stop() captures engine state and saves to result JSONB field."""
+        run_id = uuid4()
+        mock_run = MagicMock()
+        mock_run.id = str(run_id)
+
+        mock_engine = MagicMock()
+        mock_engine.run_id = run_id
+        mock_engine.symbol = "BTC/USDT"
+        mock_engine.timeframe = "1m"
+        mock_engine.error_message = None
+        mock_engine.get_pending_snapshots.return_value = []
+        mock_engine.stop = AsyncMock()
+        mock_engine.build_result_for_persistence.return_value = {
+            "cash": "8500",
+            "equity": "10200",
+            "total_fees": "25.0",
+            "bar_count": 50,
+            "realized_pnl": "400",
+            "unrealized_pnl": "100",
+            "positions": {"BTC/USDT": {"amount": "0.1"}},
+            "trades": [
+                {
+                    "symbol": "BTC/USDT",
+                    "side": "buy",
+                    "entry_price": "50000",
+                    "exit_price": "51000",
+                    "amount": "0.1",
+                    "pnl": "100",
+                }
+            ],
+            "open_trade": {
+                "symbol": "BTC/USDT",
+                "side": "buy",
+                "entry_time": "2024-06-01T10:00:00+00:00",
+                "entry_price": "50000",
+                "amount": "0.1",
+                "fees": "5.0",
+                "partial_exit_pnl": "0",
+            },
+            "completed_orders_count": 8,
+            "trades_count": 4,
+            "logs": ["Live log entry"],
+            "risk_state": {"is_halted": False},
+        }
+
+        with patch.object(service.run_repo, "get", new_callable=AsyncMock) as mock_get:
+            mock_get.return_value = mock_run
+
+            with patch("squant.services.live_trading.get_live_session_manager") as mock_get_manager:
+                mock_manager = MagicMock()
+                mock_manager.get.return_value = mock_engine
+                mock_manager.unregister = AsyncMock()
+                mock_manager.get_subscribed_symbols.return_value = set()
+                mock_get_manager.return_value = mock_manager
+
+                with patch.object(
+                    service.run_repo, "update", new_callable=AsyncMock
+                ) as mock_update:
+                    mock_update.return_value = mock_run
+
+                    with patch(
+                        "squant.websocket.manager.get_stream_manager"
+                    ) as mock_stream_manager:
+                        mock_stream = MagicMock()
+                        mock_stream.unsubscribe_candles = AsyncMock()
+                        mock_stream_manager.return_value = mock_stream
+
+                        await service.stop(run_id)
+
+                        # Verify result data was saved
+                        update_kwargs = mock_update.call_args.kwargs
+                        assert "result" in update_kwargs
+                        result = update_kwargs["result"]
+                        assert result is not None
+                        assert result["cash"] == "8500"
+                        assert result["equity"] == "10200"
+                        assert result["trades_count"] == 4
+                        assert result["risk_state"] == {"is_halted": False}
+                        # Verify open_trade, trades, and logs are preserved
+                        assert result["open_trade"] is not None
+                        assert result["open_trade"]["entry_time"] == "2024-06-01T10:00:00+00:00"
+                        assert len(result["trades"]) == 1
+                        assert len(result["logs"]) == 1
+
+
+class TestGetStatusFromResult:
+    """Tests for get_status() restoring data from result field."""
+
+    @pytest.fixture
+    def mock_session(self) -> MagicMock:
+        """Create mock database session."""
+        return MagicMock()
+
+    @pytest.fixture
+    def service(self, mock_session: MagicMock) -> LiveTradingService:
+        """Create service with mock session."""
+        return LiveTradingService(mock_session)
+
+    @pytest.mark.asyncio
+    async def test_get_status_restores_from_result(self, service: LiveTradingService) -> None:
+        """Test get_status() restores data from result JSONB when engine not in memory."""
+        run_id = uuid4()
+        mock_run = MagicMock()
+        mock_run.id = str(run_id)
+        mock_run.strategy_id = str(uuid4())
+        mock_run.symbol = "BTC/USDT"
+        mock_run.timeframe = "1m"
+        mock_run.initial_capital = Decimal("10000")
+        mock_run.started_at = datetime.now(UTC)
+        mock_run.stopped_at = datetime.now(UTC)
+        mock_run.error_message = None
+        mock_run.result = {
+            "bar_count": 50,
+            "cash": "8500",
+            "equity": "10200",
+            "total_fees": "25.0",
+            "unrealized_pnl": "100",
+            "realized_pnl": "400",
+            "positions": {"BTC/USDT": {"amount": "0.1"}},
+            "completed_orders_count": 8,
+            "trades_count": 4,
+            "risk_state": {"is_halted": False},
+        }
+
+        with patch.object(service.run_repo, "get", new_callable=AsyncMock) as mock_get:
+            mock_get.return_value = mock_run
+
+            with patch("squant.services.live_trading.get_live_session_manager") as mock_get_manager:
+                mock_manager = MagicMock()
+                mock_manager.get.return_value = None  # Not active
+                mock_get_manager.return_value = mock_manager
+
+                result = await service.get_status(run_id)
+
+                assert result["is_running"] is False
+                assert result["bar_count"] == 50
+                assert result["cash"] == "8500"
+                assert result["equity"] == "10200"
+                assert result["trades_count"] == 4
+                assert result["risk_state"] == {"is_halted": False}
+
+    @pytest.mark.asyncio
+    async def test_get_status_fallback_without_result(self, service: LiveTradingService) -> None:
+        """Test get_status() falls back to zero values when no result saved."""
+        run_id = uuid4()
+        mock_run = MagicMock()
+        mock_run.id = str(run_id)
+        mock_run.strategy_id = str(uuid4())
+        mock_run.symbol = "BTC/USDT"
+        mock_run.timeframe = "1m"
+        mock_run.initial_capital = Decimal("10000")
+        mock_run.started_at = datetime.now(UTC)
+        mock_run.stopped_at = datetime.now(UTC)
+        mock_run.error_message = None
+        mock_run.result = None
+
+        with patch.object(service.run_repo, "get", new_callable=AsyncMock) as mock_get:
+            mock_get.return_value = mock_run
+
+            with patch("squant.services.live_trading.get_live_session_manager") as mock_get_manager:
+                mock_manager = MagicMock()
+                mock_manager.get.return_value = None
+                mock_get_manager.return_value = mock_manager
+
+                result = await service.get_status(run_id)
+
+                assert result["is_running"] is False
+                assert result["bar_count"] == 0
+                assert result["cash"] == "10000"
+                assert result["positions"] == {}
+                assert result["risk_state"] is None
+
+
+class TestMarkOrphanedWithRecovery:
+    """Tests for mark_orphaned_sessions with equity curve recovery."""
+
+    @pytest.fixture
+    def mock_session(self) -> MagicMock:
+        """Create mock database session."""
+        session = MagicMock()
+        session.commit = AsyncMock()
+        return session
+
+    @pytest.fixture
+    def service(self, mock_session: MagicMock) -> LiveTradingService:
+        """Create service with mock session."""
+        return LiveTradingService(mock_session)
+
+    @pytest.mark.asyncio
+    async def test_mark_orphaned_preserves_existing_result(
+        self, service: LiveTradingService
+    ) -> None:
+        """Test mark_orphaned_sessions preserves existing result from on_result callback."""
+        run_id = str(uuid4())
+        mock_run = MagicMock()
+        mock_run.id = run_id
+        mock_run.result = {
+            "cash": "9000",
+            "equity": "10500",
+            "total_fees": "50",
+            "unrealized_pnl": "200",
+            "realized_pnl": "300",
+            "positions": {"BTC/USDT": {"amount": "0.1"}},
+            "trades": [{"symbol": "BTC/USDT", "pnl": "300"}],
+            "logs": ["[10:00] Buy BTC"],
+        }
+
+        with (
+            patch.object(
+                service.run_repo, "get_orphaned_sessions", new_callable=AsyncMock
+            ) as mock_get_orphaned,
+            patch.object(
+                service.equity_repo, "get_last_by_run", new_callable=AsyncMock
+            ) as mock_get_last,
+            patch.object(service.run_repo, "update", new_callable=AsyncMock) as mock_update,
+        ):
+            mock_get_orphaned.return_value = [mock_run]
+            mock_update.return_value = mock_run
+
+            count = await service.mark_orphaned_sessions()
+
+            assert count == 1
+            # Should NOT query equity curve since result already exists
+            mock_get_last.assert_not_called()
+            update_kwargs = mock_update.call_args.kwargs
+            assert update_kwargs["result"]["realized_pnl"] == "300"
+            assert update_kwargs["result"]["trades"] == [{"symbol": "BTC/USDT", "pnl": "300"}]
+            assert update_kwargs["status"] == RunStatus.INTERRUPTED
+
+    @pytest.mark.asyncio
+    async def test_mark_orphaned_falls_back_to_equity_curve(
+        self, service: LiveTradingService
+    ) -> None:
+        """Test mark_orphaned_sessions falls back to equity curve when no result exists."""
+        run_id = str(uuid4())
+        mock_run = MagicMock()
+        mock_run.id = run_id
+        mock_run.result = None
+
+        mock_equity = MagicMock()
+        mock_equity.equity = Decimal("10500")
+        mock_equity.cash = Decimal("9000")
+        mock_equity.unrealized_pnl = Decimal("200")
+
+        with (
+            patch.object(
+                service.run_repo, "get_orphaned_sessions", new_callable=AsyncMock
+            ) as mock_get_orphaned,
+            patch.object(
+                service.equity_repo, "get_last_by_run", new_callable=AsyncMock
+            ) as mock_get_last,
+            patch.object(service.run_repo, "update", new_callable=AsyncMock) as mock_update,
+        ):
+            mock_get_orphaned.return_value = [mock_run]
+            mock_get_last.return_value = mock_equity
+            mock_update.return_value = mock_run
+
+            count = await service.mark_orphaned_sessions()
+
+            assert count == 1
+            service.session.commit.assert_called_once()
+            update_kwargs = mock_update.call_args.kwargs
+            assert update_kwargs["result"]["equity"] == "10500"
+            assert update_kwargs["result"]["cash"] == "9000"
+            assert update_kwargs["status"] == RunStatus.INTERRUPTED
+
+    @pytest.mark.asyncio
+    async def test_mark_orphaned_without_equity_curve(
+        self, service: LiveTradingService
+    ) -> None:
+        """Test mark_orphaned_sessions when no result and no equity curve data."""
+        mock_run = MagicMock()
+        mock_run.id = str(uuid4())
+        mock_run.result = None
+
+        with (
+            patch.object(
+                service.run_repo, "get_orphaned_sessions", new_callable=AsyncMock
+            ) as mock_get_orphaned,
+            patch.object(
+                service.equity_repo, "get_last_by_run", new_callable=AsyncMock
+            ) as mock_get_last,
+            patch.object(service.run_repo, "update", new_callable=AsyncMock) as mock_update,
+        ):
+            mock_get_orphaned.return_value = [mock_run]
+            mock_get_last.return_value = None
+            mock_update.return_value = mock_run
+
+            count = await service.mark_orphaned_sessions()
+
+            assert count == 1
+            update_kwargs = mock_update.call_args.kwargs
+            assert update_kwargs["result"] is None
+
+    @pytest.mark.asyncio
+    async def test_mark_orphaned_no_orphans(self, service: LiveTradingService) -> None:
+        """Test mark_orphaned_sessions when no orphaned sessions exist."""
+        with patch.object(
+            service.run_repo, "get_orphaned_sessions", new_callable=AsyncMock
+        ) as mock_get_orphaned:
+            mock_get_orphaned.return_value = []
+
+            count = await service.mark_orphaned_sessions()
+
+            assert count == 0
+            service.session.commit.assert_not_called()
+
+
+class TestStopAll:
+    """Tests for stop_all method."""
+
+    @pytest.fixture
+    def mock_session(self) -> MagicMock:
+        """Create mock database session."""
+        session = MagicMock()
+        session.commit = AsyncMock()
+        return session
+
+    @pytest.fixture
+    def service(self, mock_session: MagicMock) -> LiveTradingService:
+        """Create service with mock session."""
+        return LiveTradingService(mock_session)
+
+    @pytest.mark.asyncio
+    async def test_stop_all_success(self, service: LiveTradingService) -> None:
+        """Test stopping all active live trading sessions."""
+        run_id_1 = uuid4()
+        run_id_2 = uuid4()
+
+        with (
+            patch("squant.services.live_trading.get_live_session_manager") as mock_get_manager,
+            patch.object(LiveTradingService, "stop", new_callable=AsyncMock) as mock_stop,
+        ):
+            mock_manager = MagicMock()
+            mock_manager.list_sessions.return_value = [
+                {"run_id": str(run_id_1), "symbol": "BTC/USDT"},
+                {"run_id": str(run_id_2), "symbol": "ETH/USDT"},
+            ]
+            mock_get_manager.return_value = mock_manager
+            mock_stop.return_value = MagicMock()
+
+            count = await service.stop_all()
+
+            assert count == 2
+            assert mock_stop.call_count == 2
+            for call in mock_stop.call_args_list:
+                assert call.kwargs.get("for_shutdown") is not True
+
+    @pytest.mark.asyncio
+    async def test_stop_all_for_shutdown(self, service: LiveTradingService) -> None:
+        """Test stop_all passes for_shutdown flag to stop()."""
+        run_id = uuid4()
+
+        with (
+            patch("squant.services.live_trading.get_live_session_manager") as mock_get_manager,
+            patch.object(LiveTradingService, "stop", new_callable=AsyncMock) as mock_stop,
+        ):
+            mock_manager = MagicMock()
+            mock_manager.list_sessions.return_value = [
+                {"run_id": str(run_id), "symbol": "BTC/USDT"},
+            ]
+            mock_get_manager.return_value = mock_manager
+            mock_stop.return_value = MagicMock()
+
+            count = await service.stop_all(for_shutdown=True)
+
+            assert count == 1
+            mock_stop.assert_called_once_with(run_id, for_shutdown=True)
+
+    @pytest.mark.asyncio
+    async def test_stop_all_empty(self, service: LiveTradingService) -> None:
+        """Test stop_all when no sessions are active."""
+        with patch("squant.services.live_trading.get_live_session_manager") as mock_get_manager:
+            mock_manager = MagicMock()
+            mock_manager.list_sessions.return_value = []
+            mock_get_manager.return_value = mock_manager
+
+            count = await service.stop_all()
+
+            assert count == 0
+
+    @pytest.mark.asyncio
+    async def test_stop_all_partial_failure(self, service: LiveTradingService) -> None:
+        """Test stop_all continues when one session fails to stop."""
+        run_id_1 = uuid4()
+        run_id_2 = uuid4()
+
+        with (
+            patch("squant.services.live_trading.get_live_session_manager") as mock_get_manager,
+            patch.object(LiveTradingService, "stop", new_callable=AsyncMock) as mock_stop,
+        ):
+            mock_manager = MagicMock()
+            mock_manager.list_sessions.return_value = [
+                {"run_id": str(run_id_1), "symbol": "BTC/USDT"},
+                {"run_id": str(run_id_2), "symbol": "ETH/USDT"},
+            ]
+            mock_get_manager.return_value = mock_manager
+            mock_stop.side_effect = [Exception("Failed"), MagicMock()]
+
+            count = await service.stop_all()
+
+            assert count == 1
+            assert mock_stop.call_count == 2
 
 
 class TestCheckUnsubscribe:

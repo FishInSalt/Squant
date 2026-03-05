@@ -883,7 +883,10 @@ class TestGetDecryptedCredentials:
         account.passphrase_enc = None
         account.nonce = b"test_nonce_12"
 
-        with patch("squant.services.account.get_crypto_manager") as mock_crypto:
+        with (
+            patch("squant.services.account.get_crypto_manager") as mock_crypto,
+            patch("squant.utils.crypto.get_old_crypto_manager", return_value=None),
+        ):
             mock_manager = MagicMock()
             mock_manager.decrypt_with_derived_nonce.side_effect = DecryptionError(
                 "Decryption failed"

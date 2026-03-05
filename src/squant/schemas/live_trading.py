@@ -44,6 +44,12 @@ class RiskConfigRequest(BaseModel):
         le=10,
         description="Consecutive losses to trigger circuit breaker",
     )
+    min_order_value: Decimal = Field(
+        default=Decimal("10"),
+        gt=0,
+        le=100000,
+        description="Minimum order value in quote currency (e.g., USDT)",
+    )
 
 
 class StartLiveTradingRequest(BaseModel):
@@ -64,6 +70,17 @@ class StartLiveTradingRequest(BaseModel):
         description="Initial equity for risk calculations (fetched from exchange if not provided)",
     )
     params: dict[str, Any] | None = Field(None, description="Strategy parameters")
+
+
+class ResumeLiveTradingRequest(BaseModel):
+    """Request to resume a stopped/errored live trading session."""
+
+    warmup_bars: int = Field(
+        default=200,
+        ge=0,
+        le=5000,
+        description="Number of historical bars to replay for strategy warmup",
+    )
 
 
 class LiveTradingRunResponse(BaseModel):
@@ -158,14 +175,18 @@ class LiveTradingStatusResponse(BaseModel):
 class LiveTradingListItem(BaseModel):
     """Live trading list item (active session summary)."""
 
-    run_id: UUID
+    id: UUID
     strategy_id: UUID
     strategy_name: str | None = None
     account_id: str | None = None
     symbol: str
+    exchange: str
     timeframe: str
+    status: str
     is_running: bool
+    initial_capital: NumberDecimal | None
     started_at: datetime | None
+    created_at: datetime
     bar_count: int
     equity: NumberDecimal
     cash: NumberDecimal
@@ -185,6 +206,39 @@ class RemainingPosition(BaseModel):
     symbol: str
     amount: str
     side: str  # "long" or "short"
+
+
+class LiveSessionTradeResponse(BaseModel):
+    """Trade execution record for a live session order."""
+
+    id: UUID
+    price: NumberDecimal
+    amount: NumberDecimal
+    fee: NumberDecimal
+    fee_currency: str | None = None
+    timestamp: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class LiveSessionOrderResponse(BaseModel):
+    """Order record from the audit table for a live session."""
+
+    id: UUID
+    exchange_oid: str | None = None
+    symbol: str
+    side: str
+    type: str
+    amount: NumberDecimal
+    filled: NumberDecimal
+    avg_price: NumberDecimal | None = None
+    price: NumberDecimal | None = None
+    status: str
+    trades: list[LiveSessionTradeResponse] = Field(default_factory=list)
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
 
 
 class EmergencyCloseResponse(BaseModel):

@@ -1022,7 +1022,8 @@ class TestTradeTracking:
 
         # PnL = (42000-40000)*1 + (44000-40000)*1 - (80+42+44) = 2000+4000-166 = 5834
         assert trade.pnl == Decimal("5834")
-        assert trade.exit_price == Decimal("44000")
+        # Weighted average exit: (42000*1 + 44000*1) / 2 = 43000
+        assert trade.exit_price == Decimal("43000")
         assert trade.entry_price == Decimal("40000")
         # pnl_pct = 5834 / (40000*2) * 100
         expected_pnl_pct = Decimal("5834") / Decimal("80000") * 100
@@ -1073,11 +1074,17 @@ class TestTradeTracking:
         context._set_current_bar(bar2)
         context._add_bar_to_history(bar2)
         sid1 = context.sell("BTC/USDT", Decimal("1"))
-        context._process_fill(Fill(
-            order_id=sid1, symbol="BTC/USDT", side=OrderSide.SELL,
-            price=Decimal("41000"), amount=Decimal("1"),
-            fee=Decimal("0"), timestamp=bar2.time,
-        ))
+        context._process_fill(
+            Fill(
+                order_id=sid1,
+                symbol="BTC/USDT",
+                side=OrderSide.SELL,
+                price=Decimal("41000"),
+                amount=Decimal("1"),
+                fee=Decimal("0"),
+                timestamp=bar2.time,
+            )
+        )
         context._move_completed_orders()
 
         # Sell 1 @ $43,000
@@ -1093,11 +1100,17 @@ class TestTradeTracking:
         context._set_current_bar(bar3)
         context._add_bar_to_history(bar3)
         sid2 = context.sell("BTC/USDT", Decimal("1"))
-        context._process_fill(Fill(
-            order_id=sid2, symbol="BTC/USDT", side=OrderSide.SELL,
-            price=Decimal("43000"), amount=Decimal("1"),
-            fee=Decimal("0"), timestamp=bar3.time,
-        ))
+        context._process_fill(
+            Fill(
+                order_id=sid2,
+                symbol="BTC/USDT",
+                side=OrderSide.SELL,
+                price=Decimal("43000"),
+                amount=Decimal("1"),
+                fee=Decimal("0"),
+                timestamp=bar3.time,
+            )
+        )
         context._move_completed_orders()
 
         # Sell 1 @ $39,000 (losing exit)
@@ -1113,11 +1126,17 @@ class TestTradeTracking:
         context._set_current_bar(bar4)
         context._add_bar_to_history(bar4)
         sid3 = context.sell("BTC/USDT", Decimal("1"))
-        context._process_fill(Fill(
-            order_id=sid3, symbol="BTC/USDT", side=OrderSide.SELL,
-            price=Decimal("39000"), amount=Decimal("1"),
-            fee=Decimal("0"), timestamp=bar4.time,
-        ))
+        context._process_fill(
+            Fill(
+                order_id=sid3,
+                symbol="BTC/USDT",
+                side=OrderSide.SELL,
+                price=Decimal("39000"),
+                amount=Decimal("1"),
+                fee=Decimal("0"),
+                timestamp=bar4.time,
+            )
+        )
 
         assert context._open_trade is None
         assert len(context.trades) == 1
@@ -1152,11 +1171,17 @@ class TestTradeTracking:
         context._set_current_bar(bar1)
         context._add_bar_to_history(bar1)
         oid1 = context.buy("BTC/USDT", Decimal("1"))
-        context._process_fill(Fill(
-            order_id=oid1, symbol="BTC/USDT", side=OrderSide.BUY,
-            price=Decimal("40000"), amount=Decimal("1"),
-            fee=Decimal("40"), timestamp=bar1.time,
-        ))
+        context._process_fill(
+            Fill(
+                order_id=oid1,
+                symbol="BTC/USDT",
+                side=OrderSide.BUY,
+                price=Decimal("40000"),
+                amount=Decimal("1"),
+                fee=Decimal("40"),
+                timestamp=bar1.time,
+            )
+        )
         context._move_completed_orders()
 
         # Verify: 1 BTC, entry price = $40,000
@@ -1177,11 +1202,17 @@ class TestTradeTracking:
         context._set_current_bar(bar2)
         context._add_bar_to_history(bar2)
         oid2 = context.buy("BTC/USDT", Decimal("2"))
-        context._process_fill(Fill(
-            order_id=oid2, symbol="BTC/USDT", side=OrderSide.BUY,
-            price=Decimal("46000"), amount=Decimal("2"),
-            fee=Decimal("92"), timestamp=bar2.time,
-        ))
+        context._process_fill(
+            Fill(
+                order_id=oid2,
+                symbol="BTC/USDT",
+                side=OrderSide.BUY,
+                price=Decimal("46000"),
+                amount=Decimal("2"),
+                fee=Decimal("92"),
+                timestamp=bar2.time,
+            )
+        )
         context._move_completed_orders()
 
         # Verify: 3 BTC, weighted avg entry = (40000*1 + 46000*2) / 3 = 44000
@@ -1201,11 +1232,17 @@ class TestTradeTracking:
         context._set_current_bar(bar3)
         context._add_bar_to_history(bar3)
         sid1 = context.sell("BTC/USDT", Decimal("1"))
-        context._process_fill(Fill(
-            order_id=sid1, symbol="BTC/USDT", side=OrderSide.SELL,
-            price=Decimal("48000"), amount=Decimal("1"),
-            fee=Decimal("48"), timestamp=bar3.time,
-        ))
+        context._process_fill(
+            Fill(
+                order_id=sid1,
+                symbol="BTC/USDT",
+                side=OrderSide.SELL,
+                price=Decimal("48000"),
+                amount=Decimal("1"),
+                fee=Decimal("48"),
+                timestamp=bar3.time,
+            )
+        )
         context._move_completed_orders()
 
         # Trade still open; amount stays at peak (3 BTC), entry price unchanged
@@ -1226,11 +1263,17 @@ class TestTradeTracking:
         context._set_current_bar(bar4)
         context._add_bar_to_history(bar4)
         sid2 = context.sell("BTC/USDT", Decimal("2"))
-        context._process_fill(Fill(
-            order_id=sid2, symbol="BTC/USDT", side=OrderSide.SELL,
-            price=Decimal("42000"), amount=Decimal("2"),
-            fee=Decimal("84"), timestamp=bar4.time,
-        ))
+        context._process_fill(
+            Fill(
+                order_id=sid2,
+                symbol="BTC/USDT",
+                side=OrderSide.SELL,
+                price=Decimal("42000"),
+                amount=Decimal("2"),
+                fee=Decimal("84"),
+                timestamp=bar4.time,
+            )
+        )
 
         # Trade closed
         assert context._open_trade is None
@@ -1243,3 +1286,1125 @@ class TestTradeTracking:
         # pnl_pct = -264 / (44000 * 3) * 100
         expected_pnl_pct = Decimal("-264") / Decimal("132000") * 100
         assert trade.pnl_pct == expected_pnl_pct
+
+
+class TestRestoreState:
+    """Tests for restore_state() — session resume support."""
+
+    def test_restore_cash(self, context: BacktestContext) -> None:
+        """Test that cash is restored from state."""
+        context.restore_state({"cash": "5000.50"})
+        assert context.cash == Decimal("5000.50")
+
+    def test_restore_total_fees(self, context: BacktestContext) -> None:
+        """Test that total_fees is restored from state."""
+        context.restore_state({"total_fees": "123.45"})
+        assert context._total_fees == Decimal("123.45")
+
+    def test_restore_positions(self, context: BacktestContext) -> None:
+        """Test that positions are restored from state."""
+        state = {
+            "positions": {
+                "BTC/USDT": {
+                    "amount": "0.5",
+                    "avg_entry_price": "45000",
+                    "current_price": "46000",
+                },
+            }
+        }
+        context.restore_state(state)
+
+        assert "BTC/USDT" in context._positions
+        pos = context._positions["BTC/USDT"]
+        assert pos.amount == Decimal("0.5")
+        assert pos.avg_entry_price == Decimal("45000")
+        assert context._last_prices["BTC/USDT"] == Decimal("46000")
+
+    def test_restore_positions_clears_previous(self, context: BacktestContext) -> None:
+        """Test that restore_state clears pre-existing positions."""
+        from squant.engine.backtest.types import Position
+
+        context._positions["ETH/USDT"] = Position(
+            symbol="ETH/USDT", amount=Decimal("1"), avg_entry_price=Decimal("3000")
+        )
+
+        context.restore_state(
+            {
+                "positions": {
+                    "BTC/USDT": {"amount": "1", "avg_entry_price": "50000"},
+                }
+            }
+        )
+
+        assert "ETH/USDT" not in context._positions
+        assert "BTC/USDT" in context._positions
+
+    def test_restore_trades(self, context: BacktestContext) -> None:
+        """Test that closed trades are restored from state."""
+        state = {
+            "trades": [
+                {
+                    "symbol": "BTC/USDT",
+                    "side": "buy",
+                    "entry_time": "2024-06-01T12:00:00+00:00",
+                    "entry_price": "50000",
+                    "exit_time": "2024-06-01T13:00:00+00:00",
+                    "exit_price": "51000",
+                    "amount": "0.1",
+                    "pnl": "100",
+                    "pnl_pct": "2.0",
+                    "fees": "10.2",
+                },
+            ]
+        }
+        context.restore_state(state)
+
+        assert len(context.trades) == 1
+        trade = context.trades[0]
+        assert trade.symbol == "BTC/USDT"
+        assert trade.entry_price == Decimal("50000")
+        assert trade.exit_price == Decimal("51000")
+        assert trade.pnl == Decimal("100")
+        assert trade.fees == Decimal("10.2")
+
+    def test_restore_open_position_creates_open_trade(self, context: BacktestContext) -> None:
+        """Test that an open position causes _open_trade to be set."""
+        state = {
+            "positions": {
+                "BTC/USDT": {
+                    "amount": "0.5",
+                    "avg_entry_price": "45000",
+                },
+            }
+        }
+        context.restore_state(state)
+
+        assert context._open_trade is not None
+        assert context._open_trade.symbol == "BTC/USDT"
+        assert context._open_trade.entry_price == Decimal("45000")
+        assert context._open_trade.amount == Decimal("0.5")
+
+    def test_restore_open_trade_preserves_entry_time(self, context: BacktestContext) -> None:
+        """Test that open_trade field preserves entry_time and partial_exit_pnl."""
+        state = {
+            "positions": {
+                "BTC/USDT": {
+                    "amount": "0.5",
+                    "avg_entry_price": "45000",
+                },
+            },
+            "open_trade": {
+                "symbol": "BTC/USDT",
+                "side": "buy",
+                "entry_time": "2024-06-01T14:30:00+00:00",
+                "entry_price": "45000",
+                "amount": "0.5",
+                "fees": "4.5",
+                "partial_exit_pnl": "75.25",
+            },
+        }
+        context.restore_state(state)
+
+        assert context._open_trade is not None
+        assert context._open_trade.symbol == "BTC/USDT"
+        assert context._open_trade.entry_time == datetime(2024, 6, 1, 14, 30, tzinfo=UTC)
+        assert context._open_trade.entry_price == Decimal("45000")
+        assert context._open_trade.fees == Decimal("4.5")
+        assert context._partial_exit_pnl == Decimal("75.25")
+
+    def test_restore_short_position_creates_sell_open_trade(self, context: BacktestContext) -> None:
+        """Test that a short (negative amount) position creates a SELL open trade."""
+        state = {
+            "positions": {
+                "BTC/USDT": {
+                    "amount": "-0.5",
+                    "avg_entry_price": "45000",
+                },
+            }
+        }
+        context.restore_state(state)
+
+        assert context._open_trade is not None
+        assert context._open_trade.side == OrderSide.SELL
+        assert context._open_trade.amount == Decimal("0.5")
+
+    def test_restore_no_positions_clears_open_trade(self, context: BacktestContext) -> None:
+        """Test that empty positions dict clears _open_trade."""
+        context.restore_state({"positions": {}})
+
+        assert context._open_trade is None
+        assert context._partial_exit_pnl == Decimal("0")
+
+    def test_restore_partial_state(self, context: BacktestContext) -> None:
+        """Test that only provided fields are restored."""
+        original_cash = context.cash
+        context.restore_state({"total_fees": "50"})
+
+        # Cash unchanged, fees restored
+        assert context.cash == original_cash
+        assert context._total_fees == Decimal("50")
+
+    def test_restore_empty_state(self, context: BacktestContext) -> None:
+        """Test that empty state dict is a no-op."""
+        original_cash = context.cash
+        context.restore_state({})
+        assert context.cash == original_cash
+
+    def test_restore_full_state(self, context: BacktestContext) -> None:
+        """Test complete state restoration combining all fields."""
+        state = {
+            "cash": "8000",
+            "total_fees": "200",
+            "positions": {
+                "BTC/USDT": {
+                    "amount": "0.1",
+                    "avg_entry_price": "40000",
+                    "current_price": "42000",
+                },
+            },
+            "trades": [
+                {
+                    "symbol": "ETH/USDT",
+                    "side": "buy",
+                    "entry_time": "2024-01-01T10:00:00+00:00",
+                    "entry_price": "2000",
+                    "exit_time": "2024-01-01T11:00:00+00:00",
+                    "exit_price": "2100",
+                    "amount": "1.0",
+                    "pnl": "100",
+                    "pnl_pct": "5.0",
+                    "fees": "4.1",
+                },
+            ],
+        }
+        context.restore_state(state)
+
+        assert context.cash == Decimal("8000")
+        assert context._total_fees == Decimal("200")
+        assert "BTC/USDT" in context._positions
+        assert len(context.trades) == 1
+        assert context._open_trade is not None
+        assert context._partial_exit_pnl == Decimal("0")
+
+
+class TestBuildResultSnapshot:
+    """Tests for build_result_snapshot() — result persistence support."""
+
+    def test_empty_context(self, context: BacktestContext) -> None:
+        """Test snapshot of fresh context."""
+        result = context.build_result_snapshot()
+
+        assert result["cash"] == str(context.cash)
+        assert result["total_fees"] == "0"
+        assert result["unrealized_pnl"] == "0"
+        assert result["realized_pnl"] == "0"
+        assert result["positions"] == {}
+        assert result["trades"] == []
+        assert result["open_trade"] is None
+        assert result["trades_count"] == 0
+        assert result["logs"] == []
+
+    def test_with_position(self, context: BacktestContext, sample_bar: Bar) -> None:
+        """Test snapshot includes open positions with unrealized PnL."""
+        from squant.engine.backtest.types import Position
+
+        context._positions["BTC/USDT"] = Position(
+            symbol="BTC/USDT",
+            amount=Decimal("0.5"),
+            avg_entry_price=Decimal("40000"),
+        )
+        context._last_prices["BTC/USDT"] = Decimal("42000")
+
+        result = context.build_result_snapshot()
+
+        assert "BTC/USDT" in result["positions"]
+        pos = result["positions"]["BTC/USDT"]
+        assert pos["amount"] == "0.5"
+        assert pos["avg_entry_price"] == "40000"
+        assert pos["current_price"] == "42000"
+        # unrealized = (42000 - 40000) * 0.5 = 1000
+        assert Decimal(pos["unrealized_pnl"]) == Decimal("1000")
+        # Top-level total matches
+        assert Decimal(result["unrealized_pnl"]) == Decimal("1000")
+
+    def test_with_trades(self, context: BacktestContext) -> None:
+        """Test snapshot includes closed trades."""
+        from squant.engine.backtest.types import TradeRecord
+
+        context._trades.append(
+            TradeRecord(
+                symbol="BTC/USDT",
+                side=OrderSide.BUY,
+                entry_time=datetime(2024, 1, 1, 10, 0, 0, tzinfo=UTC),
+                entry_price=Decimal("40000"),
+                exit_time=datetime(2024, 1, 1, 11, 0, 0, tzinfo=UTC),
+                exit_price=Decimal("41000"),
+                amount=Decimal("0.1"),
+                pnl=Decimal("100"),
+                pnl_pct=Decimal("2.5"),
+                fees=Decimal("8"),
+            )
+        )
+
+        result = context.build_result_snapshot()
+
+        assert result["trades_count"] == 1
+        assert len(result["trades"]) == 1
+        trade = result["trades"][0]
+        assert trade["symbol"] == "BTC/USDT"
+        assert trade["entry_price"] == "40000"
+        assert trade["exit_price"] == "41000"
+        assert trade["pnl"] == "100"
+        # Top-level realized PnL
+        assert Decimal(result["realized_pnl"]) == Decimal("100")
+
+    def test_roundtrip_with_restore(self, context: BacktestContext) -> None:
+        """Test that build_result_snapshot output can be fed to restore_state."""
+        from squant.engine.backtest.types import Position, TradeRecord
+
+        # Set up state
+        context._cash = Decimal("8000")
+        context._total_fees = Decimal("50")
+        context._positions["BTC/USDT"] = Position(
+            symbol="BTC/USDT",
+            amount=Decimal("0.2"),
+            avg_entry_price=Decimal("45000"),
+        )
+        context._last_prices["BTC/USDT"] = Decimal("46000")
+        context._open_trade = TradeRecord(
+            symbol="BTC/USDT",
+            side=OrderSide.BUY,
+            entry_time=datetime(2024, 6, 1, 10, 0, 0, tzinfo=UTC),
+            entry_price=Decimal("45000"),
+            amount=Decimal("0.2"),
+            fees=Decimal("9.0"),
+        )
+        context._partial_exit_pnl = Decimal("150.5")  # from a prior partial exit
+        context._trades.append(
+            TradeRecord(
+                symbol="ETH/USDT",
+                side=OrderSide.BUY,
+                entry_time=datetime(2024, 6, 1, 12, 0, 0, tzinfo=UTC),
+                entry_price=Decimal("3000"),
+                exit_time=datetime(2024, 6, 1, 13, 0, 0, tzinfo=UTC),
+                exit_price=Decimal("3100"),
+                amount=Decimal("1"),
+                pnl=Decimal("100"),
+                pnl_pct=Decimal("3.33"),
+                fees=Decimal("6.2"),
+            )
+        )
+        context.log("Test trade executed")
+        context.log("Position opened")
+
+        # Snapshot → restore into a fresh context
+        snapshot = context.build_result_snapshot()
+
+        # Verify top-level aggregates in snapshot
+        assert Decimal(snapshot["realized_pnl"]) == Decimal("100")
+        assert Decimal(snapshot["unrealized_pnl"]) == Decimal("200")  # (46000-45000)*0.2
+        assert len(snapshot["logs"]) == 2
+
+        new_ctx = BacktestContext(
+            initial_capital=Decimal("100000"),
+            commission_rate=Decimal("0.001"),
+        )
+        new_ctx.restore_state(snapshot)
+
+        assert new_ctx.cash == Decimal("8000")
+        assert new_ctx._total_fees == Decimal("50")
+        assert "BTC/USDT" in new_ctx._positions
+        assert new_ctx._positions["BTC/USDT"].amount == Decimal("0.2")
+        assert new_ctx._last_prices["BTC/USDT"] == Decimal("46000")
+        assert len(new_ctx.trades) == 1
+        assert new_ctx.trades[0].pnl == Decimal("100")
+        # Open trade restored with original entry_time and partial exit PnL
+        assert new_ctx._open_trade is not None
+        assert new_ctx._open_trade.entry_time == datetime(2024, 6, 1, 10, 0, 0, tzinfo=UTC)
+        assert new_ctx._open_trade.fees == Decimal("9.0")
+        assert new_ctx._partial_exit_pnl == Decimal("150.5")
+        # Logs restored
+        assert len(new_ctx.logs) == 2
+        assert "Test trade executed" in new_ctx.logs[0]
+
+
+class TestWeightedExitPrice:
+    """P1-2: exit_price should be weighted average across partial exits."""
+
+    def test_single_exit_uses_fill_price(self, context: BacktestContext, sample_bar: Bar) -> None:
+        """Single exit sets exit_price to the fill price directly."""
+        context._set_current_bar(sample_bar)
+        context._add_bar_to_history(sample_bar)
+
+        # Buy 1 BTC at $50,000
+        order_id = context.buy("BTC/USDT", Decimal("1"))
+        context._process_fill(
+            Fill(
+                order_id=order_id,
+                symbol="BTC/USDT",
+                side=OrderSide.BUY,
+                price=Decimal("50000"),
+                amount=Decimal("1"),
+                fee=Decimal("50"),
+                timestamp=sample_bar.time,
+            )
+        )
+        context._move_completed_orders()
+
+        # Sell 1 BTC at $52,000
+        sell_id = context.sell("BTC/USDT", Decimal("1"))
+        context._process_fill(
+            Fill(
+                order_id=sell_id,
+                symbol="BTC/USDT",
+                side=OrderSide.SELL,
+                price=Decimal("52000"),
+                amount=Decimal("1"),
+                fee=Decimal("52"),
+                timestamp=sample_bar.time,
+            )
+        )
+
+        trade = context.trades[-1]
+        assert trade.exit_price == Decimal("52000")
+
+    def test_two_partial_exits_weighted_average(
+        self, context: BacktestContext, sample_bar: Bar
+    ) -> None:
+        """Two partial exits produce a weighted average exit_price."""
+        context._set_current_bar(sample_bar)
+        context._add_bar_to_history(sample_bar)
+
+        # Buy 1 BTC at $50,000
+        order_id = context.buy("BTC/USDT", Decimal("1"))
+        context._process_fill(
+            Fill(
+                order_id=order_id,
+                symbol="BTC/USDT",
+                side=OrderSide.BUY,
+                price=Decimal("50000"),
+                amount=Decimal("1"),
+                fee=Decimal("50"),
+                timestamp=sample_bar.time,
+            )
+        )
+        context._move_completed_orders()
+
+        # Sell 0.6 BTC at $52,000
+        sell1_id = context.sell("BTC/USDT", Decimal("0.6"))
+        context._process_fill(
+            Fill(
+                order_id=sell1_id,
+                symbol="BTC/USDT",
+                side=OrderSide.SELL,
+                price=Decimal("52000"),
+                amount=Decimal("0.6"),
+                fee=Decimal("31.2"),
+                timestamp=sample_bar.time,
+            )
+        )
+        context._move_completed_orders()
+
+        # Sell remaining 0.4 BTC at $51,000
+        sell2_id = context.sell("BTC/USDT", Decimal("0.4"))
+        context._process_fill(
+            Fill(
+                order_id=sell2_id,
+                symbol="BTC/USDT",
+                side=OrderSide.SELL,
+                price=Decimal("51000"),
+                amount=Decimal("0.4"),
+                fee=Decimal("20.4"),
+                timestamp=sample_bar.time,
+            )
+        )
+
+        trade = context.trades[-1]
+        # Weighted avg: (52000 * 0.6 + 51000 * 0.4) / 1.0 = (31200 + 20400) / 1.0 = 51600
+        assert trade.exit_price == Decimal("51600")
+
+    def test_three_partial_exits_weighted_average(
+        self, context: BacktestContext, sample_bar: Bar
+    ) -> None:
+        """Three partial exits produce correct weighted average exit_price."""
+        context._set_current_bar(sample_bar)
+        context._add_bar_to_history(sample_bar)
+
+        # Buy 1 BTC at $50,000
+        order_id = context.buy("BTC/USDT", Decimal("1"))
+        context._process_fill(
+            Fill(
+                order_id=order_id,
+                symbol="BTC/USDT",
+                side=OrderSide.BUY,
+                price=Decimal("50000"),
+                amount=Decimal("1"),
+                fee=Decimal("50"),
+                timestamp=sample_bar.time,
+            )
+        )
+        context._move_completed_orders()
+
+        # Sell 0.3 at $53,000
+        s1 = context.sell("BTC/USDT", Decimal("0.3"))
+        context._process_fill(
+            Fill(
+                order_id=s1,
+                symbol="BTC/USDT",
+                side=OrderSide.SELL,
+                price=Decimal("53000"),
+                amount=Decimal("0.3"),
+                fee=Decimal("15.9"),
+                timestamp=sample_bar.time,
+            )
+        )
+        context._move_completed_orders()
+
+        # Sell 0.3 at $52,000
+        s2 = context.sell("BTC/USDT", Decimal("0.3"))
+        context._process_fill(
+            Fill(
+                order_id=s2,
+                symbol="BTC/USDT",
+                side=OrderSide.SELL,
+                price=Decimal("52000"),
+                amount=Decimal("0.3"),
+                fee=Decimal("15.6"),
+                timestamp=sample_bar.time,
+            )
+        )
+        context._move_completed_orders()
+
+        # Sell final 0.4 at $51,000
+        s3 = context.sell("BTC/USDT", Decimal("0.4"))
+        context._process_fill(
+            Fill(
+                order_id=s3,
+                symbol="BTC/USDT",
+                side=OrderSide.SELL,
+                price=Decimal("51000"),
+                amount=Decimal("0.4"),
+                fee=Decimal("20.4"),
+                timestamp=sample_bar.time,
+            )
+        )
+
+        trade = context.trades[-1]
+        # (53000*0.3 + 52000*0.3 + 51000*0.4) / 1.0 = (15900 + 15600 + 20400) / 1.0 = 51900
+        assert trade.exit_price == Decimal("51900")
+
+
+class TestFillsPersistRestore:
+    """P2-2: Fills should be persisted and restored across session restarts."""
+
+    def test_fills_included_in_snapshot(self, context: BacktestContext, sample_bar: Bar) -> None:
+        """build_result_snapshot includes fills data."""
+        context._set_current_bar(sample_bar)
+        context._add_bar_to_history(sample_bar)
+
+        order_id = context.buy("BTC/USDT", Decimal("0.1"))
+        context._process_fill(
+            Fill(
+                order_id=order_id,
+                symbol="BTC/USDT",
+                side=OrderSide.BUY,
+                price=Decimal("50000"),
+                amount=Decimal("0.1"),
+                fee=Decimal("5"),
+                timestamp=sample_bar.time,
+            )
+        )
+
+        snapshot = context.build_result_snapshot()
+        assert "fills" in snapshot
+        assert len(snapshot["fills"]) == 1
+        assert snapshot["fills"][0]["symbol"] == "BTC/USDT"
+        assert snapshot["fills"][0]["price"] == "50000"
+
+    def test_fills_restored_from_state(self) -> None:
+        """restore_state restores fills from saved state."""
+        ctx = BacktestContext(initial_capital=Decimal("100000"))
+        state = {
+            "fills": [
+                {
+                    "order_id": "abc-123",
+                    "symbol": "BTC/USDT",
+                    "side": "buy",
+                    "price": "50000",
+                    "amount": "0.1",
+                    "fee": "5",
+                    "timestamp": "2024-01-01T12:00:00+00:00",
+                },
+                {
+                    "order_id": "def-456",
+                    "symbol": "BTC/USDT",
+                    "side": "sell",
+                    "price": "52000",
+                    "amount": "0.1",
+                    "fee": "5.2",
+                    "timestamp": "2024-01-01T13:00:00+00:00",
+                },
+            ]
+        }
+        ctx.restore_state(state)
+
+        assert len(ctx.fills) == 2
+        assert ctx.fills[0].order_id == "abc-123"
+        assert ctx.fills[0].price == Decimal("50000")
+        assert ctx.fills[1].side == OrderSide.SELL
+        assert ctx.fills[1].amount == Decimal("0.1")
+
+    def test_fills_roundtrip(self, context: BacktestContext, sample_bar: Bar) -> None:
+        """Fills survive a snapshot → restore roundtrip."""
+        context._set_current_bar(sample_bar)
+        context._add_bar_to_history(sample_bar)
+
+        order_id = context.buy("BTC/USDT", Decimal("0.5"))
+        context._process_fill(
+            Fill(
+                order_id=order_id,
+                symbol="BTC/USDT",
+                side=OrderSide.BUY,
+                price=Decimal("45000"),
+                amount=Decimal("0.5"),
+                fee=Decimal("22.5"),
+                timestamp=sample_bar.time,
+            )
+        )
+
+        snapshot = context.build_result_snapshot()
+
+        new_ctx = BacktestContext(initial_capital=Decimal("100000"))
+        new_ctx.restore_state(snapshot)
+
+        assert len(new_ctx.fills) == 1
+        assert new_ctx.fills[0].price == Decimal("45000")
+        assert new_ctx.fills[0].amount == Decimal("0.5")
+
+
+class TestExitFillTrackingRestore:
+    """exit_fill_notional/amount should be persisted and restored."""
+
+    def test_exit_fill_tracking_roundtrip(self, context: BacktestContext, sample_bar: Bar) -> None:
+        """Partial exit tracking survives snapshot → restore."""
+        context._set_current_bar(sample_bar)
+        context._add_bar_to_history(sample_bar)
+
+        # Buy 1 BTC
+        order_id = context.buy("BTC/USDT", Decimal("1"))
+        context._process_fill(
+            Fill(
+                order_id=order_id,
+                symbol="BTC/USDT",
+                side=OrderSide.BUY,
+                price=Decimal("50000"),
+                amount=Decimal("1"),
+                fee=Decimal("50"),
+                timestamp=sample_bar.time,
+            )
+        )
+        context._move_completed_orders()
+
+        # Partial sell 0.5 BTC at $52,000
+        sell_id = context.sell("BTC/USDT", Decimal("0.5"))
+        context._process_fill(
+            Fill(
+                order_id=sell_id,
+                symbol="BTC/USDT",
+                side=OrderSide.SELL,
+                price=Decimal("52000"),
+                amount=Decimal("0.5"),
+                fee=Decimal("26"),
+                timestamp=sample_bar.time,
+            )
+        )
+        context._move_completed_orders()
+
+        # Snapshot while position is open with partial exits
+        snapshot = context.build_result_snapshot()
+        assert snapshot["open_trade"]["exit_fill_notional"] == str(
+            Decimal("52000") * Decimal("0.5")
+        )
+        assert snapshot["open_trade"]["exit_fill_amount"] == "0.5"
+
+        # Restore and verify
+        new_ctx = BacktestContext(initial_capital=Decimal("100000"))
+        new_ctx.restore_state(snapshot)
+        assert new_ctx._exit_fill_notional == Decimal("52000") * Decimal("0.5")
+        assert new_ctx._exit_fill_amount == Decimal("0.5")
+
+
+class TestStopOrderContextAPI:
+    """Tests for stop/stop-limit order placement via context API."""
+
+    def test_buy_stop_order_creates_correct_type(self, context: BacktestContext) -> None:
+        """buy() with stop_price creates a STOP order."""
+        bar = Bar(
+            time=datetime(2024, 1, 1, tzinfo=UTC),
+            symbol="BTC/USDT",
+            open=Decimal("42000"),
+            high=Decimal("43000"),
+            low=Decimal("41000"),
+            close=Decimal("42500"),
+            volume=Decimal("100"),
+        )
+        context._set_current_bar(bar)
+
+        order_id = context.buy("BTC/USDT", Decimal("0.1"), stop_price=Decimal("43000"))
+
+        orders = context.pending_orders
+        assert len(orders) == 1
+        order = orders[0]
+        assert order.id == order_id
+        assert order.type == OrderType.STOP
+        assert order.stop_price == Decimal("43000")
+        assert order.price is None
+        assert order.triggered is False
+
+    def test_buy_stop_limit_order_creates_correct_type(self, context: BacktestContext) -> None:
+        """buy() with stop_price and price creates a STOP_LIMIT order."""
+        bar = Bar(
+            time=datetime(2024, 1, 1, tzinfo=UTC),
+            symbol="BTC/USDT",
+            open=Decimal("42000"),
+            high=Decimal("43000"),
+            low=Decimal("41000"),
+            close=Decimal("42500"),
+            volume=Decimal("100"),
+        )
+        context._set_current_bar(bar)
+
+        order_id = context.buy(
+            "BTC/USDT", Decimal("0.1"),
+            price=Decimal("43500"), stop_price=Decimal("43000"),
+        )
+
+        orders = context.pending_orders
+        assert len(orders) == 1
+        order = orders[0]
+        assert order.id == order_id
+        assert order.type == OrderType.STOP_LIMIT
+        assert order.stop_price == Decimal("43000")
+        assert order.price == Decimal("43500")
+
+    def test_sell_stop_order_creates_correct_type(self, context: BacktestContext) -> None:
+        """sell() with stop_price creates a STOP order."""
+        bar = Bar(
+            time=datetime(2024, 1, 1, tzinfo=UTC),
+            symbol="BTC/USDT",
+            open=Decimal("42000"),
+            high=Decimal("43000"),
+            low=Decimal("41000"),
+            close=Decimal("42500"),
+            volume=Decimal("100"),
+        )
+        context._set_current_bar(bar)
+
+        # Give a position first
+        from squant.engine.backtest.types import Fill
+        from squant.engine.backtest.types import OrderSide as Side
+
+        context._process_fill(Fill(
+            order_id="fake",
+            symbol="BTC/USDT",
+            side=Side.BUY,
+            price=Decimal("42000"),
+            amount=Decimal("1"),
+            fee=Decimal("42"),
+            timestamp=datetime(2024, 1, 1, tzinfo=UTC),
+        ))
+
+        order_id = context.sell("BTC/USDT", Decimal("0.5"), stop_price=Decimal("41000"))
+
+        orders = context.pending_orders
+        assert len(orders) == 1
+        order = orders[0]
+        assert order.id == order_id
+        assert order.type == OrderType.STOP
+        assert order.stop_price == Decimal("41000")
+
+    def test_stop_buy_cash_reservation(self, context: BacktestContext) -> None:
+        """STOP buy reserves cash based on stop_price + slippage."""
+        bar = Bar(
+            time=datetime(2024, 1, 1, tzinfo=UTC),
+            symbol="BTC/USDT",
+            open=Decimal("42000"),
+            high=Decimal("43000"),
+            low=Decimal("41000"),
+            close=Decimal("42500"),
+            volume=Decimal("100"),
+        )
+        context._set_current_bar(bar)
+
+        # Place a stop buy that would use most of the capital
+        # Capital = 100000, stop_price = 43000, amount = 2
+        # Cost ≈ 43000 * 2 * 1.001 (commission) = 86086
+        context.buy("BTC/USDT", Decimal("2"), stop_price=Decimal("43000"))
+
+        # Second stop buy should fail due to insufficient available cash
+        with pytest.raises(ValueError, match="Insufficient cash"):
+            context.buy("BTC/USDT", Decimal("1"), stop_price=Decimal("43000"))
+
+    def test_stop_order_gets_bars_remaining(self, context: BacktestContext) -> None:
+        """STOP orders support valid_for_bars expiry."""
+        bar = Bar(
+            time=datetime(2024, 1, 1, tzinfo=UTC),
+            symbol="BTC/USDT",
+            open=Decimal("42000"),
+            high=Decimal("43000"),
+            low=Decimal("41000"),
+            close=Decimal("42500"),
+            volume=Decimal("100"),
+        )
+        context._set_current_bar(bar)
+
+        context.buy("BTC/USDT", Decimal("0.1"), stop_price=Decimal("43000"), valid_for_bars=5)
+
+        orders = context.pending_orders
+        assert orders[0].bars_remaining == 5
+
+
+class TestConvenienceTradingMethods:
+    """Tests for close_position, target_position, target_percent."""
+
+    def _setup_position(self, context: BacktestContext, symbol: str, amount: Decimal) -> None:
+        """Helper: simulate owning a position by processing a fill."""
+        bar = Bar(
+            time=datetime(2024, 1, 1, tzinfo=UTC),
+            symbol=symbol,
+            open=Decimal("50000"),
+            high=Decimal("51000"),
+            low=Decimal("49000"),
+            close=Decimal("50000"),
+            volume=Decimal("100"),
+        )
+        context._set_current_bar(bar)
+        context._add_bar_to_history(bar)
+
+        fill = Fill(
+            order_id="setup-fill",
+            symbol=symbol,
+            side=OrderSide.BUY,
+            price=Decimal("50000"),
+            amount=amount,
+            fee=amount * Decimal("50000") * Decimal("0.001"),
+            timestamp=bar.time,
+        )
+        context._process_fill(fill)
+
+    # --- close_position ---
+
+    def test_close_position_sells_entire_position(self, context: BacktestContext) -> None:
+        """close_position places a market sell for the full position amount."""
+        self._setup_position(context, "BTC/USDT", Decimal("0.5"))
+        order_id = context.close_position("BTC/USDT")
+
+        assert order_id is not None
+        assert len(context.pending_orders) == 1
+        order = context.pending_orders[0]
+        assert order.side == OrderSide.SELL
+        assert order.amount == Decimal("0.5")
+        assert order.type == OrderType.MARKET
+
+    def test_close_position_no_position_returns_none(self, context: BacktestContext) -> None:
+        """close_position returns None when there is no position."""
+        bar = Bar(
+            time=datetime(2024, 1, 1, tzinfo=UTC),
+            symbol="BTC/USDT",
+            open=Decimal("50000"),
+            high=Decimal("51000"),
+            low=Decimal("49000"),
+            close=Decimal("50000"),
+            volume=Decimal("100"),
+        )
+        context._set_current_bar(bar)
+        result = context.close_position("BTC/USDT")
+        assert result is None
+
+    def test_close_position_cancels_pending_sells(self, context: BacktestContext) -> None:
+        """close_position cancels existing pending sell orders before placing new sell."""
+        self._setup_position(context, "BTC/USDT", Decimal("1.0"))
+        # Place partial sell order first
+        context.sell("BTC/USDT", Decimal("0.3"), price=Decimal("55000"))
+        assert len(context.pending_orders) == 1
+
+        # close_position should cancel the pending sell and sell everything
+        order_id = context.close_position("BTC/USDT")
+        assert order_id is not None
+        # Only the new market sell should be pending
+        pending = context.pending_orders
+        assert len(pending) == 1
+        assert pending[0].amount == Decimal("1.0")
+        assert pending[0].type == OrderType.MARKET
+
+    # --- target_position ---
+
+    def test_target_position_buy_to_increase(self, context: BacktestContext) -> None:
+        """target_position buys the difference when target > current."""
+        self._setup_position(context, "BTC/USDT", Decimal("0.3"))
+        order_id = context.target_position("BTC/USDT", Decimal("0.5"))
+
+        assert order_id is not None
+        pending = context.pending_orders
+        assert len(pending) == 1
+        assert pending[0].side == OrderSide.BUY
+        assert pending[0].amount == Decimal("0.2")
+
+    def test_target_position_sell_to_decrease(self, context: BacktestContext) -> None:
+        """target_position sells the difference when target < current."""
+        self._setup_position(context, "BTC/USDT", Decimal("0.5"))
+        order_id = context.target_position("BTC/USDT", Decimal("0.2"))
+
+        assert order_id is not None
+        pending = context.pending_orders
+        assert len(pending) == 1
+        assert pending[0].side == OrderSide.SELL
+        assert pending[0].amount == Decimal("0.3")
+
+    def test_target_position_no_change_returns_none(self, context: BacktestContext) -> None:
+        """target_position returns None when already at target."""
+        self._setup_position(context, "BTC/USDT", Decimal("0.5"))
+        result = context.target_position("BTC/USDT", Decimal("0.5"))
+        assert result is None
+        assert len(context.pending_orders) == 0
+
+    def test_target_position_zero_closes(self, context: BacktestContext) -> None:
+        """target_position(symbol, 0) sells the entire position."""
+        self._setup_position(context, "BTC/USDT", Decimal("0.5"))
+        order_id = context.target_position("BTC/USDT", Decimal("0"))
+
+        assert order_id is not None
+        pending = context.pending_orders
+        assert len(pending) == 1
+        assert pending[0].side == OrderSide.SELL
+        assert pending[0].amount == Decimal("0.5")
+
+    def test_target_position_negative_raises(self, context: BacktestContext) -> None:
+        """target_position raises ValueError for negative target."""
+        bar = Bar(
+            time=datetime(2024, 1, 1, tzinfo=UTC),
+            symbol="BTC/USDT",
+            open=Decimal("50000"),
+            high=Decimal("51000"),
+            low=Decimal("49000"),
+            close=Decimal("50000"),
+            volume=Decimal("100"),
+        )
+        context._set_current_bar(bar)
+        with pytest.raises(ValueError, match="target_amount must be >= 0"):
+            context.target_position("BTC/USDT", Decimal("-0.1"))
+
+    def test_target_position_from_zero_buys(self, context: BacktestContext) -> None:
+        """target_position opens a new position when none exists."""
+        bar = Bar(
+            time=datetime(2024, 1, 1, tzinfo=UTC),
+            symbol="BTC/USDT",
+            open=Decimal("50000"),
+            high=Decimal("51000"),
+            low=Decimal("49000"),
+            close=Decimal("50000"),
+            volume=Decimal("100"),
+        )
+        context._set_current_bar(bar)
+        order_id = context.target_position("BTC/USDT", Decimal("0.5"))
+
+        assert order_id is not None
+        pending = context.pending_orders
+        assert len(pending) == 1
+        assert pending[0].side == OrderSide.BUY
+        assert pending[0].amount == Decimal("0.5")
+
+    def test_target_position_cancels_conflicting_orders(self, context: BacktestContext) -> None:
+        """target_position cancels pending orders on the same side before adjusting."""
+        self._setup_position(context, "BTC/USDT", Decimal("1.0"))
+        # Place a pending sell
+        context.sell("BTC/USDT", Decimal("0.3"), price=Decimal("55000"))
+        assert len(context.pending_orders) == 1
+
+        # target_position to sell more should cancel the pending sell first
+        order_id = context.target_position("BTC/USDT", Decimal("0.5"))
+        assert order_id is not None
+        pending = context.pending_orders
+        assert len(pending) == 1
+        assert pending[0].amount == Decimal("0.5")
+        assert pending[0].side == OrderSide.SELL
+
+    # --- target_percent ---
+
+    def test_target_percent_buys_correct_amount(self, context: BacktestContext) -> None:
+        """target_percent calculates and buys to reach 50% equity allocation."""
+        bar = Bar(
+            time=datetime(2024, 1, 1, tzinfo=UTC),
+            symbol="BTC/USDT",
+            open=Decimal("50000"),
+            high=Decimal("51000"),
+            low=Decimal("49000"),
+            close=Decimal("50000"),
+            volume=Decimal("100"),
+        )
+        context._set_current_bar(bar)
+        context._add_bar_to_history(bar)
+
+        # equity=100000, 50% target = 50000 worth = 1.0 BTC at 50000
+        order_id = context.target_percent("BTC/USDT", Decimal("0.5"))
+        assert order_id is not None
+        pending = context.pending_orders
+        assert len(pending) == 1
+        assert pending[0].side == OrderSide.BUY
+        assert pending[0].amount == Decimal("1")
+
+    def test_target_percent_sells_excess(self, context: BacktestContext) -> None:
+        """target_percent sells when current position exceeds target allocation."""
+        self._setup_position(context, "BTC/USDT", Decimal("1.0"))
+        # Position value = 1.0 * 50000 = 50000, equity ≈ 99950 + 50000 = ~99950 cash + 50000 pos
+        # target 10% of equity → need to sell down
+        order_id = context.target_percent("BTC/USDT", Decimal("0.1"))
+        assert order_id is not None
+        pending = context.pending_orders
+        assert len(pending) == 1
+        assert pending[0].side == OrderSide.SELL
+
+    def test_target_percent_out_of_range_raises(self, context: BacktestContext) -> None:
+        """target_percent raises for percent outside [0, 1]."""
+        bar = Bar(
+            time=datetime(2024, 1, 1, tzinfo=UTC),
+            symbol="BTC/USDT",
+            open=Decimal("50000"),
+            high=Decimal("51000"),
+            low=Decimal("49000"),
+            close=Decimal("50000"),
+            volume=Decimal("100"),
+        )
+        context._set_current_bar(bar)
+
+        with pytest.raises(ValueError, match="percent must be between 0 and 1"):
+            context.target_percent("BTC/USDT", Decimal("1.5"))
+
+        with pytest.raises(ValueError, match="percent must be between 0 and 1"):
+            context.target_percent("BTC/USDT", Decimal("-0.1"))
+
+    def test_target_percent_no_bar_raises(self, context: BacktestContext) -> None:
+        """target_percent raises when no current bar is set."""
+        with pytest.raises(ValueError, match="No current bar"):
+            context.target_percent("BTC/USDT", Decimal("0.5"))
+
+
+class TestAccountMetrics:
+    """Tests for public account metrics properties (P1-4)."""
+
+    def test_unrealized_pnl_no_position(self, context: BacktestContext) -> None:
+        """unrealized_pnl returns 0 with no position."""
+        assert context.unrealized_pnl == Decimal("0")
+
+    def test_unrealized_pnl_with_profit(
+        self, context: BacktestContext, sample_bar: Bar
+    ) -> None:
+        """unrealized_pnl reflects paper profit."""
+        context._set_current_bar(sample_bar)
+        # Simulate a buy fill
+        fill = Fill(
+            order_id="test",
+            symbol="BTC/USDT",
+            side=OrderSide.BUY,
+            price=Decimal("50000"),
+            amount=Decimal("1"),
+            fee=Decimal("50"),
+            timestamp=sample_bar.time,
+        )
+        context._process_fill(fill)
+        # Set a higher price
+        higher_bar = Bar(
+            time=sample_bar.time,
+            symbol="BTC/USDT",
+            open=Decimal("51000"),
+            high=Decimal("52000"),
+            low=Decimal("50500"),
+            close=Decimal("51000"),
+            volume=Decimal("100"),
+        )
+        context._set_current_bar(higher_bar)
+        # Position bought at 50000, now at 51000 → +1000
+        assert context.unrealized_pnl == Decimal("1000")
+
+    def test_realized_pnl_no_trades(self, context: BacktestContext) -> None:
+        """realized_pnl returns 0 with no completed trades."""
+        assert context.realized_pnl == Decimal("0")
+
+    def test_realized_pnl_after_round_trip(
+        self, context: BacktestContext, sample_bar: Bar
+    ) -> None:
+        """realized_pnl reflects closed trade PnL."""
+        context._set_current_bar(sample_bar)
+        # Buy fill
+        buy_fill = Fill(
+            order_id="buy1",
+            symbol="BTC/USDT",
+            side=OrderSide.BUY,
+            price=Decimal("50000"),
+            amount=Decimal("1"),
+            fee=Decimal("50"),
+            timestamp=sample_bar.time,
+        )
+        context._process_fill(buy_fill)
+        # Sell fill at higher price
+        sell_fill = Fill(
+            order_id="sell1",
+            symbol="BTC/USDT",
+            side=OrderSide.SELL,
+            price=Decimal("51000"),
+            amount=Decimal("1"),
+            fee=Decimal("51"),
+            timestamp=sample_bar.time,
+        )
+        context._process_fill(sell_fill)
+        # 1 completed trade with PnL
+        assert len(context.trades) == 1
+        assert context.realized_pnl == context.trades[0].pnl
+
+    def test_return_pct_initial(self, context: BacktestContext) -> None:
+        """return_pct is 0 at start."""
+        assert context.return_pct == Decimal("0")
+
+    def test_return_pct_after_profit(
+        self, context: BacktestContext, sample_bar: Bar
+    ) -> None:
+        """return_pct reflects equity change."""
+        context._set_current_bar(sample_bar)
+        # Buy 1 BTC at 50000
+        fill = Fill(
+            order_id="test",
+            symbol="BTC/USDT",
+            side=OrderSide.BUY,
+            price=Decimal("50000"),
+            amount=Decimal("1"),
+            fee=Decimal("50"),
+            timestamp=sample_bar.time,
+        )
+        context._process_fill(fill)
+        # Initial capital is 100000, after buy: cash=49950, position=50000, equity=99950
+        # return = (99950-100000)/100000 = -0.0005
+        expected = (context.equity - Decimal("100000")) / Decimal("100000")
+        assert context.return_pct == expected
+
+    def test_max_drawdown_no_snapshots(self, context: BacktestContext) -> None:
+        """max_drawdown returns 0 with no equity curve."""
+        assert context.max_drawdown == Decimal("0")
+
+    def test_max_drawdown_with_decline(self, context: BacktestContext) -> None:
+        """max_drawdown reflects peak-to-trough decline."""
+        from squant.engine.backtest.types import EquitySnapshot
+
+        # Simulate equity curve: 100 → 110 → 90 → 100
+        for i, eq in enumerate([100, 110, 90, 100]):
+            context._equity_curve.append(
+                EquitySnapshot(
+                    time=datetime(2024, 1, 1, i, tzinfo=UTC),
+                    equity=Decimal(str(eq)),
+                    cash=Decimal(str(eq)),
+                    position_value=Decimal("0"),
+                    unrealized_pnl=Decimal("0"),
+                )
+            )
+        # Peak=110, trough=90, drawdown = (110-90)/110 = 20/110
+        expected = Decimal("20") / Decimal("110")
+        assert abs(context.max_drawdown - expected) < Decimal("0.0001")

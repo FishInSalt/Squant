@@ -66,4 +66,29 @@ describe('PaperTrading', () => {
     await flushPromises()
     expect(wrapper.text()).toContain('暂无模拟交易会话')
   })
+
+  it('shows commission rate field but not slippage', async () => {
+    const wrapper = mountView(PaperTrading)
+    await flushPromises()
+    expect(wrapper.text()).toContain('手续费率 (%)')
+    expect(wrapper.text()).not.toContain('滑点 (%)')
+  })
+
+  it('shows optional risk config section', async () => {
+    const wrapper = mountView(PaperTrading)
+    await flushPromises()
+    expect(wrapper.text()).toContain('风控配置（可选）')
+  })
+
+  it('risk config fields hidden by default, visible when enabled', async () => {
+    const wrapper = mountView(PaperTrading)
+    await flushPromises()
+    // Fields hidden by default (v-show)
+    const body = wrapper.find('.risk-config-body')
+    expect(body.exists()).toBe(true)
+    expect((body.element as HTMLElement).style.display).toBe('none')
+    // Enable risk config via switch
+    await wrapper.find('.risk-config-section .el-switch').trigger('click')
+    expect((body.element as HTMLElement).style.display).not.toBe('none')
+  })
 })

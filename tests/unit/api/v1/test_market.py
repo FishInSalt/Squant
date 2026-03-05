@@ -464,6 +464,97 @@ class TestGetCandles:
         assert response.status_code == 502
 
 
+class TestGetCandlesEndTime:
+    """Tests for GET /api/v1/market/candles/{symbol} with end_time parameter."""
+
+    @pytest.mark.asyncio
+    async def test_get_candles_with_end_time(
+        self, client: AsyncClient, mock_candles: list[Candlestick], mock_exchange
+    ) -> None:
+        """Test that end_time causes start_time to be calculated and passed to exchange."""
+        mock_exchange.get_candlesticks = AsyncMock(return_value=mock_candles)
+
+        end_time = 1700000000000  # arbitrary ms timestamp
+        response = await client.get(
+            f"/api/v1/market/candles/BTC/USDT?timeframe=1h&limit=100&end_time={end_time}"
+        )
+
+        assert response.status_code == 200
+
+        # Verify start_time was calculated: end_time - limit * 3600000 (1h in ms)
+        mock_exchange.get_candlesticks.assert_called_once()
+        call_kwargs = mock_exchange.get_candlesticks.call_args[1]
+        expected_start = end_time - 100 * 3_600_000
+        assert call_kwargs["start_time"] == expected_start
+        assert call_kwargs["limit"] == 100
+
+    @pytest.mark.asyncio
+    async def test_get_candles_without_end_time_unchanged(
+        self, client: AsyncClient, mock_candles: list[Candlestick], mock_exchange
+    ) -> None:
+        """Test that without end_time, start_time is not passed (None)."""
+        mock_exchange.get_candlesticks = AsyncMock(return_value=mock_candles)
+
+        response = await client.get("/api/v1/market/candles/BTC/USDT?timeframe=1h&limit=100")
+
+        assert response.status_code == 200
+        call_kwargs = mock_exchange.get_candlesticks.call_args[1]
+        assert call_kwargs["start_time"] is None
+
+    @pytest.mark.asyncio
+    async def test_get_candles_end_time_filters_response(
+        self, client: AsyncClient, mock_exchange
+    ) -> None:
+        """Test that candles with timestamp >= end_time are filtered out."""
+        end_time = 1700000000000
+        candles_from_exchange = [
+            Candlestick(
+                timestamp=datetime.fromtimestamp(
+                    (end_time - 7_200_000) / 1000, tz=UTC
+                ),
+                open=42000.0, high=42100.0, low=41900.0, close=42050.0, volume=100.0,
+            ),
+            Candlestick(
+                timestamp=datetime.fromtimestamp(
+                    (end_time - 3_600_000) / 1000, tz=UTC
+                ),
+                open=42050.0, high=42150.0, low=42000.0, close=42100.0, volume=150.0,
+            ),
+            # This candle is at end_time — should be filtered out
+            Candlestick(
+                timestamp=datetime.fromtimestamp(end_time / 1000, tz=UTC),
+                open=42100.0, high=42200.0, low=42050.0, close=42150.0, volume=200.0,
+            ),
+        ]
+        mock_exchange.get_candlesticks = AsyncMock(return_value=candles_from_exchange)
+
+        response = await client.get(
+            f"/api/v1/market/candles/BTC/USDT?timeframe=1h&limit=100&end_time={end_time}"
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        # Only 2 candles should remain (the one at end_time is filtered)
+        assert len(data["data"]["candles"]) == 2
+
+    @pytest.mark.asyncio
+    async def test_get_candles_end_time_with_5m_timeframe(
+        self, client: AsyncClient, mock_candles: list[Candlestick], mock_exchange
+    ) -> None:
+        """Test start_time calculation with 5m timeframe."""
+        mock_exchange.get_candlesticks = AsyncMock(return_value=mock_candles)
+
+        end_time = 1700000000000
+        response = await client.get(
+            f"/api/v1/market/candles/BTC/USDT?timeframe=5m&limit=50&end_time={end_time}"
+        )
+
+        assert response.status_code == 200
+        call_kwargs = mock_exchange.get_candlesticks.call_args[1]
+        expected_start = end_time - 50 * 300_000  # 5m = 300000ms
+        assert call_kwargs["start_time"] == expected_start
+
+
 class TestCandleDataIntegrity:
     """Tests for candle data structure and values."""
 

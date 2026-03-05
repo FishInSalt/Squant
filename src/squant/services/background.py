@@ -131,10 +131,11 @@ class BackgroundTaskManager:
                         logger.error(f"Failed to persist live snapshots for run {run_id}: {e}")
 
     async def _health_check(self) -> None:
-        """Check and cleanup stale sessions.
+        """Check and cleanup stale sessions (paper + live).
 
-        Before cleaning up, persist any pending snapshots for unhealthy sessions
-        to avoid data loss (PP-C07).
+        Before cleaning up:
+        1. Persist any pending snapshots for unhealthy sessions (PP-C07)
+        2. Capture engine state snapshots for result preservation
         """
         from squant.config import get_settings
         from squant.engine.paper.manager import get_session_manager
@@ -142,34 +143,188 @@ class BackgroundTaskManager:
         from squant.services.paper_trading import PaperTradingService
 
         settings = get_settings()
-        session_manager = get_session_manager()
 
-        # Get unhealthy sessions first
+        # --- Paper trading health check ---
+        session_manager = get_session_manager()
         unhealthy_ids = await session_manager.check_health(settings.paper_session_timeout_seconds)
 
-        # Persist snapshots for unhealthy sessions before cleanup (PP-C07)
-        if unhealthy_ids:
+        # --- Live trading health check (LIVE-004) ---
+        await self._health_check_live(settings.paper_session_timeout_seconds)
+
+        if not unhealthy_ids:
+            return
+
+        # Capture engine result snapshots BEFORE cleanup so result data is preserved
+        engine_states: dict[str, dict] = {}
+        for run_id in unhealthy_ids:
+            engine = session_manager.get(run_id)
+            if engine:
+                try:
+                    engine_states[str(run_id)] = engine.build_result_for_persistence()
+                except Exception as e:
+                    logger.error(f"Failed to capture state for session {run_id}: {e}")
+
+        # Persist pending equity snapshots before cleanup
+        try:
+            async with get_session_context() as db_session:
+                service = PaperTradingService(db_session)
+                for run_id in unhealthy_ids:
+                    try:
+                        count = await service.persist_snapshots(run_id)
+                        if count > 0:
+                            logger.info(
+                                f"Persisted {count} snapshots for stale session {run_id} "
+                                f"before cleanup"
+                            )
+                    except Exception as e:
+                        logger.error(f"Failed to persist snapshots for stale session {run_id}: {e}")
+        except Exception as e:
+            logger.error(f"Failed to open DB session for pre-cleanup persistence: {e}")
+
+        # cleanup_stale_sessions returns actual cleaned IDs and subscription keys to release
+        cleaned_ids, keys_to_unsub = await session_manager.cleanup_stale_sessions(
+            settings.paper_session_timeout_seconds
+        )
+        if cleaned_ids:
+            logger.warning(f"Cleaned up {len(cleaned_ids)} stale paper trading sessions")
+
+            # Notification: stale sessions cleaned (LIVE-011)
+            try:
+                from squant.services.notification import emit_notification
+
+                asyncio.get_running_loop().create_task(
+                    emit_notification(
+                        level="warning",
+                        event_type="stale_sessions_cleaned",
+                        title="过时会话清理",
+                        message=f"清理了 {len(cleaned_ids)} 个超时的模拟交易会话",
+                        details={"session_ids": [str(sid) for sid in cleaned_ids]},
+                    )
+                )
+            except Exception:
+                pass
+            # Update DB status for actually cleaned sessions, including result data
             try:
                 async with get_session_context() as db_session:
                     service = PaperTradingService(db_session)
-                    for run_id in unhealthy_ids:
+                    for run_id in cleaned_ids:
                         try:
-                            count = await service.persist_snapshots(run_id)
-                            if count > 0:
-                                logger.info(
-                                    f"Persisted {count} snapshots for stale session {run_id} "
-                                    f"before cleanup"
-                                )
+                            await service.mark_session_interrupted(
+                                run_id,
+                                error_message="Session timeout: no activity detected",
+                                result=engine_states.get(str(run_id)),
+                            )
+                        except Exception as e:
+                            logger.error(f"Failed to update DB for stale session {run_id}: {e}")
+            except Exception as e:
+                logger.error(f"Failed to open DB session for stale session DB update: {e}")
+
+            # Unsubscribe from candles for keys with no remaining sessions
+            for key in keys_to_unsub:
+                try:
+                    from squant.websocket.manager import get_stream_manager
+
+                    stream_manager = get_stream_manager()
+                    await stream_manager.unsubscribe_candles(*key)
+                    logger.info(f"Unsubscribed from candles {key} after stale session cleanup")
+                except Exception as e:
+                    logger.warning(f"Failed to unsubscribe candles {key}: {e}")
+
+
+    async def _health_check_live(self, timeout_seconds: int) -> None:
+        """Check and cleanup stale live trading sessions (LIVE-004).
+
+        Mirrors paper trading health check: persist snapshots, capture state,
+        clean up stale sessions, and update DB records.
+        """
+        from squant.engine.live.manager import get_live_session_manager
+        from squant.infra.database import get_session_context
+        from squant.services.live_trading import LiveTradingService
+
+        live_manager = get_live_session_manager()
+        unhealthy_ids = await live_manager.check_health(timeout_seconds)
+        if not unhealthy_ids:
+            return
+
+        logger.warning(f"Found {len(unhealthy_ids)} unhealthy live sessions: {unhealthy_ids}")
+
+        # Capture engine state before cleanup
+        engine_states: dict[str, dict] = {}
+        for run_id in unhealthy_ids:
+            engine = live_manager.get(run_id)
+            if engine:
+                try:
+                    engine_states[str(run_id)] = engine.build_result_for_persistence()
+                except Exception as e:
+                    logger.error(f"Failed to capture state for live session {run_id}: {e}")
+
+        # Persist pending snapshots before cleanup
+        try:
+            async with get_session_context() as db_session:
+                service = LiveTradingService(db_session)
+                for run_id in unhealthy_ids:
+                    try:
+                        count = await service.persist_snapshots(run_id)
+                        if count > 0:
+                            logger.info(
+                                f"Persisted {count} snapshots for stale live session {run_id}"
+                            )
+                    except Exception as e:
+                        logger.error(
+                            f"Failed to persist snapshots for stale live session {run_id}: {e}"
+                        )
+        except Exception as e:
+            logger.error(f"Failed to open DB session for live pre-cleanup persistence: {e}")
+
+        # Clean up stale sessions (stop engines + unregister)
+        cleaned_ids, keys_to_unsub = await live_manager.cleanup_stale_sessions(timeout_seconds)
+        if cleaned_ids:
+            logger.warning(f"Cleaned up {len(cleaned_ids)} stale live trading sessions")
+
+            # Notification: stale live sessions cleaned (LIVE-011)
+            try:
+                from squant.services.notification import emit_notification
+
+                asyncio.get_running_loop().create_task(
+                    emit_notification(
+                        level="warning",
+                        event_type="stale_sessions_cleaned",
+                        title="过时会话清理",
+                        message=f"清理了 {len(cleaned_ids)} 个超时的实盘交易会话",
+                        details={"session_ids": [str(sid) for sid in cleaned_ids]},
+                    )
+                )
+            except Exception:
+                pass
+            try:
+                async with get_session_context() as db_session:
+                    service = LiveTradingService(db_session)
+                    for run_id in cleaned_ids:
+                        try:
+                            await service.mark_session_interrupted(
+                                run_id,
+                                error_message="Session timeout: no activity detected",
+                                result=engine_states.get(str(run_id)),
+                            )
                         except Exception as e:
                             logger.error(
-                                f"Failed to persist snapshots for stale session {run_id}: {e}"
+                                f"Failed to update DB for stale live session {run_id}: {e}"
                             )
             except Exception as e:
-                logger.error(f"Failed to open DB session for pre-cleanup persistence: {e}")
+                logger.error(f"Failed to open DB session for stale live session update: {e}")
 
-        count = await session_manager.cleanup_stale_sessions(settings.paper_session_timeout_seconds)
-        if count > 0:
-            logger.warning(f"Cleaned up {count} stale paper trading sessions")
+            # Unsubscribe from candles for keys with no remaining sessions
+            for key in keys_to_unsub:
+                try:
+                    from squant.websocket.manager import get_stream_manager
+
+                    stream_manager = get_stream_manager()
+                    await stream_manager.unsubscribe_candles(*key)
+                    logger.info(
+                        f"Unsubscribed from candles {key} after stale live session cleanup"
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to unsubscribe candles {key}: {e}")
 
 
 # Global instance

@@ -119,6 +119,7 @@ class StrategyRun(Base, UUIDMixin):
         if self.status in (
             RunStatus.COMPLETED,
             RunStatus.ERROR,
+            RunStatus.INTERRUPTED,
             RunStatus.CANCELLED,
             RunStatus.STOPPED,
         ):

@@ -111,9 +111,9 @@
                 <el-input-number
                   v-model="form.commission_rate"
                   :min="0"
-                  :max="1"
+                  :max="100"
                   :step="0.01"
-                  :precision="3"
+                  :precision="4"
                   style="width: 100%"
                 />
               </el-form-item>
@@ -123,9 +123,9 @@
                 <el-input-number
                   v-model="form.slippage"
                   :min="0"
-                  :max="1"
+                  :max="100"
                   :step="0.01"
-                  :precision="3"
+                  :precision="4"
                   style="width: 100%"
                 />
               </el-form-item>
@@ -238,7 +238,8 @@ import StatusBadge from '@/components/common/StatusBadge.vue'
 import { formatExchangeName, formatDateTime } from '@/utils/format'
 import { TIMEFRAME_OPTIONS } from '@/utils/constants'
 import { getSymbols } from '@/api/market'
-import { startBacktest, getBacktests } from '@/api/backtest'
+import { startBacktest, getBacktests, checkDataAvailability } from '@/api/backtest'
+import { downloadHistoricalData } from '@/api/system'
 import { useNotification } from '@/composables/useNotification'
 import type { BacktestRun } from '@/types'
 
@@ -254,15 +255,16 @@ const historyLoading = ref(false)
 const symbols = ref<string[]>([])
 const backtestHistory = ref<BacktestRun[]>([])
 
+const q = route.query
 const form = reactive({
-  strategy_id: (route.query.strategy_id as string) || '',
-  exchange: (route.query.exchange as string) || 'binance',
-  symbol: (route.query.symbol as string) || '',
-  timeframe: '1h',
-  dateRange: [] as string[],
-  initial_capital: 10000,
-  commission_rate: 0.001,
-  slippage: 0.001,
+  strategy_id: (q.strategy_id as string) || '',
+  exchange: (q.exchange as string) || 'okx',
+  symbol: (q.symbol as string) || '',
+  timeframe: (q.timeframe as string) || '1h',
+  dateRange: (q.start_date && q.end_date ? [q.start_date as string, q.end_date as string] : []) as string[],
+  initial_capital: q.initial_capital ? Number(q.initial_capital) : 10000,
+  commission_rate: q.commission_rate ? Number(q.commission_rate) : 0.1,
+  slippage: q.slippage ? Number(q.slippage) : 0.1,
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   params: {} as Record<string, any>,
 })
@@ -319,13 +321,13 @@ async function loadHistory() {
 
 function handleReset() {
   form.strategy_id = ''
-  form.exchange = 'binance'
+  form.exchange = 'okx'
   form.symbol = ''
   form.timeframe = '1h'
   form.dateRange = []
   form.initial_capital = 10000
-  form.commission_rate = 0.001
-  form.slippage = 0.001
+  form.commission_rate = 0.1
+  form.slippage = 0.1
   form.params = {}
   formRef.value?.resetFields()
 }
@@ -346,12 +348,61 @@ function handleStrategyChange() {
   }
 }
 
+async function triggerDownload() {
+  try {
+    await downloadHistoricalData({
+      exchange: form.exchange,
+      symbol: form.symbol,
+      timeframe: form.timeframe,
+      start_date: form.dateRange[0],
+      end_date: form.dateRange[1],
+    })
+    toastSuccess('下载任务已创建，可在「系统管理 > 数据管理」中查看进度')
+  } catch {
+    toastError('创建下载任务失败')
+  }
+}
+
 async function handleSubmit() {
   const valid = await formRef.value?.validate()
   if (!valid) return
 
   submitting.value = true
   try {
+    // 提交前检查历史数据可用性
+    const checkResponse = await checkDataAvailability({
+      exchange: form.exchange,
+      symbol: form.symbol,
+      timeframe: form.timeframe,
+      start_date: form.dateRange[0],
+      end_date: form.dateRange[1],
+    })
+    const availability = checkResponse.data
+    if (!availability.has_data) {
+      try {
+        await ElMessageBox.confirm(
+          `所选时间范围内无可用历史数据（${form.exchange} · ${form.symbol} · ${form.timeframe}），是否立即下载？`,
+          '缺少历史数据',
+          { confirmButtonText: '下载数据', cancelButtonText: '取消', type: 'warning' },
+        )
+        await triggerDownload()
+      } catch { /* 用户取消 */ }
+      return
+    }
+    if (!availability.is_complete) {
+      try {
+        await ElMessageBox.confirm(
+          `历史数据不完整（仅有 ${availability.total_bars} 根K线，` +
+          `覆盖 ${availability.first_bar?.slice(0, 10) || '?'} 至 ${availability.last_bar?.slice(0, 10) || '?'}），` +
+          `是否下载完整数据？`,
+          '历史数据不完整',
+          { confirmButtonText: '下载数据', cancelButtonText: '取消', type: 'warning' },
+        )
+        await triggerDownload()
+      } catch { /* 用户取消 */ }
+      return
+    }
+
     const config = {
       strategy_id: form.strategy_id,
       exchange: form.exchange,
@@ -360,8 +411,8 @@ async function handleSubmit() {
       start_date: form.dateRange[0],
       end_date: form.dateRange[1],
       initial_capital: form.initial_capital,
-      commission_rate: form.commission_rate,
-      slippage: form.slippage,
+      commission_rate: form.commission_rate / 100,
+      slippage: form.slippage / 100,
       params: form.params,
     }
 
@@ -389,6 +440,13 @@ onMounted(async () => {
 
   if (form.strategy_id) {
     handleStrategyChange()
+    // Override with query params if present (from "再次回测")
+    if (q.params) {
+      try {
+        const parsed = JSON.parse(q.params as string)
+        Object.assign(form.params, parsed)
+      } catch { /* ignore invalid JSON */ }
+    }
   }
 })
 </script>

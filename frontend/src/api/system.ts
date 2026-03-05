@@ -1,9 +1,7 @@
 /**
- * System API Module — 待后端实现
+ * System API Module
  *
- * 以下 API 函数对应的后端路由（/system/*）尚未实现。
- * 对应的前端页面（DataManagement、SystemLogs、AssetOverview）当前使用 ComingSoon 占位符。
- * 待后端就绪后启用。
+ * 数据下载和管理接口已实现。日志、状态、配置接口待后端实现。
  */
 import api, { get, post, del } from './index'
 import type { SystemLog, DataDownloadTask, HistoricalData, PaginatedData } from '@/types'
@@ -62,6 +60,10 @@ export const getDownloadTasks = () =>
 export const cancelDownloadTask = (id: string) =>
   post<void>(`/system/data/download/${id}/cancel`)
 
+// 删除下载任务记录（仅限已完成/失败的任务）
+export const removeDownloadTask = (id: string) =>
+  del<void>(`/system/data/download/${id}`)
+
 // 获取已下载的历史数据列表
 export const getHistoricalDataList = (params?: {
   exchange?: string
@@ -92,9 +94,13 @@ export const getSystemConfig = () =>
 export const updateSystemConfig = (config: Record<string, unknown>) =>
   post<void>('/system/config', config)
 
-// 搜索交易对
-export const searchSymbols = (exchange: string, query: string) =>
-  get<string[]>(`/market/symbols/search`, { exchange, query })
+// 获取交易所可用交易对
+export const getExchangeSymbols = (exchange: string) =>
+  get<string[]>(`/system/symbols/${exchange}`)
+
+// 搜索交易对 (deprecated, use getExchangeSymbols + local filter)
+export const searchSymbols = (exchange: string, _query: string) =>
+  getExchangeSymbols(exchange)
 
 // Alias exports for component compatibility
 export const startDownload = downloadHistoricalData

@@ -1,5 +1,5 @@
 import { get, post } from './index'
-import type { LiveSession, LiveTradingStatus, RiskConfig, PaginatedData, EquityCurvePoint } from '@/types'
+import type { LiveSession, LiveSessionOrder, LiveTradingStatus, RiskConfig, PaginatedData, EquityCurvePoint, EmergencyCloseResult } from '@/types'
 
 // 启动实盘交易
 export const startLiveTrading = (config: {
@@ -19,7 +19,7 @@ export const stopLiveTrading = (id: string, cancel_orders?: boolean) =>
 
 // 紧急平仓
 export const emergencyClosePositions = (id: string) =>
-  post<void>(`/live/${id}/emergency-close`)
+  post<EmergencyCloseResult>(`/live/${id}/emergency-close`)
 
 // 获取会话状态
 export const getLiveSession = (id: string) =>
@@ -44,5 +44,13 @@ export const getRunningLiveSessions = () =>
   get<LiveSession[]>('/live')
 
 // 获取收益曲线
-export const getLiveEquityCurve = (id: string) =>
-  get<EquityCurvePoint[]>(`/live/${id}/equity-curve`)
+export const getLiveEquityCurve = (id: string, since?: string) =>
+  get<EquityCurvePoint[]>(`/live/${id}/equity-curve`, since ? { since } : undefined)
+
+// 恢复实盘交易
+export const resumeLiveTrading = (id: string, warmup_bars?: number) =>
+  post<LiveSession>(`/live/${id}/resume`, warmup_bars != null ? { warmup_bars } : undefined)
+
+// 获取会话历史订单（审计表）
+export const getLiveSessionOrders = (id: string, params?: { page?: number; page_size?: number }) =>
+  get<PaginatedData<LiveSessionOrder>>(`/live/${id}/orders`, params)

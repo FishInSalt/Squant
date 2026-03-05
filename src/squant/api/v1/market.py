@@ -22,6 +22,18 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
+# Timeframe durations in milliseconds (local copy to avoid cross-layer dependency)
+TIMEFRAME_MS: dict[str, int] = {
+    "1m": 60_000,
+    "5m": 300_000,
+    "15m": 900_000,
+    "30m": 1_800_000,
+    "1h": 3_600_000,
+    "4h": 14_400_000,
+    "1d": 86_400_000,
+    "1w": 604_800_000,
+}
+
 # Runtime storage for current exchange (single-user system)
 _current_exchange: str = get_settings().default_exchange
 
@@ -248,10 +260,21 @@ async def get_candles(
         Query(description="Time frame: 1m, 5m, 15m, 30m, 1h, 4h, 1d, 1w"),
     ] = "1h",
     limit: Annotated[int, Query(ge=1, le=300, description="Number of candles")] = 100,
+    end_time: Annotated[
+        int | None,
+        Query(
+            ge=0,
+            le=32503680000000,
+            description="End timestamp in milliseconds. "
+            "When provided, fetches candles before this time.",
+        ),
+    ] = None,
 ) -> ApiResponse[CandlestickResponse]:
     """Get candlestick (OHLCV) data for a trading pair.
 
     Returns historical price data in candlestick format.
+    When end_time is provided, returns candles before that timestamp
+    (useful for scroll-loading historical data).
     """
     # Map string to TimeFrame enum
     tf_map = {
@@ -272,7 +295,21 @@ async def get_candles(
         )
 
     try:
-        candles = await exchange.get_candlesticks(symbol, tf, limit=limit)
+        # When end_time is provided, calculate start_time to fetch historical candles
+        start_time: int | None = None
+        if end_time is not None:
+            tf_ms = TIMEFRAME_MS[timeframe]
+            start_time = end_time - limit * tf_ms
+
+        candles = await exchange.get_candlesticks(
+            symbol, tf, limit=limit, start_time=start_time
+        )
+
+        # Filter out candles at or after end_time
+        if end_time is not None:
+            end_dt = datetime.fromtimestamp(end_time / 1000, tz=UTC)
+            candles = [c for c in candles if c.timestamp < end_dt]
+
         data = CandlestickResponse(
             symbol=symbol,
             timeframe=timeframe,

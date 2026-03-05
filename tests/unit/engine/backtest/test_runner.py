@@ -379,7 +379,7 @@ class TestProcessBar:
         call_order = []
 
         # Strategy that records call order and modifies cash via buy
-        strategy_code = '''
+        strategy_code = """
 class MyStrategy(Strategy):
     def on_init(self):
         pass
@@ -387,7 +387,7 @@ class MyStrategy(Strategy):
         pass
     def on_stop(self):
         pass
-'''
+"""
         runner = BacktestRunner(
             strategy_code=strategy_code,
             strategy_name="Test",
@@ -638,3 +638,582 @@ class TestBacktestCancellation:
         error2 = BacktestCancelledError()
         assert "cancelled" in str(error2).lower()
         assert error2.run_id is None
+
+
+class TestLimitOrderExpiry:
+    """Tests for limit order bars_remaining expiry in backtest."""
+
+    @pytest.mark.asyncio
+    async def test_limit_order_expires_after_valid_for_bars(self):
+        """Test that limit orders with valid_for_bars expire after N bars."""
+        strategy_code = """
+class MyStrategy(Strategy):
+    def on_init(self):
+        self.placed = False
+
+    def on_bar(self, bar):
+        if not self.placed:
+            # Place a limit buy far below market — should never fill
+            self.ctx.buy(bar.symbol, Decimal("0.01"),
+                         price=Decimal("10000"), valid_for_bars=3)
+            self.placed = True
+"""
+        base_time = datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC)
+        bars = [
+            Bar(
+                time=base_time + timedelta(hours=i),
+                symbol="BTC/USDT",
+                open=Decimal("50000"),
+                high=Decimal("51000"),
+                low=Decimal("49000"),
+                close=Decimal("50500"),
+                volume=Decimal("100"),
+            )
+            for i in range(6)
+        ]
+
+        runner = BacktestRunner(
+            strategy_code=strategy_code,
+            strategy_name="Test",
+            symbol="BTC/USDT",
+            timeframe="1h",
+            initial_capital=Decimal("100000"),
+        )
+
+        result = await runner.run(async_bar_iterator(bars))
+
+        # Order should be cancelled (expired), not filled
+        assert len(result.trades) == 0
+        cancelled = [o for o in result.orders if o.status.value == "cancelled"]
+        assert len(cancelled) == 1
+        # Verify log mentions expiry
+        assert any("订单过期" in log for log in result.logs)
+
+    @pytest.mark.asyncio
+    async def test_limit_order_without_valid_for_bars_stays_active(self):
+        """Test that limit orders without valid_for_bars (GTC) never expire."""
+        strategy_code = """
+class MyStrategy(Strategy):
+    def on_init(self):
+        self.placed = False
+
+    def on_bar(self, bar):
+        if not self.placed:
+            # GTC limit buy far below market
+            self.ctx.buy(bar.symbol, Decimal("0.01"),
+                         price=Decimal("10000"))
+            self.placed = True
+"""
+        base_time = datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC)
+        bars = [
+            Bar(
+                time=base_time + timedelta(hours=i),
+                symbol="BTC/USDT",
+                open=Decimal("50000"),
+                high=Decimal("51000"),
+                low=Decimal("49000"),
+                close=Decimal("50500"),
+                volume=Decimal("100"),
+            )
+            for i in range(10)
+        ]
+
+        runner = BacktestRunner(
+            strategy_code=strategy_code,
+            strategy_name="Test",
+            symbol="BTC/USDT",
+            timeframe="1h",
+            initial_capital=Decimal("100000"),
+        )
+
+        result = await runner.run(async_bar_iterator(bars))
+
+        # GTC order should still be pending (not cancelled, not filled)
+        assert len(result.trades) == 0
+        cancelled = [o for o in result.orders if o.status.value == "cancelled"]
+        assert len(cancelled) == 0
+
+
+class TestStopOrderRunner:
+    """Tests for stop orders in backtest runner end-to-end."""
+
+    async def test_sell_stop_triggers_and_fills(self):
+        """Strategy places a sell stop that triggers on a subsequent bar."""
+        strategy_code = '''
+class MyStrategy(Strategy):
+    def on_init(self):
+        self.bought = False
+        self.stop_placed = False
+
+    def on_bar(self, bar):
+        from decimal import Decimal
+        if not self.bought:
+            self.ctx.buy(bar.symbol, Decimal("1"))
+            self.bought = True
+        elif not self.stop_placed and self.ctx.has_position(bar.symbol):
+            # Set stop loss at 40000
+            self.ctx.sell(bar.symbol, Decimal("1"), stop_price=Decimal("40000"))
+            self.stop_placed = True
+'''
+        # Bar 0: buy at open
+        # Bar 1: place stop at 40000 (price above stop, no trigger)
+        # Bar 2: price drops → stop triggers
+        bars = [
+            Bar(
+                time=datetime(2024, 1, 1, 0, i, tzinfo=UTC),
+                symbol="BTC/USDT",
+                open=open_p,
+                high=high_p,
+                low=low_p,
+                close=close_p,
+                volume=Decimal("100"),
+            )
+            for i, (open_p, high_p, low_p, close_p) in enumerate([
+                (Decimal("42000"), Decimal("43000"), Decimal("41000"), Decimal("42500")),
+                (Decimal("42500"), Decimal("43000"), Decimal("41500"), Decimal("42000")),
+                (Decimal("41000"), Decimal("41500"), Decimal("39500"), Decimal("40000")),
+            ])
+        ]
+
+        runner = BacktestRunner(
+            strategy_code=strategy_code,
+            strategy_name="StopTest",
+            symbol="BTC/USDT",
+            timeframe="1h",
+            initial_capital=Decimal("100000"),
+        )
+
+        result = await runner.run(async_bar_iterator(bars))
+
+        # Should have 1 completed trade (buy + sell stop)
+        assert len(result.trades) == 1
+        trade = result.trades[0]
+        assert trade.exit_price is not None
+        # Stop triggered at bar 2: min(stop=40000, open=41000) = 40000
+        assert trade.exit_price == Decimal("40000")
+
+    async def test_stop_order_expires_with_bars_remaining(self):
+        """Stop order with valid_for_bars expires after N bars."""
+        strategy_code = '''
+class MyStrategy(Strategy):
+    def on_init(self):
+        self.bought = False
+        self.stop_placed = False
+
+    def on_bar(self, bar):
+        from decimal import Decimal
+        if not self.bought:
+            self.ctx.buy(bar.symbol, Decimal("1"))
+            self.bought = True
+        elif not self.stop_placed and self.ctx.has_position(bar.symbol):
+            self.ctx.sell(bar.symbol, Decimal("1"), stop_price=Decimal("38000"), valid_for_bars=2)
+            self.stop_placed = True
+'''
+        # Bar 0: buy
+        # Bar 1: place stop at 38000 (valid_for_bars=2)
+        # Bar 2: no trigger, bars_remaining 2→1
+        # Bar 3: no trigger, bars_remaining 1→0 → cancelled
+        bars = [
+            Bar(
+                time=datetime(2024, 1, 1, 0, i, tzinfo=UTC),
+                symbol="BTC/USDT",
+                open=Decimal("42000"),
+                high=Decimal("43000"),
+                low=Decimal("41000"),
+                close=Decimal("42500"),
+                volume=Decimal("100"),
+            )
+            for i in range(4)
+        ]
+
+        runner = BacktestRunner(
+            strategy_code=strategy_code,
+            strategy_name="StopExpiryTest",
+            symbol="BTC/USDT",
+            timeframe="1h",
+            initial_capital=Decimal("100000"),
+        )
+
+        result = await runner.run(async_bar_iterator(bars))
+
+        # Stop should have expired without triggering
+        cancelled = [o for o in result.orders if o.status.value == "cancelled"]
+        assert len(cancelled) == 1
+        assert cancelled[0].stop_price == Decimal("38000")
+
+
+class TestStrategyCallbacks:
+    """Tests for on_fill and on_order_done strategy callbacks."""
+
+    @pytest.mark.asyncio
+    async def test_on_fill_called_on_market_order_fill(self):
+        """Test on_fill is called when a market order is filled."""
+        strategy_code = """
+class MyStrategy(Strategy):
+    def on_init(self):
+        self.fill_count = 0
+
+    def on_fill(self, fill):
+        self.fill_count = self.fill_count + 1
+        self.ctx.log(f"on_fill:{fill.symbol}:{fill.side.value}")
+
+    def on_bar(self, bar):
+        if not self.ctx.has_position(bar.symbol):
+            self.ctx.buy(bar.symbol, Decimal("0.1"))
+
+    def on_stop(self):
+        self.ctx.log(f"fills_received={self.fill_count}")
+"""
+        base_time = datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC)
+        bars = [
+            Bar(
+                time=base_time + timedelta(hours=i),
+                symbol="BTC/USDT",
+                open=Decimal("50000"),
+                high=Decimal("51000"),
+                low=Decimal("49000"),
+                close=Decimal("50500"),
+                volume=Decimal("100"),
+            )
+            for i in range(5)
+        ]
+
+        runner = BacktestRunner(
+            strategy_code=strategy_code,
+            strategy_name="Test",
+            symbol="BTC/USDT",
+            timeframe="1h",
+            initial_capital=Decimal("100000"),
+        )
+
+        result = await runner.run(async_bar_iterator(bars))
+
+        # Buy on bar 0, fill on bar 1 → 1 fill
+        assert any("fills_received=1" in log for log in result.logs)
+        assert len(result.fills) == 1
+
+    @pytest.mark.asyncio
+    async def test_on_order_done_called_on_filled_order(self):
+        """Test on_order_done is called when order reaches FILLED status."""
+        strategy_code = """
+class MyStrategy(Strategy):
+    def on_init(self):
+        self.done_statuses = ""
+
+    def on_order_done(self, order):
+        self.done_statuses = self.done_statuses + order.status.value + ","
+
+    def on_bar(self, bar):
+        if not self.ctx.has_position(bar.symbol):
+            self.ctx.buy(bar.symbol, Decimal("0.1"))
+
+    def on_stop(self):
+        self.ctx.log(f"done_statuses={self.done_statuses}")
+"""
+        base_time = datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC)
+        bars = [
+            Bar(
+                time=base_time + timedelta(hours=i),
+                symbol="BTC/USDT",
+                open=Decimal("50000"),
+                high=Decimal("51000"),
+                low=Decimal("49000"),
+                close=Decimal("50500"),
+                volume=Decimal("100"),
+            )
+            for i in range(5)
+        ]
+
+        runner = BacktestRunner(
+            strategy_code=strategy_code,
+            strategy_name="Test",
+            symbol="BTC/USDT",
+            timeframe="1h",
+            initial_capital=Decimal("100000"),
+        )
+
+        result = await runner.run(async_bar_iterator(bars))
+
+        # Verify on_order_done was called with FILLED status
+        assert any("done_statuses=filled," in log for log in result.logs)
+
+    @pytest.mark.asyncio
+    async def test_on_order_done_called_on_expired_limit(self):
+        """Test on_order_done is called when a limit order expires."""
+        strategy_code = """
+class MyStrategy(Strategy):
+    def on_init(self):
+        self.placed = False
+        self.cancelled_count = 0
+
+    def on_order_done(self, order):
+        if order.status == OrderStatus.CANCELLED:
+            self.cancelled_count = self.cancelled_count + 1
+
+    def on_bar(self, bar):
+        if not self.placed:
+            # Limit buy far below market, expires in 2 bars
+            self.ctx.buy(bar.symbol, Decimal("0.01"),
+                         price=Decimal("10000"), valid_for_bars=2)
+            self.placed = True
+
+    def on_stop(self):
+        self.ctx.log(f"cancelled_count={self.cancelled_count}")
+"""
+        base_time = datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC)
+        bars = [
+            Bar(
+                time=base_time + timedelta(hours=i),
+                symbol="BTC/USDT",
+                open=Decimal("50000"),
+                high=Decimal("51000"),
+                low=Decimal("49000"),
+                close=Decimal("50500"),
+                volume=Decimal("100"),
+            )
+            for i in range(5)
+        ]
+
+        runner = BacktestRunner(
+            strategy_code=strategy_code,
+            strategy_name="Test",
+            symbol="BTC/USDT",
+            timeframe="1h",
+            initial_capital=Decimal("100000"),
+        )
+
+        result = await runner.run(async_bar_iterator(bars))
+
+        # Limit order expires → on_order_done with CANCELLED
+        assert any("cancelled_count=1" in log for log in result.logs)
+
+    @pytest.mark.asyncio
+    async def test_on_fill_error_does_not_crash_backtest(self):
+        """Test that errors in on_fill are caught and don't crash the backtest."""
+        strategy_code = """
+class MyStrategy(Strategy):
+    def on_fill(self, fill):
+        raise RuntimeError("on_fill error")
+
+    def on_bar(self, bar):
+        if not self.ctx.has_position(bar.symbol):
+            self.ctx.buy(bar.symbol, Decimal("0.1"))
+"""
+        base_time = datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC)
+        bars = [
+            Bar(
+                time=base_time + timedelta(hours=i),
+                symbol="BTC/USDT",
+                open=Decimal("50000"),
+                high=Decimal("51000"),
+                low=Decimal("49000"),
+                close=Decimal("50500"),
+                volume=Decimal("100"),
+            )
+            for i in range(5)
+        ]
+
+        runner = BacktestRunner(
+            strategy_code=strategy_code,
+            strategy_name="Test",
+            symbol="BTC/USDT",
+            timeframe="1h",
+            initial_capital=Decimal("100000"),
+        )
+
+        result = await runner.run(async_bar_iterator(bars))
+
+        # Backtest completes despite on_fill error
+        assert result.bar_count == 5
+        assert any("ERROR in on_fill" in log for log in result.logs)
+
+    @pytest.mark.asyncio
+    async def test_on_order_done_error_does_not_crash_backtest(self):
+        """Test that errors in on_order_done are caught and don't crash the backtest."""
+        strategy_code = """
+class MyStrategy(Strategy):
+    def on_order_done(self, order):
+        raise RuntimeError("on_order_done error")
+
+    def on_bar(self, bar):
+        if not self.ctx.has_position(bar.symbol):
+            self.ctx.buy(bar.symbol, Decimal("0.1"))
+"""
+        base_time = datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC)
+        bars = [
+            Bar(
+                time=base_time + timedelta(hours=i),
+                symbol="BTC/USDT",
+                open=Decimal("50000"),
+                high=Decimal("51000"),
+                low=Decimal("49000"),
+                close=Decimal("50500"),
+                volume=Decimal("100"),
+            )
+            for i in range(5)
+        ]
+
+        runner = BacktestRunner(
+            strategy_code=strategy_code,
+            strategy_name="Test",
+            symbol="BTC/USDT",
+            timeframe="1h",
+            initial_capital=Decimal("100000"),
+        )
+
+        result = await runner.run(async_bar_iterator(bars))
+
+        # Backtest completes despite on_order_done error
+        assert result.bar_count == 5
+        assert any("ERROR in on_order_done" in log for log in result.logs)
+
+    @pytest.mark.asyncio
+    async def test_on_fill_can_place_orders(self):
+        """Test that strategy can place orders from on_fill callback (e.g., stop-loss after buy)."""
+        strategy_code = """
+class MyStrategy(Strategy):
+    def on_init(self):
+        self.stop_placed = False
+
+    def on_fill(self, fill):
+        # Place a stop-loss after buy fill
+        if fill.side.value == "buy" and not self.stop_placed:
+            self.ctx.sell(fill.symbol, fill.amount,
+                         stop_price=Decimal("40000"))
+            self.stop_placed = True
+
+    def on_bar(self, bar):
+        if not self.ctx.has_position(bar.symbol):
+            self.ctx.buy(bar.symbol, Decimal("0.1"))
+
+    def on_stop(self):
+        self.ctx.log(f"stop_placed={self.stop_placed}")
+"""
+        base_time = datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC)
+        bars = [
+            Bar(
+                time=base_time + timedelta(hours=i),
+                symbol="BTC/USDT",
+                open=Decimal("50000"),
+                high=Decimal("51000"),
+                low=Decimal("49000"),
+                close=Decimal("50500"),
+                volume=Decimal("100"),
+            )
+            for i in range(5)
+        ]
+
+        runner = BacktestRunner(
+            strategy_code=strategy_code,
+            strategy_name="Test",
+            symbol="BTC/USDT",
+            timeframe="1h",
+            initial_capital=Decimal("100000"),
+        )
+
+        result = await runner.run(async_bar_iterator(bars))
+
+        # Stop-loss was placed from on_fill
+        assert any("stop_placed=True" in log for log in result.logs)
+
+    @pytest.mark.asyncio
+    async def test_on_fill_called_before_on_bar(self):
+        """Test that on_fill is called before on_bar on the same bar."""
+        strategy_code = """
+class MyStrategy(Strategy):
+    def on_init(self):
+        self.call_order = ""
+
+    def on_fill(self, fill):
+        self.call_order = self.call_order + "on_fill|"
+
+    def on_bar(self, bar):
+        self.call_order = self.call_order + "on_bar|"
+        if not self.ctx.has_position(bar.symbol):
+            self.ctx.buy(bar.symbol, Decimal("0.1"))
+
+    def on_stop(self):
+        self.ctx.log(f"order={self.call_order}")
+"""
+        base_time = datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC)
+        bars = [
+            Bar(
+                time=base_time + timedelta(hours=i),
+                symbol="BTC/USDT",
+                open=Decimal("50000"),
+                high=Decimal("51000"),
+                low=Decimal("49000"),
+                close=Decimal("50500"),
+                volume=Decimal("100"),
+            )
+            for i in range(3)
+        ]
+
+        runner = BacktestRunner(
+            strategy_code=strategy_code,
+            strategy_name="Test",
+            symbol="BTC/USDT",
+            timeframe="1h",
+            initial_capital=Decimal("100000"),
+        )
+
+        result = await runner.run(async_bar_iterator(bars))
+
+        # Find the call order log (has timestamp prefix like "[2024-01-01 12:00:00+00:00] order=...")
+        order_log = [log for log in result.logs if "order=" in log]
+        assert len(order_log) == 1
+        # Extract the order part after "order="
+        order_str = order_log[0].split("order=")[1]
+        calls = order_str.strip("|").split("|")
+        # Bar 0: on_bar (buy order placed)
+        # Bar 1: on_fill (fill delivered), on_bar
+        # Bar 2: on_bar
+        assert calls[0] == "on_bar"  # bar 0
+        assert calls[1] == "on_fill"  # bar 1, fill first
+        assert calls[2] == "on_bar"  # bar 1, then on_bar
+
+    @pytest.mark.asyncio
+    async def test_fill_and_orderstatus_types_available_in_sandbox(self):
+        """Test that Fill and OrderStatus types are accessible in strategy sandbox."""
+        strategy_code = """
+class MyStrategy(Strategy):
+    def on_fill(self, fill):
+        # Verify Fill type is accessible
+        assert isinstance(fill, Fill)
+        self.ctx.log(f"fill_type_ok={isinstance(fill, Fill)}")
+
+    def on_order_done(self, order):
+        # Verify OrderStatus is accessible
+        is_filled = order.status == OrderStatus.FILLED
+        self.ctx.log(f"status_check_ok={is_filled}")
+
+    def on_bar(self, bar):
+        if not self.ctx.has_position(bar.symbol):
+            self.ctx.buy(bar.symbol, Decimal("0.1"))
+"""
+        base_time = datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC)
+        bars = [
+            Bar(
+                time=base_time + timedelta(hours=i),
+                symbol="BTC/USDT",
+                open=Decimal("50000"),
+                high=Decimal("51000"),
+                low=Decimal("49000"),
+                close=Decimal("50500"),
+                volume=Decimal("100"),
+            )
+            for i in range(5)
+        ]
+
+        runner = BacktestRunner(
+            strategy_code=strategy_code,
+            strategy_name="Test",
+            symbol="BTC/USDT",
+            timeframe="1h",
+            initial_capital=Decimal("100000"),
+        )
+
+        result = await runner.run(async_bar_iterator(bars))
+
+        assert any("fill_type_ok=True" in log for log in result.logs)
+        assert any("status_check_ok=True" in log for log in result.logs)

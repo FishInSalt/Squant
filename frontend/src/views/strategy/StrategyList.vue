@@ -1,7 +1,13 @@
 <template>
   <div class="strategy-list">
     <div class="page-header">
-      <h1 class="page-title">策略库</h1>
+      <div class="header-left">
+        <h1 class="page-title">策略库</h1>
+        <el-radio-group v-model="statusFilter" size="small" @change="handleStatusChange">
+          <el-radio-button value="active">活跃</el-radio-button>
+          <el-radio-button value="archived">已归档</el-radio-button>
+        </el-radio-group>
+      </div>
       <div class="header-actions">
         <el-input
           v-model="searchQuery"
@@ -28,7 +34,7 @@
         <div class="card-header">
           <h3 class="strategy-name">{{ strategy.name }}</h3>
           <StatusBadge
-            :status="strategy.status === 'active' ? 'active' : 'error'"
+            :status="strategy.status === 'active' ? 'active' : 'archived'"
           />
         </div>
 
@@ -45,7 +51,7 @@
           </span>
         </div>
 
-        <div class="card-actions" @click.stop>
+        <div v-if="statusFilter === 'active'" class="card-actions" @click.stop>
           <el-button size="small" type="primary" @click="goToBacktest(strategy.id)">
             回测
           </el-button>
@@ -59,13 +65,16 @@
             删除
           </el-button>
         </div>
+        <div v-else class="card-actions card-actions--archived" @click.stop>
+          <span class="archived-time">归档于 {{ formatRelativeTime(strategy.updated_at) }}</span>
+        </div>
       </div>
     </div>
 
     <div v-if="strategies.length === 0 && !loading" class="empty-state card">
       <el-icon class="empty-icon"><Document /></el-icon>
-      <p class="empty-text">暂无策略</p>
-      <el-button type="primary" @click="goToUpload">
+      <p class="empty-text">{{ statusFilter === 'active' ? '暂无策略' : '暂无归档策略' }}</p>
+      <el-button v-if="statusFilter === 'active'" type="primary" @click="goToUpload">
         上传策略
       </el-button>
     </div>
@@ -119,6 +128,7 @@ const strategies = computed(() => {
 const pagination = computed(() => strategyStore.pagination)
 
 const searchQuery = ref('')
+const statusFilter = ref<'active' | 'archived'>('active')
 const showDeleteDialog = ref(false)
 const strategyToDelete = ref<Strategy | null>(null)
 const deleteLoading = ref(false)
@@ -126,17 +136,23 @@ const deleteLoading = ref(false)
 const handleSearch = debounce(() => {
   if (searchQuery.value) {
     // Load all strategies for complete local filtering
-    strategyStore.loadStrategies({ page: 1, pageSize: 100 })
+    strategyStore.loadStrategies({ page: 1, pageSize: 100, status: statusFilter.value })
   } else {
     // Reset to normal pagination
     strategyStore.setPage(1)
-    strategyStore.loadStrategies()
+    strategyStore.loadStrategies({ status: statusFilter.value })
   }
 }, 300)
 
+function handleStatusChange() {
+  searchQuery.value = ''
+  strategyStore.setPage(1)
+  strategyStore.loadStrategies({ status: statusFilter.value })
+}
+
 function handlePageChange(page: number) {
   strategyStore.setPage(page)
-  strategyStore.loadStrategies()
+  strategyStore.loadStrategies({ status: statusFilter.value })
 }
 
 function goToUpload() {
@@ -198,7 +214,7 @@ async function confirmDelete() {
 }
 
 onMounted(() => {
-  strategyStore.loadStrategies()
+  strategyStore.loadStrategies({ status: statusFilter.value })
 })
 </script>
 
@@ -211,9 +227,16 @@ onMounted(() => {
     margin-bottom: 24px;
   }
 
+  .header-left {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+  }
+
   .page-title {
     font-size: 20px;
     font-weight: 600;
+    margin: 0;
   }
 
   .header-actions {
@@ -278,6 +301,15 @@ onMounted(() => {
       gap: 8px;
       padding-top: 12px;
       border-top: 1px solid #ebeef5;
+
+      &--archived {
+        justify-content: flex-end;
+      }
+
+      .archived-time {
+        font-size: 12px;
+        color: #909399;
+      }
     }
   }
 

@@ -141,6 +141,7 @@ class EquityCurvePoint(BaseModel):
     cash: NumberDecimal
     position_value: NumberDecimal
     unrealized_pnl: NumberDecimal
+    benchmark_equity: NumberDecimal | None = None
 
     model_config = {"from_attributes": True}
 
@@ -158,6 +159,18 @@ class TradeRecordResponse(BaseModel):
     pnl: NumberDecimal
     pnl_pct: NumberDecimal
     fees: NumberDecimal
+
+
+class FillRecordResponse(BaseModel):
+    """Individual fill record response."""
+
+    order_id: str
+    symbol: str
+    side: str
+    price: NumberDecimal
+    amount: NumberDecimal
+    fee: NumberDecimal
+    timestamp: datetime
 
 
 class BacktestMetrics(BaseModel):
@@ -209,6 +222,7 @@ class BacktestDetailResponse(BaseModel):
     metrics: BacktestMetrics | None = None
     equity_curve: list[EquityCurvePoint]
     trades: list[TradeRecordResponse] = Field(default_factory=list)
+    fills: list[FillRecordResponse] = Field(default_factory=list)
     total_bars: int | None = None
 
 
@@ -243,6 +257,26 @@ class ExportFormat(str, enum.Enum):
 
     JSON = "json"
     CSV = "csv"
+
+
+class CandlestickPoint(BaseModel):
+    """Single candlestick data point for backtest K-line chart."""
+
+    timestamp: datetime
+    open: NumberDecimal
+    high: NumberDecimal
+    low: NumberDecimal
+    close: NumberDecimal
+    volume: NumberDecimal
+
+    model_config = {"from_attributes": True}
+
+
+class CandlesPageResponse(BaseModel):
+    """Paginated candles response with metadata."""
+
+    candles: list[CandlestickPoint]
+    total_count: int
 
 
 class BacktestReportExport(BaseModel):

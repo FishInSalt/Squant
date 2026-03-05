@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import pytest
+from sqlalchemy.exc import IntegrityError
 
 from squant.models.enums import RunStatus, StrategyStatus
 from squant.models.strategy import Strategy, StrategyRun
@@ -385,11 +386,38 @@ class TestStrategyService:
         assert call_args[1]["status"] == StrategyStatus.ARCHIVED
 
     @pytest.mark.asyncio
-    async def test_delete_success(self, service, mock_session):
-        """Test successful strategy deletion when no running sessions."""
-        strategy_id = uuid4()
-        service.repository.exists = AsyncMock(return_value=True)
-        service.repository.delete = AsyncMock()
+    async def test_update_name_integrity_error_raises_name_exists(
+        self, service, sample_strategy
+    ):
+        """Test that IntegrityError on commit (race condition) raises StrategyNameExistsError.
+
+        repository.update() returns an object with the NEW name already set,
+        so the condition must compare against the original name captured before update.
+        """
+        # Simulate repository.update returning object with name already changed
+        updated_strategy = MagicMock()
+        updated_strategy.name = "Conflicting Name"  # name already set to new value
+
+        service.repository.get = AsyncMock(return_value=sample_strategy)
+        service.repository.get_by_name = AsyncMock(return_value=None)  # passes TOCTOU check
+        service.repository.update = AsyncMock(return_value=updated_strategy)
+        service.session.commit = AsyncMock(
+            side_effect=IntegrityError("duplicate", {}, None)
+        )
+        service.session.rollback = AsyncMock()
+
+        request = UpdateStrategyRequest(name="Conflicting Name")
+
+        with pytest.raises(StrategyNameExistsError):
+            await service.update(sample_strategy.id, request)
+
+        service.session.rollback.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_delete_success(self, service, mock_session, sample_strategy):
+        """Test successful strategy soft-delete (archive) when no running sessions."""
+        service.repository.get = AsyncMock(return_value=sample_strategy)
+        service.repository.update = AsyncMock(return_value=sample_strategy)
 
         # Mock no running sessions
         mock_scalars = MagicMock()
@@ -398,24 +426,26 @@ class TestStrategyService:
         mock_result.scalars.return_value = mock_scalars
         mock_session.execute.return_value = mock_result
 
-        await service.delete(strategy_id)
+        await service.delete(sample_strategy.id)
 
-        service.repository.delete.assert_called_once()
+        call_args = service.repository.update.call_args
+        assert call_args[0][0] == sample_strategy.id
+        assert call_args[1]["status"] == StrategyStatus.ARCHIVED
+        assert call_args[1]["name"].startswith("Test Strategy_archived_")
         service.session.commit.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_delete_not_found(self, service):
         """Test delete fails when strategy not found."""
-        service.repository.exists = AsyncMock(return_value=False)
+        service.repository.get = AsyncMock(return_value=None)
 
         with pytest.raises(StrategyNotFoundError):
             await service.delete(uuid4())
 
     @pytest.mark.asyncio
-    async def test_delete_running_strategy_fails(self, service, mock_session):
+    async def test_delete_running_strategy_fails(self, service, mock_session, sample_strategy):
         """Test delete fails when strategy has running sessions (STR-024)."""
-        strategy_id = uuid4()
-        service.repository.exists = AsyncMock(return_value=True)
+        service.repository.get = AsyncMock(return_value=sample_strategy)
 
         # Mock one running session
         running_session = MagicMock(spec=StrategyRun)
@@ -427,16 +457,15 @@ class TestStrategyService:
         mock_session.execute.return_value = mock_result
 
         with pytest.raises(StrategyInUseError) as exc_info:
-            await service.delete(strategy_id)
+            await service.delete(sample_strategy.id)
 
         assert exc_info.value.running_count == 1
-        assert str(strategy_id) in str(exc_info.value)
+        assert str(sample_strategy.id) in str(exc_info.value)
 
     @pytest.mark.asyncio
-    async def test_delete_multiple_running_sessions_fails(self, service, mock_session):
+    async def test_delete_multiple_running_sessions_fails(self, service, mock_session, sample_strategy):
         """Test delete fails with correct count when multiple sessions running."""
-        strategy_id = uuid4()
-        service.repository.exists = AsyncMock(return_value=True)
+        service.repository.get = AsyncMock(return_value=sample_strategy)
 
         # Mock multiple running sessions
         running_sessions = [
@@ -451,9 +480,103 @@ class TestStrategyService:
         mock_session.execute.return_value = mock_result
 
         with pytest.raises(StrategyInUseError) as exc_info:
-            await service.delete(strategy_id)
+            await service.delete(sample_strategy.id)
 
         assert exc_info.value.running_count == 3
+
+    @pytest.mark.asyncio
+    async def test_delete_with_completed_runs_archives(self, service, mock_session, sample_strategy):
+        """Test delete archives strategy even when it has completed runs.
+
+        Soft delete preserves strategy_runs history (backtest results, etc.)
+        while hiding the strategy from active listings.
+        """
+        service.repository.get = AsyncMock(return_value=sample_strategy)
+        service.repository.update = AsyncMock(return_value=sample_strategy)
+
+        # Mock no running sessions
+        mock_scalars = MagicMock()
+        mock_scalars.all.return_value = []
+        mock_result = MagicMock()
+        mock_result.scalars.return_value = mock_scalars
+        mock_session.execute.return_value = mock_result
+
+        await service.delete(sample_strategy.id)
+
+        # Should archive, not hard delete
+        call_args = service.repository.update.call_args
+        assert call_args[0][0] == sample_strategy.id
+        assert call_args[1]["status"] == StrategyStatus.ARCHIVED
+        assert "_archived_" in call_args[1]["name"]
+
+    @pytest.mark.asyncio
+    @patch("squant.services.strategy.validate_strategy_code")
+    async def test_archive_frees_name_for_reuse(self, mock_validate, service, mock_session, sample_strategy):
+        """Test that archiving a strategy frees up its name for a new strategy."""
+        # Step 1: Archive the strategy
+        service.repository.get = AsyncMock(return_value=sample_strategy)
+        service.repository.update = AsyncMock(return_value=sample_strategy)
+
+        mock_scalars = MagicMock()
+        mock_scalars.all.return_value = []
+        mock_result = MagicMock()
+        mock_result.scalars.return_value = mock_scalars
+        mock_session.execute.return_value = mock_result
+
+        await service.delete(sample_strategy.id)
+
+        # Verify name was changed to include _archived_
+        archive_call = service.repository.update.call_args
+        archived_name = archive_call[1]["name"]
+        assert archived_name != sample_strategy.name
+        assert sample_strategy.name in archived_name
+
+        # Step 2: Create new strategy with original name should not conflict
+        mock_validate.return_value = MagicMock(valid=True, errors=[])
+        # get_by_name returns None because the archived one has a different name now
+        service.repository.get_by_name = AsyncMock(return_value=None)
+        new_strategy = MagicMock(spec=Strategy)
+        new_strategy.name = sample_strategy.name
+        service.repository.create = AsyncMock(return_value=new_strategy)
+
+        request = CreateStrategyRequest(
+            name=sample_strategy.name,
+            code="class T(Strategy):\n    def on_bar(self, bar): pass\n",
+        )
+        result = await service.create(request)
+        assert result.name == sample_strategy.name
+
+    @pytest.mark.asyncio
+    async def test_delete_already_archived_is_noop(self, service, mock_session, sample_strategy):
+        """Test deleting an already-archived strategy is a no-op (F2)."""
+        sample_strategy.status = StrategyStatus.ARCHIVED
+        service.repository.get = AsyncMock(return_value=sample_strategy)
+        service.repository.update = AsyncMock()
+
+        await service.delete(sample_strategy.id)
+
+        service.repository.update.assert_not_called()
+        service.session.commit.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_delete_truncates_long_name(self, service, mock_session, sample_strategy):
+        """Test archived name is truncated to fit 128-char DB limit (F1)."""
+        sample_strategy.name = "A" * 128  # Max length name
+        service.repository.get = AsyncMock(return_value=sample_strategy)
+        service.repository.update = AsyncMock(return_value=sample_strategy)
+
+        mock_scalars = MagicMock()
+        mock_scalars.all.return_value = []
+        mock_result = MagicMock()
+        mock_result.scalars.return_value = mock_scalars
+        mock_session.execute.return_value = mock_result
+
+        await service.delete(sample_strategy.id)
+
+        call_args = service.repository.update.call_args
+        archived_name = call_args[1]["name"]
+        assert len(archived_name) <= 128
+        assert "_archived_" in archived_name
 
     @pytest.mark.asyncio
     async def test_get_success(self, service, sample_strategy):

@@ -1,16 +1,19 @@
 <template>
-  <div ref="chartContainer" class="kline-chart" :style="{ height: height }"></div>
+  <div ref="chartContainer" class="kline-chart" :style="{ height: computedHeight }"></div>
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, watch } from 'vue'
-import { init, dispose, type Chart } from 'klinecharts'
+import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
+import { init, dispose, LoadDataType, type Chart } from 'klinecharts'
 import type { Candle } from '@/types'
+import { getIndicatorDef, type IndicatorParams } from './indicatorConfig'
 
 interface Props {
   data: Candle[]
   height?: string
   indicators?: string[]
+  indicatorParams?: IndicatorParams
+  onLoadMore?: (params: { before: number }) => Promise<Candle[]>
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -22,25 +25,21 @@ const emit = defineEmits<{
   (e: 'crosshair', data: { timestamp: number; price: number } | null): void
 }>()
 
+const SUB_PANE_HEIGHT = 120
+
 const chartContainer = ref<HTMLDivElement | null>(null)
 let chart: Chart | null = null
-let indicatorsCreated = false  // 跟踪指标是否已创建
+let indicatorsCreated = false
 
-const indicatorMapping: Record<string, { name: string; paneId?: string }> = {
-  MA: { name: 'MA' },
-  EMA: { name: 'EMA' },
-  BOLL: { name: 'BOLL' },
-  VOL: { name: 'VOL', paneId: 'volume' },
-  MACD: { name: 'MACD', paneId: 'macd' },
-  RSI: { name: 'RSI', paneId: 'rsi' },
-  KDJ: { name: 'KDJ', paneId: 'kdj' },
-}
+const subPaneCount = computed(() =>
+  props.indicators.filter((name) => getIndicatorDef(name)?.paneId != null).length
+)
 
-/**
- * 根据价格计算合适的小数位数
- * @param price 价格
- * @returns 小数位数
- */
+const computedHeight = computed(() => {
+  const base = parseInt(props.height) || 500
+  return `${base + subPaneCount.value * SUB_PANE_HEIGHT}px`
+})
+
 function calculatePricePrecision(price: number): number {
   if (price >= 10000) return 2
   if (price >= 1000) return 3
@@ -51,6 +50,17 @@ function calculatePricePrecision(price: number): number {
   return 8
 }
 
+function toKLineData(c: Candle) {
+  return {
+    timestamp: c.timestamp,
+    open: c.open,
+    high: c.high,
+    low: c.low,
+    close: c.close,
+    volume: c.volume,
+  }
+}
+
 function initChart() {
   if (!chartContainer.value) return
 
@@ -58,18 +68,8 @@ function initChart() {
   const styles: any = {
     grid: {
       show: true,
-      horizontal: {
-        show: true,
-        size: 1,
-        color: '#EDEDED',
-        style: 'dashed',
-      },
-      vertical: {
-        show: true,
-        size: 1,
-        color: '#EDEDED',
-        style: 'dashed',
-      },
+      horizontal: { show: true, size: 1, color: '#EDEDED', style: 'dashed' },
+      vertical: { show: true, size: 1, color: '#EDEDED', style: 'dashed' },
     },
     candle: {
       type: 'candle_solid',
@@ -84,100 +84,71 @@ function initChart() {
         downWickColor: '#FF1744',
         noChangeWickColor: '#909399',
       },
-      tooltip: {
-        showRule: 'follow_cross',
-        showType: 'standard',
-      },
+      tooltip: { showRule: 'follow_cross', showType: 'standard' },
     },
     indicator: {
-      tooltip: {
-        showRule: 'follow_cross',
-        showType: 'standard',
-      },
+      tooltip: { showRule: 'follow_cross', showType: 'standard' },
     },
     xAxis: {
       show: true,
-      axisLine: {
-        show: true,
-        color: '#DDDDDD',
-      },
-      tickLine: {
-        show: true,
-        color: '#DDDDDD',
-      },
-      tickText: {
-        show: true,
-        color: '#909399',
-      },
+      axisLine: { show: true, color: '#DDDDDD' },
+      tickLine: { show: true, color: '#DDDDDD' },
+      tickText: { show: true, color: '#909399' },
     },
     yAxis: {
       show: true,
-      axisLine: {
-        show: true,
-        color: '#DDDDDD',
-      },
-      tickLine: {
-        show: true,
-        color: '#DDDDDD',
-      },
-      tickText: {
-        show: true,
-        color: '#909399',
-      },
+      axisLine: { show: true, color: '#DDDDDD' },
+      tickLine: { show: true, color: '#DDDDDD' },
+      tickText: { show: true, color: '#909399' },
     },
     crosshair: {
       show: true,
       horizontal: {
         show: true,
-        line: {
-          show: true,
-          style: 'dashed',
-          color: '#909399',
-        },
-        text: {
-          show: true,
-          color: '#FFFFFF',
-          backgroundColor: '#1890FF',
-        },
+        line: { show: true, style: 'dashed', color: '#909399' },
+        text: { show: true, color: '#FFFFFF', backgroundColor: '#1890FF' },
       },
       vertical: {
         show: true,
-        line: {
-          show: true,
-          style: 'dashed',
-          color: '#909399',
-        },
-        text: {
-          show: true,
-          color: '#FFFFFF',
-          backgroundColor: '#1890FF',
-        },
+        line: { show: true, style: 'dashed', color: '#909399' },
+        text: { show: true, color: '#FFFFFF', backgroundColor: '#1890FF' },
       },
     },
   }
 
   chart = init(chartContainer.value, { styles })
 
-  // 监听十字线
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  chart?.subscribeAction('crosshair' as any, (data: any) => {
+  chart?.subscribeAction('onCrosshairChange' as any, (data: any) => {
     if (data?.kLineData) {
-      emit('crosshair', {
-        timestamp: data.kLineData.timestamp,
-        price: data.kLineData.close,
-      })
+      emit('crosshair', { timestamp: data.kLineData.timestamp, price: data.kLineData.close })
     } else {
       emit('crosshair', null)
     }
   })
 
-  // 加载数据（指标计算依赖数据，所以先加载数据再创建指标）
+  // Register lazy-loading callback using klinecharts' native API.
+  // The library automatically detects when the user scrolls to the left edge (from === 0),
+  // triggers the callback, and internally prepends data while preserving the viewport position.
+  if (props.onLoadMore) {
+    chart?.setLoadDataCallback(({ type, data, callback }) => {
+      if (type === LoadDataType.Forward && data) {
+        // Forward = user scrolled to see the oldest bar → load older data
+        props.onLoadMore!({ before: data.timestamp }).then((candles) => {
+          callback(candles.map(toKLineData), candles.length >= 300)
+        }).catch(() => {
+          callback([], true)
+        })
+      } else {
+        // Backward (newer data) or no boundary data — not needed, realtime WS handles it
+        callback([], false)
+      }
+    })
+  }
+
   if (props.data.length > 0) {
     updateData(props.data)
-    // 数据加载后创建指标，确保 MA 等指标能正确计算
-    props.indicators.forEach((indicator) => {
-      addIndicator(indicator)
-    })
+    props.indicators.forEach((indicator) => addIndicator(indicator))
     indicatorsCreated = true
   }
 }
@@ -185,97 +156,115 @@ function initChart() {
 function updateData(candles: Candle[]) {
   if (!chart || candles.length === 0) return
 
-  // 根据价格计算合适的精度
   const latestPrice = candles[candles.length - 1].close
   const pricePrecision = calculatePricePrecision(latestPrice)
-  // 成交量精度：根据成交量大小动态调整
   const latestVolume = candles[candles.length - 1].volume
   const volumePrecision = latestVolume >= 1 ? 2 : 6
-
   chart.setPriceVolumePrecision(pricePrecision, volumePrecision)
 
-  const klineData = candles.map((c) => ({
-    timestamp: c.timestamp,
-    open: c.open,
-    high: c.high,
-    low: c.low,
-    close: c.close,
-    volume: c.volume,
-  }))
-
-  chart.applyNewData(klineData)
+  // Pass more=true when onLoadMore is available, telling the library
+  // that more historical data can be loaded when user scrolls left
+  chart.applyNewData(candles.map(toKLineData), !!props.onLoadMore)
 }
 
-/**
- * 实时更新单根 K 线
- * @param candle K线数据
- */
 function updateCandle(candle: { timestamp: number; open: number; high: number; low: number; close: number; volume: number }) {
   if (!chart) return
   chart.updateData(candle)
 }
 
 function addIndicator(name: string) {
-  const config = indicatorMapping[name]
-  if (chart && config) {
-    if (config.paneId) {
-      // 副图指标：创建新的 pane
-      chart.createIndicator(config.name, false, { id: config.paneId })
-    } else {
-      // 主图指标：明确指定添加到 candle_pane（主图）
-      chart.createIndicator(config.name, false, { id: 'candle_pane' })
-    }
+  const def = getIndicatorDef(name)
+  if (!chart || !def) return
+  const paneId = def.paneId ?? 'candle_pane'
+  const isStack = !def.paneId
+  const params = props.indicatorParams?.[name]
+  chart.createIndicator(
+    { name: def.key, ...(params ? { calcParams: params } : {}) } as any,
+    isStack,
+    { id: paneId, ...(def.paneId ? { height: SUB_PANE_HEIGHT } : {}) },
+  )
+  if (def.colors) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    chart.overrideIndicator({
+      name: def.key,
+      styles: {
+        lines: def.colors.map((color) => ({
+          style: 'solid',
+          smooth: false,
+          size: 1,
+          dashedValue: [2, 2],
+          color,
+        })),
+      },
+    } as any, paneId)
   }
 }
 
-function removeIndicator(paneId: string) {
-  if (chart) {
-    chart.removeIndicator(paneId)
+function removeIndicator(name: string, paneId?: string) {
+  if (!chart) return
+  const def = getIndicatorDef(name)
+  const resolvedPaneId = paneId ?? def?.paneId ?? 'candle_pane'
+  chart.removeIndicator(resolvedPaneId, name)
+}
+
+function overrideIndicatorParams(name: string) {
+  const def = getIndicatorDef(name)
+  if (!chart || !def) return
+  const paneId = def.paneId ?? 'candle_pane'
+  const params = props.indicatorParams?.[name]
+  if (!params) return
+
+  if (def.dynamicCount) {
+    // Dynamic-count: remove and re-add to apply new line count
+    chart.removeIndicator(paneId, def.key)
+    addIndicator(name)
+  } else {
+    // Fixed-count: override in place
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    chart.overrideIndicator({ name: def.key, calcParams: params } as any, paneId)
   }
 }
 
 watch(() => props.data, (newData) => {
   if (newData.length > 0) {
     updateData(newData)
-    // 数据首次加载后创建指标
     if (!indicatorsCreated && chart) {
-      props.indicators.forEach((indicator) => {
-        addIndicator(indicator)
-      })
+      props.indicators.forEach((indicator) => addIndicator(indicator))
       indicatorsCreated = true
     }
   }
 }, { deep: true })
 
-// 监听指标变化
 watch(() => props.indicators, (newIndicators, oldIndicators) => {
   if (!chart) return
 
   const oldSet = new Set(oldIndicators || [])
   const newSet = new Set(newIndicators || [])
 
-  // 移除不再需要的指标
   oldIndicators?.forEach((indicator) => {
     if (!newSet.has(indicator)) {
-      const config = indicatorMapping[indicator]
-      if (config) {
-        if (config.paneId) {
-          // 副图指标：移除整个 pane
-          chart?.removeIndicator(config.paneId, config.name)
-        } else {
-          // 主图指标：从主图移除
-          chart?.removeIndicator('candle_pane', config.name)
-        }
+      const def = getIndicatorDef(indicator)
+      if (def) {
+        const paneId = def.paneId ?? 'candle_pane'
+        chart?.removeIndicator(paneId, def.key)
       }
     }
   })
 
-  // 添加新指标
   newIndicators?.forEach((indicator) => {
     if (!oldSet.has(indicator)) {
       addIndicator(indicator)
     }
   })
+}, { deep: true })
+
+watch(computedHeight, () => {
+  nextTick(() => chart?.resize())
+})
+
+watch(() => props.indicatorParams, () => {
+  if (!chart) return
+  props.indicators.forEach((name) => overrideIndicatorParams(name))
 }, { deep: true })
 
 onMounted(() => {

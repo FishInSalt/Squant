@@ -26,6 +26,8 @@
         </el-button>
       </el-badge>
 
+      <NotificationBell />
+
       <el-tooltip :content="wsConnected ? '已连接' : '未连接'" placement="bottom">
         <span class="connection-status" :class="{ connected: wsConnected }">
           <el-icon><Connection /></el-icon>
@@ -40,10 +42,18 @@ import { ref, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { useTradingStore } from '@/stores/trading'
 import { useWebSocketStore } from '@/stores/websocket'
+import { useNotificationStore } from '@/stores/notification'
+import NotificationBell from './NotificationBell.vue'
 
 const router = useRouter()
 const tradingStore = useTradingStore()
 const wsStore = useWebSocketStore()
+const notificationStore = useNotificationStore()
+
+// Load unread count on mount
+onMounted(() => {
+  notificationStore.loadUnreadCount()
+})
 
 const searchQuery = ref('')
 

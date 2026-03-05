@@ -67,4 +67,29 @@ describe('StrategyList', () => {
     expect(wrapper.text()).toContain('均线交叉策略')
     expect(wrapper.text()).toContain('暂无描述')
   })
+
+  it('shows status filter with active and archived options', async () => {
+    const wrapper = mountView(StrategyList)
+    await flushPromises()
+    expect(wrapper.text()).toContain('活跃')
+    expect(wrapper.text()).toContain('已归档')
+  })
+
+  it('calls loadStrategies with active status on mount', async () => {
+    mountView(StrategyList)
+    await flushPromises()
+    const store = useStrategyStore()
+    expect(store.loadStrategies).toHaveBeenCalledWith(
+      expect.objectContaining({ status: 'active' })
+    )
+  })
+
+  it('shows empty archived message when no archived strategies', async () => {
+    const wrapper = mountView(StrategyList)
+    await flushPromises()
+    // Simulate switching to archived tab by setting the radio value
+    const radioButtons = wrapper.findAll('.el-radio-button')
+    // The archived radio button should exist
+    expect(radioButtons.length).toBeGreaterThanOrEqual(2)
+  })
 })

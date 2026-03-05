@@ -322,7 +322,7 @@
           "Market"
         ],
         "summary": "Get Candles",
-        "description": "Get candlestick (OHLCV) data for a trading pair.\n\nReturns historical price data in candlestick format.",
+        "description": "Get candlestick (OHLCV) data for a trading pair.\n\nReturns historical price data in candlestick format.\nWhen end_time is provided, returns candles before that timestamp\n(useful for scroll-loading historical data).",
         "operationId": "get_candles_api_v1_market_candles__symbol__get",
         "parameters": [
           {
@@ -361,6 +361,26 @@
               "title": "Limit"
             },
             "description": "Number of candles"
+          },
+          {
+            "name": "end_time",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "maximum": 32503680000000,
+                  "minimum": 0
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "End timestamp in milliseconds. When provided, fetches candles before this time.",
+              "title": "End Time"
+            },
+            "description": "End timestamp in milliseconds. When provided, fetches candles before this time."
           }
         ],
         "responses": {
@@ -1459,7 +1479,7 @@
           "Backtest"
         ],
         "summary": "Run Backtest",
-        "description": "Create and run a backtest synchronously.\n\nThis endpoint creates a backtest run and executes it immediately,\nreturning when the backtest completes.\n\nArgs:\n    request: Backtest configuration.\n    session: Database session.\n\nReturns:\n    Backtest run with results.\n\nRaises:\n    HTTPException: 400 if insufficient data, 404 if strategy not found.",
+        "description": "Create a backtest and start execution in background.\n\nReturns immediately with a PENDING run record. The backtest executes\nasynchronously — poll GET /backtest/{run_id} for status updates.\n\nArgs:\n    request: Backtest configuration.\n    session: Database session.\n\nReturns:\n    Created backtest run (status: pending).\n\nRaises:\n    HTTPException: 400 if invalid config, 404 if strategy not found.",
         "operationId": "run_backtest_api_v1_backtest_post",
         "requestBody": {
           "required": true,
@@ -1639,7 +1659,7 @@
           "Backtest"
         ],
         "summary": "Execute Backtest",
-        "description": "Execute a pending backtest.\n\nArgs:\n    run_id: Backtest run ID.\n    session: Database session.\n\nReturns:\n    Updated backtest run with results.\n\nRaises:\n    HTTPException: 400 if execution fails or data incomplete, 404 if not found.",
+        "description": "Start execution of a pending backtest in background.\n\nReturns immediately. Poll GET /backtest/{run_id} for status updates.\n\nArgs:\n    run_id: Backtest run ID.\n    session: Database session.\n\nReturns:\n    Current backtest run record.\n\nRaises:\n    HTTPException: 404 if not found, 400 if not in pending state.",
         "operationId": "execute_backtest_api_v1_backtest__run_id__run_post",
         "parameters": [
           {
@@ -2007,6 +2027,102 @@
         }
       }
     },
+    "/api/v1/backtest/{run_id}/candles": {
+      "get": {
+        "tags": [
+          "Backtest"
+        ],
+        "summary": "Get Backtest Candles",
+        "description": "Get paginated candlestick data for a backtest run's period.\n\nSupports cursor-based pagination via `before` / `after` timestamps.\nDefault (no cursor): returns the last `limit` candles of the backtest period.\n\nArgs:\n    run_id: Backtest run ID.\n    before: Return candles with time < before (scroll left / older data).\n    after: Return candles with time > after (scroll right / newer data).\n    limit: Max number of candles to return (1-2000, default 1000).\n    session: Database session.\n\nReturns:\n    Paginated candles with total_count metadata.\n\nRaises:\n    HTTPException: 404 if backtest not found, 400 if no data available.",
+        "operationId": "get_backtest_candles_api_v1_backtest__run_id__candles_get",
+        "parameters": [
+          {
+            "name": "run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Run Id"
+            }
+          },
+          {
+            "name": "before",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Fetch candles before this time",
+              "title": "Before"
+            },
+            "description": "Fetch candles before this time"
+          },
+          {
+            "name": "after",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Fetch candles after this time",
+              "title": "After"
+            },
+            "description": "Fetch candles after this time"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 2000,
+              "minimum": 1,
+              "description": "Max candles to return",
+              "default": 1000,
+              "title": "Limit"
+            },
+            "description": "Max candles to return"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_CandlesPageResponse_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/backtest/{run_id}/export": {
       "get": {
         "tags": [
@@ -2168,6 +2284,67 @@
         }
       }
     },
+    "/api/v1/paper/{run_id}/resume": {
+      "post": {
+        "tags": [
+          "Paper Trading"
+        ],
+        "summary": "Resume Paper Trading",
+        "description": "Resume a stopped or errored paper trading session.\n\nRestores trading state from the saved result snapshot and replays\nhistorical bars to rebuild strategy internal state.\n\nArgs:\n    run_id: Paper trading run ID.\n    request: Optional resume configuration.\n    redis: Redis client for circuit breaker check.\n    session: Database session.\n\nReturns:\n    Updated paper trading run record.",
+        "operationId": "resume_paper_trading_api_v1_paper__run_id__resume_post",
+        "parameters": [
+          {
+            "name": "run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Run Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/ResumePaperTradingRequest"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Request"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_PaperTradingRunResponse_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/paper/{run_id}/status": {
       "get": {
         "tags": [
@@ -2212,13 +2389,35 @@
         }
       }
     },
+    "/api/v1/paper/stop-all": {
+      "post": {
+        "tags": [
+          "Paper Trading"
+        ],
+        "summary": "Stop All Paper Trading",
+        "description": "Stop all active paper trading sessions.\n\nReturns:\n    Number of sessions stopped.",
+        "operationId": "stop_all_paper_trading_api_v1_paper_stop_all_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_dict_"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/paper/runs": {
       "get": {
         "tags": [
           "Paper Trading"
         ],
         "summary": "List Paper Trading Runs",
-        "description": "List paper trading runs with pagination.\n\nArgs:\n    page: Page number (1-indexed).\n    page_size: Items per page.\n    status: Optional status filter (pending, running, stopped, error).\n    session: Database session.\n\nReturns:\n    Paginated list of paper trading runs.",
+        "description": "List paper trading runs with pagination.\n\nArgs:\n    page: Page number (1-indexed).\n    page_size: Items per page.\n    status: Optional status filter (pending, running, stopped, error, interrupted).\n    session: Database session.\n\nReturns:\n    Paginated list of paper trading runs.",
         "operationId": "list_paper_trading_runs_api_v1_paper_runs_get",
         "parameters": [
           {
@@ -2341,7 +2540,7 @@
           "Paper Trading"
         ],
         "summary": "Get Equity Curve",
-        "description": "Get equity curve for a paper trading run.\n\nArgs:\n    run_id: Paper trading run ID.\n    session: Database session.\n\nReturns:\n    Equity curve data points.\n\nRaises:\n    HTTPException: 404 if not found.",
+        "description": "Get equity curve for a paper trading run.\n\nArgs:\n    run_id: Paper trading run ID.\n    session: Database session.\n    since: Optional time filter for incremental loading.\n\nReturns:\n    Equity curve data points.\n\nRaises:\n    HTTPException: 404 if not found.",
         "operationId": "get_equity_curve_api_v1_paper__run_id__equity_curve_get",
         "parameters": [
           {
@@ -2353,6 +2552,25 @@
               "format": "uuid",
               "title": "Run Id"
             }
+          },
+          {
+            "name": "since",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Only return records after this time (ISO 8601)",
+              "title": "Since"
+            },
+            "description": "Only return records after this time (ISO 8601)"
           }
         ],
         "responses": {
@@ -2546,6 +2764,67 @@
         }
       }
     },
+    "/api/v1/live/{run_id}/resume": {
+      "post": {
+        "tags": [
+          "Live Trading"
+        ],
+        "summary": "Resume Live Trading",
+        "description": "Resume a stopped/errored/interrupted live trading session.\n\nReconnects to the exchange, reconciles orders and positions,\nrestores trading state, and resumes.\n\nArgs:\n    run_id: Live trading run ID.\n    request: Resume configuration (optional).\n    session: Database session.\n\nReturns:\n    Updated live trading run record.",
+        "operationId": "resume_live_trading_api_v1_live__run_id__resume_post",
+        "parameters": [
+          {
+            "name": "run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Run Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/ResumeLiveTradingRequest"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Request"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_LiveTradingRunResponse_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/live/{run_id}/emergency-close": {
       "post": {
         "tags": [
@@ -2640,7 +2919,7 @@
           "Live Trading"
         ],
         "summary": "List Live Trading Runs",
-        "description": "List live trading runs with pagination.\n\nArgs:\n    page: Page number (1-indexed).\n    page_size: Items per page.\n    status: Optional status filter (pending, running, stopped, error).\n    session: Database session.\n\nReturns:\n    Paginated list of live trading runs.",
+        "description": "List live trading runs with pagination.\n\nArgs:\n    page: Page number (1-indexed).\n    page_size: Items per page.\n    status: Optional status filter (pending, running, stopped, error, interrupted).\n    session: Database session.\n\nReturns:\n    Paginated list of live trading runs.",
         "operationId": "list_live_trading_runs_api_v1_live_runs_get",
         "parameters": [
           {
@@ -2713,6 +2992,77 @@
         }
       }
     },
+    "/api/v1/live/{run_id}/orders": {
+      "get": {
+        "tags": [
+          "Live Trading"
+        ],
+        "summary": "Get Session Orders",
+        "description": "Get orders from the audit table for a live trading session.\n\nReturns orders placed by the strategy engine, with their trade fills.\n\nArgs:\n    run_id: Live trading run ID.\n    page: Page number (1-indexed).\n    page_size: Items per page.\n    session: Database session.\n\nReturns:\n    Paginated list of order records with trades.",
+        "operationId": "get_session_orders_api_v1_live__run_id__orders_get",
+        "parameters": [
+          {
+            "name": "run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Run Id"
+            }
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "Page number",
+              "default": 1,
+              "title": "Page"
+            },
+            "description": "Page number"
+          },
+          {
+            "name": "page_size",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "description": "Page size",
+              "default": 20,
+              "title": "Page Size"
+            },
+            "description": "Page size"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_PaginatedData_LiveSessionOrderResponse__"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/live/{run_id}": {
       "get": {
         "tags": [
@@ -2763,7 +3113,7 @@
           "Live Trading"
         ],
         "summary": "Get Equity Curve",
-        "description": "Get equity curve for a live trading run.\n\nArgs:\n    run_id: Live trading run ID.\n    session: Database session.\n\nReturns:\n    Equity curve data points.\n\nRaises:\n    HTTPException: 404 if not found.",
+        "description": "Get equity curve for a live trading run.\n\nArgs:\n    run_id: Live trading run ID.\n    session: Database session.\n    since: Optional time filter for incremental loading.\n\nReturns:\n    Equity curve data points.\n\nRaises:\n    HTTPException: 404 if not found.",
         "operationId": "get_equity_curve_api_v1_live__run_id__equity_curve_get",
         "parameters": [
           {
@@ -2775,6 +3125,25 @@
               "format": "uuid",
               "title": "Run Id"
             }
+          },
+          {
+            "name": "since",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Only return records after this time (ISO 8601)",
+              "title": "Since"
+            },
+            "description": "Only return records after this time (ISO 8601)"
           }
         ],
         "responses": {
@@ -3450,6 +3819,228 @@
         }
       }
     },
+    "/api/v1/notifications": {
+      "get": {
+        "tags": [
+          "Notifications"
+        ],
+        "summary": "List Notifications",
+        "description": "List notifications with pagination and filters.",
+        "operationId": "list_notifications_api_v1_notifications_get",
+        "parameters": [
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "Page number",
+              "default": 1,
+              "title": "Page"
+            },
+            "description": "Page number"
+          },
+          {
+            "name": "page_size",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "description": "Page size",
+              "default": 20,
+              "title": "Page Size"
+            },
+            "description": "Page size"
+          },
+          {
+            "name": "level",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by level: critical/warning/info",
+              "title": "Level"
+            },
+            "description": "Filter by level: critical/warning/info"
+          },
+          {
+            "name": "is_read",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by read status",
+              "title": "Is Read"
+            },
+            "description": "Filter by read status"
+          },
+          {
+            "name": "event_type",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by event type",
+              "title": "Event Type"
+            },
+            "description": "Filter by event type"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_PaginatedData_NotificationResponse__"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/notifications/unread-count": {
+      "get": {
+        "tags": [
+          "Notifications"
+        ],
+        "summary": "Get Unread Count",
+        "description": "Get count of unread notifications.",
+        "operationId": "get_unread_count_api_v1_notifications_unread_count_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_UnreadCountResponse_"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/notifications/mark-read": {
+      "post": {
+        "tags": [
+          "Notifications"
+        ],
+        "summary": "Mark Read",
+        "description": "Mark notifications as read.",
+        "operationId": "mark_read_api_v1_notifications_mark_read_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MarkReadRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_dict_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/notifications/{notification_id}": {
+      "delete": {
+        "tags": [
+          "Notifications"
+        ],
+        "summary": "Delete Notification",
+        "description": "Delete a notification.",
+        "operationId": "delete_notification_api_v1_notifications__notification_id__delete",
+        "parameters": [
+          {
+            "name": "notification_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Notification Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_dict_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/watchlist": {
       "get": {
         "tags": [
@@ -3653,6 +4244,371 @@
           }
         }
       }
+    },
+    "/api/v1/system/data/download": {
+      "post": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Start Download",
+        "description": "Start a historical data download task.",
+        "operationId": "start_download_api_v1_system_data_download_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DownloadDataRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_DownloadTaskResponse_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/system/data/download/tasks": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "List Download Tasks",
+        "description": "List all download tasks (most recent first).",
+        "operationId": "list_download_tasks_api_v1_system_data_download_tasks_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_list_DownloadTaskResponse__"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/system/data/download/{task_id}": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Get Download Task",
+        "description": "Get download task status by ID.",
+        "operationId": "get_download_task_api_v1_system_data_download__task_id__get",
+        "parameters": [
+          {
+            "name": "task_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Task Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_DownloadTaskResponse_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Remove Download Task",
+        "description": "Remove a completed or failed download task from the list.",
+        "operationId": "remove_download_task_api_v1_system_data_download__task_id__delete",
+        "parameters": [
+          {
+            "name": "task_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Task Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_NoneType_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/system/data/download/{task_id}/cancel": {
+      "post": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Cancel Download Task",
+        "description": "Cancel a running download task.",
+        "operationId": "cancel_download_task_api_v1_system_data_download__task_id__cancel_post",
+        "parameters": [
+          {
+            "name": "task_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Task Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_DownloadTaskResponse_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/system/data/list": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "List Historical Data",
+        "description": "List available historical data in the database.",
+        "operationId": "list_historical_data_api_v1_system_data_list_get",
+        "parameters": [
+          {
+            "name": "exchange",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by exchange",
+              "title": "Exchange"
+            },
+            "description": "Filter by exchange"
+          },
+          {
+            "name": "symbol",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by symbol",
+              "title": "Symbol"
+            },
+            "description": "Filter by symbol"
+          },
+          {
+            "name": "timeframe",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by timeframe",
+              "title": "Timeframe"
+            },
+            "description": "Filter by timeframe"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_list_HistoricalDataItem__"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/system/data/{data_id}": {
+      "delete": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Delete Historical Data",
+        "description": "Delete historical data for a specific exchange/symbol/timeframe.\n\nThe data_id format is \"exchange:symbol:timeframe\" (e.g., \"okx:BTC/USDT:1h\").",
+        "operationId": "delete_historical_data_api_v1_system_data__data_id__delete",
+        "parameters": [
+          {
+            "name": "data_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Data Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_NoneType_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/system/symbols/{exchange_id}": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "List Exchange Symbols",
+        "description": "List available trading symbols for an exchange via CCXT.",
+        "operationId": "list_exchange_symbols_api_v1_system_symbols__exchange_id__get",
+        "parameters": [
+          {
+            "name": "exchange_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Exchange Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_list_str__"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -3747,6 +4703,28 @@
           "data"
         ],
         "title": "ApiResponse[BalanceResponse]"
+      },
+      "ApiResponse_CandlesPageResponse_": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "default": 0
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "success"
+          },
+          "data": {
+            "$ref": "#/components/schemas/CandlesPageResponse"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "title": "ApiResponse[CandlesPageResponse]"
       },
       "ApiResponse_CandlestickResponse_": {
         "properties": {
@@ -3857,6 +4835,28 @@
           "data"
         ],
         "title": "ApiResponse[DataAvailabilityResponse]"
+      },
+      "ApiResponse_DownloadTaskResponse_": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "default": 0
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "success"
+          },
+          "data": {
+            "$ref": "#/components/schemas/DownloadTaskResponse"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "title": "ApiResponse[DownloadTaskResponse]"
       },
       "ApiResponse_EmergencyCloseResponse_": {
         "properties": {
@@ -4079,6 +5079,28 @@
         ],
         "title": "ApiResponse[PaginatedData[BacktestListItem]]"
       },
+      "ApiResponse_PaginatedData_LiveSessionOrderResponse__": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "default": 0
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "success"
+          },
+          "data": {
+            "$ref": "#/components/schemas/PaginatedData_LiveSessionOrderResponse_"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "title": "ApiResponse[PaginatedData[LiveSessionOrderResponse]]"
+      },
       "ApiResponse_PaginatedData_LiveTradingRunResponse__": {
         "properties": {
           "code": {
@@ -4100,6 +5122,28 @@
           "data"
         ],
         "title": "ApiResponse[PaginatedData[LiveTradingRunResponse]]"
+      },
+      "ApiResponse_PaginatedData_NotificationResponse__": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "default": 0
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "success"
+          },
+          "data": {
+            "$ref": "#/components/schemas/PaginatedData_NotificationResponse_"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "title": "ApiResponse[PaginatedData[NotificationResponse]]"
       },
       "ApiResponse_PaginatedData_PaperTradingRunResponse__": {
         "properties": {
@@ -4394,6 +5438,28 @@
         ],
         "title": "ApiResponse[Union[BalanceItem, NoneType]]"
       },
+      "ApiResponse_UnreadCountResponse_": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "default": 0
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "success"
+          },
+          "data": {
+            "$ref": "#/components/schemas/UnreadCountResponse"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "title": "ApiResponse[UnreadCountResponse]"
+      },
       "ApiResponse_ValidationResultResponse_": {
         "properties": {
           "code": {
@@ -4510,6 +5576,32 @@
         ],
         "title": "ApiResponse[list[AvailableSymbolResponse]]"
       },
+      "ApiResponse_list_DownloadTaskResponse__": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "default": 0
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "success"
+          },
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/DownloadTaskResponse"
+            },
+            "type": "array",
+            "title": "Data"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "title": "ApiResponse[list[DownloadTaskResponse]]"
+      },
       "ApiResponse_list_EquityCurvePoint__": {
         "properties": {
           "code": {
@@ -4561,6 +5653,32 @@
           "data"
         ],
         "title": "ApiResponse[list[ExchangeAccountListItem]]"
+      },
+      "ApiResponse_list_HistoricalDataItem__": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "default": 0
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "success"
+          },
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/HistoricalDataItem"
+            },
+            "type": "array",
+            "title": "Data"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "title": "ApiResponse[list[HistoricalDataItem]]"
       },
       "ApiResponse_list_LiveTradingListItem__": {
         "properties": {
@@ -4692,6 +5810,32 @@
         ],
         "title": "ApiResponse[list[WatchlistItemResponse]]"
       },
+      "ApiResponse_list_str__": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "default": 0
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "success"
+          },
+          "data": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Data"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "title": "ApiResponse[list[str]]"
+      },
       "AvailableSymbolResponse": {
         "properties": {
           "exchange": {
@@ -4775,6 +5919,13 @@
             },
             "type": "array",
             "title": "Trades"
+          },
+          "fills": {
+            "items": {
+              "$ref": "#/components/schemas/FillRecordResponse"
+            },
+            "type": "array",
+            "title": "Fills"
           },
           "total_bars": {
             "anyOf": [
@@ -5294,6 +6445,28 @@
         "title": "BalanceResponse",
         "description": "Account balance response."
       },
+      "CandlesPageResponse": {
+        "properties": {
+          "candles": {
+            "items": {
+              "$ref": "#/components/schemas/CandlestickPoint"
+            },
+            "type": "array",
+            "title": "Candles"
+          },
+          "total_count": {
+            "type": "integer",
+            "title": "Total Count"
+          }
+        },
+        "type": "object",
+        "required": [
+          "candles",
+          "total_count"
+        ],
+        "title": "CandlesPageResponse",
+        "description": "Paginated candles response with metadata."
+      },
       "CandlestickItem": {
         "properties": {
           "timestamp": {
@@ -5339,6 +6512,46 @@
         ],
         "title": "CandlestickItem",
         "description": "Single candlestick."
+      },
+      "CandlestickPoint": {
+        "properties": {
+          "timestamp": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Timestamp"
+          },
+          "open": {
+            "type": "number",
+            "title": "Open"
+          },
+          "high": {
+            "type": "number",
+            "title": "High"
+          },
+          "low": {
+            "type": "number",
+            "title": "Low"
+          },
+          "close": {
+            "type": "number",
+            "title": "Close"
+          },
+          "volume": {
+            "type": "number",
+            "title": "Volume"
+          }
+        },
+        "type": "object",
+        "required": [
+          "timestamp",
+          "open",
+          "high",
+          "low",
+          "close",
+          "volume"
+        ],
+        "title": "CandlestickPoint",
+        "description": "Single candlestick data point for backtest K-line chart."
       },
       "CandlestickResponse": {
         "properties": {
@@ -5801,7 +7014,7 @@
           },
           "type": {
             "$ref": "#/components/schemas/OrderType",
-            "description": "Order type (MARKET/LIMIT)"
+            "description": "Order type (MARKET/LIMIT/STOP/STOP_LIMIT)"
           },
           "amount": {
             "anyOf": [
@@ -5831,7 +7044,23 @@
               }
             ],
             "title": "Price",
-            "description": "Limit price (required for LIMIT orders)"
+            "description": "Limit price (required for LIMIT/STOP_LIMIT)"
+          },
+          "stop_price": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "string",
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stop Price",
+            "description": "Stop trigger price (required for STOP/STOP_LIMIT)"
           },
           "client_order_id": {
             "anyOf": [
@@ -6091,6 +7320,151 @@
         "title": "DetailedHealthStatus",
         "description": "Detailed health check response with components."
       },
+      "DownloadDataRequest": {
+        "properties": {
+          "exchange": {
+            "type": "string",
+            "maxLength": 32,
+            "minLength": 1,
+            "title": "Exchange",
+            "description": "Exchange ID (okx, binance, bybit)"
+          },
+          "symbol": {
+            "type": "string",
+            "maxLength": 32,
+            "minLength": 1,
+            "title": "Symbol",
+            "description": "Trading pair (e.g., BTC/USDT)"
+          },
+          "timeframe": {
+            "type": "string",
+            "maxLength": 8,
+            "minLength": 1,
+            "title": "Timeframe",
+            "description": "Candle timeframe (1m, 5m, 15m, 30m, 1h, 4h, 1d, 1w)"
+          },
+          "start_date": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Start Date",
+            "description": "Download start date"
+          },
+          "end_date": {
+            "type": "string",
+            "format": "date-time",
+            "title": "End Date",
+            "description": "Download end date"
+          }
+        },
+        "type": "object",
+        "required": [
+          "exchange",
+          "symbol",
+          "timeframe",
+          "start_date",
+          "end_date"
+        ],
+        "title": "DownloadDataRequest",
+        "description": "Request to start a historical data download."
+      },
+      "DownloadTaskResponse": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "exchange": {
+            "type": "string",
+            "title": "Exchange"
+          },
+          "symbol": {
+            "type": "string",
+            "title": "Symbol"
+          },
+          "timeframe": {
+            "type": "string",
+            "title": "Timeframe"
+          },
+          "start_date": {
+            "type": "string",
+            "title": "Start Date"
+          },
+          "end_date": {
+            "type": "string",
+            "title": "End Date"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "progress": {
+            "type": "number",
+            "title": "Progress"
+          },
+          "total_candles": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Total Candles"
+          },
+          "downloaded_candles": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Downloaded Candles"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "created_at": {
+            "type": "string",
+            "title": "Created At"
+          },
+          "completed_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completed At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "exchange",
+          "symbol",
+          "timeframe",
+          "start_date",
+          "end_date",
+          "status",
+          "progress",
+          "created_at"
+        ],
+        "title": "DownloadTaskResponse",
+        "description": "Download task status response.\n\nMatches frontend DataDownloadTask type in types/common.ts."
+      },
       "EmergencyCloseResponse": {
         "properties": {
           "run_id": {
@@ -6195,6 +7569,17 @@
           "unrealized_pnl": {
             "type": "number",
             "title": "Unrealized Pnl"
+          },
+          "benchmark_equity": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Benchmark Equity"
           }
         },
         "type": "object",
@@ -6311,6 +7696,51 @@
         "title": "ExportFormat",
         "description": "Export format enum (TRD-009#4)."
       },
+      "FillRecordResponse": {
+        "properties": {
+          "order_id": {
+            "type": "string",
+            "title": "Order Id"
+          },
+          "symbol": {
+            "type": "string",
+            "title": "Symbol"
+          },
+          "side": {
+            "type": "string",
+            "title": "Side"
+          },
+          "price": {
+            "type": "number",
+            "title": "Price"
+          },
+          "amount": {
+            "type": "number",
+            "title": "Amount"
+          },
+          "fee": {
+            "type": "number",
+            "title": "Fee"
+          },
+          "timestamp": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Timestamp"
+          }
+        },
+        "type": "object",
+        "required": [
+          "order_id",
+          "symbol",
+          "side",
+          "price",
+          "amount",
+          "fee",
+          "timestamp"
+        ],
+        "title": "FillRecordResponse",
+        "description": "Individual fill record response."
+      },
       "HTTPValidationError": {
         "properties": {
           "detail": {
@@ -6348,6 +7778,72 @@
         ],
         "title": "HealthStatus",
         "description": "Health check response model."
+      },
+      "HistoricalDataItem": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "exchange": {
+            "type": "string",
+            "title": "Exchange"
+          },
+          "symbol": {
+            "type": "string",
+            "title": "Symbol"
+          },
+          "timeframe": {
+            "type": "string",
+            "title": "Timeframe"
+          },
+          "start_date": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Start Date"
+          },
+          "end_date": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "End Date"
+          },
+          "candle_count": {
+            "type": "integer",
+            "title": "Candle Count"
+          },
+          "file_size": {
+            "type": "integer",
+            "title": "File Size",
+            "default": 0
+          },
+          "created_at": {
+            "type": "string",
+            "title": "Created At",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "exchange",
+          "symbol",
+          "timeframe",
+          "candle_count"
+        ],
+        "title": "HistoricalDataItem",
+        "description": "Historical data summary item.\n\nMaps from DataLoader.get_available_symbols() output."
       },
       "LiveOrderInfo": {
         "properties": {
@@ -6496,12 +7992,156 @@
         "title": "LivePositionInfo",
         "description": "Position information for live trading."
       },
-      "LiveTradingListItem": {
+      "LiveSessionOrderResponse": {
         "properties": {
-          "run_id": {
+          "id": {
             "type": "string",
             "format": "uuid",
-            "title": "Run Id"
+            "title": "Id"
+          },
+          "exchange_oid": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Exchange Oid"
+          },
+          "symbol": {
+            "type": "string",
+            "title": "Symbol"
+          },
+          "side": {
+            "type": "string",
+            "title": "Side"
+          },
+          "type": {
+            "type": "string",
+            "title": "Type"
+          },
+          "amount": {
+            "type": "number",
+            "title": "Amount"
+          },
+          "filled": {
+            "type": "number",
+            "title": "Filled"
+          },
+          "avg_price": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Avg Price"
+          },
+          "price": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Price"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "trades": {
+            "items": {
+              "$ref": "#/components/schemas/LiveSessionTradeResponse"
+            },
+            "type": "array",
+            "title": "Trades"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Updated At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "symbol",
+          "side",
+          "type",
+          "amount",
+          "filled",
+          "status",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "LiveSessionOrderResponse",
+        "description": "Order record from the audit table for a live session."
+      },
+      "LiveSessionTradeResponse": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "price": {
+            "type": "number",
+            "title": "Price"
+          },
+          "amount": {
+            "type": "number",
+            "title": "Amount"
+          },
+          "fee": {
+            "type": "number",
+            "title": "Fee"
+          },
+          "fee_currency": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fee Currency"
+          },
+          "timestamp": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Timestamp"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "price",
+          "amount",
+          "fee",
+          "timestamp"
+        ],
+        "title": "LiveSessionTradeResponse",
+        "description": "Trade execution record for a live session order."
+      },
+      "LiveTradingListItem": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
           },
           "strategy_id": {
             "type": "string",
@@ -6534,13 +8174,32 @@
             "type": "string",
             "title": "Symbol"
           },
+          "exchange": {
+            "type": "string",
+            "title": "Exchange"
+          },
           "timeframe": {
             "type": "string",
             "title": "Timeframe"
           },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
           "is_running": {
             "type": "boolean",
             "title": "Is Running"
+          },
+          "initial_capital": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Initial Capital"
           },
           "started_at": {
             "anyOf": [
@@ -6553,6 +8212,11 @@
               }
             ],
             "title": "Started At"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
           },
           "bar_count": {
             "type": "integer",
@@ -6569,12 +8233,16 @@
         },
         "type": "object",
         "required": [
-          "run_id",
+          "id",
           "strategy_id",
           "symbol",
+          "exchange",
           "timeframe",
+          "status",
           "is_running",
+          "initial_capital",
           "started_at",
+          "created_at",
           "bar_count",
           "equity",
           "cash"
@@ -6884,6 +8552,141 @@
         "title": "LiveTradingStatusResponse",
         "description": "Live trading status response."
       },
+      "MarkReadRequest": {
+        "properties": {
+          "notification_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notification Ids",
+            "description": "Notification IDs to mark as read. None = mark all as read."
+          }
+        },
+        "type": "object",
+        "title": "MarkReadRequest",
+        "description": "Mark notifications as read."
+      },
+      "NotificationResponse": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "level": {
+            "type": "string",
+            "title": "Level"
+          },
+          "event_type": {
+            "type": "string",
+            "title": "Event Type"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "message": {
+            "type": "string",
+            "title": "Message"
+          },
+          "details": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Details"
+          },
+          "run_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Run Id"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "is_read": {
+            "type": "boolean",
+            "title": "Is Read"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Updated At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "level",
+          "event_type",
+          "title",
+          "message",
+          "details",
+          "run_id",
+          "status",
+          "is_read",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "NotificationResponse",
+        "description": "Notification record response."
+      },
+      "OpenTradeInfo": {
+        "properties": {
+          "symbol": {
+            "type": "string",
+            "title": "Symbol"
+          },
+          "side": {
+            "type": "string",
+            "title": "Side"
+          },
+          "entry_time": {
+            "type": "string",
+            "title": "Entry Time"
+          },
+          "entry_price": {
+            "type": "number",
+            "title": "Entry Price"
+          },
+          "amount": {
+            "type": "number",
+            "title": "Amount"
+          },
+          "fees": {
+            "type": "number",
+            "title": "Fees"
+          }
+        },
+        "type": "object",
+        "required": [
+          "symbol",
+          "side",
+          "entry_time",
+          "entry_price",
+          "amount",
+          "fees"
+        ],
+        "title": "OpenTradeInfo",
+        "description": "Currently open trade (position entry info for chart markers)."
+      },
       "OrderDetail": {
         "properties": {
           "id": {
@@ -6956,6 +8759,18 @@
             ],
             "title": "Price",
             "description": "Order price"
+          },
+          "stop_price": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stop Price",
+            "description": "Stop trigger price"
           },
           "amount": {
             "type": "number",
@@ -7182,7 +8997,9 @@
         "type": "string",
         "enum": [
           "market",
-          "limit"
+          "limit",
+          "stop",
+          "stop_limit"
         ],
         "title": "OrderType",
         "description": "Order type."
@@ -7259,6 +9076,18 @@
             ],
             "title": "Price",
             "description": "Order price"
+          },
+          "stop_price": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stop Price",
+            "description": "Stop trigger price"
           },
           "amount": {
             "type": "number",
@@ -7405,6 +9234,37 @@
         ],
         "title": "PaginatedData[BacktestListItem]"
       },
+      "PaginatedData_LiveSessionOrderResponse_": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/LiveSessionOrderResponse"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          },
+          "page": {
+            "type": "integer",
+            "title": "Page"
+          },
+          "page_size": {
+            "type": "integer",
+            "title": "Page Size"
+          }
+        },
+        "type": "object",
+        "required": [
+          "items",
+          "total",
+          "page",
+          "page_size"
+        ],
+        "title": "PaginatedData[LiveSessionOrderResponse]"
+      },
       "PaginatedData_LiveTradingRunResponse_": {
         "properties": {
           "items": {
@@ -7435,6 +9295,37 @@
           "page_size"
         ],
         "title": "PaginatedData[LiveTradingRunResponse]"
+      },
+      "PaginatedData_NotificationResponse_": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/NotificationResponse"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          },
+          "page": {
+            "type": "integer",
+            "title": "Page"
+          },
+          "page_size": {
+            "type": "integer",
+            "title": "Page Size"
+          }
+        },
+        "type": "object",
+        "required": [
+          "items",
+          "total",
+          "page",
+          "page_size"
+        ],
+        "title": "PaginatedData[NotificationResponse]"
       },
       "PaginatedData_PaperTradingRunResponse_": {
         "properties": {
@@ -7562,10 +9453,10 @@
       },
       "PaperTradingListItem": {
         "properties": {
-          "run_id": {
+          "id": {
             "type": "string",
             "format": "uuid",
-            "title": "Run Id"
+            "title": "Id"
           },
           "strategy_id": {
             "type": "string",
@@ -7587,13 +9478,32 @@
             "type": "string",
             "title": "Symbol"
           },
+          "exchange": {
+            "type": "string",
+            "title": "Exchange"
+          },
           "timeframe": {
             "type": "string",
             "title": "Timeframe"
           },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
           "is_running": {
             "type": "boolean",
             "title": "Is Running"
+          },
+          "initial_capital": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Initial Capital"
           },
           "started_at": {
             "anyOf": [
@@ -7606,6 +9516,11 @@
               }
             ],
             "title": "Started At"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
           },
           "bar_count": {
             "type": "integer",
@@ -7622,12 +9537,16 @@
         },
         "type": "object",
         "required": [
-          "run_id",
+          "id",
           "strategy_id",
           "symbol",
+          "exchange",
           "timeframe",
+          "status",
           "is_running",
+          "initial_capital",
           "started_at",
+          "created_at",
           "bar_count",
           "equity",
           "cash"
@@ -7753,6 +9672,28 @@
             "type": "string",
             "format": "date-time",
             "title": "Updated At"
+          },
+          "equity": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Equity"
+          },
+          "unrealized_pnl": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unrealized Pnl"
           }
         },
         "type": "object",
@@ -7882,6 +9823,49 @@
           "trades_count": {
             "type": "integer",
             "title": "Trades Count"
+          },
+          "trades": {
+            "items": {
+              "$ref": "#/components/schemas/TradeRecordResponse"
+            },
+            "type": "array",
+            "title": "Trades"
+          },
+          "fills": {
+            "items": {
+              "$ref": "#/components/schemas/FillRecordResponse"
+            },
+            "type": "array",
+            "title": "Fills"
+          },
+          "open_trade": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/OpenTradeInfo"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "logs": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Logs"
+          },
+          "risk_state": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Risk State"
           }
         },
         "type": "object",
@@ -8103,6 +10087,36 @@
         "title": "ResetCircuitBreakerResponse",
         "description": "Response after resetting the circuit breaker."
       },
+      "ResumeLiveTradingRequest": {
+        "properties": {
+          "warmup_bars": {
+            "type": "integer",
+            "maximum": 5000.0,
+            "minimum": 0.0,
+            "title": "Warmup Bars",
+            "description": "Number of historical bars to replay for strategy warmup",
+            "default": 200
+          }
+        },
+        "type": "object",
+        "title": "ResumeLiveTradingRequest",
+        "description": "Request to resume a stopped/errored live trading session."
+      },
+      "ResumePaperTradingRequest": {
+        "properties": {
+          "warmup_bars": {
+            "type": "integer",
+            "maximum": 5000.0,
+            "minimum": 0.0,
+            "title": "Warmup Bars",
+            "description": "Number of historical bars to replay for strategy warmup",
+            "default": 200
+          }
+        },
+        "type": "object",
+        "title": "ResumePaperTradingRequest",
+        "description": "Request to resume a stopped/errored paper trading session."
+      },
       "RiskConfigRequest": {
         "properties": {
           "max_position_size": {
@@ -8180,6 +10194,22 @@
             "title": "Circuit Breaker Threshold",
             "description": "Consecutive losses to trigger circuit breaker",
             "default": 3
+          },
+          "min_order_value": {
+            "anyOf": [
+              {
+                "type": "number",
+                "maximum": 100000.0,
+                "exclusiveMinimum": 0.0
+              },
+              {
+                "type": "string",
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
+              }
+            ],
+            "title": "Min Order Value",
+            "description": "Minimum order value in quote currency (e.g., USDT)",
+            "default": "10"
           }
         },
         "type": "object",
@@ -8744,8 +10774,8 @@
               }
             ],
             "title": "Slippage",
-            "description": "Slippage rate for market orders",
-            "default": "0"
+            "description": "Slippage rate for market orders (default 5bps covers typical spread)",
+            "default": "0.0005"
           },
           "params": {
             "anyOf": [
@@ -8759,6 +10789,17 @@
             ],
             "title": "Params",
             "description": "Strategy parameters"
+          },
+          "risk_config": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RiskConfigRequest"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Optional risk management configuration"
           }
         },
         "type": "object",
@@ -9331,6 +11372,20 @@
         ],
         "title": "TriggerCircuitBreakerResponse",
         "description": "Response after triggering the circuit breaker."
+      },
+      "UnreadCountResponse": {
+        "properties": {
+          "count": {
+            "type": "integer",
+            "title": "Count"
+          }
+        },
+        "type": "object",
+        "required": [
+          "count"
+        ],
+        "title": "UnreadCountResponse",
+        "description": "Unread notification count."
       },
       "UpdateExchangeAccountRequest": {
         "properties": {

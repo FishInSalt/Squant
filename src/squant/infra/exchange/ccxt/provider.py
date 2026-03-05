@@ -100,6 +100,11 @@ class CCXTStreamProvider:
         self._reconnect_max_delay = 60.0  # Maximum delay in seconds
         self._reconnect_attempt: int = 0  # Current reconnect attempt counter
 
+        # Candle close detection: track last timestamp to detect when a new candle starts
+        # (meaning the previous one closed). CCXT doesn't provide is_closed natively.
+        self._last_candle_ts: dict[str, int] = {}  # "symbol:timeframe" -> timestamp_ms
+        self._last_candle_data: dict[str, list[Any]] = {}  # "symbol:timeframe" -> OHLCV array
+
         # Batch ticker watching - more efficient than individual watch_ticker calls
         self._watched_ticker_symbols: set[str] = set()
         self._tickers_task: asyncio.Task[None] | None = None
@@ -134,6 +139,36 @@ class CCXTStreamProvider:
         # Add ±10% jitter to avoid thundering herd problem
         jitter = delay * 0.1 * (random.random() * 2 - 1)
         return float(delay + jitter)
+
+    def _fire_reconnect_exhausted_alert(self, subscription_key: str) -> None:
+        """Fire a critical notification when reconnect attempts are exhausted (LIVE-CN-002).
+
+        This prevents silent failure — the system alerts operators that a
+        WebSocket subscription has permanently stopped.
+        """
+        try:
+            from squant.services.notification import emit_notification
+
+            loop = asyncio.get_running_loop()
+            loop.create_task(
+                emit_notification(
+                    level="critical",
+                    event_type="ws_reconnect_exhausted",
+                    title="WebSocket connection permanently lost",
+                    message=(
+                        f"Subscription '{subscription_key}' on {self._exchange_id} stopped "
+                        f"after {self._reconnect_attempt} reconnect attempts. "
+                        f"Live trading engines may not receive market data."
+                    ),
+                    details={
+                        "exchange": self._exchange_id,
+                        "subscription_key": subscription_key,
+                        "reconnect_attempts": self._reconnect_attempt,
+                    },
+                )
+            )
+        except Exception:
+            logger.warning("Failed to fire reconnect exhausted alert", exc_info=True)
 
     @property
     def is_connected(self) -> bool:
@@ -353,6 +388,8 @@ class CCXTStreamProvider:
                     logger.error(
                         f"Max reconnection attempts ({self._reconnect_attempt}) reached, stopping {key}"
                     )
+                    # Fire critical alert so the issue is not silent (LIVE-CN-002)
+                    self._fire_reconnect_exhausted_alert(key)
                     return False
                 # Otherwise keep trying with backoff
                 return True
@@ -569,6 +606,11 @@ class CCXTStreamProvider:
                 task.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
                     await task
+            # Clean up candle tracking state for ohlcv subscriptions
+            if subscription_key.startswith("ohlcv:"):
+                candle_key = subscription_key[6:]  # "ohlcv:BTC/USDT:1h" -> "BTC/USDT:1h"
+                self._last_candle_ts.pop(candle_key, None)
+                self._last_candle_data.pop(candle_key, None)
             logger.info(f"Unwatched: {subscription_key}")
 
     async def unwatch_ticker(self, symbol: str) -> None:
@@ -693,6 +735,8 @@ class CCXTStreamProvider:
                                 f"Max reconnection attempts ({self._reconnect_attempt}) reached, "
                                 "stopping batch tickers loop"
                             )
+                            # Fire critical alert (LIVE-CN-002)
+                            self._fire_reconnect_exhausted_alert("batch_tickers")
                             break
                         # Otherwise keep trying with backoff
                 else:
@@ -751,10 +795,28 @@ class CCXTStreamProvider:
                 self._mark_success(key)
                 logger.debug(f"Received {len(ohlcv_list)} OHLCV candles for {symbol} {timeframe}")
 
-                # Process each candle (usually just the latest)
+                # Process the latest candle with close detection
                 for ohlcv in ohlcv_list[-1:]:  # Only process the latest
-                    # Determine if candle is closed based on timestamp
-                    # This is a heuristic - CCXT doesn't always provide is_closed
+                    candle_key = f"{symbol}:{timeframe}"
+                    candle_ts = int(ohlcv[0])
+
+                    # Detect candle close: when timestamp changes, previous candle closed
+                    if candle_key in self._last_candle_ts:
+                        if candle_ts != self._last_candle_ts[candle_key]:
+                            # Previous candle has closed - dispatch with is_closed=True
+                            closed_candle = self._transformer.ohlcv_to_ws_candle(
+                                self._last_candle_data[candle_key],
+                                symbol,
+                                timeframe,
+                                is_closed=True,
+                            )
+                            await self._dispatch("candle", closed_candle)
+
+                    # Track current candle state
+                    self._last_candle_ts[candle_key] = candle_ts
+                    self._last_candle_data[candle_key] = ohlcv
+
+                    # Dispatch current (open) candle for real-time UI updates
                     ws_candle = self._transformer.ohlcv_to_ws_candle(
                         ohlcv, symbol, timeframe, is_closed=False
                     )

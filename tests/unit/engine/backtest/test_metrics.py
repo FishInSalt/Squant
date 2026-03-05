@@ -109,7 +109,7 @@ class TestMaxDrawdown:
             Decimal("10000"),
             Decimal("12000"),  # Peak at hour 1
             Decimal("10000"),  # Drawdown of 2000 (16.67%) at hour 2
-            Decimal("11000"),
+            Decimal("11000"),  # Not recovered (< 12000)
         ]
         curve = create_equity_curve(equities)
 
@@ -118,7 +118,8 @@ class TestMaxDrawdown:
         assert max_dd == Decimal("2000")
         # 2000 / 12000 * 100 = 16.666...%
         assert float(max_dd_pct) == pytest.approx(16.67, rel=0.01)
-        assert dd_hours == 1  # 1 hour from peak to max drawdown
+        # Duration: peak (h1) to end (h3) since equity never recovers to 12000
+        assert dd_hours == 2
 
     def test_multiple_drawdowns(self) -> None:
         """Test with multiple drawdowns, takes the maximum."""
@@ -128,7 +129,7 @@ class TestMaxDrawdown:
             Decimal("11000"),  # Drawdown 1: 1000 (8.33%)
             Decimal("14000"),  # Peak 2 (new high)
             Decimal("10000"),  # Drawdown 2: 4000 (28.57%)
-            Decimal("13000"),
+            Decimal("13000"),  # Not recovered (< 14000)
         ]
         curve = create_equity_curve(equities)
 
@@ -137,7 +138,8 @@ class TestMaxDrawdown:
         assert max_dd == Decimal("4000")
         # 4000 / 14000 * 100 = 28.57%
         assert float(max_dd_pct) == pytest.approx(28.57, rel=0.01)
-        assert dd_hours == 1  # 1 hour from peak 2 to max drawdown point
+        # Duration: peak 2 (h3) to end (h5) since equity never recovers to 14000
+        assert dd_hours == 2
 
 
 class TestTradeStatistics:
@@ -511,22 +513,23 @@ class TestNewMetricsFields:
 
         assert metrics.volatility > Decimal("0")
 
-    def test_max_drawdown_duration(self) -> None:
-        """Test max drawdown duration tracking."""
+    def test_max_drawdown_duration_unrecovered(self) -> None:
+        """Test max drawdown duration when equity never recovers to peak."""
         equities = [
             Decimal("10000"),
-            Decimal("12000"),  # Peak
-            Decimal("11000"),  # Hour 2 - drawdown starts
-            Decimal("10000"),  # Hour 3 - deeper drawdown
-            Decimal("9000"),  # Hour 4 - max drawdown (3 hours from peak)
-            Decimal("11000"),
+            Decimal("12000"),  # Peak at h1
+            Decimal("11000"),  # h2
+            Decimal("10000"),  # h3
+            Decimal("9000"),  # h4 - max drawdown trough
+            Decimal("11000"),  # h5 - not recovered (< 12000)
         ]
         curve = create_equity_curve(equities)
 
         max_dd, max_dd_pct, dd_hours = _calculate_max_drawdown(curve)
 
         assert max_dd == Decimal("3000")
-        assert dd_hours == 3
+        # Duration: peak (h1) to end (h5) = 4 hours (not recovered)
+        assert dd_hours == 4
 
     def test_calmar_ratio(self) -> None:
         """Test Calmar ratio calculation."""
@@ -589,3 +592,57 @@ class TestNewMetricsFields:
         # With different timeframes, the Sharpe ratios should differ
         # (hourly annualization amplifies more than daily)
         assert metrics_daily.sharpe_ratio != metrics_hourly.sharpe_ratio
+
+
+class TestDrawdownDurationRecovery:
+    """Tests for drawdown duration measured peak-to-recovery."""
+
+    def test_recovery_shortens_duration(self) -> None:
+        """When equity recovers to peak, duration ends at recovery point."""
+        equities = [
+            Decimal("10000"),
+            Decimal("12000"),  # Peak at h1
+            Decimal("9000"),  # Trough at h2
+            Decimal("10000"),  # h3 — partial recovery
+            Decimal("12000"),  # h4 — full recovery to peak
+            Decimal("13000"),  # h5 — new high
+        ]
+        curve = create_equity_curve(equities)
+
+        max_dd, max_dd_pct, dd_hours = _calculate_max_drawdown(curve)
+
+        assert max_dd == Decimal("3000")
+        # Duration: peak (h1) to recovery (h4) = 3 hours
+        assert dd_hours == 3
+
+    def test_no_recovery_uses_end_time(self) -> None:
+        """When equity never recovers, duration extends to end of curve."""
+        equities = [
+            Decimal("10000"),
+            Decimal("15000"),  # Peak at h1
+            Decimal("10000"),  # Trough at h2
+            Decimal("12000"),  # h3 — partial recovery only
+        ]
+        curve = create_equity_curve(equities)
+
+        max_dd, max_dd_pct, dd_hours = _calculate_max_drawdown(curve)
+
+        assert max_dd == Decimal("5000")
+        # Duration: peak (h1) to end (h3) = 2 hours (not recovered)
+        assert dd_hours == 2
+
+    def test_immediate_recovery(self) -> None:
+        """Drawdown that recovers on the very next bar."""
+        equities = [
+            Decimal("10000"),
+            Decimal("12000"),  # Peak at h1
+            Decimal("11000"),  # Trough at h2
+            Decimal("12000"),  # Recovery at h3
+        ]
+        curve = create_equity_curve(equities)
+
+        max_dd, max_dd_pct, dd_hours = _calculate_max_drawdown(curve)
+
+        assert max_dd == Decimal("1000")
+        # Duration: peak (h1) to recovery (h3) = 2 hours
+        assert dd_hours == 2

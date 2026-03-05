@@ -215,6 +215,10 @@ def _calculate_max_drawdown(
 ) -> tuple[Decimal, Decimal, int]:
     """Calculate maximum drawdown with duration.
 
+    Duration measures from the equity peak to recovery (new high), not just
+    to the trough point. If the drawdown has not recovered by the end of
+    the equity curve, duration is measured to the last snapshot.
+
     Args:
         equity_curve: List of equity snapshots.
 
@@ -228,7 +232,9 @@ def _calculate_max_drawdown(
     max_equity_time = equity_curve[0].time
     max_drawdown = Decimal("0")
     max_drawdown_pct = Decimal("0")
-    max_dd_duration_hours = 0
+    # Track the peak time that produced the max drawdown
+    max_dd_peak_time = equity_curve[0].time
+    max_dd_peak_equity = equity_curve[0].equity
 
     for snapshot in equity_curve:
         if snapshot.equity >= max_equity:
@@ -240,8 +246,31 @@ def _calculate_max_drawdown(
             max_drawdown = drawdown
             if max_equity > 0:
                 max_drawdown_pct = drawdown / max_equity * 100
-            duration_secs = (snapshot.time - max_equity_time).total_seconds()
-            max_dd_duration_hours = int(duration_secs / 3600)
+            max_dd_peak_time = max_equity_time
+            max_dd_peak_equity = max_equity
+
+    # No drawdown → zero duration
+    if max_drawdown == Decimal("0"):
+        return max_drawdown, max_drawdown_pct, 0
+
+    # Now find when the max drawdown's peak equity was recovered
+    recovery_time = None
+    past_peak = False
+    for snapshot in equity_curve:
+        if snapshot.time == max_dd_peak_time:
+            past_peak = True
+            continue
+        if past_peak and snapshot.equity >= max_dd_peak_equity:
+            recovery_time = snapshot.time
+            break
+
+    # Duration: peak to recovery, or peak to end if not yet recovered
+    if recovery_time is not None:
+        duration_secs = (recovery_time - max_dd_peak_time).total_seconds()
+    else:
+        duration_secs = (equity_curve[-1].time - max_dd_peak_time).total_seconds()
+
+    max_dd_duration_hours = int(duration_secs / 3600)
 
     return max_drawdown, max_drawdown_pct, max_dd_duration_hours
 

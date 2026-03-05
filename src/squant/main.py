@@ -1,8 +1,12 @@
 """FastAPI application entry point."""
 
+import asyncio
+import contextlib
 import logging
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
+from logging.handlers import RotatingFileHandler
+from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -26,12 +30,34 @@ def _configure_logging() -> None:
     """Configure logging from settings. Called once during create_app()."""
     settings = get_settings()
     log_level = getattr(logging, settings.log_level.upper(), logging.INFO)
+    log_format = "%(asctime)s %(levelname)s [%(name)s] %(message)s"
+    log_datefmt = "%Y-%m-%d %H:%M:%S"
+
     logging.basicConfig(
         level=log_level,
-        format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S",
+        format=log_format,
+        datefmt=log_datefmt,
+        force=True,
     )
+
+    # Add rotating file handler when LOG_FILE is configured
+    log_cfg = settings.logging
+    if log_cfg.file:
+        log_path = Path(log_cfg.file)
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        file_handler = RotatingFileHandler(
+            log_path,
+            maxBytes=log_cfg.max_bytes,
+            backupCount=log_cfg.backup_count,
+            encoding="utf-8",
+        )
+        file_handler.setLevel(log_level)
+        file_handler.setFormatter(logging.Formatter(log_format, datefmt=log_datefmt))
+        logging.getLogger().addHandler(file_handler)
+
     logging.getLogger("squant").setLevel(log_level)
+    # Suppress verbose third-party library logs (ccxt dumps full HTTP responses at DEBUG)
+    logging.getLogger("ccxt").setLevel(logging.WARNING)
 
 
 @asynccontextmanager
@@ -49,38 +75,83 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         redis_initialized = True
         logger.info("Redis connection initialized")
 
-        # WebSocket stream manager - optional, continues if connection fails
-        try:
-            await init_stream_manager()
-            logger.info("Stream manager initialized")
-        except Exception as e:
-            logger.warning(
-                f"Failed to initialize stream manager: {e}. Real-time data will be unavailable."
-            )
-            logger.warning("The application will continue without WebSocket connectivity.")
-            # Start retry loop to attempt reconnection in the background
-            from squant.websocket.manager import get_stream_manager
+        # WebSocket stream manager — initialize in background so it doesn't block
+        # the HTTP server from accepting connections. The server starts immediately;
+        # when the stream manager connects to the exchange, it publishes a
+        # service_ready event so WebSocket gateways can re-subscribe OKX channels.
+        async def _start_stream_manager_background() -> None:
+            try:
+                await init_stream_manager()
+                logger.info("Stream manager initialized (background)")
+            except Exception as e:
+                logger.warning(
+                    f"Failed to initialize stream manager: {e}. "
+                    "Real-time data will be unavailable."
+                )
+                from squant.websocket.manager import get_stream_manager
 
-            stream_manager = get_stream_manager()
-            stream_manager.start_retry_loop()
+                get_stream_manager().start_retry_loop()
 
         # Recover orphaned trading sessions (NFR-013)
-        from squant.infra.database import get_session_context
-        from squant.services.live_trading import LiveTradingService
-        from squant.services.paper_trading import StrategyRunRepository
+        # Must run after stream manager init so resumed sessions can subscribe
+        async def _recover_orphaned_sessions(stream_init_task: asyncio.Task) -> None:  # type: ignore[type-arg]
+            """Recover orphaned sessions after stream manager is ready."""
+            from squant.infra.database import get_session_context
+            from squant.services.live_trading import LiveTradingService
+            from squant.services.paper_trading import PaperTradingService
 
-        async with get_session_context() as session:
-            # Paper trading sessions
-            repo = StrategyRunRepository(session)
-            paper_count = await repo.mark_orphaned_sessions()
-            if paper_count > 0:
-                logger.warning(f"Marked {paper_count} orphaned paper trading sessions as ERROR")
+            # Wait for stream manager to be ready (with timeout)
+            try:
+                await asyncio.wait_for(asyncio.shield(stream_init_task), timeout=30.0)
+            except (TimeoutError, Exception) as e:
+                logger.warning(
+                    f"Stream manager not ready for session recovery: {e}. "
+                    "Falling back to marking orphaned sessions as INTERRUPTED."
+                )
+                # Fall back to mark-as-interrupted when stream not available
+                async with get_session_context() as session:
+                    paper_service = PaperTradingService(session)
+                    paper_count = await paper_service.mark_orphaned_sessions()
+                    if paper_count > 0:
+                        logger.warning(
+                            f"Marked {paper_count} orphaned paper sessions as INTERRUPTED"
+                        )
 
-            # Live trading sessions
-            live_service = LiveTradingService(session)
-            live_count = await live_service.mark_orphaned_sessions()
-            if live_count > 0:
-                logger.warning(f"Marked {live_count} orphaned live trading sessions as ERROR")
+                    live_service = LiveTradingService(session)
+                    live_count = await live_service.mark_orphaned_sessions()
+                    if live_count > 0:
+                        logger.warning(
+                            f"Marked {live_count} orphaned live sessions as INTERRUPTED"
+                        )
+                return
+
+            # Stream manager ready — attempt auto-recovery
+            async with get_session_context() as session:
+                paper_service = PaperTradingService(session)
+                paper_recovered, paper_failed = await paper_service.recover_orphaned_sessions()
+                if paper_recovered > 0 or paper_failed > 0:
+                    logger.info(
+                        f"Paper trading orphan recovery: "
+                        f"{paper_recovered} recovered, {paper_failed} marked INTERRUPTED"
+                    )
+
+                # Live trading — auto-recovery if enabled, otherwise mark INTERRUPTED
+                live_service = LiveTradingService(session)
+                live_recovered, live_failed = await live_service.recover_orphaned_sessions()
+                if live_recovered > 0 or live_failed > 0:
+                    logger.info(
+                        f"Live trading orphan recovery: "
+                        f"{live_recovered} recovered, {live_failed} marked INTERRUPTED/ERROR"
+                    )
+
+        stream_manager_task = asyncio.create_task(
+            _start_stream_manager_background(), name="stream_manager_init"
+        )
+
+        recovery_task = asyncio.create_task(
+            _recover_orphaned_sessions(stream_manager_task),
+            name="orphan_recovery",
+        )
 
         # Start background tasks for paper trading
         from squant.services.background import get_task_manager
@@ -105,23 +176,50 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # Shutdown
     logger.info("Shutting down application...")
 
+    # Cancel recovery task if still in progress
+    if not recovery_task.done():
+        recovery_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await recovery_task
+        logger.info("Orphan recovery task cancelled")
+
+    # Cancel stream manager init if still in progress
+    if not stream_manager_task.done():
+        stream_manager_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await stream_manager_task
+        logger.info("Stream manager init task cancelled")
+
     # Stop background tasks first
     await task_manager.stop()
     logger.info("Background tasks stopped")
 
-    # Gracefully stop all paper trading sessions
-    from squant.engine.paper.manager import get_session_manager
+    # Gracefully stop all trading sessions via service layer (persists results)
+    from squant.infra.database import get_session_context
 
-    session_manager = get_session_manager()
-    await session_manager.stop_all(reason="application shutdown")
-    logger.info("Paper trading sessions stopped")
+    try:
+        async with get_session_context() as db_session:
+            from squant.services.paper_trading import PaperTradingService
 
-    # Gracefully stop all live trading sessions
-    from squant.engine.live.manager import get_live_session_manager
+            paper_service = PaperTradingService(db_session)
+            paper_stopped = await paper_service.stop_all(for_shutdown=True)
+            logger.info(f"Paper trading sessions stopped ({paper_stopped} sessions)")
 
-    live_session_manager = get_live_session_manager()
-    await live_session_manager.stop_all(reason="application shutdown")
-    logger.info("Live trading sessions stopped")
+            from squant.services.live_trading import LiveTradingService
+
+            live_service = LiveTradingService(db_session)
+            live_stopped = await live_service.stop_all(for_shutdown=True)
+            logger.info(f"Live trading sessions stopped ({live_stopped} sessions)")
+    except Exception:
+        logger.exception("Error during graceful session shutdown, forcing stop")
+        # Fallback: force stop engines directly if service layer fails
+        from squant.engine.live.manager import get_live_session_manager
+        from squant.engine.paper.manager import get_session_manager
+
+        session_manager = get_session_manager()
+        await session_manager.stop_all(reason="application shutdown (fallback)")
+        live_session_manager = get_live_session_manager()
+        await live_session_manager.stop_all(reason="application shutdown (fallback)")
 
     await close_stream_manager()
     logger.info("Stream manager closed")
@@ -154,6 +252,11 @@ def create_app() -> FastAPI:
     )
 
     # CORS middleware
+    if settings.debug:
+        logger.warning(
+            "CORS allow_origins=['*'] — debug mode is ON. "
+            "Do NOT use debug=True in production."
+        )
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["*"] if settings.debug else settings.allowed_origins,

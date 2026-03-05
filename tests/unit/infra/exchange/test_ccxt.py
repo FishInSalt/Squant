@@ -930,6 +930,7 @@ class TestCCXTRestAdapterExceptionHandling:
         import ccxt.async_support as ccxt_lib
 
         authenticated_adapter._exchange.has = {"fetchTickers": True}
+        authenticated_adapter._exchange.markets = {"BTC/USDT": {}}
         authenticated_adapter._exchange.fetch_tickers = AsyncMock(
             side_effect=ccxt_lib.RateLimitExceeded("too many requests")
         )

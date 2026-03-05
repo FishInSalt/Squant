@@ -1,6 +1,6 @@
 // 交易相关类型
 export type TradingMode = 'backtest' | 'paper' | 'live'
-export type SessionStatus = 'pending' | 'running' | 'completed' | 'error' | 'stopped' | 'cancelled'
+export type SessionStatus = 'pending' | 'running' | 'completed' | 'error' | 'stopped' | 'cancelled' | 'interrupted'
 
 // 回测配置（用于提交请求）
 export interface BacktestConfig {
@@ -47,6 +47,7 @@ export interface BacktestResult {
   metrics: BacktestMetrics | null
   equity_curve: EquityPoint[]
   trades: Trade[]
+  fills: Fill[]
   total_bars?: number
 }
 
@@ -85,6 +86,7 @@ export interface EquityPoint {
   cash: number
   position_value: number
   unrealized_pnl: number
+  benchmark_equity?: number
 }
 
 // 用于实盘交易的收益曲线点
@@ -98,6 +100,17 @@ export interface EquityCurvePoint {
 export interface DrawdownPoint {
   timestamp: number
   drawdown: number
+}
+
+// 逐笔成交记录（匹配后端 FillRecordResponse）
+export interface Fill {
+  order_id: string
+  symbol: string
+  side: 'buy' | 'sell'
+  price: number
+  amount: number
+  fee: number
+  timestamp: string
 }
 
 // 交易记录（匹配后端 TradeRecordResponse）
@@ -133,9 +146,11 @@ export interface PaperSession {
   started_at?: string
   stopped_at?: string
   updated_at: string
+  equity?: number
+  unrealized_pnl?: number
 }
 
-// 实盘交易会话（匹配后端 LiveTradingRunResponse）
+// 实盘交易会话（匹配后端 LiveTradingRunResponse / LiveTradingListItem）
 export interface LiveSession {
   id: string
   strategy_id: string
@@ -155,6 +170,8 @@ export interface LiveSession {
   started_at?: string
   stopped_at?: string
   updated_at: string
+  equity?: number
+  cash?: number
 }
 
 export interface RiskConfig {
@@ -164,6 +181,7 @@ export interface RiskConfig {
   daily_loss_limit: number
   price_deviation_limit?: number
   circuit_breaker_threshold?: number
+  min_order_value?: number
 }
 
 // 运行日志
@@ -196,6 +214,16 @@ export interface PendingOrderInfo {
   created_at?: string
 }
 
+// 当前持仓入场信息（匹配后端 OpenTradeInfo）
+export interface OpenTrade {
+  symbol: string
+  side: 'buy' | 'sell'
+  entry_time: string
+  entry_price: number
+  amount: number
+  fees: number
+}
+
 // 模拟交易实时状态（匹配后端 PaperTradingStatusResponse）
 export interface PaperTradingStatus {
   run_id: string
@@ -216,6 +244,10 @@ export interface PaperTradingStatus {
   pending_orders: PendingOrderInfo[]
   completed_orders_count: number
   trades_count: number
+  trades: Trade[]
+  fills: Fill[]
+  open_trade?: OpenTrade
+  logs: string[]
 }
 
 // 实盘订单信息（匹配后端 LiveOrderInfo）
@@ -263,9 +295,97 @@ export interface LiveTradingStatus {
   unrealized_pnl: number
   realized_pnl: number
   positions: Record<string, Position>
-  pending_orders: Record<string, unknown>[]
+  pending_orders: PendingOrderInfo[]
   live_orders: LiveOrderInfo[]
   completed_orders_count: number
   trades_count: number
   risk_state?: RiskState
+}
+
+// WebSocket 交易状态事件类型
+export interface TradingBarUpdate {
+  event: 'bar_update'
+  run_id: string
+  bar_count: number
+  cash: string
+  equity: string
+  unrealized_pnl: string
+  realized_pnl: string
+  total_fees: string
+  completed_orders_count: number
+  trades_count: number
+  positions: Record<string, { amount: string; avg_entry_price: string }>
+  pending_orders: PendingOrderInfo[]
+  open_trade?: OpenTrade
+  new_fills: Fill[]
+  new_trades: Trade[]
+  new_logs: string[]
+  risk_state?: Record<string, unknown>
+}
+
+export interface TradingEngineStopped {
+  event: 'engine_stopped'
+  run_id: string
+  error_message?: string
+  stopped_at?: string
+}
+
+export interface TradingFillEvent {
+  event: 'fill'
+  run_id: string
+  fill: {
+    order_id: string
+    symbol: string
+    side: string
+    price: string
+    amount: string
+    fee: string
+    timestamp: string | null
+  }
+  cash: string
+  equity: string
+  unrealized_pnl: string
+  positions: Record<string, { amount: string; avg_entry_price: string }>
+  pending_orders: PendingOrderInfo[]
+  open_trade?: OpenTrade
+}
+
+export type TradingStatusEvent = TradingBarUpdate | TradingEngineStopped | TradingFillEvent
+
+// 实盘会话成交记录（匹配后端 LiveSessionTradeResponse）
+export interface LiveSessionTrade {
+  id: string
+  price: number
+  amount: number
+  fee: number
+  fee_currency?: string
+  timestamp: string
+}
+
+// 实盘会话订单记录（匹配后端 LiveSessionOrderResponse，审计表）
+export interface LiveSessionOrder {
+  id: string
+  exchange_oid?: string
+  symbol: string
+  side: string
+  type: string
+  amount: number
+  filled: number
+  avg_price?: number
+  price?: number
+  status: string
+  trades: LiveSessionTrade[]
+  created_at: string
+  updated_at: string
+}
+
+// 紧急平仓响应（匹配后端 EmergencyCloseResponse）
+export interface EmergencyCloseResult {
+  run_id: string
+  status: string
+  message?: string
+  orders_cancelled?: number
+  positions_closed?: number
+  remaining_positions?: Array<{ symbol: string; amount: string; side: string }>
+  errors?: Array<Record<string, unknown>>
 }

@@ -213,3 +213,24 @@ class ExchangeAdapter(ABC):
             ExchangeAPIError: If API request fails.
         """
         ...
+
+    # Dead Man's Switch (F-2)
+
+    @property
+    def supports_dead_man_switch(self) -> bool:
+        """Whether the exchange supports cancel-all-after (dead man's switch)."""
+        return False
+
+    async def setup_dead_man_switch(self, timeout_ms: int) -> None:
+        """Activate dead man's switch — exchange cancels all orders after timeout.
+
+        Must be called periodically (heartbeat) to keep resetting the timer.
+        Call with timeout_ms=0 to cancel the timer.
+
+        Args:
+            timeout_ms: Countdown in milliseconds. 0 cancels the timer.
+        """
+
+    async def cancel_dead_man_switch(self) -> None:
+        """Deactivate dead man's switch (convenience wrapper for timeout=0)."""
+        await self.setup_dead_man_switch(0)

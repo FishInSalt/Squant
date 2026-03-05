@@ -58,6 +58,8 @@ export type LiveTradingStatusResponse = components['schemas']['LiveTradingStatus
 export type StartLiveTradingRequest = components['schemas']['StartLiveTradingRequest']
 export type StopLiveTradingRequest = components['schemas']['StopLiveTradingRequest']
 export type EmergencyCloseResponse = components['schemas']['EmergencyCloseResponse']
+export type LiveSessionOrderResponse = components['schemas']['LiveSessionOrderResponse']
+export type LiveSessionTradeResponse = components['schemas']['LiveSessionTradeResponse']
 
 // ================== Risk ==================
 export type RiskRuleResponse = components['schemas']['RiskRuleResponse']

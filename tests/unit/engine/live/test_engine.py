@@ -1041,6 +1041,9 @@ class TestStateSnapshot:
         assert Decimal(snapshot["equity"]) == Decimal("10000")
         assert snapshot["positions"] == {}
         assert snapshot["pending_orders"] == []
+        assert snapshot["trades"] == []
+        assert snapshot["open_trade"] is None
+        assert "logs" in snapshot
         assert "risk_state" in snapshot
 
     @pytest.mark.asyncio
@@ -1176,16 +1179,25 @@ class TestHealthCheck:
         assert engine.is_healthy(timeout_seconds=300) is False
 
     @pytest.mark.asyncio
-    async def test_is_healthy_with_zero_timeout(self, engine):
-        """Test is_healthy with very short timeout."""
+    async def test_is_healthy_adapts_to_timeframe(self, engine):
+        """Test is_healthy uses adaptive timeout based on timeframe.
+
+        For 1m timeframe, effective timeout = max(timeout_seconds, 60*3=180).
+        So even with timeout_seconds=0, a just-started engine is healthy.
+        """
         await engine.start()
+        # Effective timeout = max(0, 180) = 180s, just started so healthy
+        assert engine.is_healthy(timeout_seconds=0) is True
 
-        # With 0 second timeout, should be considered unhealthy
-        # since any elapsed time > 0
-        import asyncio
+    @pytest.mark.asyncio
+    async def test_is_healthy_returns_false_when_expired(self, engine):
+        """Test is_healthy returns False when activity exceeds adaptive timeout."""
+        from datetime import timedelta
 
-        await asyncio.sleep(0.01)
-        assert engine.is_healthy(timeout_seconds=0) is False
+        await engine.start()
+        # Set last_active_at far in the past (beyond adaptive timeout of 180s for 1m)
+        engine._last_active_at = datetime.now(UTC) - timedelta(seconds=600)
+        assert engine.is_healthy(timeout_seconds=300) is False
 
 
 class TestCancelAllOrders:
@@ -1410,11 +1422,13 @@ class TestCircuitBreakerIntegration:
         )
         engine._exchange_order_map[exchange_id] = internal_id
 
-        # Simulate trades list growing (indicating new trade completed)
+        # Simulate a trade completion: _open_trade goes from non-None to None
         mock_trade = MagicMock()
         mock_trade.pnl = Decimal("-100")  # Loss
 
         engine._context._trades = []  # Before: 0 trades
+        # Set _open_trade to simulate an open position (will be cleared by fill)
+        engine._context._open_trade = MagicMock()
 
         # Create order update
         update = WSOrderUpdate(
@@ -1433,9 +1447,10 @@ class TestCircuitBreakerIntegration:
             timestamp=datetime.now(UTC),
         )
 
-        # Patch trades to return mock trade after processing
+        # Mock _process_fill to close the trade (_open_trade → None, trade added)
         def mock_process_fill(*args, **kwargs):
             engine._context._trades = [mock_trade]
+            engine._context._open_trade = None
 
         with (
             patch.object(engine._context, "_process_fill", side_effect=mock_process_fill),
@@ -1883,8 +1898,8 @@ class TestOrderSyncRateLimiting:
         assert "exchange-1" in engine._order_last_poll
 
 
-class TestIncrementalFillProcessing:
-    """Tests for _process_incremental_fill from polling path."""
+class TestFillProcessing:
+    """Tests for _record_fill and _check_trade_completion."""
 
     @pytest.fixture
     def engine_with_buy_order(self, engine):
@@ -1903,31 +1918,21 @@ class TestIncrementalFillProcessing:
         return engine
 
     @pytest.mark.asyncio
-    async def test_incremental_fill_updates_context(self, engine_with_buy_order, mock_adapter):
-        """Test that incremental fill processes correctly via _process_incremental_fill."""
+    async def test_record_fill_updates_context(self, engine_with_buy_order, mock_adapter):
+        """Test that _record_fill processes correctly."""
         engine = engine_with_buy_order
         await engine.start()
 
         live_order = engine._live_orders["order-1"]
-        response = OrderResponse(
-            order_id="exchange-1",
-            symbol="BTC/USDT",
-            side=OrderSide.BUY,
-            type=OrderType.MARKET,
-            status=OrderStatus.PARTIAL,
-            price=None,
-            amount=Decimal("1.0"),
-            filled=Decimal("0.5"),
-            avg_price=Decimal("45000"),
-            fee=Decimal("0.225"),
-            fee_currency="USDT",
-        )
 
         with (
             patch.object(engine._context, "_process_fill") as mock_fill,
             patch.object(engine._context, "_move_completed_orders"),
         ):
-            engine._process_incremental_fill(live_order, Decimal("0.5"), response, Decimal("0.225"))
+            engine._record_fill(
+                live_order, Decimal("45000"), Decimal("0.5"),
+                Decimal("0.225"), Decimal("0.225"), source="poll",
+            )
 
             mock_fill.assert_called_once()
             fill_arg = mock_fill.call_args[0][0]
@@ -1936,33 +1941,7 @@ class TestIncrementalFillProcessing:
             assert fill_arg.price == Decimal("45000")
 
     @pytest.mark.asyncio
-    async def test_incremental_fill_skipped_when_no_avg_price(
-        self, engine_with_buy_order, mock_adapter
-    ):
-        """Test that fill processing is skipped when avg_price is None."""
-        engine = engine_with_buy_order
-        await engine.start()
-
-        live_order = engine._live_orders["order-1"]
-        response = OrderResponse(
-            order_id="exchange-1",
-            symbol="BTC/USDT",
-            side=OrderSide.BUY,
-            type=OrderType.MARKET,
-            status=OrderStatus.PARTIAL,
-            price=None,
-            amount=Decimal("1.0"),
-            filled=Decimal("0.5"),
-            avg_price=None,  # No avg price
-        )
-
-        with patch.object(engine._context, "_process_fill") as mock_fill:
-            engine._process_incremental_fill(live_order, Decimal("0.5"), response)
-
-            mock_fill.assert_not_called()
-
-    @pytest.mark.asyncio
-    async def test_incremental_fill_uses_total_fee_when_no_delta(
+    async def test_record_fill_uses_total_fee_when_no_delta(
         self, engine_with_buy_order, mock_adapter
     ):
         """Test fallback to total fee when fee_delta is None."""
@@ -1970,25 +1949,15 @@ class TestIncrementalFillProcessing:
         await engine.start()
 
         live_order = engine._live_orders["order-1"]
-        response = OrderResponse(
-            order_id="exchange-1",
-            symbol="BTC/USDT",
-            side=OrderSide.BUY,
-            type=OrderType.MARKET,
-            status=OrderStatus.FILLED,
-            price=None,
-            amount=Decimal("1.0"),
-            filled=Decimal("1.0"),
-            avg_price=Decimal("45000"),
-            fee=Decimal("0.45"),
-        )
 
         with (
             patch.object(engine._context, "_process_fill") as mock_fill,
             patch.object(engine._context, "_move_completed_orders"),
         ):
-            # No fee_delta provided
-            engine._process_incremental_fill(live_order, Decimal("1.0"), response)
+            engine._record_fill(
+                live_order, Decimal("45000"), Decimal("1.0"),
+                None, Decimal("0.45"), source="poll",
+            )
 
             fill_arg = mock_fill.call_args[0][0]
             # Should use total fee as fallback
@@ -2090,9 +2059,11 @@ class TestIncrementalFillProcessing:
         mock_trade.pnl = Decimal("-100")
 
         engine._context._trades = []  # Before: 0 trades
+        engine._context._open_trade = MagicMock()  # Simulate open position
 
         def mock_process_fill(*args, **kwargs):
             engine._context._trades = [mock_trade]
+            engine._context._open_trade = None  # Trade closed
 
         with (
             patch.object(engine._context, "_process_fill", side_effect=mock_process_fill),
@@ -2139,9 +2110,11 @@ class TestIncrementalFillProcessing:
         mock_trade.pnl = Decimal("-200")
 
         engine._context._trades = []
+        engine._context._open_trade = MagicMock()  # Simulate open position
 
         def mock_process_fill(*args, **kwargs):
             engine._context._trades = [mock_trade]
+            engine._context._open_trade = None  # Trade closed
 
         with (
             patch.object(engine._context, "_process_fill", side_effect=mock_process_fill),
@@ -2286,9 +2259,10 @@ class TestBalanceSyncFailure:
         assert engine.context.cash == initial_cash
 
     @pytest.mark.asyncio
-    async def test_balance_sync_updates_cash_correctly(self, engine, mock_adapter):
-        """Test balance sync correctly updates cash from quote currency."""
+    async def test_balance_sync_does_not_overwrite_cash(self, engine, mock_adapter):
+        """Test balance sync does NOT overwrite local cash (LIVE-012)."""
         await engine.start()
+        initial_cash = engine.context.cash
 
         mock_adapter.get_balance.return_value = AccountBalance(
             exchange="okx",
@@ -2299,8 +2273,68 @@ class TestBalanceSyncFailure:
 
         await engine._sync_balance()
 
-        # Should update to available balance
-        assert engine.context.cash == Decimal("9500")
+        # Cash should remain at initial_equity, not overwritten to 9500
+        assert engine.context.cash == initial_cash
+
+    @pytest.mark.asyncio
+    async def test_balance_sync_stores_exchange_balance(self, engine, mock_adapter):
+        """Test that exchange balance is stored for diagnostics."""
+        await engine.start()
+        engine._last_balance_check = None  # Reset rate limiter for direct call
+
+        mock_adapter.get_balance.return_value = AccountBalance(
+            exchange="okx",
+            balances=[
+                Balance(currency="USDT", available=Decimal("9500"), frozen=Decimal("500")),
+            ],
+        )
+
+        await engine._sync_balance()
+
+        assert engine._last_exchange_balance == Decimal("9500")
+
+    @pytest.mark.asyncio
+    async def test_balance_sync_logs_cash_discrepancy(self, engine, mock_adapter, caplog):
+        """Test that large cash discrepancy is logged as warning."""
+        await engine.start()
+        engine._last_balance_check = None  # Reset rate limiter for direct test
+        # Engine initial_equity = 10000, set exchange to very different value
+        mock_adapter.get_balance.return_value = AccountBalance(
+            exchange="okx",
+            balances=[
+                Balance(currency="USDT", available=Decimal("5000"), frozen=Decimal("0")),
+            ],
+        )
+
+        import logging
+
+        with caplog.at_level(logging.WARNING):
+            await engine._sync_balance()
+
+        assert any("Cash discrepancy" in msg for msg in caplog.messages)
+        # Cash should still be original value
+        assert engine.context.cash == engine._initial_equity
+
+    @pytest.mark.asyncio
+    async def test_balance_sync_no_warning_for_small_discrepancy(self, engine, mock_adapter, caplog):
+        """Test that small cash discrepancy does not trigger warning."""
+        await engine.start()
+        # Exchange balance close to initial_equity (within 5%)
+        mock_adapter.get_balance.return_value = AccountBalance(
+            exchange="okx",
+            balances=[
+                Balance(
+                    currency="USDT", available=Decimal("9800"), frozen=Decimal("0")
+                ),
+            ],
+        )
+
+        import logging
+
+        with caplog.at_level(logging.WARNING):
+            await engine._sync_balance()
+
+        assert not any("Cash discrepancy" in msg for msg in caplog.messages)
 
 
 class TestCircuitBreakerOrderProcessing:
@@ -2349,6 +2383,7 @@ class TestSyncConsecutiveFailures:
         """Test _sync_balance raises RuntimeError after consecutive failures."""
         await engine.start()
         assert engine.is_running is True
+        engine._last_balance_check = None  # Reset rate limiter for direct test
 
         # Make get_balance fail
         mock_adapter.get_balance.side_effect = Exception("Network error")
@@ -2375,6 +2410,7 @@ class TestSyncConsecutiveFailures:
         """
         await engine.start()
         assert engine.is_running is True
+        engine._last_balance_check = None  # Reset rate limiter for direct test
 
         # Pre-fail to reach threshold on next sync
         engine._balance_consecutive_failures = 4
@@ -2405,6 +2441,7 @@ class TestSyncConsecutiveFailures:
     async def test_balance_sync_success_resets_failure_counter(self, engine, mock_adapter):
         """Test successful balance sync resets the failure counter."""
         await engine.start()
+        engine._last_balance_check = None  # Reset rate limiter for direct test
 
         # Fail 4 times (below threshold)
         mock_adapter.get_balance.side_effect = Exception("Network error")
@@ -2652,3 +2689,623 @@ class TestWsUpdateBuffering:
         # Should not raise
         engine_with_order._drain_ws_updates()
         assert len(engine_with_order._pending_ws_updates) == 0
+
+
+class TestTimedOutOrderReconciliation:
+    """Tests for R5-F3: timed-out order recovery via client_order_id."""
+
+    async def test_timeout_records_order_for_reconciliation(self, engine, mock_adapter):
+        """Test that order submission timeout adds order to _timed_out_orders."""
+        mock_adapter.place_order.side_effect = TimeoutError("timed out")
+
+        await engine.start()
+
+        # Create a pending order manually
+        engine._current_price = Decimal("45000")
+        engine._context.buy("BTC/USDT", Decimal("0.01"))
+        pending = engine._context._get_pending_orders()
+        assert len(pending) == 1
+
+        order = pending[0]
+        await engine._submit_order(order)
+
+        # Order should be in _timed_out_orders, NOT in _live_orders
+        assert order.id in engine._timed_out_orders
+        assert order.id not in engine._live_orders
+        # Order should NOT be marked REJECTED
+        assert order.status != OrderStatus.REJECTED
+
+    async def test_reconcile_recovers_order_found_on_exchange(self, engine, mock_adapter):
+        """Test that reconciliation recovers a timed-out order found on exchange."""
+        await engine.start()
+
+        # Simulate a timed-out order
+        engine._current_price = Decimal("45000")
+        engine._context.buy("BTC/USDT", Decimal("0.01"))
+        order = engine._context._get_pending_orders()[0]
+        engine._timed_out_orders[order.id] = order
+
+        # Exchange has this order (matched by client_order_id)
+        mock_adapter.get_open_orders.return_value = [
+            OrderResponse(
+                order_id="exchange-recovered-1",
+                client_order_id=order.id,
+                symbol="BTC/USDT",
+                side=OrderSide.BUY,
+                type=OrderType.MARKET,
+                status=OrderStatus.SUBMITTED,
+                amount=Decimal("0.01"),
+                filled=Decimal("0"),
+            )
+        ]
+
+        await engine._reconcile_timed_out_orders()
+
+        # Order should now be tracked as a live order
+        assert order.id in engine._live_orders
+        assert engine._live_orders[order.id].exchange_order_id == "exchange-recovered-1"
+        assert "exchange-recovered-1" in engine._exchange_order_map
+        # Should be removed from timed-out tracking
+        assert order.id not in engine._timed_out_orders
+
+    async def test_reconcile_marks_cancelled_when_not_on_exchange(self, engine, mock_adapter):
+        """Test that timed-out order not found on exchange is marked cancelled."""
+        await engine.start()
+
+        engine._current_price = Decimal("45000")
+        engine._context.buy("BTC/USDT", Decimal("0.01"))
+        order = engine._context._get_pending_orders()[0]
+        engine._timed_out_orders[order.id] = order
+
+        # Exchange has no matching orders
+        mock_adapter.get_open_orders.return_value = []
+
+        await engine._reconcile_timed_out_orders()
+
+        # Order should be marked cancelled and moved to completed
+        assert order.status == OrderStatus.CANCELLED
+        assert order.id not in engine._timed_out_orders
+        assert any(o.id == order.id for o in engine._context._completed_orders)
+
+    async def test_reconcile_processes_fills_for_recovered_order(self, engine, mock_adapter):
+        """Test that fills on recovered timed-out orders are processed."""
+        await engine.start()
+
+        engine._current_price = Decimal("45000")
+        engine._context.buy("BTC/USDT", Decimal("0.01"))
+        order = engine._context._get_pending_orders()[0]
+        engine._timed_out_orders[order.id] = order
+
+        # Exchange has this order already partially filled
+        mock_adapter.get_open_orders.return_value = [
+            OrderResponse(
+                order_id="exchange-recovered-2",
+                client_order_id=order.id,
+                symbol="BTC/USDT",
+                side=OrderSide.BUY,
+                type=OrderType.MARKET,
+                status=OrderStatus.PARTIAL,
+                amount=Decimal("0.01"),
+                filled=Decimal("0.005"),
+                avg_price=Decimal("45000"),
+                fee=Decimal("0.225"),
+                fee_currency="USDT",
+            )
+        ]
+
+        await engine._reconcile_timed_out_orders()
+
+        # Fill should have been processed
+        assert engine._live_orders[order.id].filled_amount == Decimal("0.005")
+        # Position should exist in context
+        pos = engine._context.get_position("BTC/USDT")
+        assert pos is not None and pos.amount > 0
+
+    async def test_timed_out_order_not_resubmitted(self, engine, mock_adapter):
+        """Test that orders in _timed_out_orders are not re-submitted."""
+        await engine.start()
+
+        engine._current_price = Decimal("45000")
+        engine._context.buy("BTC/USDT", Decimal("0.01"))
+        order = engine._context._get_pending_orders()[0]
+        # Simulate timeout
+        engine._timed_out_orders[order.id] = order
+
+        # Reset place_order call count
+        mock_adapter.place_order.reset_mock()
+
+        await engine._process_order_requests()
+
+        # Should NOT have attempted to submit the order again
+        mock_adapter.place_order.assert_not_called()
+
+    async def test_reconcile_noop_when_no_timed_out_orders(self, engine, mock_adapter):
+        """Test reconciliation is a no-op with no timed-out orders."""
+        await engine.start()
+
+        await engine._reconcile_timed_out_orders()
+
+        # get_open_orders should NOT be called
+        mock_adapter.get_open_orders.assert_not_called()
+
+    async def test_reconcile_handles_exchange_error_gracefully(self, engine, mock_adapter):
+        """Test reconciliation handles exchange errors without crashing."""
+        await engine.start()
+
+        engine._current_price = Decimal("45000")
+        engine._context.buy("BTC/USDT", Decimal("0.01"))
+        order = engine._context._get_pending_orders()[0]
+        engine._timed_out_orders[order.id] = order
+
+        mock_adapter.get_open_orders.side_effect = Exception("Network error")
+
+        await engine._reconcile_timed_out_orders()
+
+        # Order should remain in _timed_out_orders for next attempt
+        assert order.id in engine._timed_out_orders
+
+
+class TestBalanceCheckRateLimiting:
+    """Tests for F-5: balance check rate limiting to reduce API calls."""
+
+    @pytest.mark.asyncio
+    async def test_balance_check_skipped_within_interval(self, engine, mock_adapter):
+        """Balance sync should be skipped if called within the rate limit interval."""
+        await engine.start()
+        # start() calls _sync_balance() once, setting _last_balance_check
+        initial_call_count = mock_adapter.get_balance.call_count
+
+        await engine._sync_balance()
+
+        # Should be skipped — no additional call
+        assert mock_adapter.get_balance.call_count == initial_call_count
+
+    @pytest.mark.asyncio
+    async def test_balance_check_executes_after_interval(self, engine, mock_adapter):
+        """Balance sync should execute after the rate limit interval expires."""
+        await engine.start()
+        initial_call_count = mock_adapter.get_balance.call_count
+
+        # Simulate interval elapsed
+        engine._last_balance_check = None
+
+        await engine._sync_balance()
+
+        assert mock_adapter.get_balance.call_count == initial_call_count + 1
+
+    @pytest.mark.asyncio
+    async def test_balance_check_forced_after_fill(self, engine, mock_adapter):
+        """Balance sync should execute immediately after a fill, even within interval."""
+        await engine.start()
+        initial_call_count = mock_adapter.get_balance.call_count
+
+        # Simulate a recent fill
+        engine._has_recent_fill = True
+
+        await engine._sync_balance()
+
+        assert mock_adapter.get_balance.call_count == initial_call_count + 1
+        # Flag should be reset after check
+        assert engine._has_recent_fill is False
+
+
+class TestOrderEventPersistRetry:
+    """Tests for F-10: failed audit events are retried on next bar."""
+
+    @pytest.mark.asyncio
+    async def test_failed_persist_puts_events_back(self, engine):
+        """Events should be put back into the queue if persist fails."""
+        await engine.start()
+
+        # Inject events and a failing callback
+        events = [{"type": "order_created", "order_id": "abc"}]
+        engine._pending_order_events = events.copy()
+        engine._on_order_persist = AsyncMock(side_effect=Exception("DB error"))
+
+        # Simulate the persist flush path in process_candle
+        if engine._on_order_persist and engine._pending_order_events:
+            events_to_persist = engine._pending_order_events.copy()
+            engine._pending_order_events.clear()
+            try:
+                await engine._on_order_persist(str(engine._run_id), events_to_persist)
+            except Exception:
+                engine._pending_order_events = events_to_persist + engine._pending_order_events
+
+        assert len(engine._pending_order_events) == 1
+        assert engine._pending_order_events[0]["order_id"] == "abc"
+
+    @pytest.mark.asyncio
+    async def test_successful_persist_clears_events(self, engine):
+        """Events should be cleared after successful persist."""
+        await engine.start()
+
+        events = [{"type": "order_created", "order_id": "abc"}]
+        engine._pending_order_events = events.copy()
+        engine._on_order_persist = AsyncMock()
+
+        if engine._on_order_persist and engine._pending_order_events:
+            events_to_persist = engine._pending_order_events.copy()
+            engine._pending_order_events.clear()
+            try:
+                await engine._on_order_persist(str(engine._run_id), events_to_persist)
+            except Exception:
+                engine._pending_order_events = events_to_persist + engine._pending_order_events
+
+        assert len(engine._pending_order_events) == 0
+        engine._on_order_persist.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_retry_preserves_new_events_added_during_persist(self, engine):
+        """New events added during persist attempt should be preserved alongside retried ones."""
+        await engine.start()
+
+        original = [{"type": "fill", "order_id": "1"}]
+        engine._pending_order_events = original.copy()
+
+        async def fail_and_add_event(run_id, events):
+            # Simulate new event arriving during persist
+            engine._pending_order_events.append({"type": "fill", "order_id": "2"})
+            raise Exception("DB error")
+
+        engine._on_order_persist = AsyncMock(side_effect=fail_and_add_event)
+
+        if engine._on_order_persist and engine._pending_order_events:
+            events_to_persist = engine._pending_order_events.copy()
+            engine._pending_order_events.clear()
+            try:
+                await engine._on_order_persist(str(engine._run_id), events_to_persist)
+            except Exception:
+                engine._pending_order_events = events_to_persist + engine._pending_order_events
+
+        # Original event first, then new event
+        assert len(engine._pending_order_events) == 2
+        assert engine._pending_order_events[0]["order_id"] == "1"
+        assert engine._pending_order_events[1]["order_id"] == "2"
+
+
+class TestOnBarExceptionIsolation:
+    """Tests for ISSUE-3: on_bar() exceptions should not stop the live engine."""
+
+    @pytest.mark.asyncio
+    async def test_strategy_exception_does_not_stop_engine(self, engine, mock_adapter):
+        """A strategy on_bar() error should be caught and logged, not stop the engine."""
+        await engine.start()
+
+        # Make strategy raise a KeyError
+        engine._strategy.on_bar = MagicMock(side_effect=KeyError("missing_key"))
+
+        candle = WSCandle(
+            symbol="BTC/USDT",
+            timeframe="1m",
+            timestamp=datetime(2025, 1, 1, 0, 1, tzinfo=UTC),
+            open=Decimal("50000"),
+            high=Decimal("50100"),
+            low=Decimal("49900"),
+            close=Decimal("50050"),
+            volume=Decimal("100"),
+            is_closed=True,
+        )
+
+        with patch("squant.config.get_settings") as mock_settings:
+            mock_settings.return_value = MagicMock(
+                strategy=MagicMock(cpu_limit_seconds=5, memory_limit_mb=256),
+            )
+            # Should NOT raise — strategy error is isolated
+            await engine.process_candle(candle)
+
+        # Engine should still be running
+        assert engine._is_running is True
+
+    @pytest.mark.asyncio
+    async def test_strategy_exception_logged_to_context(self, engine, mock_adapter):
+        """Strategy error should be recorded in context logs."""
+        await engine.start()
+
+        engine._strategy.on_bar = MagicMock(side_effect=ValueError("bad calculation"))
+
+        candle = WSCandle(
+            symbol="BTC/USDT",
+            timeframe="1m",
+            timestamp=datetime(2025, 1, 1, 0, 1, tzinfo=UTC),
+            open=Decimal("50000"),
+            high=Decimal("50100"),
+            low=Decimal("49900"),
+            close=Decimal("50050"),
+            volume=Decimal("100"),
+            is_closed=True,
+        )
+
+        with patch("squant.config.get_settings") as mock_settings:
+            mock_settings.return_value = MagicMock(
+                strategy=MagicMock(cpu_limit_seconds=5, memory_limit_mb=256),
+            )
+            await engine.process_candle(candle)
+
+        # Error should be in context logs
+        logs = list(engine._context._logs)
+        assert any("ERROR in on_bar" in log for log in logs)
+
+
+class TestOrderTTLExpiry:
+    """Tests for ISSUE-8: limit orders with bars_remaining TTL."""
+
+    @pytest.mark.asyncio
+    async def test_ttl_order_cancelled_after_expiry(self, engine, mock_adapter):
+        """Limit order with bars_remaining=1 should be cancelled after 1 bar."""
+        await engine.start()
+
+        # Create a live order with TTL
+        live_order = LiveOrder(
+            internal_id="test-ttl-1",
+            exchange_order_id="exc-123",
+            symbol="BTC/USDT",
+            side=OrderSide.BUY,
+            order_type="limit",
+            amount=Decimal("0.01"),
+            price=Decimal("45000"),
+        )
+        live_order.bars_remaining = 1
+        live_order.created_at = datetime(2025, 1, 1, tzinfo=UTC)
+        engine._live_orders["test-ttl-1"] = live_order
+        engine._exchange_order_map["exc-123"] = "test-ttl-1"
+
+        # Mock cancel response
+        mock_adapter.cancel_order.return_value = OrderResponse(
+            order_id="exc-123",
+            symbol="BTC/USDT",
+            side=OrderSide.BUY,
+            type=OrderType.LIMIT,
+            amount=Decimal("0.01"),
+            status=OrderStatus.CANCELLED,
+            filled=Decimal("0"),
+            avg_price=None,
+            fee=Decimal("0"),
+        )
+
+        await engine._expire_ttl_orders()
+
+        assert live_order.bars_remaining == 0
+        mock_adapter.cancel_order.assert_called_once()
+        assert live_order.status == OrderStatus.CANCELLED
+
+    @pytest.mark.asyncio
+    async def test_ttl_order_not_cancelled_before_expiry(self, engine, mock_adapter):
+        """Limit order with bars_remaining=3 should not be cancelled after 1 bar."""
+        await engine.start()
+
+        live_order = LiveOrder(
+            internal_id="test-ttl-2",
+            exchange_order_id="exc-456",
+            symbol="BTC/USDT",
+            side=OrderSide.BUY,
+            order_type="limit",
+            amount=Decimal("0.01"),
+            price=Decimal("45000"),
+        )
+        live_order.bars_remaining = 3
+        live_order.created_at = datetime(2025, 1, 1, tzinfo=UTC)
+        engine._live_orders["test-ttl-2"] = live_order
+
+        await engine._expire_ttl_orders()
+
+        assert live_order.bars_remaining == 2
+        mock_adapter.cancel_order.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_gtc_order_not_affected(self, engine, mock_adapter):
+        """GTC order (bars_remaining=None) should never expire."""
+        await engine.start()
+
+        live_order = LiveOrder(
+            internal_id="test-gtc",
+            exchange_order_id="exc-789",
+            symbol="BTC/USDT",
+            side=OrderSide.BUY,
+            order_type="limit",
+            amount=Decimal("0.01"),
+            price=Decimal("45000"),
+        )
+        live_order.bars_remaining = None
+        live_order.created_at = datetime(2025, 1, 1, tzinfo=UTC)
+        engine._live_orders["test-gtc"] = live_order
+
+        await engine._expire_ttl_orders()
+
+        assert live_order.bars_remaining is None
+        mock_adapter.cancel_order.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_ttl_cancel_failure_handled_gracefully(self, engine, mock_adapter):
+        """Exchange cancel failure should not crash the engine."""
+        await engine.start()
+
+        live_order = LiveOrder(
+            internal_id="test-ttl-fail",
+            exchange_order_id="exc-999",
+            symbol="BTC/USDT",
+            side=OrderSide.BUY,
+            order_type="limit",
+            amount=Decimal("0.01"),
+            price=Decimal("45000"),
+        )
+        live_order.bars_remaining = 1
+        live_order.created_at = datetime(2025, 1, 1, tzinfo=UTC)
+        engine._live_orders["test-ttl-fail"] = live_order
+
+        mock_adapter.cancel_order.side_effect = Exception("Network error")
+
+        # Should not raise
+        await engine._expire_ttl_orders()
+
+        assert live_order.bars_remaining == 0
+
+
+class TestFillPositionCashIntegration:
+    """End-to-end tests for _record_fill → _process_fill(force=True) verifying
+    exact position amount, cash, and fee changes after fills."""
+
+    @pytest.fixture
+    def engine_with_tracked_buy(self, engine):
+        """Engine with a tracked BUY order on the exchange."""
+        order = LiveOrder(
+            internal_id="buy-1",
+            exchange_order_id="exc-buy-1",
+            symbol="BTC/USDT",
+            side=OrderSide.BUY,
+            order_type="limit",
+            amount=Decimal("0.5"),
+            price=Decimal("40000"),
+            status=OrderStatus.SUBMITTED,
+        )
+        order.created_at = datetime(2025, 1, 1, tzinfo=UTC)
+        engine._live_orders["buy-1"] = order
+        engine._exchange_order_map["exc-buy-1"] = "buy-1"
+        return engine
+
+    @pytest.mark.asyncio
+    async def test_buy_fill_updates_position_and_cash(self, engine_with_tracked_buy, mock_adapter):
+        """BUY fill: position increases, cash decreases by (price * amount + fee)."""
+        engine = engine_with_tracked_buy
+        await engine.start()
+
+        initial_cash = engine._context._cash
+        live_order = engine._live_orders["buy-1"]
+
+        engine._record_fill(
+            live_order,
+            fill_price=Decimal("40000"),
+            fill_amount=Decimal("0.5"),
+            fee_delta=Decimal("10"),
+            total_fee=Decimal("10"),
+            source="poll",
+        )
+
+        # Position should be 0.5 BTC
+        pos = engine._context.get_position("BTC/USDT")
+        assert pos is not None
+        assert pos.amount == Decimal("0.5")
+
+        # Cash: initial - (40000 * 0.5 + 10) = initial - 20010
+        expected_cash = initial_cash - Decimal("20010")
+        assert engine._context._cash == expected_cash
+
+        # Fill recorded
+        assert len(engine._context.fills) == 1
+        assert engine._context.fills[0].fee == Decimal("10")
+
+        # Balance check triggered
+        assert engine._has_recent_fill is True
+
+    @pytest.mark.asyncio
+    async def test_sell_fill_updates_position_and_cash(self, engine_with_tracked_buy, mock_adapter):
+        """SELL fill: position decreases, cash increases by (price * amount - fee)."""
+        engine = engine_with_tracked_buy
+        await engine.start()
+
+        # First buy to establish position
+        buy_order = engine._live_orders["buy-1"]
+        engine._record_fill(
+            buy_order,
+            fill_price=Decimal("40000"),
+            fill_amount=Decimal("1.0"),
+            fee_delta=Decimal("20"),
+            total_fee=Decimal("20"),
+            source="poll",
+        )
+        cash_before_sell = engine._context._cash
+
+        # Create sell order
+        sell_order = LiveOrder(
+            internal_id="sell-1",
+            exchange_order_id="exc-sell-1",
+            symbol="BTC/USDT",
+            side=OrderSide.SELL,
+            order_type="limit",
+            amount=Decimal("0.5"),
+            price=Decimal("45000"),
+            status=OrderStatus.SUBMITTED,
+        )
+        engine._live_orders["sell-1"] = sell_order
+
+        engine._record_fill(
+            sell_order,
+            fill_price=Decimal("45000"),
+            fill_amount=Decimal("0.5"),
+            fee_delta=Decimal("11.25"),
+            total_fee=Decimal("11.25"),
+            source="poll",
+        )
+
+        # Position: 1.0 - 0.5 = 0.5
+        pos = engine._context.get_position("BTC/USDT")
+        assert pos.amount == Decimal("0.5")
+
+        # Cash: before + (45000 * 0.5 - 11.25) = before + 22488.75
+        expected_cash = cash_before_sell + Decimal("22488.75")
+        assert engine._context._cash == expected_cash
+
+    @pytest.mark.asyncio
+    async def test_partial_fills_accumulate_correctly(self, engine_with_tracked_buy, mock_adapter):
+        """Two partial fills should accumulate position and deduct cash correctly."""
+        engine = engine_with_tracked_buy
+        await engine.start()
+
+        initial_cash = engine._context._cash
+        live_order = engine._live_orders["buy-1"]
+
+        # First partial: 0.3 of 0.5
+        engine._record_fill(
+            live_order,
+            fill_price=Decimal("40000"),
+            fill_amount=Decimal("0.3"),
+            fee_delta=Decimal("6"),
+            total_fee=Decimal("6"),
+            source="ws",
+        )
+
+        pos = engine._context.get_position("BTC/USDT")
+        assert pos.amount == Decimal("0.3")
+        assert engine._context._cash == initial_cash - Decimal("12006")  # 40000*0.3+6
+
+        # Second partial: remaining 0.2 at slightly different price
+        engine._record_fill(
+            live_order,
+            fill_price=Decimal("40100"),
+            fill_amount=Decimal("0.2"),
+            fee_delta=Decimal("4"),
+            total_fee=Decimal("10"),
+            source="ws",
+        )
+
+        pos = engine._context.get_position("BTC/USDT")
+        assert pos.amount == Decimal("0.5")
+        # Additional cost: 40100*0.2+4 = 8024
+        assert engine._context._cash == initial_cash - Decimal("12006") - Decimal("8024")
+        assert len(engine._context.fills) == 2
+
+    @pytest.mark.asyncio
+    async def test_force_true_allows_negative_cash(self, engine_with_tracked_buy, mock_adapter):
+        """force=True allows fill recording even when cash goes deeply negative."""
+        engine = engine_with_tracked_buy
+        await engine.start()
+
+        # Deplete cash to near-zero
+        engine._context._cash = Decimal("1")
+
+        live_order = engine._live_orders["buy-1"]
+        engine._record_fill(
+            live_order,
+            fill_price=Decimal("40000"),
+            fill_amount=Decimal("0.5"),
+            fee_delta=Decimal("10"),
+            total_fee=Decimal("10"),
+            source="reconcile",
+        )
+
+        # Cash deeply negative: 1 - 20010 = -20009
+        assert engine._context._cash == Decimal("-20009")
+        # Position IS recorded despite negative cash
+        pos = engine._context.get_position("BTC/USDT")
+        assert pos.amount == Decimal("0.5")
+        # Audit event buffered
+        assert any(e["type"] == "fill" for e in engine._pending_order_events)

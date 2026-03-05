@@ -69,30 +69,95 @@
       </div>
     </div>
 
-    <div class="chart-container card">
+    <div class="chart-container card" v-loading="loading" element-loading-text="加载K线数据...">
       <div class="chart-toolbar">
         <span class="toolbar-label">指标:</span>
-        <el-checkbox-group v-model="selectedIndicators" @change="handleIndicatorChange">
-          <el-checkbox value="MA">MA</el-checkbox>
-          <el-checkbox value="EMA">EMA</el-checkbox>
-          <el-checkbox value="BOLL">BOLL</el-checkbox>
-          <el-checkbox value="VOL">VOL</el-checkbox>
-          <el-checkbox value="MACD">MACD</el-checkbox>
-          <el-checkbox value="RSI">RSI</el-checkbox>
-          <el-checkbox value="KDJ">KDJ</el-checkbox>
-        </el-checkbox-group>
+        <div class="indicator-tags">
+          <div v-for="ind in INDICATOR_DEFS" :key="ind.key" class="indicator-item">
+            <el-check-tag
+              :checked="selectedIndicators.includes(ind.key)"
+              @change="toggleIndicator(ind.key)"
+            >
+              {{ ind.label }}
+            </el-check-tag>
+            <el-popover
+              v-if="selectedIndicators.includes(ind.key)"
+              trigger="click"
+              :width="300"
+              placement="bottom-start"
+            >
+              <template #reference>
+                <el-icon class="param-icon"><Setting /></el-icon>
+              </template>
+              <div class="param-form">
+                <div class="param-header">{{ ind.label }} 参数</div>
+                <!-- Dynamic-count indicators -->
+                <template v-if="ind.dynamicCount">
+                  <div v-for="(val, i) in indicatorParams[ind.key]" :key="i" class="param-row">
+                    <span class="param-label">{{ getDynamicLabel(ind, i) }}</span>
+                    <el-input-number
+                      v-model="indicatorParams[ind.key][i]"
+                      :min="1"
+                      :max="500"
+                      :step="1"
+                      size="small"
+                      @change="onDynamicParamChange(ind.key)"
+                    />
+                    <el-icon
+                      v-if="indicatorParams[ind.key].length > 1"
+                      class="remove-btn"
+                      @click="removeParam(ind.key, i)"
+                    >
+                      <CircleClose />
+                    </el-icon>
+                  </div>
+                  <el-button
+                    v-if="indicatorParams[ind.key].length < (ind.maxCount ?? 8)"
+                    size="small"
+                    text
+                    type="primary"
+                    :icon="Plus"
+                    @click="addParam(ind.key)"
+                  >
+                    添加
+                  </el-button>
+                </template>
+                <!-- Fixed-count indicators -->
+                <template v-else>
+                  <div v-for="(p, i) in ind.params" :key="i" class="param-row">
+                    <span class="param-label">{{ p.label }}</span>
+                    <el-input-number
+                      v-model="indicatorParams[ind.key][i]"
+                      :min="p.min"
+                      :max="p.max"
+                      :step="p.step"
+                      size="small"
+                      @change="onParamChange(ind.key)"
+                    />
+                  </div>
+                </template>
+                <el-button size="small" text type="info" @click="resetParams(ind.key)">
+                  恢复默认
+                </el-button>
+              </div>
+            </el-popover>
+          </div>
+        </div>
         <span class="toolbar-spacer"></span>
-        <span class="realtime-status" :class="{ active: lastCandleUpdate }">
+        <span class="realtime-status" :class="{ active: wsStore.isConnected }">
           <el-icon v-if="wsStore.isConnected" color="#67C23A"><CircleCheckFilled /></el-icon>
           <el-icon v-else color="#909399"><CircleCloseFilled /></el-icon>
-          <span v-if="lastCandleUpdate">最后更新: {{ lastCandleUpdate }}</span>
-          <span v-else>等待实时数据...</span>
+          <span v-if="lastCandleUpdate">{{ lastCandleUpdate }}</span>
+          <span v-else-if="wsStore.isConnected">等待实时数据...</span>
+          <span v-else>实时数据未连接</span>
         </span>
       </div>
       <KLineChart
         ref="chartRef"
         :data="candles"
         :indicators="selectedIndicators"
+        :indicator-params="indicatorParams"
+        :on-load-more="loadMoreCandles"
         height="600px"
       />
     </div>
@@ -122,7 +187,8 @@ import { useWebSocketStore, type CandleUpdate } from '@/stores/websocket'
 import KLineChart from '@/components/charts/KLineChart.vue'
 import PriceCell from '@/components/common/PriceCell.vue'
 import { formatPrice, formatVolume, formatLargeNumber, formatExchangeName } from '@/utils/format'
-import { CircleCheckFilled, CircleCloseFilled } from '@element-plus/icons-vue'
+import { CircleCheckFilled, CircleCloseFilled, CircleClose, Setting, Plus } from '@element-plus/icons-vue'
+import { INDICATOR_DEFS, getDefaultParams, getIndicatorDef, getDynamicParamLabel, suggestNewPeriod, type IndicatorParams } from '@/components/charts/indicatorConfig'
 import { getCandles, getTicker } from '@/api/market'
 import { addRecentSymbol } from '@/utils/storage'
 import type { Candle, Ticker, Timeframe } from '@/types'
@@ -141,6 +207,7 @@ const candles = ref<Candle[]>([])
 const ticker = ref<Ticker | null>(null)
 const selectedTimeframe = ref<Timeframe>('1h')
 const selectedIndicators = ref(['MA', 'VOL'])
+const indicatorParams = ref<IndicatorParams>(getDefaultParams())
 const loading = ref(false)
 const lastCandleUpdate = ref<string>('')  // 调试：最近的 K 线更新时间
 
@@ -160,6 +227,53 @@ const isInWatchlist = computed(() =>
 // Use current exchange from store (may differ from route param after switching)
 const currentExchange = computed(() => marketStore.currentExchange)
 
+function toggleIndicator(name: string) {
+  const idx = selectedIndicators.value.indexOf(name)
+  if (idx >= 0) {
+    selectedIndicators.value.splice(idx, 1)
+  } else {
+    selectedIndicators.value.push(name)
+  }
+}
+
+function onParamChange(_name: string) {
+  // Trigger deep watch by replacing the object reference
+  indicatorParams.value = { ...indicatorParams.value }
+}
+
+function resetParams(name: string) {
+  const def = getIndicatorDef(name)
+  if (!def) return
+  indicatorParams.value[name] = def.params.map((p) => p.default)
+  onParamChange(name)
+}
+
+// --- Dynamic-count indicator helpers ---
+function getDynamicLabel(def: { paramPrefix?: string; key: string }, index: number): string {
+  return getDynamicParamLabel(def as any, index)
+}
+
+function onDynamicParamChange(name: string) {
+  // Dynamic indicators need reference change to trigger KLineChart watch
+  indicatorParams.value = { ...indicatorParams.value }
+}
+
+function addParam(name: string) {
+  const def = getIndicatorDef(name)
+  if (!def) return
+  const current = indicatorParams.value[name]
+  const newPeriod = suggestNewPeriod(def, current)
+  indicatorParams.value[name] = [...current, newPeriod]
+  onDynamicParamChange(name)
+}
+
+function removeParam(name: string, index: number) {
+  const current = indicatorParams.value[name]
+  if (current.length <= 1) return
+  indicatorParams.value[name] = current.filter((_, i) => i !== index)
+  onDynamicParamChange(name)
+}
+
 async function loadCandles() {
   loading.value = true
   try {
@@ -169,10 +283,7 @@ async function loadCandles() {
       300  // Backend limit is 300 max
     )
     candles.value = response.data.candles
-    // Mark data as loaded - real-time updates may be slow for less active pairs
-    if (candles.value.length > 0) {
-      lastCandleUpdate.value = '数据已加载'
-    }
+    // Don't set lastCandleUpdate here — it's reserved for real-time WS updates
   } catch (error) {
     console.error('Failed to load candles:', error)
   } finally {
@@ -189,8 +300,19 @@ async function loadTicker() {
   }
 }
 
-function handleIndicatorChange() {
-  // 指标变化由 KLineChart 组件处理
+async function loadMoreCandles(params: { before: number }): Promise<Candle[]> {
+  try {
+    const response = await getCandles(
+      props.symbol,
+      selectedTimeframe.value,
+      300,
+      params.before
+    )
+    return response.data.candles
+  } catch (error) {
+    console.error('Failed to load more candles:', error)
+    return []
+  }
 }
 
 function toggleWatchlist() {
@@ -248,21 +370,38 @@ watch(selectedTimeframe, (newTf, oldTf) => {
 })
 
 let unsubscribeTicker: (() => void) | null = null
-let tickerRefreshTimer: ReturnType<typeof setInterval> | null = null
+let tickerRefreshTimer: ReturnType<typeof setTimeout> | null = null
+const TICKER_POLL_FAST = 10000   // 10s — WS 断开时
+const TICKER_POLL_SLOW = 60000   // 60s — WS 已连接时（刷新成交量）
 
-// 处理 K 线实时更新
+function scheduleTickerPoll() {
+  const interval = wsStore.isConnected ? TICKER_POLL_SLOW : TICKER_POLL_FAST
+  tickerRefreshTimer = setTimeout(async () => {
+    tickerRefreshTimer = null
+    try {
+      await loadTicker()
+    } catch {
+      // Silent fail - WS is primary, this is fallback
+    }
+    scheduleTickerPoll()
+  }, interval)
+}
+
+// 处理 K 线实时更新（来自 exchange candle WS）
+// 只使用交易所推送的 candle 数据更新图表，不混入 ticker 数据
+// ticker 数据只用于价格栏显示，避免因数据源频率差异导致 OHLCV 失真
 function handleCandleUpdate(candle: CandleUpdate) {
   lastCandleUpdate.value = new Date().toLocaleTimeString()
-  if (chartRef.value) {
-    chartRef.value.updateCandle({
-      timestamp: candle.timestamp,
-      open: candle.open,
-      high: candle.high,
-      low: candle.low,
-      close: candle.close,
-      volume: candle.volume,
-    })
-  }
+  if (!chartRef.value) return
+
+  chartRef.value.updateCandle({
+    timestamp: candle.timestamp,
+    open: candle.open,
+    high: candle.high,
+    low: candle.low,
+    close: candle.close,
+    volume: candle.volume,
+  })
 }
 
 // 将 symbol 从 URL 格式 (BTC-USDT) 转换为标准格式 (BTC/USDT)
@@ -295,15 +434,8 @@ onMounted(async () => {
   // 订阅 K 线实时更新
   subscribeToCandles()
 
-  // Start REST API polling as fallback for infrequent WebSocket updates
-  // OKX doesn't send frequent updates for less active pairs
-  tickerRefreshTimer = setInterval(async () => {
-    try {
-      await loadTicker()
-    } catch (error) {
-      // Silent fail - this is just a fallback
-    }
-  }, 10000)  // Refresh every 10 seconds
+  // REST ticker polling: fast when WS disconnected, slow when connected (volume refresh)
+  scheduleTickerPoll()
 })
 
 onUnmounted(() => {
@@ -314,7 +446,7 @@ onUnmounted(() => {
 
   // Stop ticker refresh timer
   if (tickerRefreshTimer) {
-    clearInterval(tickerRefreshTimer)
+    clearTimeout(tickerRefreshTimer)
     tickerRefreshTimer = null
   }
 
@@ -410,6 +542,30 @@ onUnmounted(() => {
         font-size: 14px;
       }
 
+      .indicator-tags {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        flex-wrap: wrap;
+
+        .indicator-item {
+          display: inline-flex;
+          align-items: center;
+          gap: 2px;
+
+          .param-icon {
+            font-size: 14px;
+            color: #909399;
+            cursor: pointer;
+            transition: color 0.2s;
+
+            &:hover {
+              color: #409EFF;
+            }
+          }
+        }
+      }
+
       .toolbar-spacer {
         flex: 1;
       }
@@ -436,6 +592,52 @@ onUnmounted(() => {
     display: flex;
     gap: 12px;
     padding: 16px;
+  }
+}
+
+.param-form {
+  .param-header {
+    font-size: 13px;
+    font-weight: 500;
+    color: #303133;
+    margin-bottom: 10px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid #f0f0f0;
+  }
+
+  .param-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 8px;
+
+    .param-label {
+      font-size: 12px;
+      color: #606266;
+      min-width: 40px;
+      font-weight: 500;
+    }
+
+    :deep(.el-input-number) {
+      flex: 1;
+    }
+
+    .remove-btn {
+      flex-shrink: 0;
+      font-size: 16px;
+      color: #C0C4CC;
+      cursor: pointer;
+      transition: color 0.2s;
+
+      &:hover {
+        color: #F56C6C;
+      }
+    }
+  }
+
+  > .el-button {
+    margin-top: 6px;
+    width: 100%;
   }
 }
 </style>

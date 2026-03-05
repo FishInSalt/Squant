@@ -287,7 +287,7 @@ class TestBacktestValidation:
         payload["unknown_field"] = "should be ignored"
         with patch("squant.api.v1.backtest.BacktestService") as mock_cls:
             mock_service = mock_cls.return_value
-            mock_service.create_and_run = AsyncMock(side_effect=StrategyNotFoundError("not found"))
+            mock_service.create = AsyncMock(side_effect=StrategyNotFoundError("not found"))
             response = await client.post(self.URL, json=payload)
         assert response.status_code == 404
 

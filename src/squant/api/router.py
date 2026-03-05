@@ -10,11 +10,13 @@ from squant.api.v1 import (
     health,
     live_trading,
     market,
+    notifications,
     orders,
     paper_trading,
     risk,
     risk_triggers,
     strategies,
+    system,
     watchlist,
 )
 from squant.websocket.handlers import router as ws_router
@@ -61,8 +63,16 @@ api_router.include_router(
     circuit_breaker.router, prefix="/circuit-breaker", tags=["Circuit Breaker"]
 )
 
+# Notification endpoints
+api_router.include_router(
+    notifications.router, prefix="/notifications", tags=["Notifications"]
+)
+
 # Watchlist endpoints
 api_router.include_router(watchlist.router, prefix="/watchlist", tags=["Watchlist"])
+
+# System management endpoints (data download, etc.)
+api_router.include_router(system.router, prefix="/system", tags=["System"])
 
 # WebSocket endpoints for real-time data
 api_router.include_router(ws_router, prefix="/ws", tags=["WebSocket"])

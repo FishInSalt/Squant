@@ -2,11 +2,16 @@
 
 基于相对强弱指标 (RSI) 的均值回归策略。
 当 RSI 进入超卖区间时买入（预期价格回升），进入超买区间时卖出（预期价格回落）。
+使用 ta 模块的 rsi() 计算指标，演示 on_fill 回调的使用方式。
 
-系统自动注入以下类型到策略运行环境：
+系统自动注入以下对象到策略运行环境（无需 import）：
 - Strategy: 策略基类（必须继承）
 - Bar: K线数据 (time, symbol, open, high, low, close, volume)
 - Position: 持仓信息 (symbol, amount, avg_entry_price)
+- OrderSide / OrderType: 订单方向与类型枚举
+- Fill: 成交回报 (symbol, side, price, amount, fee, pnl, ...)
+- OrderStatus: 订单状态枚举 (PENDING, FILLED, CANCELLED, EXPIRED)
+- ta: 内置技术指标模块 (sma, ema, rsi, macd, bollinger_bands, atr, ...)
 - Decimal: 精确小数计算
 - math: 数学函数模块
 
@@ -20,87 +25,57 @@ class RSIMeanReversionStrategy(Strategy):  # noqa: F821
     """RSI 均值回归策略
 
     当 RSI 低于超卖线时买入，高于超买线时卖出。
-    使用 Wilder 平滑法计算 RSI。
+    使用 ta.rsi() 内置的 Wilder 平滑法计算 RSI。
 
     参数:
         rsi_period (int): RSI 计算周期，默认 14
         oversold (int): 超卖阈值，默认 30
         overbought (int): 超买阈值，默认 70
-        amount (str): 每次买入数量，默认 "0.01"
+        position_ratio (float): 仓位比例，默认 0.9
     """
 
-    def on_init(self) -> None:
-        """策略初始化"""
+    def on_init(self):
         self.rsi_period = self.ctx.params.get("rsi_period", 14)
-        self.oversold = Decimal(str(self.ctx.params.get("oversold", 30)))
-        self.overbought = Decimal(str(self.ctx.params.get("overbought", 70)))
-        self.amount = Decimal(str(self.ctx.params.get("amount", "0.01")))
+        self.oversold = self.ctx.params.get("oversold", 30)
+        self.overbought = self.ctx.params.get("overbought", 70)
+        self.position_ratio = Decimal(str(self.ctx.params.get("position_ratio", 0.9)))
+        self.trade_count = 0
 
-        self.prev_close = None
-        self.avg_gain = Decimal("0")
-        self.avg_loss = Decimal("0")
-        self.bar_count = 0
-
-    def on_bar(self, bar) -> None:
-        """K线数据回调"""
-        if self.prev_close is None:
-            self.prev_close = bar.close
+    def on_bar(self, bar):
+        # 需要 period+1 根 K 线来计算 RSI
+        closes = self.ctx.get_closes(self.rsi_period + 1)
+        if len(closes) < self.rsi_period + 1:
             return
 
-        # 计算价格变动
-        change = bar.close - self.prev_close
-        self.prev_close = bar.close
-
-        gain = change if change > 0 else Decimal("0")
-        loss = -change if change < 0 else Decimal("0")
-
-        self.bar_count = self.bar_count + 1
-        period = Decimal(str(self.rsi_period))
-
-        if self.bar_count < self.rsi_period:
-            # 累积阶段：收集初始数据
-            self.avg_gain = self.avg_gain + gain
-            self.avg_loss = self.avg_loss + loss
+        current_rsi = ta.rsi(closes, self.rsi_period)  # noqa: F821
+        if current_rsi is None:
             return
-
-        if self.bar_count == self.rsi_period:
-            # 第一次计算：简单平均
-            self.avg_gain = (self.avg_gain + gain) / period
-            self.avg_loss = (self.avg_loss + loss) / period
-        else:
-            # Wilder 平滑法
-            self.avg_gain = (self.avg_gain * (period - 1) + gain) / period
-            self.avg_loss = (self.avg_loss * (period - 1) + loss) / period
-
-        # 计算 RSI
-        if self.avg_loss == 0:
-            rsi = Decimal("100")
-        else:
-            rs = self.avg_gain / self.avg_loss
-            rsi = Decimal("100") - Decimal("100") / (1 + rs)
 
         pos = self.ctx.get_position(bar.symbol)
 
         # 超卖区间 → 买入信号
-        if rsi < self.oversold:
-            if not pos or pos.amount <= 0:
-                self.ctx.buy(
-                    symbol=bar.symbol,
-                    amount=self.amount,
-                    price=bar.close,
-                )
-                self.ctx.log(f"RSI={rsi:.1f} 超卖买入: {bar.close}")
+        if current_rsi < self.oversold and not pos:
+            amount = self.ctx.cash * self.position_ratio / bar.close
+            if amount > 0:
+                self.ctx.buy(bar.symbol, amount)
+                self.ctx.log(f"RSI={current_rsi:.1f} 超卖买入: {bar.close}")
 
         # 超买区间 → 卖出信号
-        elif rsi > self.overbought:
-            if pos and pos.amount > 0:
-                self.ctx.sell(
-                    symbol=bar.symbol,
-                    amount=pos.amount,
-                    price=bar.close,
-                )
-                self.ctx.log(f"RSI={rsi:.1f} 超买卖出: {bar.close}")
+        elif current_rsi > self.overbought and pos:
+            self.ctx.close_position(bar.symbol)
+            self.ctx.log(f"RSI={current_rsi:.1f} 超买平仓: {bar.close}")
 
-    def on_stop(self) -> None:
-        """策略停止"""
-        self.ctx.log(f"策略停止，共处理 {self.bar_count} 根K线")
+    def on_fill(self, fill):
+        """成交回调：记录每笔成交"""
+        self.trade_count = self.trade_count + 1
+        self.ctx.log(
+            f"成交 #{self.trade_count}: {fill.side.value} "
+            f"{fill.amount} @ {fill.price}"
+        )
+
+    def on_stop(self):
+        self.ctx.log(
+            f"策略停止 | 交易次数: {self.trade_count} | "
+            f"收益率: {self.ctx.return_pct:.2%} | "
+            f"最大回撤: {self.ctx.max_drawdown:.2%}"
+        )

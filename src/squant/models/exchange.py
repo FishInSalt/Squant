@@ -20,12 +20,12 @@ class ExchangeAccount(Base, UUIDMixin, TimestampMixin):
     testnet: Mapped[bool] = mapped_column(Boolean, default=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
 
-    # Relationships
+    # Relationships (lazy="select" — load on access only; LIVE-PF-002)
     strategy_runs: Mapped[list["StrategyRun"]] = relationship(  # noqa: F821
-        back_populates="account", lazy="selectin"
+        back_populates="account", lazy="select"
     )
     orders: Mapped[list["Order"]] = relationship(  # noqa: F821
-        back_populates="account", lazy="selectin"
+        back_populates="account", lazy="select"
     )
 
     __table_args__ = (

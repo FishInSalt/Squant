@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from squant.engine.backtest.context import BacktestContext
-    from squant.engine.backtest.types import Bar
+    from squant.engine.backtest.types import Bar, Fill, SimulatedOrder
 
 
 class Strategy(ABC):
@@ -69,6 +69,33 @@ class Strategy(ABC):
         Note:
             Orders placed in on_bar are executed on the NEXT bar's open price
             (for market orders) to prevent look-ahead bias.
+        """
+        pass
+
+    def on_fill(self, fill: "Fill") -> None:
+        """Called when an order is filled (fully or partially).
+
+        Override this method to react to fill events — e.g., place a
+        stop-loss after a buy fill, or cancel the other side of an
+        OCO pair. Called once per fill, before on_bar() on the same bar.
+
+        Orders placed in on_fill are executed on the NEXT bar, same as
+        orders placed in on_bar.
+
+        Args:
+            fill: The fill event with price, amount, fee, etc.
+        """
+        pass
+
+    def on_order_done(self, order: "SimulatedOrder") -> None:
+        """Called when an order reaches a terminal state (FILLED or CANCELLED).
+
+        Override this method to react to order completion — e.g., cancel
+        the other leg of an OCO pair when one side fills. Called once per
+        completed order, before on_bar() on the same bar.
+
+        Args:
+            order: The completed order with final status, fill price, etc.
         """
         pass
 

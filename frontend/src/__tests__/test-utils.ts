@@ -45,6 +45,7 @@ export function mountView<T extends Component>(
         // Chart components (Canvas not supported in happy-dom)
         EquityCurve: { template: '<div class="equity-curve-stub" />' },
         KLineChart: { template: '<div class="kline-chart-stub" />' },
+        TradingKLineChart: { template: '<div class="trading-kline-chart-stub" />' },
         PieChart: { template: '<div class="pie-chart-stub" />' },
         // Heavy Element Plus components
         ElDatePicker: { template: '<div class="el-date-picker-stub" />' },

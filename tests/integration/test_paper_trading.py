@@ -327,6 +327,54 @@ class TestPaperTradingIntegration:
         assert Decimal(snapshot["positions"]["BTC/USDT"]["amount"]) == Decimal("0.1")
         assert Decimal(snapshot["cash"]) < Decimal("10000")  # Cash reduced after buy
 
+        # Verify trades and logs are present in snapshot
+        assert "trades" in snapshot
+        assert "logs" in snapshot
+        assert isinstance(snapshot["trades"], list)
+        assert isinstance(snapshot["logs"], list)
+
+        # After buy only (no sell yet), should have no completed trade
+        assert len(snapshot["trades"]) == 0
+
+        # Complete the trade cycle: sell to close position
+        candle3 = WSCandle(
+            symbol="BTC/USDT",
+            timeframe="1m",
+            timestamp=datetime(2024, 1, 1, 12, 2, 0, tzinfo=UTC),
+            open=Decimal("45500"),
+            high=Decimal("46000"),
+            low=Decimal("45000"),
+            close=Decimal("45800"),
+            volume=Decimal("100"),
+            is_closed=True,
+        )
+        await session_manager.dispatch_candle(candle3)
+
+        candle4 = WSCandle(
+            symbol="BTC/USDT",
+            timeframe="1m",
+            timestamp=datetime(2024, 1, 1, 12, 3, 0, tzinfo=UTC),
+            open=Decimal("45900"),
+            high=Decimal("46500"),
+            low=Decimal("45700"),
+            close=Decimal("46200"),
+            volume=Decimal("100"),
+            is_closed=True,
+        )
+        await session_manager.dispatch_candle(candle4)
+
+        snapshot = engine.get_state_snapshot()
+        assert len(snapshot["trades"]) == 1
+
+        trade = snapshot["trades"][0]
+        assert trade["symbol"] == "BTC/USDT"
+        assert trade["side"] == "buy"
+        assert trade["entry_price"] is not None
+        assert trade["exit_price"] is not None
+        assert trade["amount"] is not None
+        assert "pnl" in trade
+        assert "fees" in trade
+
         await engine.stop()
 
     @pytest.mark.asyncio

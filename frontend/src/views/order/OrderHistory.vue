@@ -112,7 +112,7 @@
 
         <el-table-column prop="status" label="状态" width="100">
           <template #default="{ row }">
-            <StatusBadge :status="row.status" />
+            <StatusBadge :status="row.status" context="order" />
           </template>
         </el-table-column>
 
@@ -167,7 +167,7 @@
           {{ selectedOrder.commission ? `${formatNumber(selectedOrder.commission, 6)} ${selectedOrder.commission_asset || ''}` : '-' }}
         </el-descriptions-item>
         <el-descriptions-item label="状态">
-          <StatusBadge :status="selectedOrder.status" />
+          <StatusBadge :status="selectedOrder.status" context="order" />
         </el-descriptions-item>
         <el-descriptions-item label="策略">{{ selectedOrder.strategy_name || '-' }}</el-descriptions-item>
         <el-descriptions-item label="创建时间" :span="2">{{ formatDateTime(selectedOrder.created_at) }}</el-descriptions-item>

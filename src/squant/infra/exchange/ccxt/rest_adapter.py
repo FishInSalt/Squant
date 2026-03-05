@@ -22,6 +22,7 @@ from squant.infra.exchange.exceptions import (
     InvalidOrderError,
     OrderNotFoundError,
 )
+from squant.infra.exchange.retry import RetryConfig, with_retry
 from squant.infra.exchange.types import (
     AccountBalance,
     Balance,
@@ -35,6 +36,14 @@ from squant.infra.exchange.types import (
 from squant.models.enums import OrderSide, OrderStatus, OrderType
 
 logger = logging.getLogger(__name__)
+
+# Retry config for read-only and idempotent operations (LIVE-007)
+_READ_RETRY = RetryConfig(max_retries=3, base_delay=0.5, max_delay=10.0)
+
+# Retry config for order placement — safe when client_order_id is set
+# (exchanges treat duplicate client_order_id as idempotent). Single retry
+# to avoid extended delays while protecting against transient network errors.
+_PLACE_ORDER_RETRY = RetryConfig(max_retries=1, base_delay=0.5, max_delay=5.0)
 
 
 class CCXTRestAdapter(ExchangeAdapter):
@@ -82,6 +91,15 @@ class CCXTRestAdapter(ExchangeAdapter):
     def is_testnet(self) -> bool:
         """Whether connected to testnet/sandbox."""
         return self._credentials.sandbox if self._credentials else False
+
+    def get_symbols(self) -> list[str]:
+        """Return sorted list of available trading symbols.
+
+        Must be called after connect() / load_markets().
+        """
+        if self._exchange and self._exchange.markets:
+            return sorted(self._exchange.markets.keys())
+        return []
 
     async def connect(self) -> None:
         """Establish connection to the exchange."""
@@ -202,12 +220,25 @@ class CCXTRestAdapter(ExchangeAdapter):
             if symbols is None:
                 tickers = await self._exchange.fetch_tickers()
             else:
+                # Filter out symbols not available on this exchange
+                markets = self._exchange.markets or {}
+                valid_symbols = [s for s in symbols if s in markets]
+                skipped = set(symbols) - set(valid_symbols)
+                if skipped:
+                    logger.warning(
+                        f"Skipping symbols not found on {self._exchange_id}: "
+                        f"{', '.join(sorted(skipped))}"
+                    )
+
+                if not valid_symbols:
+                    return []
+
                 # Some exchanges support batch fetch, others need individual calls
                 if self._exchange.has.get("fetchTickers"):
-                    tickers = await self._exchange.fetch_tickers(list(symbols))
+                    tickers = await self._exchange.fetch_tickers(valid_symbols)
                 else:
                     tickers = {}
-                    for symbol in symbols:
+                    for symbol in valid_symbols:
                         try:
                             ticker = await self._exchange.fetch_ticker(symbol)
                             tickers[symbol] = ticker
@@ -257,6 +288,9 @@ class CCXTRestAdapter(ExchangeAdapter):
             candles = []
             for item in ohlcv:
                 if len(item) >= 6:
+                    # Filter by end_time if specified (CCXT doesn't support it natively)
+                    if end_time is not None and item[0] > end_time:
+                        continue
                     candles.append(
                         Candlestick(
                             timestamp=datetime.fromtimestamp(item[0] / 1000, tz=UTC),
@@ -289,6 +323,12 @@ class CCXTRestAdapter(ExchangeAdapter):
 
     async def get_balance(self) -> AccountBalance:
         """Get account balance for all currencies."""
+        return await with_retry(
+            self._get_balance_impl, config=_READ_RETRY, operation_name="get_balance"
+        )
+
+    async def _get_balance_impl(self) -> AccountBalance:
+        """Internal get_balance implementation (retryable)."""
         if not self._exchange:
             raise ExchangeConnectionError(
                 message="Exchange not connected. Call connect() first.",
@@ -349,7 +389,10 @@ class CCXTRestAdapter(ExchangeAdapter):
     # ==================== Order Methods ====================
 
     async def place_order(self, request: OrderRequest) -> OrderResponse:
-        """Place a new order."""
+        """Place a new order with retry for transient errors (LIVE-EX-001).
+
+        Uses client_order_id for idempotency — safe to retry on network errors.
+        """
         if not self._exchange:
             raise ExchangeConnectionError(
                 message="Exchange not connected. Call connect() first.",
@@ -362,17 +405,35 @@ class CCXTRestAdapter(ExchangeAdapter):
                 exchange=self._exchange_id,
             )
 
+        return await with_retry(
+            self._place_order_impl, request,
+            config=_PLACE_ORDER_RETRY, operation_name="place_order",
+        )
+
+    async def _place_order_impl(self, request: OrderRequest) -> OrderResponse:
+        """Internal place_order implementation."""
         try:
             order_type = request.type.value.lower()
             side = request.side.value.lower()
 
-            order = await self._exchange.create_order(
-                symbol=request.symbol,
-                type=order_type,
-                side=side,
-                amount=str(request.amount),
-                price=str(request.price) if request.price else None,
-            )
+            kwargs: dict[str, Any] = {
+                "symbol": request.symbol,
+                "type": order_type,
+                "side": side,
+                "amount": str(request.amount),
+                "price": str(request.price) if request.price else None,
+            }
+            params: dict[str, Any] = {}
+            if request.client_order_id:
+                params["clientOrderId"] = request.client_order_id
+            # LIVE-EX-002: pass trigger price for STOP/STOP_LIMIT orders
+            # CCXT unified API uses "triggerPrice" across all exchanges
+            if request.stop_price is not None:
+                params["triggerPrice"] = str(request.stop_price)
+            if params:
+                kwargs["params"] = params
+
+            order = await self._exchange.create_order(**kwargs)
 
             return self._transform_order(order)
         except ccxt.InsufficientFunds as e:
@@ -404,6 +465,13 @@ class CCXTRestAdapter(ExchangeAdapter):
 
     async def cancel_order(self, request: CancelOrderRequest) -> OrderResponse:
         """Cancel an existing order."""
+        return await with_retry(
+            self._cancel_order_impl, request,
+            config=_READ_RETRY, operation_name="cancel_order",
+        )
+
+    async def _cancel_order_impl(self, request: CancelOrderRequest) -> OrderResponse:
+        """Internal cancel_order implementation (retryable)."""
         if not self._exchange:
             raise ExchangeConnectionError(
                 message="Exchange not connected. Call connect() first.",
@@ -447,6 +515,13 @@ class CCXTRestAdapter(ExchangeAdapter):
 
     async def get_order(self, symbol: str, order_id: str) -> OrderResponse:
         """Get order details by ID."""
+        return await with_retry(
+            self._get_order_impl, symbol, order_id,
+            config=_READ_RETRY, operation_name="get_order",
+        )
+
+    async def _get_order_impl(self, symbol: str, order_id: str) -> OrderResponse:
+        """Internal get_order implementation (retryable)."""
         if not self._exchange:
             raise ExchangeConnectionError(
                 message="Exchange not connected. Call connect() first.",
@@ -484,7 +559,7 @@ class CCXTRestAdapter(ExchangeAdapter):
             ) from e
 
     async def get_open_orders(self, symbol: str | None = None) -> list[OrderResponse]:
-        """Get all open (unfilled) orders."""
+        """Get all open (unfilled) orders with retry (LIVE-CN-004)."""
         if not self._exchange:
             raise ExchangeConnectionError(
                 message="Exchange not connected. Call connect() first.",
@@ -497,6 +572,13 @@ class CCXTRestAdapter(ExchangeAdapter):
                 exchange=self._exchange_id,
             )
 
+        return await with_retry(
+            self._get_open_orders_impl, symbol,
+            config=_READ_RETRY, operation_name="get_open_orders",
+        )
+
+    async def _get_open_orders_impl(self, symbol: str | None = None) -> list[OrderResponse]:
+        """Internal get_open_orders implementation."""
         try:
             orders = await self._exchange.fetch_open_orders(symbol)
             return [self._transform_order(order) for order in orders]
@@ -515,6 +597,48 @@ class CCXTRestAdapter(ExchangeAdapter):
                 message=f"Failed to fetch open orders: {e}",
                 exchange=self._exchange_id,
             ) from e
+
+    # ==================== Dead Man's Switch (F-2) ====================
+
+    @property
+    def supports_dead_man_switch(self) -> bool:
+        """Whether the exchange supports cancel-all-after."""
+        if not self._exchange:
+            return False
+        return bool(self._exchange.has.get("cancelAllOrdersAfter"))
+
+    async def setup_dead_man_switch(self, timeout_ms: int) -> None:
+        """Activate or refresh dead man's switch timer.
+
+        Args:
+            timeout_ms: Countdown in milliseconds. 0 cancels the timer.
+        """
+        if not self._exchange:
+            raise ExchangeConnectionError(
+                message="Exchange not connected. Call connect() first.",
+                exchange=self._exchange_id,
+            )
+
+        if not self._exchange.has.get("cancelAllOrdersAfter"):
+            return
+
+        try:
+            params: dict[str, Any] = {}
+            # Bybit requires explicit product type for spot
+            if self._exchange_id == "bybit":
+                params["product"] = "SPOT"
+
+            await self._exchange.cancel_all_orders_after(timeout_ms, params)
+        except ccxt.AuthenticationError as e:
+            raise ExchangeAuthenticationError(
+                message=f"Authentication failed for dead man's switch: {e}",
+                exchange=self._exchange_id,
+            ) from e
+        except Exception as e:
+            # Non-fatal: log and continue — DMS is a safety net, not critical path
+            logger.warning(
+                f"Failed to set dead man's switch on {self._exchange_id}: {e}"
+            )
 
     # ==================== Transformation Helpers ====================
 
@@ -545,7 +669,7 @@ class CCXTRestAdapter(ExchangeAdapter):
             else None,
             change_24h=Decimal(str(change_24h)) if change_24h is not None else None,
             change_pct_24h=Decimal(str(change_pct_24h)) if change_pct_24h is not None else None,
-            timestamp=self._parse_timestamp(ticker.get("timestamp")),
+            timestamp=self._parse_timestamp(ticker.get("timestamp")) or datetime.now(UTC),
         )
 
     def _transform_order(self, order: dict[str, Any]) -> OrderResponse:
@@ -592,8 +716,12 @@ class CCXTRestAdapter(ExchangeAdapter):
         }
         return status_map.get(lower_status, OrderStatus.SUBMITTED)
 
-    def _parse_timestamp(self, ts: int | None) -> datetime:
-        """Parse CCXT timestamp (milliseconds) to datetime."""
+    def _parse_timestamp(self, ts: int | None) -> datetime | None:
+        """Parse CCXT timestamp (milliseconds) to datetime.
+
+        Returns None when the exchange omits the timestamp instead of
+        silently substituting the current wall-clock time (LIVE-CN-006).
+        """
         if ts is None:
-            return datetime.now(UTC)
+            return None
         return datetime.fromtimestamp(ts / 1000, tz=UTC)

@@ -761,9 +761,9 @@ class TestExchangeSwitchSubscriptionRecovery:
             old_provider.close = AsyncMock()
             manager._ccxt_provider = old_provider
 
-            # Pre-populate subscriptions
-            manager._ticker_subscriptions.add("BTC/USDT")
-            manager._ticker_subscriptions.add("ETH/USDT")
+            # Pre-populate subscriptions (dict with ref counts)
+            manager._ticker_subscriptions["BTC/USDT"] = 1
+            manager._ticker_subscriptions["ETH/USDT"] = 1
 
             # Mock new provider creation
             new_provider = MagicMock()
@@ -786,7 +786,7 @@ class TestExchangeSwitchSubscriptionRecovery:
                     call_count += 1
                     if symbol == "ETH/USDT":
                         raise Exception("Symbol not found on new exchange")
-                    manager._ticker_subscriptions.add(symbol)
+                    manager._ticker_subscriptions[symbol] = 1
 
                 manager.subscribe_ticker = failing_subscribe
 

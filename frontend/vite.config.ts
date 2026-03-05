@@ -30,6 +30,35 @@ export default defineConfig({
       '/api': {
         target: 'http://localhost:8000',
         changeOrigin: true,
+        // Buffer the full upstream response before forwarding to the browser.
+        // Prevents ERR_CONTENT_LENGTH_MISMATCH / ERR_INCOMPLETE_CHUNKED_ENCODING
+        // caused by http-proxy forwarding partial data when the connection to
+        // uvicorn drops mid-transfer (intermittent in DevContainer networking).
+        selfHandleResponse: true,
+        configure: (proxy) => {
+          proxy.on('proxyRes', (proxyRes, _req, res) => {
+            const chunks: Buffer[] = []
+            proxyRes.on('data', (chunk: Buffer) => chunks.push(chunk))
+            proxyRes.on('end', () => {
+              const body = Buffer.concat(chunks)
+              const headers = { ...proxyRes.headers }
+              delete headers['transfer-encoding']
+              headers['content-length'] = String(body.length)
+              res.writeHead(proxyRes.statusCode!, headers)
+              res.end(body)
+            })
+            proxyRes.on('error', () => {
+              if (!res.headersSent) res.writeHead(502)
+              res.end()
+            })
+          })
+          proxy.on('error', (_err, _req, res: any) => {
+            if (res.writeHead && !res.headersSent) {
+              res.writeHead(502)
+              res.end()
+            }
+          })
+        },
       },
       '/ws': {
         target: 'ws://localhost:8000',

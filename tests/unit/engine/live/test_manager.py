@@ -342,9 +342,12 @@ class TestHealthCheck:
         mock_engine.is_healthy.return_value = False
         await session_manager.register(mock_engine)
 
-        cleaned = await session_manager.cleanup_stale_sessions(timeout_seconds=300)
+        cleaned_ids, keys_to_unsub = await session_manager.cleanup_stale_sessions(
+            timeout_seconds=300
+        )
 
-        assert cleaned == 1
+        assert cleaned_ids == [mock_engine.run_id]
+        assert keys_to_unsub == [(mock_engine.symbol, mock_engine.timeframe)]
         mock_engine.stop.assert_called_once()
         assert session_manager.session_count == 0
 

@@ -37,7 +37,7 @@ class TestStartPaperTradingRequest:
         assert request.timeframe == "1m"
         assert request.initial_capital == Decimal("10000")
         assert request.commission_rate == Decimal("0.001")
-        assert request.slippage == Decimal("0")
+        assert request.slippage == Decimal("0.0005")
 
     def test_full_request(self):
         """Test creating request with all fields."""
@@ -462,6 +462,80 @@ class TestPaperTradingStatusResponse:
         assert data["realized_pnl"] == 456.78
 
 
+    def test_status_response_with_trades_and_logs(self):
+        """Test status response with trades and logs fields."""
+        from squant.schemas.backtest import TradeRecordResponse
+
+        now = datetime.now(UTC)
+        trades = [
+            TradeRecordResponse(
+                symbol="BTC/USDT",
+                side="buy",
+                entry_time=now,
+                entry_price=Decimal("50000"),
+                exit_time=now,
+                exit_price=Decimal("51000"),
+                amount=Decimal("0.1"),
+                pnl=Decimal("100"),
+                pnl_pct=Decimal("2.0"),
+                fees=Decimal("0.1"),
+            )
+        ]
+        logs = ["[2024-01-01 12:00:00] Buy signal triggered", "[2024-01-01 12:01:00] Order filled"]
+
+        response = PaperTradingStatusResponse(
+            run_id=uuid4(),
+            symbol="BTC/USDT",
+            timeframe="1m",
+            is_running=True,
+            started_at=now,
+            stopped_at=None,
+            error_message=None,
+            bar_count=100,
+            cash=Decimal("9000"),
+            equity=Decimal("10100"),
+            initial_capital=Decimal("10000"),
+            total_fees=Decimal("0.1"),
+            positions={},
+            pending_orders=[],
+            completed_orders_count=1,
+            trades_count=1,
+            trades=trades,
+            logs=logs,
+        )
+
+        assert len(response.trades) == 1
+        assert response.trades[0].symbol == "BTC/USDT"
+        assert response.trades[0].pnl == Decimal("100")
+        assert len(response.logs) == 2
+        assert "Buy signal" in response.logs[0]
+
+    def test_status_response_trades_and_logs_default_empty(self):
+        """Test trades and logs default to empty lists when not provided."""
+        now = datetime.now(UTC)
+        response = PaperTradingStatusResponse(
+            run_id=uuid4(),
+            symbol="BTC/USDT",
+            timeframe="1m",
+            is_running=True,
+            started_at=now,
+            stopped_at=None,
+            error_message=None,
+            bar_count=0,
+            cash=Decimal("10000"),
+            equity=Decimal("10000"),
+            initial_capital=Decimal("10000"),
+            total_fees=Decimal("0"),
+            positions={},
+            pending_orders=[],
+            completed_orders_count=0,
+            trades_count=0,
+        )
+
+        assert response.trades == []
+        assert response.logs == []
+
+
 class TestPaperTradingListItem:
     """Tests for PaperTradingListItem schema."""
 
@@ -469,12 +543,16 @@ class TestPaperTradingListItem:
         """Test paper trading list item."""
         now = datetime.now(UTC)
         item = PaperTradingListItem(
-            run_id=uuid4(),
+            id=uuid4(),
             strategy_id=uuid4(),
             symbol="BTC/USDT",
+            exchange="okx",
             timeframe="1m",
+            status="running",
             is_running=True,
+            initial_capital=Decimal("10000"),
             started_at=now,
+            created_at=now,
             bar_count=500,
             equity=Decimal("10500"),
             cash=Decimal("5000"),
@@ -483,16 +561,24 @@ class TestPaperTradingListItem:
         assert item.symbol == "BTC/USDT"
         assert item.is_running is True
         assert item.equity == Decimal("10500")
+        assert item.initial_capital == Decimal("10000")
+        assert item.exchange == "okx"
+        assert item.status == "running"
 
     def test_not_started_item(self):
         """Test list item for session not yet started."""
+        now = datetime.now(UTC)
         item = PaperTradingListItem(
-            run_id=uuid4(),
+            id=uuid4(),
             strategy_id=uuid4(),
             symbol="ETH/USDT",
+            exchange="binance",
             timeframe="5m",
+            status="pending",
             is_running=False,
+            initial_capital=Decimal("10000"),
             started_at=None,
+            created_at=now,
             bar_count=0,
             equity=Decimal("10000"),
             cash=Decimal("10000"),

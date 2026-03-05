@@ -1,6 +1,7 @@
 """Paper trading API endpoints."""
 
 import logging
+from datetime import datetime
 from decimal import Decimal
 from uuid import UUID
 
@@ -11,19 +12,22 @@ from squant.api.deps import RedisClient
 from squant.api.utils import ApiResponse, PaginatedData
 from squant.infra.database import get_session
 from squant.models.enums import RunStatus
-from squant.schemas.backtest import EquityCurvePoint
+from squant.schemas.backtest import EquityCurvePoint, FillRecordResponse, TradeRecordResponse
 from squant.schemas.paper_trading import (
+    OpenTradeInfo,
     PaperTradingListItem,
     PaperTradingRunResponse,
     PaperTradingStatusResponse,
     PendingOrderInfo,
     PositionInfo,
+    ResumePaperTradingRequest,
     StartPaperTradingRequest,
 )
 from squant.services.paper_trading import (
     PaperTradingError,
     PaperTradingService,
     SessionNotFoundError,
+    SessionNotResumableError,
     StrategyInstantiationError,
 )
 from squant.services.strategy import StrategyNotFoundError
@@ -68,6 +72,7 @@ async def start_paper_trading(
             slippage=request.slippage,
             params=request.params,
             redis=redis,
+            risk_config=request.risk_config,
         )
         return ApiResponse(data=PaperTradingRunResponse.model_validate(run))
     except StrategyNotFoundError as e:
@@ -106,6 +111,41 @@ async def stop_paper_trading(
         raise HTTPException(status_code=404, detail=str(e))
 
 
+@router.post("/{run_id}/resume", response_model=ApiResponse[PaperTradingRunResponse])
+async def resume_paper_trading(
+    run_id: UUID,
+    redis: RedisClient,
+    request: ResumePaperTradingRequest | None = None,
+    session: AsyncSession = Depends(get_session),
+) -> ApiResponse[PaperTradingRunResponse]:
+    """Resume a stopped or errored paper trading session.
+
+    Restores trading state from the saved result snapshot and replays
+    historical bars to rebuild strategy internal state.
+
+    Args:
+        run_id: Paper trading run ID.
+        request: Optional resume configuration.
+        redis: Redis client for circuit breaker check.
+        session: Database session.
+
+    Returns:
+        Updated paper trading run record.
+    """
+    service = PaperTradingService(session)
+    warmup_bars = request.warmup_bars if request else 200
+
+    try:
+        run = await service.resume(run_id, warmup_bars=warmup_bars, redis=redis)
+        return ApiResponse(data=PaperTradingRunResponse.model_validate(run))
+    except SessionNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except SessionNotResumableError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    except PaperTradingError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
 @router.get("/{run_id}/status", response_model=ApiResponse[PaperTradingStatusResponse])
 async def get_paper_trading_status(
     run_id: UUID,
@@ -135,6 +175,10 @@ async def get_paper_trading_status(
             symbol: PositionInfo(
                 amount=Decimal(pos["amount"]),
                 avg_entry_price=Decimal(pos["avg_entry_price"]),
+                current_price=Decimal(pos["current_price"]) if pos.get("current_price") else None,
+                unrealized_pnl=(
+                    Decimal(pos["unrealized_pnl"]) if pos.get("unrealized_pnl") else None
+                ),
             )
             for symbol, pos in status.get("positions", {}).items()
         }
@@ -153,6 +197,49 @@ async def get_paper_trading_status(
             for order in status.get("pending_orders", [])
         ]
 
+        trades = [
+            TradeRecordResponse(
+                symbol=t["symbol"],
+                side=t["side"],
+                entry_time=t["entry_time"],
+                entry_price=Decimal(t["entry_price"]),
+                exit_time=t.get("exit_time"),
+                exit_price=Decimal(t["exit_price"]) if t.get("exit_price") else None,
+                amount=Decimal(t["amount"]),
+                pnl=Decimal(t["pnl"]),
+                pnl_pct=Decimal(t["pnl_pct"]),
+                fees=Decimal(t["fees"]),
+            )
+            for t in status.get("trades", [])
+        ]
+
+        fills = [
+            FillRecordResponse(
+                order_id=f["order_id"],
+                symbol=f["symbol"],
+                side=f["side"],
+                price=Decimal(f["price"]),
+                amount=Decimal(f["amount"]),
+                fee=Decimal(f["fee"]),
+                timestamp=f["timestamp"],
+            )
+            for f in status.get("fills", [])
+        ]
+
+        open_trade_data = status.get("open_trade")
+        open_trade = (
+            OpenTradeInfo(
+                symbol=open_trade_data["symbol"],
+                side=open_trade_data["side"],
+                entry_time=open_trade_data["entry_time"],
+                entry_price=Decimal(open_trade_data["entry_price"]),
+                amount=Decimal(open_trade_data["amount"]),
+                fees=Decimal(open_trade_data["fees"]),
+            )
+            if open_trade_data
+            else None
+        )
+
         response = PaperTradingStatusResponse(
             run_id=UUID(status["run_id"]),
             symbol=status["symbol"],
@@ -166,10 +253,17 @@ async def get_paper_trading_status(
             equity=Decimal(status["equity"]),
             initial_capital=Decimal(status["initial_capital"]),
             total_fees=Decimal(status["total_fees"]),
+            unrealized_pnl=Decimal(status["unrealized_pnl"]),
+            realized_pnl=Decimal(status["realized_pnl"]),
             positions=positions,
             pending_orders=pending_orders,
             completed_orders_count=status["completed_orders_count"],
             trades_count=status["trades_count"],
+            trades=trades,
+            fills=fills,
+            open_trade=open_trade,
+            logs=status.get("logs", []),
+            risk_state=status.get("risk_state"),
         )
 
         return ApiResponse(data=response)
@@ -206,13 +300,17 @@ async def list_active_sessions(
 
         items.append(
             PaperTradingListItem(
-                run_id=UUID(sess["run_id"]),
+                id=UUID(sess["run_id"]),
                 strategy_id=strategy_id,
                 strategy_name=run.strategy_name,
                 symbol=sess["symbol"],
+                exchange=run.exchange,
                 timeframe=sess["timeframe"],
+                status=run.status.value if hasattr(run.status, "value") else run.status,
                 is_running=sess["is_running"],
+                initial_capital=run.initial_capital,
                 started_at=sess.get("started_at"),
+                created_at=run.created_at,
                 bar_count=sess["bar_count"],
                 equity=Decimal(sess["equity"]),
                 cash=Decimal(sess["cash"]),
@@ -220,6 +318,20 @@ async def list_active_sessions(
         )
 
     return ApiResponse(data=items)
+
+
+@router.post("/stop-all", response_model=ApiResponse[dict])
+async def stop_all_paper_trading(
+    session: AsyncSession = Depends(get_session),
+) -> ApiResponse[dict]:
+    """Stop all active paper trading sessions.
+
+    Returns:
+        Number of sessions stopped.
+    """
+    service = PaperTradingService(session)
+    stopped = await service.stop_all()
+    return ApiResponse(data={"stopped_count": stopped})
 
 
 @router.get("/runs", response_model=ApiResponse[PaginatedData[PaperTradingRunResponse]])
@@ -234,7 +346,7 @@ async def list_paper_trading_runs(
     Args:
         page: Page number (1-indexed).
         page_size: Items per page.
-        status: Optional status filter (pending, running, stopped, error).
+        status: Optional status filter (pending, running, stopped, error, interrupted).
         session: Database session.
 
     Returns:
@@ -259,7 +371,16 @@ async def list_paper_trading_runs(
         status=run_status,
     )
 
-    items = [PaperTradingRunResponse.model_validate(r) for r in runs]
+    items = []
+    for r in runs:
+        item = PaperTradingRunResponse.model_validate(r)
+        # Extract equity/unrealized_pnl from result JSONB (IMP-006)
+        if r.result and isinstance(r.result, dict):
+            if "equity" in r.result:
+                item.equity = r.result["equity"]
+            if "unrealized_pnl" in r.result:
+                item.unrealized_pnl = r.result["unrealized_pnl"]
+        items.append(item)
 
     return ApiResponse(
         data=PaginatedData(
@@ -301,12 +422,16 @@ async def get_paper_trading_run(
 async def get_equity_curve(
     run_id: UUID,
     session: AsyncSession = Depends(get_session),
+    since: datetime | None = Query(
+        None, description="Only return records after this time (ISO 8601)"
+    ),
 ) -> ApiResponse[list[EquityCurvePoint]]:
     """Get equity curve for a paper trading run.
 
     Args:
         run_id: Paper trading run ID.
         session: Database session.
+        since: Optional time filter for incremental loading.
 
     Returns:
         Equity curve data points.
@@ -317,7 +442,7 @@ async def get_equity_curve(
     service = PaperTradingService(session)
 
     try:
-        equity_curve = await service.get_equity_curve(run_id)
+        equity_curve = await service.get_equity_curve(run_id, since=since)
         return ApiResponse(data=[EquityCurvePoint.model_validate(e) for e in equity_curve])
     except SessionNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))

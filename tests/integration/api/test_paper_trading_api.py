@@ -238,6 +238,8 @@ class TestPaperTradingStatus:
             "equity": "11200.00",
             "initial_capital": "10000.00",
             "total_fees": "12.50",
+            "unrealized_pnl": "200.00",
+            "realized_pnl": "1000.00",
             "positions": {
                 "BTC/USDT": {
                     "amount": "0.05",
@@ -284,6 +286,8 @@ class TestPaperTradingStatus:
             "equity": "10200.00",
             "initial_capital": "10000.00",
             "total_fees": "5.00",
+            "unrealized_pnl": "0",
+            "realized_pnl": "200.00",
             "positions": {},
             "pending_orders": [
                 {
@@ -354,6 +358,8 @@ class TestPaperTradingStatus:
             "equity": "10500.00",
             "initial_capital": "10000.00",
             "total_fees": "0.00",
+            "unrealized_pnl": "0",
+            "realized_pnl": "0",
             "positions": {},
             "pending_orders": [],
             "completed_orders_count": 0,
@@ -743,6 +749,159 @@ class TestEquityCurve:
         assert response.status_code == 404
         data = response.json()
         assert "message" in data
+
+
+class TestStatusTradesAndLogs:
+    """Test trades and logs conversion in status endpoint."""
+
+    @pytest.mark.asyncio
+    async def test_status_includes_trades_with_correct_conversion(self, client):
+        """Test that raw trade dicts from get_state_snapshot are converted to TradeRecordResponse."""
+        run_id = uuid4()
+
+        mock_status = {
+            "run_id": str(run_id),
+            "symbol": "BTC/USDT",
+            "timeframe": "1h",
+            "is_running": True,
+            "started_at": datetime.now(UTC),
+            "stopped_at": None,
+            "error_message": None,
+            "bar_count": 50,
+            "cash": "9500.00",
+            "equity": "10200.00",
+            "initial_capital": "10000.00",
+            "total_fees": "8.50",
+            "unrealized_pnl": "0",
+            "realized_pnl": "700.00",
+            "positions": {},
+            "pending_orders": [],
+            "completed_orders_count": 2,
+            "trades_count": 1,
+            "trades": [
+                {
+                    "symbol": "BTC/USDT",
+                    "side": "buy",
+                    "entry_time": "2024-01-15T10:00:00",
+                    "entry_price": "42000.00",
+                    "exit_time": "2024-01-16T14:00:00",
+                    "exit_price": "43500.00",
+                    "amount": "0.1",
+                    "pnl": "150.00",
+                    "pnl_pct": "3.57",
+                    "fees": "8.50",
+                }
+            ],
+            "logs": [
+                "[2024-01-15 10:00:00] Strategy initialized",
+                "[2024-01-15 10:00:01] Buy signal: BTC/USDT",
+            ],
+        }
+
+        with patch(
+            "squant.services.paper_trading.PaperTradingService.get_status",
+            new_callable=AsyncMock,
+            return_value=mock_status,
+        ):
+            response = await client.get(f"/api/v1/paper/{run_id}/status")
+
+        assert response.status_code == 200
+        data = response.json()
+
+        result = data["data"]
+        # Verify trades conversion
+        assert len(result["trades"]) == 1
+        trade = result["trades"][0]
+        assert trade["symbol"] == "BTC/USDT"
+        assert trade["side"] == "buy"
+        assert trade["entry_time"] == "2024-01-15T10:00:00"
+        assert float(trade["entry_price"]) == 42000.0
+        assert trade["exit_time"] == "2024-01-16T14:00:00"
+        assert float(trade["exit_price"]) == 43500.0
+        assert float(trade["amount"]) == 0.1
+        assert float(trade["pnl"]) == 150.0
+        assert float(trade["pnl_pct"]) == 3.57
+        assert float(trade["fees"]) == 8.5
+
+        # Verify logs pass through
+        assert len(result["logs"]) == 2
+        assert "Strategy initialized" in result["logs"][0]
+        assert "Buy signal" in result["logs"][1]
+
+    @pytest.mark.asyncio
+    async def test_status_defaults_trades_and_logs_when_missing(self, client):
+        """Test that status endpoint defaults trades=[] and logs=[] when not in mock status."""
+        run_id = uuid4()
+
+        # Status dict without trades/logs keys (as returned by inactive session from DB)
+        mock_status = {
+            "run_id": str(run_id),
+            "symbol": "ETH/USDT",
+            "timeframe": "5m",
+            "is_running": False,
+            "started_at": datetime.now(UTC),
+            "stopped_at": datetime.now(UTC),
+            "error_message": None,
+            "bar_count": 0,
+            "cash": "5000.00",
+            "equity": "5000.00",
+            "initial_capital": "5000.00",
+            "total_fees": "0",
+            "unrealized_pnl": "0",
+            "realized_pnl": "0",
+            "positions": {},
+            "pending_orders": [],
+            "completed_orders_count": 0,
+            "trades_count": 0,
+        }
+
+        with patch(
+            "squant.services.paper_trading.PaperTradingService.get_status",
+            new_callable=AsyncMock,
+            return_value=mock_status,
+        ):
+            response = await client.get(f"/api/v1/paper/{run_id}/status")
+
+        assert response.status_code == 200
+        data = response.json()
+
+        result = data["data"]
+        assert result["trades"] == []
+        assert result["logs"] == []
+
+
+class TestStopAllPaperTrading:
+    """Test stop-all paper trading endpoint."""
+
+    @pytest.mark.asyncio
+    async def test_stop_all_returns_stopped_count(self, client):
+        """Test POST /paper/stop-all returns the correct stopped count."""
+        with patch(
+            "squant.services.paper_trading.PaperTradingService.stop_all",
+            new_callable=AsyncMock,
+            return_value=3,
+        ):
+            response = await client.post("/api/v1/paper/stop-all")
+
+        assert response.status_code == 200
+        data = response.json()
+
+        assert data["data"]["stopped_count"] == 3
+
+    @pytest.mark.asyncio
+    async def test_stop_all_with_no_sessions(self, client):
+        """Test stop-all when no sessions are running."""
+        with patch(
+            "squant.services.paper_trading.PaperTradingService.stop_all",
+            new_callable=AsyncMock,
+            return_value=0,
+        ):
+            response = await client.post("/api/v1/paper/stop-all")
+
+        assert response.status_code == 200
+        data = response.json()
+
+        assert data["data"]["stopped_count"] == 0
 
 
 class TestPersistSnapshots:

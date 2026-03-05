@@ -117,10 +117,12 @@ class WebSocketGateway:
             logger.exception(f"WebSocket gateway error: {e}")
         finally:
             self._running = False
-            # Cleanup subscriptions
-            if self._pubsub and self._subscribed_channels:
+            # Cleanup subscriptions (both Redis and exchange)
+            if self._subscribed_channels:
                 for channel in list(self._subscribed_channels):
-                    await self._unsubscribe_redis(channel)
+                    if self._pubsub:
+                        await self._unsubscribe_redis(channel)
+                    await self._unsubscribe_okx(channel)
             logger.info("WebSocket gateway connection closed")
 
     async def _redis_heartbeat(self) -> None:
@@ -216,10 +218,11 @@ class WebSocketGateway:
             self._running = False
 
     # Valid channel prefixes for subscription (R3-017)
-    VALID_CHANNEL_PREFIXES = ("ticker:", "candle:", "orderbook:", "trade:")
-    VALID_EXACT_CHANNELS = ("orders", "account")
+    VALID_CHANNEL_PREFIXES = ("ticker:", "candle:", "orderbook:", "trade:", "trading:")
+    VALID_EXACT_CHANNELS = ("orders", "account", "notifications")
     MAX_CHANNEL_LENGTH = 64
-    MAX_SUBSCRIPTIONS = 50
+    # Frontend max pageSize is 200 tickers + system channel + headroom for other channel types
+    MAX_SUBSCRIPTIONS = 250
 
     async def _subscribe(self, channel: str) -> None:
         """Subscribe to a channel.
@@ -275,7 +278,6 @@ class WebSocketGateway:
                     "channel": channel,
                 }
             )
-            logger.debug(f"Client subscribed to {channel}")
         except Exception as e:
             logger.warning(f"Failed to subscribe to {channel}: {e}")
             await self._send_error(f"Failed to subscribe to {channel}")
@@ -285,12 +287,6 @@ class WebSocketGateway:
 
         Args:
             channel: Channel name.
-
-        TODO: Implement reference counting for OKX subscriptions.
-        Currently, OKX subscriptions are not cancelled when clients unsubscribe.
-        This causes minimal resource waste (data flows to Redis but no consumer).
-        A proper solution would track subscriber count per channel and call
-        stream_manager.unsubscribe_* when count reaches zero.
         """
         if channel not in self._subscribed_channels:
             await self.websocket.send_json(
@@ -303,6 +299,7 @@ class WebSocketGateway:
             return
 
         await self._unsubscribe_redis(channel)
+        await self._unsubscribe_okx(channel)
 
         await self.websocket.send_json(
             {
@@ -310,7 +307,6 @@ class WebSocketGateway:
                 "channel": channel,
             }
         )
-        logger.debug(f"Client unsubscribed from {channel}")
 
     async def _unsubscribe_redis(self, channel: str) -> None:
         """Unsubscribe from Redis channel."""
@@ -326,9 +322,10 @@ class WebSocketGateway:
         """
         parts = channel.split(":")
         channel_type = parts[0]
-        logger.debug(
-            f"_subscribe_okx called: channel={channel}, parts={parts}, channel_type={channel_type}"
-        )
+
+        # trading: channels use Redis pub/sub only, no exchange subscription
+        if channel_type == "trading":
+            return
 
         try:
             if channel_type == "ticker" and len(parts) >= 2:
@@ -405,6 +402,22 @@ class WebSocketGateway:
                         data = message["data"]
                         if isinstance(data, bytes):
                             data = data.decode("utf-8")
+
+                        # Intercept service_ready on system channel to re-subscribe OKX
+                        redis_channel = message.get("channel", b"")
+                        if isinstance(redis_channel, bytes):
+                            redis_channel = redis_channel.decode("utf-8")
+                        if redis_channel == f"{self.REDIS_CHANNEL_PREFIX}system":
+                            try:
+                                parsed = json.loads(data)
+                                if parsed.get("type") == "service_ready":
+                                    logger.info(
+                                        "Received service_ready, re-subscribing OKX channels"
+                                    )
+                                    await self._resubscribe_okx_channels()
+                            except (json.JSONDecodeError, KeyError):
+                                pass
+
                         await self.websocket.send_text(data)
 
                 except asyncio.CancelledError:
@@ -445,6 +458,50 @@ class WebSocketGateway:
             pass
         except Exception as e:
             logger.exception(f"Fatal error in Redis receive loop: {e}")
+
+    async def _unsubscribe_okx(self, channel: str) -> None:
+        """Unsubscribe from OKX/exchange stream when client no longer needs the channel.
+
+        Args:
+            channel: Channel name (e.g., "ticker:BTC/USDT", "candle:BTC/USDT:1h").
+        """
+        parts = channel.split(":")
+        channel_type = parts[0]
+
+        # trading: channels use Redis pub/sub only, no exchange subscription
+        if channel_type == "trading":
+            return
+
+        try:
+            if channel_type == "ticker" and len(parts) >= 2:
+                symbol = parts[1]
+                await self.stream_manager.unsubscribe_ticker(symbol)
+
+            elif channel_type == "candle" and len(parts) >= 3:
+                symbol = parts[1]
+                timeframe = parts[2]
+                await self.stream_manager.unsubscribe_candles(symbol, timeframe)
+
+            elif channel_type == "trade" and len(parts) >= 2:
+                symbol = parts[1]
+                await self.stream_manager.unsubscribe_trades(symbol)
+
+            elif channel_type == "orderbook" and len(parts) >= 2:
+                symbol = parts[1]
+                await self.stream_manager.unsubscribe_orderbook(symbol)
+
+        except Exception as e:
+            logger.warning(f"Failed to unsubscribe OKX stream for {channel}: {e}")
+
+    async def _resubscribe_okx_channels(self) -> None:
+        """Re-subscribe all current channels to OKX after stream manager recovery."""
+        for channel in list(self._subscribed_channels):
+            if channel == "system":
+                continue
+            try:
+                await self._subscribe_okx(channel)
+            except Exception as e:
+                logger.warning(f"Failed to re-subscribe OKX channel {channel}: {e}")
 
     async def _send_error(self, message: str) -> None:
         """Send error message to client."""
@@ -489,32 +546,16 @@ async def websocket_gateway(websocket: WebSocket) -> None:
     """
     stream_manager = get_stream_manager()
 
-    # Check if stream manager is running (exchange WebSocket connected)
+    # Never call try_start() here — it blocks the WebSocket handshake while
+    # connecting to the exchange (can hang for minutes). The background task in
+    # main.py handles stream manager initialization. When it finishes, it
+    # publishes a service_ready event; the Gateway intercepts it and
+    # re-subscribes OKX channels at that point.
     if not stream_manager.is_running:
-        # Attempt late initialization on first WebSocket connection
-        logger.info("Stream manager not running, attempting late initialization...")
-        if await stream_manager.try_start():
-            logger.info("Stream manager late initialization successful")
-        else:
-            await websocket.accept()
-            await websocket.send_json(
-                {
-                    "type": "error",
-                    "message": "Real-time data service unavailable. Exchange WebSocket connection failed. "
-                    "Please check network connectivity or use REST API for data.",
-                    "code": "STREAM_UNAVAILABLE",
-                }
-            )
-            await websocket.close(code=4503)  # Custom code for service unavailable
-            return
-
-    # Log a warning if stream manager is running but not healthy
-    # (e.g., CCXT provider lost connection after startup)
-    if not stream_manager.is_healthy:
-        logger.warning(
-            "Stream manager is running but not healthy - exchange connection may have been lost"
+        logger.info(
+            "Stream manager not running, accepting WebSocket anyway. "
+            "OKX data will flow after service_ready event."
         )
-        # Continue anyway - the connection might recover
 
     gateway = WebSocketGateway(websocket, stream_manager)
     await gateway.run()

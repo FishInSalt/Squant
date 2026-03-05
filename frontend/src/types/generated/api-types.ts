@@ -191,6 +191,8 @@ export interface paths {
          * @description Get candlestick (OHLCV) data for a trading pair.
          *
          *     Returns historical price data in candlestick format.
+         *     When end_time is provided, returns candles before that timestamp
+         *     (useful for scroll-loading historical data).
          */
         get: operations["get_candles_api_v1_market_candles__symbol__get"];
         put?: never;
@@ -704,20 +706,20 @@ export interface paths {
         put?: never;
         /**
          * Run Backtest
-         * @description Create and run a backtest synchronously.
+         * @description Create a backtest and start execution in background.
          *
-         *     This endpoint creates a backtest run and executes it immediately,
-         *     returning when the backtest completes.
+         *     Returns immediately with a PENDING run record. The backtest executes
+         *     asynchronously — poll GET /backtest/{run_id} for status updates.
          *
          *     Args:
          *         request: Backtest configuration.
          *         session: Database session.
          *
          *     Returns:
-         *         Backtest run with results.
+         *         Created backtest run (status: pending).
          *
          *     Raises:
-         *         HTTPException: 400 if insufficient data, 404 if strategy not found.
+         *         HTTPException: 400 if invalid config, 404 if strategy not found.
          */
         post: operations["run_backtest_api_v1_backtest_post"];
         delete?: never;
@@ -770,17 +772,19 @@ export interface paths {
         put?: never;
         /**
          * Execute Backtest
-         * @description Execute a pending backtest.
+         * @description Start execution of a pending backtest in background.
+         *
+         *     Returns immediately. Poll GET /backtest/{run_id} for status updates.
          *
          *     Args:
          *         run_id: Backtest run ID.
          *         session: Database session.
          *
          *     Returns:
-         *         Updated backtest run with results.
+         *         Current backtest run record.
          *
          *     Raises:
-         *         HTTPException: 400 if execution fails or data incomplete, 404 if not found.
+         *         HTTPException: 404 if not found, 400 if not in pending state.
          */
         post: operations["execute_backtest_api_v1_backtest__run_id__run_post"];
         delete?: never;
@@ -981,6 +985,42 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/backtest/{run_id}/candles": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Backtest Candles
+         * @description Get paginated candlestick data for a backtest run's period.
+         *
+         *     Supports cursor-based pagination via `before` / `after` timestamps.
+         *     Default (no cursor): returns the last `limit` candles of the backtest period.
+         *
+         *     Args:
+         *         run_id: Backtest run ID.
+         *         before: Return candles with time < before (scroll left / older data).
+         *         after: Return candles with time > after (scroll right / newer data).
+         *         limit: Max number of candles to return (1-2000, default 1000).
+         *         session: Database session.
+         *
+         *     Returns:
+         *         Paginated candles with total_count metadata.
+         *
+         *     Raises:
+         *         HTTPException: 404 if backtest not found, 400 if no data available.
+         */
+        get: operations["get_backtest_candles_api_v1_backtest__run_id__candles_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/backtest/{run_id}/export": {
         parameters: {
             query?: never;
@@ -1092,6 +1132,38 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/paper/{run_id}/resume": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Resume Paper Trading
+         * @description Resume a stopped or errored paper trading session.
+         *
+         *     Restores trading state from the saved result snapshot and replays
+         *     historical bars to rebuild strategy internal state.
+         *
+         *     Args:
+         *         run_id: Paper trading run ID.
+         *         request: Optional resume configuration.
+         *         redis: Redis client for circuit breaker check.
+         *         session: Database session.
+         *
+         *     Returns:
+         *         Updated paper trading run record.
+         */
+        post: operations["resume_paper_trading_api_v1_paper__run_id__resume_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/paper/{run_id}/status": {
         parameters: {
             query?: never;
@@ -1124,6 +1196,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/paper/stop-all": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Stop All Paper Trading
+         * @description Stop all active paper trading sessions.
+         *
+         *     Returns:
+         *         Number of sessions stopped.
+         */
+        post: operations["stop_all_paper_trading_api_v1_paper_stop_all_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/paper/runs": {
         parameters: {
             query?: never;
@@ -1138,7 +1233,7 @@ export interface paths {
          *     Args:
          *         page: Page number (1-indexed).
          *         page_size: Items per page.
-         *         status: Optional status filter (pending, running, stopped, error).
+         *         status: Optional status filter (pending, running, stopped, error, interrupted).
          *         session: Database session.
          *
          *     Returns:
@@ -1197,6 +1292,7 @@ export interface paths {
          *     Args:
          *         run_id: Paper trading run ID.
          *         session: Database session.
+         *         since: Optional time filter for incremental loading.
          *
          *     Returns:
          *         Equity curve data points.
@@ -1330,6 +1426,37 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/live/{run_id}/resume": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Resume Live Trading
+         * @description Resume a stopped/errored/interrupted live trading session.
+         *
+         *     Reconnects to the exchange, reconciles orders and positions,
+         *     restores trading state, and resumes.
+         *
+         *     Args:
+         *         run_id: Live trading run ID.
+         *         request: Resume configuration (optional).
+         *         session: Database session.
+         *
+         *     Returns:
+         *         Updated live trading run record.
+         */
+        post: operations["resume_live_trading_api_v1_live__run_id__resume_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/live/{run_id}/emergency-close": {
         parameters: {
             query?: never;
@@ -1414,13 +1541,44 @@ export interface paths {
          *     Args:
          *         page: Page number (1-indexed).
          *         page_size: Items per page.
-         *         status: Optional status filter (pending, running, stopped, error).
+         *         status: Optional status filter (pending, running, stopped, error, interrupted).
          *         session: Database session.
          *
          *     Returns:
          *         Paginated list of live trading runs.
          */
         get: operations["list_live_trading_runs_api_v1_live_runs_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/live/{run_id}/orders": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Session Orders
+         * @description Get orders from the audit table for a live trading session.
+         *
+         *     Returns orders placed by the strategy engine, with their trade fills.
+         *
+         *     Args:
+         *         run_id: Live trading run ID.
+         *         page: Page number (1-indexed).
+         *         page_size: Items per page.
+         *         session: Database session.
+         *
+         *     Returns:
+         *         Paginated list of order records with trades.
+         */
+        get: operations["get_session_orders_api_v1_live__run_id__orders_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1473,6 +1631,7 @@ export interface paths {
          *     Args:
          *         run_id: Live trading run ID.
          *         session: Database session.
+         *         since: Optional time filter for incremental loading.
          *
          *     Returns:
          *         Equity curve data points.
@@ -1819,6 +1978,86 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/notifications": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Notifications
+         * @description List notifications with pagination and filters.
+         */
+        get: operations["list_notifications_api_v1_notifications_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/notifications/unread-count": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Unread Count
+         * @description Get count of unread notifications.
+         */
+        get: operations["get_unread_count_api_v1_notifications_unread_count_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/notifications/mark-read": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Mark Read
+         * @description Mark notifications as read.
+         */
+        post: operations["mark_read_api_v1_notifications_mark_read_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/notifications/{notification_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Delete Notification
+         * @description Delete a notification.
+         */
+        delete: operations["delete_notification_api_v1_notifications__notification_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/watchlist": {
         parameters: {
             query?: never;
@@ -1944,6 +2183,152 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/system/data/download": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Start Download
+         * @description Start a historical data download task.
+         */
+        post: operations["start_download_api_v1_system_data_download_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/system/data/download/tasks": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Download Tasks
+         * @description List all download tasks (most recent first).
+         */
+        get: operations["list_download_tasks_api_v1_system_data_download_tasks_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/system/data/download/{task_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Download Task
+         * @description Get download task status by ID.
+         */
+        get: operations["get_download_task_api_v1_system_data_download__task_id__get"];
+        put?: never;
+        post?: never;
+        /**
+         * Remove Download Task
+         * @description Remove a completed or failed download task from the list.
+         */
+        delete: operations["remove_download_task_api_v1_system_data_download__task_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/system/data/download/{task_id}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Cancel Download Task
+         * @description Cancel a running download task.
+         */
+        post: operations["cancel_download_task_api_v1_system_data_download__task_id__cancel_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/system/data/list": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Historical Data
+         * @description List available historical data in the database.
+         */
+        get: operations["list_historical_data_api_v1_system_data_list_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/system/data/{data_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Delete Historical Data
+         * @description Delete historical data for a specific exchange/symbol/timeframe.
+         *
+         *     The data_id format is "exchange:symbol:timeframe" (e.g., "okx:BTC/USDT:1h").
+         */
+        delete: operations["delete_historical_data_api_v1_system_data__data_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/system/symbols/{exchange_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Exchange Symbols
+         * @description List available trading symbols for an exchange via CCXT.
+         */
+        get: operations["list_exchange_symbols_api_v1_system_symbols__exchange_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -2005,6 +2390,20 @@ export interface components {
              */
             message: string;
             data: components["schemas"]["BalanceResponse"];
+        };
+        /** ApiResponse[CandlesPageResponse] */
+        ApiResponse_CandlesPageResponse_: {
+            /**
+             * Code
+             * @default 0
+             */
+            code: number;
+            /**
+             * Message
+             * @default success
+             */
+            message: string;
+            data: components["schemas"]["CandlesPageResponse"];
         };
         /** ApiResponse[CandlestickResponse] */
         ApiResponse_CandlestickResponse_: {
@@ -2075,6 +2474,20 @@ export interface components {
              */
             message: string;
             data: components["schemas"]["DataAvailabilityResponse"];
+        };
+        /** ApiResponse[DownloadTaskResponse] */
+        ApiResponse_DownloadTaskResponse_: {
+            /**
+             * Code
+             * @default 0
+             */
+            code: number;
+            /**
+             * Message
+             * @default success
+             */
+            message: string;
+            data: components["schemas"]["DownloadTaskResponse"];
         };
         /** ApiResponse[EmergencyCloseResponse] */
         ApiResponse_EmergencyCloseResponse_: {
@@ -2217,6 +2630,20 @@ export interface components {
             message: string;
             data: components["schemas"]["PaginatedData_BacktestListItem_"];
         };
+        /** ApiResponse[PaginatedData[LiveSessionOrderResponse]] */
+        ApiResponse_PaginatedData_LiveSessionOrderResponse__: {
+            /**
+             * Code
+             * @default 0
+             */
+            code: number;
+            /**
+             * Message
+             * @default success
+             */
+            message: string;
+            data: components["schemas"]["PaginatedData_LiveSessionOrderResponse_"];
+        };
         /** ApiResponse[PaginatedData[LiveTradingRunResponse]] */
         ApiResponse_PaginatedData_LiveTradingRunResponse__: {
             /**
@@ -2230,6 +2657,20 @@ export interface components {
              */
             message: string;
             data: components["schemas"]["PaginatedData_LiveTradingRunResponse_"];
+        };
+        /** ApiResponse[PaginatedData[NotificationResponse]] */
+        ApiResponse_PaginatedData_NotificationResponse__: {
+            /**
+             * Code
+             * @default 0
+             */
+            code: number;
+            /**
+             * Message
+             * @default success
+             */
+            message: string;
+            data: components["schemas"]["PaginatedData_NotificationResponse_"];
         };
         /** ApiResponse[PaginatedData[PaperTradingRunResponse]] */
         ApiResponse_PaginatedData_PaperTradingRunResponse__: {
@@ -2413,6 +2854,20 @@ export interface components {
             message: string;
             data: components["schemas"]["BalanceItem"] | null;
         };
+        /** ApiResponse[UnreadCountResponse] */
+        ApiResponse_UnreadCountResponse_: {
+            /**
+             * Code
+             * @default 0
+             */
+            code: number;
+            /**
+             * Message
+             * @default success
+             */
+            message: string;
+            data: components["schemas"]["UnreadCountResponse"];
+        };
         /** ApiResponse[ValidationResultResponse] */
         ApiResponse_ValidationResultResponse_: {
             /**
@@ -2487,6 +2942,21 @@ export interface components {
             /** Data */
             data: components["schemas"]["AvailableSymbolResponse"][];
         };
+        /** ApiResponse[list[DownloadTaskResponse]] */
+        ApiResponse_list_DownloadTaskResponse__: {
+            /**
+             * Code
+             * @default 0
+             */
+            code: number;
+            /**
+             * Message
+             * @default success
+             */
+            message: string;
+            /** Data */
+            data: components["schemas"]["DownloadTaskResponse"][];
+        };
         /** ApiResponse[list[EquityCurvePoint]] */
         ApiResponse_list_EquityCurvePoint__: {
             /**
@@ -2516,6 +2986,21 @@ export interface components {
             message: string;
             /** Data */
             data: components["schemas"]["ExchangeAccountListItem"][];
+        };
+        /** ApiResponse[list[HistoricalDataItem]] */
+        ApiResponse_list_HistoricalDataItem__: {
+            /**
+             * Code
+             * @default 0
+             */
+            code: number;
+            /**
+             * Message
+             * @default success
+             */
+            message: string;
+            /** Data */
+            data: components["schemas"]["HistoricalDataItem"][];
         };
         /** ApiResponse[list[LiveTradingListItem]] */
         ApiResponse_list_LiveTradingListItem__: {
@@ -2592,6 +3077,21 @@ export interface components {
             /** Data */
             data: components["schemas"]["WatchlistItemResponse"][];
         };
+        /** ApiResponse[list[str]] */
+        ApiResponse_list_str__: {
+            /**
+             * Code
+             * @default 0
+             */
+            code: number;
+            /**
+             * Message
+             * @default success
+             */
+            message: string;
+            /** Data */
+            data: string[];
+        };
         /**
          * AvailableSymbolResponse
          * @description Available symbol info.
@@ -2621,6 +3121,8 @@ export interface components {
             equity_curve: components["schemas"]["EquityCurvePoint"][];
             /** Trades */
             trades?: components["schemas"]["TradeRecordResponse"][];
+            /** Fills */
+            fills?: components["schemas"]["FillRecordResponse"][];
             /** Total Bars */
             total_bars?: number | null;
         };
@@ -2915,6 +3417,16 @@ export interface components {
             total_usd_value?: number | null;
         };
         /**
+         * CandlesPageResponse
+         * @description Paginated candles response with metadata.
+         */
+        CandlesPageResponse: {
+            /** Candles */
+            candles: components["schemas"]["CandlestickPoint"][];
+            /** Total Count */
+            total_count: number;
+        };
+        /**
          * CandlestickItem
          * @description Single candlestick.
          */
@@ -2949,6 +3461,27 @@ export interface components {
              * Volume
              * @description Volume
              */
+            volume: number;
+        };
+        /**
+         * CandlestickPoint
+         * @description Single candlestick data point for backtest K-line chart.
+         */
+        CandlestickPoint: {
+            /**
+             * Timestamp
+             * Format: date-time
+             */
+            timestamp: string;
+            /** Open */
+            open: number;
+            /** High */
+            high: number;
+            /** Low */
+            low: number;
+            /** Close */
+            close: number;
+            /** Volume */
             volume: number;
         };
         /**
@@ -3221,7 +3754,7 @@ export interface components {
             symbol: string;
             /** @description Order side (BUY/SELL) */
             side: components["schemas"]["OrderSide"];
-            /** @description Order type (MARKET/LIMIT) */
+            /** @description Order type (MARKET/LIMIT/STOP/STOP_LIMIT) */
             type: components["schemas"]["OrderType"];
             /**
              * Amount
@@ -3230,9 +3763,14 @@ export interface components {
             amount: number | string;
             /**
              * Price
-             * @description Limit price (required for LIMIT orders)
+             * @description Limit price (required for LIMIT/STOP_LIMIT)
              */
             price?: number | string | null;
+            /**
+             * Stop Price
+             * @description Stop trigger price (required for STOP/STOP_LIMIT)
+             */
+            stop_price?: number | string | null;
             /**
              * Client Order Id
              * @description Optional client order ID
@@ -3362,6 +3900,73 @@ export interface components {
             };
         };
         /**
+         * DownloadDataRequest
+         * @description Request to start a historical data download.
+         */
+        DownloadDataRequest: {
+            /**
+             * Exchange
+             * @description Exchange ID (okx, binance, bybit)
+             */
+            exchange: string;
+            /**
+             * Symbol
+             * @description Trading pair (e.g., BTC/USDT)
+             */
+            symbol: string;
+            /**
+             * Timeframe
+             * @description Candle timeframe (1m, 5m, 15m, 30m, 1h, 4h, 1d, 1w)
+             */
+            timeframe: string;
+            /**
+             * Start Date
+             * Format: date-time
+             * @description Download start date
+             */
+            start_date: string;
+            /**
+             * End Date
+             * Format: date-time
+             * @description Download end date
+             */
+            end_date: string;
+        };
+        /**
+         * DownloadTaskResponse
+         * @description Download task status response.
+         *
+         *     Matches frontend DataDownloadTask type in types/common.ts.
+         */
+        DownloadTaskResponse: {
+            /** Id */
+            id: string;
+            /** Exchange */
+            exchange: string;
+            /** Symbol */
+            symbol: string;
+            /** Timeframe */
+            timeframe: string;
+            /** Start Date */
+            start_date: string;
+            /** End Date */
+            end_date: string;
+            /** Status */
+            status: string;
+            /** Progress */
+            progress: number;
+            /** Total Candles */
+            total_candles?: number | null;
+            /** Downloaded Candles */
+            downloaded_candles?: number | null;
+            /** Error */
+            error?: string | null;
+            /** Created At */
+            created_at: string;
+            /** Completed At */
+            completed_at?: string | null;
+        };
+        /**
          * EmergencyCloseResponse
          * @description Response from emergency close operation.
          */
@@ -3404,6 +4009,8 @@ export interface components {
             position_value: number;
             /** Unrealized Pnl */
             unrealized_pnl: number;
+            /** Benchmark Equity */
+            benchmark_equity?: number | null;
         };
         /**
          * ExchangeAccountListItem
@@ -3471,6 +4078,29 @@ export interface components {
          * @enum {string}
          */
         ExportFormat: "json" | "csv";
+        /**
+         * FillRecordResponse
+         * @description Individual fill record response.
+         */
+        FillRecordResponse: {
+            /** Order Id */
+            order_id: string;
+            /** Symbol */
+            symbol: string;
+            /** Side */
+            side: string;
+            /** Price */
+            price: number;
+            /** Amount */
+            amount: number;
+            /** Fee */
+            fee: number;
+            /**
+             * Timestamp
+             * Format: date-time
+             */
+            timestamp: string;
+        };
         /** HTTPValidationError */
         HTTPValidationError: {
             /** Detail */
@@ -3490,6 +4120,38 @@ export interface components {
             timestamp: string;
             /** Version */
             version: string;
+        };
+        /**
+         * HistoricalDataItem
+         * @description Historical data summary item.
+         *
+         *     Maps from DataLoader.get_available_symbols() output.
+         */
+        HistoricalDataItem: {
+            /** Id */
+            id: string;
+            /** Exchange */
+            exchange: string;
+            /** Symbol */
+            symbol: string;
+            /** Timeframe */
+            timeframe: string;
+            /** Start Date */
+            start_date?: string | null;
+            /** End Date */
+            end_date?: string | null;
+            /** Candle Count */
+            candle_count: number;
+            /**
+             * File Size
+             * @default 0
+             */
+            file_size: number;
+            /**
+             * Created At
+             * @default
+             */
+            created_at: string;
         };
         /**
          * LiveOrderInfo
@@ -3536,15 +4198,80 @@ export interface components {
             unrealized_pnl?: number | null;
         };
         /**
+         * LiveSessionOrderResponse
+         * @description Order record from the audit table for a live session.
+         */
+        LiveSessionOrderResponse: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Exchange Oid */
+            exchange_oid?: string | null;
+            /** Symbol */
+            symbol: string;
+            /** Side */
+            side: string;
+            /** Type */
+            type: string;
+            /** Amount */
+            amount: number;
+            /** Filled */
+            filled: number;
+            /** Avg Price */
+            avg_price?: number | null;
+            /** Price */
+            price?: number | null;
+            /** Status */
+            status: string;
+            /** Trades */
+            trades?: components["schemas"]["LiveSessionTradeResponse"][];
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+        };
+        /**
+         * LiveSessionTradeResponse
+         * @description Trade execution record for a live session order.
+         */
+        LiveSessionTradeResponse: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Price */
+            price: number;
+            /** Amount */
+            amount: number;
+            /** Fee */
+            fee: number;
+            /** Fee Currency */
+            fee_currency?: string | null;
+            /**
+             * Timestamp
+             * Format: date-time
+             */
+            timestamp: string;
+        };
+        /**
          * LiveTradingListItem
          * @description Live trading list item (active session summary).
          */
         LiveTradingListItem: {
             /**
-             * Run Id
+             * Id
              * Format: uuid
              */
-            run_id: string;
+            id: string;
             /**
              * Strategy Id
              * Format: uuid
@@ -3556,12 +4283,23 @@ export interface components {
             account_id?: string | null;
             /** Symbol */
             symbol: string;
+            /** Exchange */
+            exchange: string;
             /** Timeframe */
             timeframe: string;
+            /** Status */
+            status: string;
             /** Is Running */
             is_running: boolean;
+            /** Initial Capital */
+            initial_capital: number | null;
             /** Started At */
             started_at: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
             /** Bar Count */
             bar_count: number;
             /** Equity */
@@ -3684,6 +4422,71 @@ export interface components {
             risk_state: components["schemas"]["RiskStateResponse"] | null;
         };
         /**
+         * MarkReadRequest
+         * @description Mark notifications as read.
+         */
+        MarkReadRequest: {
+            /**
+             * Notification Ids
+             * @description Notification IDs to mark as read. None = mark all as read.
+             */
+            notification_ids?: string[] | null;
+        };
+        /**
+         * NotificationResponse
+         * @description Notification record response.
+         */
+        NotificationResponse: {
+            /** Id */
+            id: string;
+            /** Level */
+            level: string;
+            /** Event Type */
+            event_type: string;
+            /** Title */
+            title: string;
+            /** Message */
+            message: string;
+            /** Details */
+            details: {
+                [key: string]: unknown;
+            };
+            /** Run Id */
+            run_id: string | null;
+            /** Status */
+            status: string;
+            /** Is Read */
+            is_read: boolean;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+        };
+        /**
+         * OpenTradeInfo
+         * @description Currently open trade (position entry info for chart markers).
+         */
+        OpenTradeInfo: {
+            /** Symbol */
+            symbol: string;
+            /** Side */
+            side: string;
+            /** Entry Time */
+            entry_time: string;
+            /** Entry Price */
+            entry_price: number;
+            /** Amount */
+            amount: number;
+            /** Fees */
+            fees: number;
+        };
+        /**
          * OrderDetail
          * @description Order detail response.
          */
@@ -3731,6 +4534,11 @@ export interface components {
              * @description Order price
              */
             price?: number | null;
+            /**
+             * Stop Price
+             * @description Stop trigger price
+             */
+            stop_price?: number | null;
             /**
              * Amount
              * @description Order amount
@@ -3882,7 +4690,7 @@ export interface components {
          * @description Order type.
          * @enum {string}
          */
-        OrderType: "market" | "limit";
+        OrderType: "market" | "limit" | "stop" | "stop_limit";
         /**
          * OrderWithTrades
          * @description Order detail with trades.
@@ -3931,6 +4739,11 @@ export interface components {
              * @description Order price
              */
             price?: number | null;
+            /**
+             * Stop Price
+             * @description Stop trigger price
+             */
+            stop_price?: number | null;
             /**
              * Amount
              * @description Order amount
@@ -4008,10 +4821,32 @@ export interface components {
             /** Page Size */
             page_size: number;
         };
+        /** PaginatedData[LiveSessionOrderResponse] */
+        PaginatedData_LiveSessionOrderResponse_: {
+            /** Items */
+            items: components["schemas"]["LiveSessionOrderResponse"][];
+            /** Total */
+            total: number;
+            /** Page */
+            page: number;
+            /** Page Size */
+            page_size: number;
+        };
         /** PaginatedData[LiveTradingRunResponse] */
         PaginatedData_LiveTradingRunResponse_: {
             /** Items */
             items: components["schemas"]["LiveTradingRunResponse"][];
+            /** Total */
+            total: number;
+            /** Page */
+            page: number;
+            /** Page Size */
+            page_size: number;
+        };
+        /** PaginatedData[NotificationResponse] */
+        PaginatedData_NotificationResponse_: {
+            /** Items */
+            items: components["schemas"]["NotificationResponse"][];
             /** Total */
             total: number;
             /** Page */
@@ -4069,10 +4904,10 @@ export interface components {
          */
         PaperTradingListItem: {
             /**
-             * Run Id
+             * Id
              * Format: uuid
              */
-            run_id: string;
+            id: string;
             /**
              * Strategy Id
              * Format: uuid
@@ -4082,12 +4917,23 @@ export interface components {
             strategy_name?: string | null;
             /** Symbol */
             symbol: string;
+            /** Exchange */
+            exchange: string;
             /** Timeframe */
             timeframe: string;
+            /** Status */
+            status: string;
             /** Is Running */
             is_running: boolean;
+            /** Initial Capital */
+            initial_capital: number | null;
             /** Started At */
             started_at: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
             /** Bar Count */
             bar_count: number;
             /** Equity */
@@ -4148,6 +4994,10 @@ export interface components {
              * Format: date-time
              */
             updated_at: string;
+            /** Equity */
+            equity?: number | null;
+            /** Unrealized Pnl */
+            unrealized_pnl?: number | null;
         };
         /**
          * PaperTradingStatusResponse
@@ -4201,6 +5051,17 @@ export interface components {
             completed_orders_count: number;
             /** Trades Count */
             trades_count: number;
+            /** Trades */
+            trades?: components["schemas"]["TradeRecordResponse"][];
+            /** Fills */
+            fills?: components["schemas"]["FillRecordResponse"][];
+            open_trade?: components["schemas"]["OpenTradeInfo"] | null;
+            /** Logs */
+            logs?: string[];
+            /** Risk State */
+            risk_state?: {
+                [key: string]: unknown;
+            } | null;
         };
         /**
          * PendingOrderInfo
@@ -4295,6 +5156,30 @@ export interface components {
             cooldown_remaining_minutes?: number | null;
         };
         /**
+         * ResumeLiveTradingRequest
+         * @description Request to resume a stopped/errored live trading session.
+         */
+        ResumeLiveTradingRequest: {
+            /**
+             * Warmup Bars
+             * @description Number of historical bars to replay for strategy warmup
+             * @default 200
+             */
+            warmup_bars: number;
+        };
+        /**
+         * ResumePaperTradingRequest
+         * @description Request to resume a stopped/errored paper trading session.
+         */
+        ResumePaperTradingRequest: {
+            /**
+             * Warmup Bars
+             * @description Number of historical bars to replay for strategy warmup
+             * @default 200
+             */
+            warmup_bars: number;
+        };
+        /**
          * RiskConfigRequest
          * @description Risk configuration for live trading.
          */
@@ -4331,6 +5216,12 @@ export interface components {
              * @default 3
              */
             circuit_breaker_threshold: number;
+            /**
+             * Min Order Value
+             * @description Minimum order value in quote currency (e.g., USDT)
+             * @default 10
+             */
+            min_order_value: number | string;
         };
         /**
          * RiskRuleListItem
@@ -4599,8 +5490,8 @@ export interface components {
             commission_rate: number | string;
             /**
              * Slippage
-             * @description Slippage rate for market orders
-             * @default 0
+             * @description Slippage rate for market orders (default 5bps covers typical spread)
+             * @default 0.0005
              */
             slippage: number | string;
             /**
@@ -4610,6 +5501,8 @@ export interface components {
             params?: {
                 [key: string]: unknown;
             } | null;
+            /** @description Optional risk management configuration */
+            risk_config?: components["schemas"]["RiskConfigRequest"] | null;
         };
         /**
          * StopLiveTradingRequest
@@ -4933,6 +5826,14 @@ export interface components {
              * @description Any errors encountered
              */
             errors?: string[];
+        };
+        /**
+         * UnreadCountResponse
+         * @description Unread notification count.
+         */
+        UnreadCountResponse: {
+            /** Count */
+            count: number;
         };
         /**
          * UpdateExchangeAccountRequest
@@ -5340,6 +6241,8 @@ export interface operations {
                 timeframe?: string;
                 /** @description Number of candles */
                 limit?: number;
+                /** @description End timestamp in milliseconds. When provided, fetches candles before this time. */
+                end_time?: number | null;
             };
             header?: never;
             path: {
@@ -6424,6 +7327,44 @@ export interface operations {
             };
         };
     };
+    get_backtest_candles_api_v1_backtest__run_id__candles_get: {
+        parameters: {
+            query?: {
+                /** @description Fetch candles before this time */
+                before?: string | null;
+                /** @description Fetch candles after this time */
+                after?: string | null;
+                /** @description Max candles to return */
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_CandlesPageResponse_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     export_backtest_report_api_v1_backtest__run_id__export_get: {
         parameters: {
             query?: {
@@ -6542,6 +7483,41 @@ export interface operations {
             };
         };
     };
+    resume_paper_trading_api_v1_paper__run_id__resume_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["ResumePaperTradingRequest"] | null;
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_PaperTradingRunResponse_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_paper_trading_status_api_v1_paper__run_id__status_get: {
         parameters: {
             query?: never;
@@ -6569,6 +7545,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    stop_all_paper_trading_api_v1_paper_stop_all_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_dict_"];
                 };
             };
         };
@@ -6642,7 +7638,10 @@ export interface operations {
     };
     get_equity_curve_api_v1_paper__run_id__equity_curve_get: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Only return records after this time (ISO 8601) */
+                since?: string | null;
+            };
             header?: never;
             path: {
                 run_id: string;
@@ -6790,6 +7789,41 @@ export interface operations {
             };
         };
     };
+    resume_live_trading_api_v1_live__run_id__resume_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["ResumeLiveTradingRequest"] | null;
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_LiveTradingRunResponse_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     emergency_close_api_v1_live__run_id__emergency_close_post: {
         parameters: {
             query?: never;
@@ -6888,6 +7922,42 @@ export interface operations {
             };
         };
     };
+    get_session_orders_api_v1_live__run_id__orders_get: {
+        parameters: {
+            query?: {
+                /** @description Page number */
+                page?: number;
+                /** @description Page size */
+                page_size?: number;
+            };
+            header?: never;
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_PaginatedData_LiveSessionOrderResponse__"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_live_trading_run_api_v1_live__run_id__get: {
         parameters: {
             query?: never;
@@ -6921,7 +7991,10 @@ export interface operations {
     };
     get_equity_curve_api_v1_live__run_id__equity_curve_get: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Only return records after this time (ISO 8601) */
+                since?: string | null;
+            };
             header?: never;
             path: {
                 run_id: string;
@@ -7341,6 +8414,130 @@ export interface operations {
             };
         };
     };
+    list_notifications_api_v1_notifications_get: {
+        parameters: {
+            query?: {
+                /** @description Page number */
+                page?: number;
+                /** @description Page size */
+                page_size?: number;
+                /** @description Filter by level: critical/warning/info */
+                level?: string | null;
+                /** @description Filter by read status */
+                is_read?: boolean | null;
+                /** @description Filter by event type */
+                event_type?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_PaginatedData_NotificationResponse__"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_unread_count_api_v1_notifications_unread_count_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_UnreadCountResponse_"];
+                };
+            };
+        };
+    };
+    mark_read_api_v1_notifications_mark_read_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MarkReadRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_dict_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_notification_api_v1_notifications__notification_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                notification_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_dict_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     list_watchlist_api_v1_watchlist_get: {
         parameters: {
             query?: never;
@@ -7479,6 +8676,250 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ApiResponse_list_WatchlistItemResponse__"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    start_download_api_v1_system_data_download_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DownloadDataRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_DownloadTaskResponse_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_download_tasks_api_v1_system_data_download_tasks_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_list_DownloadTaskResponse__"];
+                };
+            };
+        };
+    };
+    get_download_task_api_v1_system_data_download__task_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_DownloadTaskResponse_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    remove_download_task_api_v1_system_data_download__task_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_NoneType_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    cancel_download_task_api_v1_system_data_download__task_id__cancel_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_DownloadTaskResponse_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_historical_data_api_v1_system_data_list_get: {
+        parameters: {
+            query?: {
+                /** @description Filter by exchange */
+                exchange?: string | null;
+                /** @description Filter by symbol */
+                symbol?: string | null;
+                /** @description Filter by timeframe */
+                timeframe?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_list_HistoricalDataItem__"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_historical_data_api_v1_system_data__data_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                data_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_NoneType_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_exchange_symbols_api_v1_system_symbols__exchange_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                exchange_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_list_str__"];
                 };
             };
             /** @description Validation Error */

@@ -7,24 +7,30 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 
-type Status = 'pending' | 'running' | 'completed' | 'failed' | 'stopped' |
+type Status = 'pending' | 'running' | 'completed' | 'failed' | 'stopped' | 'interrupted' |
               'submitted' | 'open' | 'partial' | 'filled' | 'cancelled' | 'rejected' |
-              'active' | 'inactive' | 'triggered' | 'connected' | 'disconnected' | 'error'
+              'active' | 'inactive' | 'archived' | 'triggered' | 'connected' | 'disconnected' | 'error'
+
+type StatusContext = 'session' | 'order'
+
+type TagType = 'success' | 'warning' | 'info' | 'danger' | 'primary'
 
 interface Props {
   status: Status
+  context?: StatusContext
   size?: 'small' | 'default' | 'large'
   effect?: 'dark' | 'light' | 'plain'
   showText?: boolean
 }
 
 const props = withDefaults(defineProps<Props>(), {
+  context: 'session',
   size: 'small',
   effect: 'light',
   showText: true,
 })
 
-const statusConfig: Record<Status, { type: 'success' | 'warning' | 'info' | 'danger' | 'primary'; text: string }> = {
+const statusConfig: Record<Status, { type: TagType; text: string }> = {
   // 会话状态
   pending: { type: 'info', text: '待启动' },
   running: { type: 'success', text: '运行中' },
@@ -41,13 +47,33 @@ const statusConfig: Record<Status, { type: 'success' | 'warning' | 'info' | 'dan
   // 规则状态
   active: { type: 'success', text: '启用' },
   inactive: { type: 'info', text: '禁用' },
+  archived: { type: 'info', text: '已归档' },
   triggered: { type: 'danger', text: '已触发' },
   // 连接状态
   connected: { type: 'success', text: '已连接' },
   disconnected: { type: 'info', text: '未连接' },
   error: { type: 'danger', text: '错误' },
+  interrupted: { type: 'warning', text: '已中断' },
 }
 
-const tagType = computed(() => statusConfig[props.status]?.type || 'info')
-const displayText = computed(() => statusConfig[props.status]?.text || props.status)
+// Context-specific overrides for statuses that have different meanings
+const orderOverrides: Partial<Record<Status, { type: TagType; text: string }>> = {
+  pending: { type: 'primary', text: '等待成交' },
+}
+
+const tagType = computed(() => {
+  if (props.context === 'order') {
+    const override = orderOverrides[props.status]
+    if (override) return override.type
+  }
+  return statusConfig[props.status]?.type || 'info'
+})
+
+const displayText = computed(() => {
+  if (props.context === 'order') {
+    const override = orderOverrides[props.status]
+    if (override) return override.text
+  }
+  return statusConfig[props.status]?.text || props.status
+})
 </script>

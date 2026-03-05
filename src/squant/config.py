@@ -70,6 +70,8 @@ class LoggingSettings(BaseSettings):
     )
     format: str = Field(default="text", description="Log format: json or text")
     file: str | None = Field(default=None, description="Log file path (optional)")
+    max_bytes: int = Field(default=10 * 1024 * 1024, description="Max log file size in bytes")
+    backup_count: int = Field(default=5, description="Number of rotated log files to keep")
 
     @field_validator("level")
     @classmethod
@@ -103,6 +105,10 @@ class SecuritySettings(BaseSettings):
 
     secret_key: SecretStr = Field(description="Application secret key (min 32 chars)")
     encryption_key: SecretStr = Field(description="Key for encrypting stored API keys")
+    encryption_key_old: SecretStr | None = Field(
+        default=None,
+        description="Previous encryption key for transparent key rotation (LIVE-SC-001)",
+    )
     jwt_algorithm: str = Field(default="HS256", description="JWT signing algorithm")
     jwt_access_token_expire_minutes: int = Field(
         default=30, ge=1, description="JWT token expiry in minutes"
@@ -253,6 +259,33 @@ class PaperTradingSettings(BaseSettings):
     max_sessions: int = Field(
         default=20, ge=1, le=100, description="Max concurrent paper trading sessions"
     )
+    warmup_bars: int = Field(
+        default=200, ge=0, le=5000, description="Bars to replay for strategy warmup on resume"
+    )
+    auto_recovery: bool = Field(
+        default=True, description="Auto-recover orphaned sessions on startup"
+    )
+
+
+class LiveTradingSettings(BaseSettings):
+    """Live trading engine settings."""
+
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_prefix="LIVE_",
+        extra="ignore",
+    )
+
+    max_sessions: int = Field(
+        default=10, ge=1, le=50, description="Max concurrent live trading sessions"
+    )
+    warmup_bars: int = Field(
+        default=200, ge=0, le=5000, description="Bars to replay for strategy warmup on resume"
+    )
+    auto_recovery: bool = Field(
+        default=False,
+        description="Auto-recover orphaned sessions on startup (default off for safety)",
+    )
 
 
 class CircuitBreakerSettings(BaseSettings):
@@ -269,6 +302,33 @@ class CircuitBreakerSettings(BaseSettings):
     )
     auto_enabled: bool = Field(
         default=False, description="Enable automatic circuit breaker triggers"
+    )
+
+
+class NotificationSettings(BaseSettings):
+    """Notification system settings."""
+
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_prefix="NOTIFICATION_",
+        extra="ignore",
+    )
+
+    enabled: bool = Field(default=True, description="Enable notification system")
+    webhook_url: str | None = Field(
+        default=None, description="Webhook URL for alert notifications (HTTP POST)"
+    )
+    webhook_timeout_seconds: int = Field(
+        default=10, ge=1, le=60, description="Webhook HTTP request timeout"
+    )
+    webhook_max_retries: int = Field(
+        default=3, ge=0, le=5, description="Max retry attempts for webhook delivery"
+    )
+    cooldown_seconds: int = Field(
+        default=60, ge=0, description="Minimum seconds between same event type notifications"
+    )
+    max_history: int = Field(
+        default=1000, ge=100, le=10000, description="Max notification records to retain"
     )
 
 
@@ -381,9 +441,19 @@ class Settings(BaseSettings):
         return PaperTradingSettings()
 
     @cached_property
+    def live(self) -> LiveTradingSettings:
+        """Live trading settings."""
+        return LiveTradingSettings()
+
+    @cached_property
     def circuit_breaker(self) -> CircuitBreakerSettings:
         """Circuit breaker settings."""
         return CircuitBreakerSettings()
+
+    @cached_property
+    def notification(self) -> NotificationSettings:
+        """Notification settings."""
+        return NotificationSettings()
 
     # -------------------------------------------------------------------------
     # Backward Compatibility Aliases

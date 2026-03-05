@@ -15,19 +15,34 @@ class CreateOrderRequest(BaseModel):
 
     symbol: str = Field(..., description="Trading pair (e.g., BTC/USDT)")
     side: OrderSide = Field(..., description="Order side (BUY/SELL)")
-    type: OrderType = Field(..., description="Order type (MARKET/LIMIT)")
+    type: OrderType = Field(..., description="Order type (MARKET/LIMIT/STOP/STOP_LIMIT)")
     amount: Decimal = Field(..., gt=0, description="Order amount in base currency")
-    price: Decimal | None = Field(None, description="Limit price (required for LIMIT orders)")
+    price: Decimal | None = Field(None, description="Limit price (required for LIMIT/STOP_LIMIT)")
+    stop_price: Decimal | None = Field(
+        None, description="Stop trigger price (required for STOP/STOP_LIMIT)"
+    )
     client_order_id: str | None = Field(None, max_length=32, description="Optional client order ID")
     run_id: UUID | None = Field(None, description="Strategy run ID (if from strategy)")
 
     @model_validator(mode="after")
     def validate_limit_price(self) -> "CreateOrderRequest":
-        """Validate that LIMIT orders have a price specified (R3-008)."""
+        """Validate order type price constraints."""
         if self.type == OrderType.LIMIT and self.price is None:
             raise ValueError("price is required for LIMIT orders")
+        if self.type == OrderType.STOP:
+            if self.stop_price is None:
+                raise ValueError("stop_price is required for STOP orders")
+            if self.price is not None:
+                raise ValueError("STOP orders must not have a limit price (use STOP_LIMIT)")
+        if self.type == OrderType.STOP_LIMIT:
+            if self.stop_price is None:
+                raise ValueError("stop_price is required for STOP_LIMIT orders")
+            if self.price is None:
+                raise ValueError("price is required for STOP_LIMIT orders")
         if self.price is not None and self.price <= 0:
             raise ValueError("price must be positive")
+        if self.stop_price is not None and self.stop_price <= 0:
+            raise ValueError("stop_price must be positive")
         return self
 
 
@@ -46,6 +61,7 @@ class OrderDetail(BaseModel):
     type: OrderType = Field(..., description="Order type")
     status: OrderStatus = Field(..., description="Order status")
     price: NumberDecimal | None = Field(None, description="Order price")
+    stop_price: NumberDecimal | None = Field(None, description="Stop trigger price")
     amount: NumberDecimal = Field(..., description="Order amount")
     filled: NumberDecimal = Field(..., description="Filled amount")
     avg_price: NumberDecimal | None = Field(None, description="Average fill price")
