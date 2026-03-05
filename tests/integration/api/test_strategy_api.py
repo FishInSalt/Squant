@@ -514,7 +514,7 @@ class TestStrategyDeletion:
         assert response.status_code == 200
 
         # Verify soft-deleted (archived) — record still exists but status is ARCHIVED
-        await db_session.expire_all()
+        db_session.expire_all()
         db_result = await db_session.execute(select(Strategy).where(Strategy.id == strategy_id))
         db_strategy = db_result.scalar_one_or_none()
         assert db_strategy is not None

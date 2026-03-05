@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from decimal import Decimal
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -16,7 +16,6 @@ from squant.services.data_download import (
     DownloadTaskInfo,
     get_download_service,
 )
-
 
 # ============================================================================
 # DownloadTaskInfo Tests
