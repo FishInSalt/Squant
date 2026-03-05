@@ -1422,25 +1422,28 @@ class LiveTradingEngine:
     def _record_fill(
         self,
         live_order: LiveOrder,
-        fill_price: Decimal,
+        fill_price: Decimal | None,
         fill_amount: Decimal,
         fee_delta: Decimal | None,
         total_fee: Decimal,
         source: str,
     ) -> None:
-        """Record an incremental fill from any source (WebSocket or polling).
+        """Record an incremental fill from any source (WebSocket, polling, reconcile).
 
         Unified fill processing path — creates a Fill record, updates context
         state, records risk metrics, and buffers audit events.
 
         Args:
             live_order: The live order being filled.
-            fill_price: Average fill price for this increment.
+            fill_price: Average fill price for this increment. If None, fill is skipped.
             fill_amount: Incremental fill amount (new fills only).
             fee_delta: Incremental fee, or None to use total_fee as fallback.
             total_fee: Total cumulative fee (used as fallback when fee_delta is None).
-            source: Fill source identifier for audit trail ("ws" or "poll").
+            source: Fill source identifier for audit trail ("ws", "poll", "reconcile").
         """
+        if fill_price is None:
+            return
+
         fill_fee = fee_delta if fee_delta is not None else total_fee
 
         fill = Fill(
