@@ -2280,6 +2280,7 @@ class TestBalanceSyncFailure:
     async def test_balance_sync_stores_exchange_balance(self, engine, mock_adapter):
         """Test that exchange balance is stored for diagnostics."""
         await engine.start()
+        engine._last_balance_check = None  # Reset rate limiter for direct call
 
         mock_adapter.get_balance.return_value = AccountBalance(
             exchange="okx",
@@ -2296,6 +2297,7 @@ class TestBalanceSyncFailure:
     async def test_balance_sync_logs_cash_discrepancy(self, engine, mock_adapter, caplog):
         """Test that large cash discrepancy is logged as warning."""
         await engine.start()
+        engine._last_balance_check = None  # Reset rate limiter for direct test
         # Engine initial_equity = 10000, set exchange to very different value
         mock_adapter.get_balance.return_value = AccountBalance(
             exchange="okx",
@@ -2381,6 +2383,7 @@ class TestSyncConsecutiveFailures:
         """Test _sync_balance raises RuntimeError after consecutive failures."""
         await engine.start()
         assert engine.is_running is True
+        engine._last_balance_check = None  # Reset rate limiter for direct test
 
         # Make get_balance fail
         mock_adapter.get_balance.side_effect = Exception("Network error")
@@ -2407,6 +2410,7 @@ class TestSyncConsecutiveFailures:
         """
         await engine.start()
         assert engine.is_running is True
+        engine._last_balance_check = None  # Reset rate limiter for direct test
 
         # Pre-fail to reach threshold on next sync
         engine._balance_consecutive_failures = 4
@@ -2437,6 +2441,7 @@ class TestSyncConsecutiveFailures:
     async def test_balance_sync_success_resets_failure_counter(self, engine, mock_adapter):
         """Test successful balance sync resets the failure counter."""
         await engine.start()
+        engine._last_balance_check = None  # Reset rate limiter for direct test
 
         # Fail 4 times (below threshold)
         mock_adapter.get_balance.side_effect = Exception("Network error")
@@ -2838,3 +2843,47 @@ class TestTimedOutOrderReconciliation:
 
         # Order should remain in _timed_out_orders for next attempt
         assert order.id in engine._timed_out_orders
+
+
+class TestBalanceCheckRateLimiting:
+    """Tests for F-5: balance check rate limiting to reduce API calls."""
+
+    @pytest.mark.asyncio
+    async def test_balance_check_skipped_within_interval(self, engine, mock_adapter):
+        """Balance sync should be skipped if called within the rate limit interval."""
+        await engine.start()
+        # start() calls _sync_balance() once, setting _last_balance_check
+        initial_call_count = mock_adapter.get_balance.call_count
+
+        await engine._sync_balance()
+
+        # Should be skipped — no additional call
+        assert mock_adapter.get_balance.call_count == initial_call_count
+
+    @pytest.mark.asyncio
+    async def test_balance_check_executes_after_interval(self, engine, mock_adapter):
+        """Balance sync should execute after the rate limit interval expires."""
+        await engine.start()
+        initial_call_count = mock_adapter.get_balance.call_count
+
+        # Simulate interval elapsed
+        engine._last_balance_check = None
+
+        await engine._sync_balance()
+
+        assert mock_adapter.get_balance.call_count == initial_call_count + 1
+
+    @pytest.mark.asyncio
+    async def test_balance_check_forced_after_fill(self, engine, mock_adapter):
+        """Balance sync should execute immediately after a fill, even within interval."""
+        await engine.start()
+        initial_call_count = mock_adapter.get_balance.call_count
+
+        # Simulate a recent fill
+        engine._has_recent_fill = True
+
+        await engine._sync_balance()
+
+        assert mock_adapter.get_balance.call_count == initial_call_count + 1
+        # Flag should be reset after check
+        assert engine._has_recent_fill is False

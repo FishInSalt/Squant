@@ -315,6 +315,12 @@ class LiveTradingEngine:
         self._on_order_persist = on_order_persist
         self._pending_order_events: list[dict[str, Any]] = []
 
+        # Balance sync rate limiting (R5-F5): avoid excessive API calls
+        # Balance is monitoring-only, so checking every 5 minutes is sufficient.
+        self._balance_check_interval: float = 300.0  # seconds
+        self._last_balance_check: datetime | None = None
+        self._has_recent_fill: bool = False  # set True on fill, triggers immediate check
+
         # Exchange connection failure tracking (LV-3)
         # Separate counters for balance and order sync (R3-011)
         self._balance_consecutive_failures: int = 0
@@ -1195,9 +1201,21 @@ class LiveTradingEngine:
         Cash is NOT overwritten from exchange (LIVE-012). Local cash is tracked
         incrementally via fill processing only. Exchange balance serves as a
         health-check baseline — large discrepancies are logged as warnings.
+
+        Checks are rate-limited to once per _balance_check_interval (R5-F5),
+        unless a recent fill occurred (triggers immediate check for validation).
         """
+        # Rate-limit balance checks to reduce API calls (R5-F5)
+        now = datetime.now(UTC)
+        if self._last_balance_check is not None and not self._has_recent_fill:
+            elapsed = (now - self._last_balance_check).total_seconds()
+            if elapsed < self._balance_check_interval:
+                return
+        self._has_recent_fill = False
+
         try:
             balance = await self._adapter.get_balance()
+            self._last_balance_check = now
             # Compare exchange cash vs local (monitoring only, no overwrite)
             quote_currency = self._symbol.split("/")[1]  # e.g., "USDT" from "BTC/USDT"
             quote_balance = balance.get_balance(quote_currency)
@@ -1583,6 +1601,9 @@ class LiveTradingEngine:
 
         # Record fill for daily trade count limit (LIVE-RM-001)
         self._risk_manager.record_order_fill()
+
+        # Trigger balance check on next bar to validate post-fill state (R5-F5)
+        self._has_recent_fill = True
 
         # Buffer "fill" event for audit persistence (LIVE-013)
         self._pending_order_events.append({
