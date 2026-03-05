@@ -105,6 +105,10 @@ class SecuritySettings(BaseSettings):
 
     secret_key: SecretStr = Field(description="Application secret key (min 32 chars)")
     encryption_key: SecretStr = Field(description="Key for encrypting stored API keys")
+    encryption_key_old: SecretStr | None = Field(
+        default=None,
+        description="Previous encryption key for transparent key rotation (LIVE-SC-001)",
+    )
     jwt_algorithm: str = Field(default="HS256", description="JWT signing algorithm")
     jwt_access_token_expire_minutes: int = Field(
         default=30, ge=1, description="JWT token expiry in minutes"

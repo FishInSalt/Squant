@@ -533,6 +533,9 @@ class ExchangeAccountService:
         - Index 1: api_secret
         - Index 2: passphrase
 
+        If decryption with the current key fails and ENCRYPTION_KEY_OLD is set,
+        transparently retries with the old key (LIVE-SC-001 key rotation).
+
         Args:
             account: Exchange account with encrypted credentials.
 
@@ -540,10 +543,28 @@ class ExchangeAccountService:
             Dict with decrypted api_key, api_secret, and optionally passphrase.
 
         Raises:
-            DecryptionError: If decryption fails.
+            DecryptionError: If decryption fails with both current and old keys.
         """
+        from squant.utils.crypto import get_old_crypto_manager
+
         crypto = get_crypto_manager()
 
+        try:
+            return self._decrypt_with_manager(crypto, account)
+        except DecryptionError:
+            old_crypto = get_old_crypto_manager()
+            if old_crypto is None:
+                raise
+            logger.info(
+                f"Retrying decryption for account {account.id} with old encryption key"
+            )
+            return self._decrypt_with_manager(old_crypto, account)
+
+    @staticmethod
+    def _decrypt_with_manager(
+        crypto: "CryptoManager", account: ExchangeAccount
+    ) -> dict[str, str]:
+        """Decrypt credentials using a specific CryptoManager."""
         result = {
             "api_key": crypto.decrypt_with_derived_nonce(
                 account.api_key_enc, account.nonce, index=0
