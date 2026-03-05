@@ -1653,7 +1653,13 @@ class LiveTradingEngine:
                 client_order_id=order.id,
             )
 
-            response = await self._adapter.place_order(request)
+            # F-4: explicit timeout to prevent blocking process_candle indefinitely.
+            # CCXT has a 10s internal timeout + 1 retry = ~20s max, but we add an
+            # outer guard in case CCXT retry/backoff exceeds our tolerance.
+            response = await asyncio.wait_for(
+                self._adapter.place_order(request),
+                timeout=30.0,
+            )
 
             # Validate exchange returned an order ID (C-DEFER-4)
             if not response.order_id:
@@ -1701,6 +1707,15 @@ class LiveTradingEngine:
                 else datetime.now(UTC).isoformat(),
             })
 
+        except TimeoutError:
+            logger.error(
+                f"Order submission timed out for {order.id} "
+                f"({order.symbol} {order.side.value} {order.amount}). "
+                "Order may have been placed — will reconcile on next sync."
+            )
+            # Do NOT mark as REJECTED — the order may be live on the exchange.
+            # Leave it in _pending_orders so _sync_pending_orders can find it
+            # via client_order_id on the next bar.
         except Exception as e:
             logger.exception(f"Failed to submit order {order.id}: {e}")
             # Mark as rejected
