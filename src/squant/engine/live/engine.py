@@ -21,9 +21,6 @@ from squant.engine.backtest.types import (
     EquitySnapshot,
     Fill,
 )
-from squant.engine.backtest.types import (
-    OrderType as BacktestOrderType,
-)
 from squant.engine.paper.engine import (
     _serialize_fill,
     _serialize_open_trade,
@@ -1520,33 +1517,6 @@ class LiveTradingEngine:
 
         # Get pending orders from context that haven't been submitted
         for order in self._context._get_pending_orders():
-            # Guard: STOP/STOP_LIMIT not yet supported in live trading
-            if order.type in (BacktestOrderType.STOP, BacktestOrderType.STOP_LIMIT):
-                reason = (
-                    "STOP/STOP_LIMIT orders not supported in live trading yet. "
-                    "Use LIMIT or MARKET orders instead."
-                )
-                logger.warning(f"Order {order.id} rejected: {reason}")
-                order.status = OrderStatus.REJECTED
-                self._context._completed_orders.append(order)
-                self._context._total_completed_added += 1
-                if order in self._context._pending_orders:
-                    self._context._pending_orders.remove(order)
-                self._pending_risk_triggers.append(
-                    {
-                        "rule_type": "unsupported_order_type",
-                        "trigger_type": "order_rejected",
-                        "details": {
-                            "reason": reason,
-                            "order_symbol": order.symbol,
-                            "order_side": order.side.value,
-                            "order_type": order.type.value,
-                            "order_amount": str(order.amount),
-                        },
-                    }
-                )
-                continue
-
             # Skip if already tracked as live order
             if order.id in self._live_orders:
                 continue
@@ -1613,6 +1583,7 @@ class LiveTradingEngine:
                 type=order.type,
                 amount=order.amount,
                 price=order.price,
+                stop_price=order.stop_price,
                 client_order_id=order.id,
             )
 

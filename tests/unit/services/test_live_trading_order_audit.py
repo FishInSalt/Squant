@@ -193,6 +193,7 @@ class TestOrderEventBuffering:
         order.type = OrderType.MARKET
         order.amount = Decimal("0.01")
         order.price = None
+        order.stop_price = None
 
         await engine._submit_order(order)
 

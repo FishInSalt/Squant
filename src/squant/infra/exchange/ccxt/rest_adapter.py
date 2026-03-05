@@ -423,8 +423,15 @@ class CCXTRestAdapter(ExchangeAdapter):
                 "amount": str(request.amount),
                 "price": str(request.price) if request.price else None,
             }
+            params: dict[str, Any] = {}
             if request.client_order_id:
-                kwargs["params"] = {"clientOrderId": request.client_order_id}
+                params["clientOrderId"] = request.client_order_id
+            # LIVE-EX-002: pass trigger price for STOP/STOP_LIMIT orders
+            # CCXT unified API uses "triggerPrice" across all exchanges
+            if request.stop_price is not None:
+                params["triggerPrice"] = str(request.stop_price)
+            if params:
+                kwargs["params"] = params
 
             order = await self._exchange.create_order(**kwargs)
 
