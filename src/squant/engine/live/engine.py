@@ -154,8 +154,8 @@ def _fire_notification(
                 run_id=str(run_id),
             )
         )
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug(f"Failed to fire notification for {run_id}: {e}")
 
 
 class LiveTradingEngine:
