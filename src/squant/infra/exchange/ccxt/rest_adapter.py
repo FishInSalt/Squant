@@ -598,6 +598,48 @@ class CCXTRestAdapter(ExchangeAdapter):
                 exchange=self._exchange_id,
             ) from e
 
+    # ==================== Dead Man's Switch (F-2) ====================
+
+    @property
+    def supports_dead_man_switch(self) -> bool:
+        """Whether the exchange supports cancel-all-after."""
+        if not self._exchange:
+            return False
+        return bool(self._exchange.has.get("cancelAllOrdersAfter"))
+
+    async def setup_dead_man_switch(self, timeout_ms: int) -> None:
+        """Activate or refresh dead man's switch timer.
+
+        Args:
+            timeout_ms: Countdown in milliseconds. 0 cancels the timer.
+        """
+        if not self._exchange:
+            raise ExchangeConnectionError(
+                message="Exchange not connected. Call connect() first.",
+                exchange=self._exchange_id,
+            )
+
+        if not self._exchange.has.get("cancelAllOrdersAfter"):
+            return
+
+        try:
+            params: dict[str, Any] = {}
+            # Bybit requires explicit product type for spot
+            if self._exchange_id == "bybit":
+                params["product"] = "SPOT"
+
+            await self._exchange.cancel_all_orders_after(timeout_ms, params)
+        except ccxt.AuthenticationError as e:
+            raise ExchangeAuthenticationError(
+                message=f"Authentication failed for dead man's switch: {e}",
+                exchange=self._exchange_id,
+            ) from e
+        except Exception as e:
+            # Non-fatal: log and continue — DMS is a safety net, not critical path
+            logger.warning(
+                f"Failed to set dead man's switch on {self._exchange_id}: {e}"
+            )
+
     # ==================== Transformation Helpers ====================
 
     def _transform_ticker(self, ticker: dict[str, Any]) -> Ticker:

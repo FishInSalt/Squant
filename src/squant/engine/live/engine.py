@@ -317,6 +317,10 @@ class LiveTradingEngine:
         self._order_sync_consecutive_failures: int = 0
         self._sync_failure_threshold: int = 5
 
+        # Dead Man's Switch (F-2): exchange cancels all orders if heartbeat stops
+        self._dms_enabled: bool = False
+        self._dms_timeout_ms: int = 60_000  # 60s timeout — heartbeat sent every bar
+
     @property
     def run_id(self) -> UUID:
         """Get the strategy run ID."""
@@ -500,6 +504,9 @@ class LiveTradingEngine:
             # Start private WS for real-time order updates (LIVE-CN-001)
             await self._start_private_ws()
 
+            # Activate Dead Man's Switch if supported (F-2)
+            await self._activate_dead_man_switch()
+
             # Call strategy initialization
             self._strategy.on_init()
             logger.info(f"Strategy initialized for live run {self._run_id}")
@@ -536,6 +543,11 @@ class LiveTradingEngine:
 
         # Close private WS provider (LIVE-CN-001)
         await self._stop_private_ws()
+
+        # Deactivate Dead Man's Switch before cancelling orders (F-2)
+        # If we cancel DMS after cancel_all, there's a brief window where
+        # the DMS timer could fire and re-cancel orders placed by a new session.
+        await self._deactivate_dead_man_switch()
 
         # Cancel open orders if requested
         if cancel_orders:
@@ -632,6 +644,57 @@ class LiveTradingEngine:
             data = msg.get("data")
             if data:
                 self.on_order_update(data)
+
+    async def _activate_dead_man_switch(self) -> None:
+        """Activate Dead Man's Switch on exchange (F-2).
+
+        If supported, sets a countdown timer on the exchange that auto-cancels
+        all open orders if not refreshed. The timer is refreshed every bar
+        in process_candle(). If the system crashes, the exchange cancels orders
+        after the timeout expires.
+        """
+        if not self._adapter.supports_dead_man_switch:
+            logger.info(
+                f"Dead Man's Switch not supported by {self._exchange_id} — "
+                "orders will NOT be auto-cancelled on crash"
+            )
+            return
+
+        try:
+            await self._adapter.setup_dead_man_switch(self._dms_timeout_ms)
+            self._dms_enabled = True
+            logger.info(
+                f"Dead Man's Switch activated for {self._run_id} "
+                f"(timeout={self._dms_timeout_ms}ms)"
+            )
+        except Exception as e:
+            logger.warning(f"Failed to activate Dead Man's Switch: {e}")
+
+    async def _refresh_dead_man_switch(self) -> None:
+        """Refresh (heartbeat) the Dead Man's Switch timer.
+
+        Called at the end of each process_candle() cycle.
+        """
+        if not self._dms_enabled:
+            return
+
+        try:
+            await self._adapter.setup_dead_man_switch(self._dms_timeout_ms)
+        except Exception as e:
+            logger.warning(f"Failed to refresh Dead Man's Switch: {e}")
+
+    async def _deactivate_dead_man_switch(self) -> None:
+        """Deactivate Dead Man's Switch on graceful stop."""
+        if not self._dms_enabled:
+            return
+
+        try:
+            await self._adapter.cancel_dead_man_switch()
+            logger.info(f"Dead Man's Switch deactivated for {self._run_id}")
+        except Exception as e:
+            logger.warning(f"Failed to deactivate Dead Man's Switch: {e}")
+        finally:
+            self._dms_enabled = False
 
     async def emergency_close(self) -> dict[str, Any]:
         """Emergency close all positions at market price.
@@ -1003,6 +1066,9 @@ class LiveTradingEngine:
                         loop.create_task(self._on_event(event))
                     except Exception as e:
                         logger.debug(f"Event emit failed for {self._run_id}: {e}")
+
+                # Refresh Dead Man's Switch heartbeat (F-2)
+                await self._refresh_dead_man_switch()
 
                 logger.debug(
                     f"Processed bar {self._bar_count} at {bar.time}, equity={self._context.equity}"
