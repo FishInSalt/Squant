@@ -21,6 +21,84 @@
 - **Performance Analytics** — Sharpe ratio, Sortino ratio, max drawdown, win rate, profit factor, and equity curves
 - **Full REST API** — 60+ endpoints covering market data, strategies, trading, orders, risk, and system management
 
+## Screenshots
+
+<!--
+  截图指南：
+  - 推荐浏览器宽度 1440px，使用浅色主题
+  - 截图保存到 docs/images/ 目录，使用 PNG 格式
+  - 文件名使用下方指定的名称
+  - 如果页面需要数据，请先运行一次回测或模拟交易以产生足够的展示数据
+-->
+
+### Market Overview — 行情总览
+
+<!-- 截图：docs/images/market-overview.png
+  页面：/market/hot
+  内容：展示多个交易对的实时行情列表，包含价格、24h涨跌幅、成交量等列
+  要点：确保列表中有 10+ 个交易对，涨跌互现（红绿交替），体现数据丰富度
+-->
+
+![Market Overview](docs/images/market-overview.png)
+
+### K-Line Chart — K线图表
+
+<!-- 截图：docs/images/kline-chart.png
+  页面：/market/chart/{exchange}/{symbol}（如 /market/chart/okx/BTC-USDT）
+  内容：完整的K线图表页面，展示蜡烛图、成交量柱状图、技术指标叠加
+  要点：选择 BTC/USDT 1h 周期，确保图表有足够多的K线（100+根），
+       如果支持指标叠加（MA/BOLL等）请开启展示
+-->
+
+![K-Line Chart](docs/images/kline-chart.png)
+
+### Strategy Editor — 策略编辑
+
+<!-- 截图：docs/images/strategy-editor.png
+  页面：/strategy/{id}（选择一个已有策略如双均线策略）
+  内容：策略代码编辑器页面，展示 Monaco Editor 中的 Python 策略代码
+  要点：确保代码区域可见且有语法高亮，如有参数配置面板也一并截入
+-->
+
+![Strategy Editor](docs/images/strategy-editor.png)
+
+### Backtest Results — 回测结果
+
+<!-- 截图：docs/images/backtest-result.png
+  页面：/trading/backtest/{id}/result
+  内容：回测完成后的结果页面，包含权益曲线图、绩效指标（收益率、夏普比率、
+       最大回撤等）、交易记录列表
+  要点：这是最能体现系统分析能力的页面。请确保：
+       1. 权益曲线有明显的涨跌波动（非一条直线）
+       2. 绩效指标区域完整可见（收益率、夏普比率、最大回撤、胜率等）
+       3. 如果页面较长，可以截全页或分两张图（概览 + 交易明细）
+-->
+
+![Backtest Results](docs/images/backtest-result.png)
+
+### Trading Monitor — 交易监控
+
+<!-- 截图：docs/images/trading-monitor.png
+  页面：/trading/monitor/{type}/{id}（模拟交易或实盘的会话详情页）
+  内容：实时交易监控面板，展示当前持仓、挂单、实时权益曲线、策略日志
+  要点：优先使用模拟交易(paper)的会话，确保有至少一个持仓和几条交易记录，
+       实时权益曲线区域可见。如果没有活跃会话，也可用已完成的会话截图
+-->
+
+![Trading Monitor](docs/images/trading-monitor.png)
+
+### Risk Control — 风控中心
+
+<!-- 截图：docs/images/risk-control.png
+  页面：/risk/circuit-breaker 或 /risk/rules
+  内容：风控规则管理或熔断器控制面板
+  要点：展示已配置的风控规则列表（如仓位限制、日亏损限制），
+       或熔断器状态面板。此截图为可选项——如果上面 5 张已经足够展示
+       系统能力，可以省略此张
+-->
+
+![Risk Control](docs/images/risk-control.png)
+
 ## Tech Stack
 
 | Layer | Technology |
