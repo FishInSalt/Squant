@@ -287,10 +287,10 @@ class TestOrderEventBuffering:
         # Buffer should be cleared
         assert engine._pending_order_events == []
 
-    async def test_process_candle_clears_buffer_even_on_callback_failure(
+    async def test_process_candle_retries_events_on_callback_failure(
         self, risk_config, mock_adapter
     ):
-        """Buffer should be cleared even if callback raises."""
+        """Buffer should be restored for retry if persist callback raises."""
         persist_cb = AsyncMock(side_effect=Exception("DB error"))
         engine = _make_engine(
             risk_config=risk_config,
@@ -319,8 +319,9 @@ class TestOrderEventBuffering:
             )
             await engine.process_candle(candle)
 
-        # Buffer cleared despite error
-        assert engine._pending_order_events == []
+        # Events restored for retry on next bar (F-10 fix)
+        assert len(engine._pending_order_events) == 1
+        assert engine._pending_order_events[0]["internal_id"] == "o1"
 
     async def test_no_flush_without_callback(self, risk_config, mock_adapter):
         """Without on_order_persist, pending events remain (no crash)."""
