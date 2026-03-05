@@ -2684,3 +2684,157 @@ class TestWsUpdateBuffering:
         # Should not raise
         engine_with_order._drain_ws_updates()
         assert len(engine_with_order._pending_ws_updates) == 0
+
+
+class TestTimedOutOrderReconciliation:
+    """Tests for R5-F3: timed-out order recovery via client_order_id."""
+
+    async def test_timeout_records_order_for_reconciliation(self, engine, mock_adapter):
+        """Test that order submission timeout adds order to _timed_out_orders."""
+        mock_adapter.place_order.side_effect = TimeoutError("timed out")
+
+        await engine.start()
+
+        # Create a pending order manually
+        engine._current_price = Decimal("45000")
+        engine._context.buy("BTC/USDT", Decimal("0.01"))
+        pending = engine._context._get_pending_orders()
+        assert len(pending) == 1
+
+        order = pending[0]
+        await engine._submit_order(order)
+
+        # Order should be in _timed_out_orders, NOT in _live_orders
+        assert order.id in engine._timed_out_orders
+        assert order.id not in engine._live_orders
+        # Order should NOT be marked REJECTED
+        assert order.status != OrderStatus.REJECTED
+
+    async def test_reconcile_recovers_order_found_on_exchange(self, engine, mock_adapter):
+        """Test that reconciliation recovers a timed-out order found on exchange."""
+        await engine.start()
+
+        # Simulate a timed-out order
+        engine._current_price = Decimal("45000")
+        engine._context.buy("BTC/USDT", Decimal("0.01"))
+        order = engine._context._get_pending_orders()[0]
+        engine._timed_out_orders[order.id] = order
+
+        # Exchange has this order (matched by client_order_id)
+        mock_adapter.get_open_orders.return_value = [
+            OrderResponse(
+                order_id="exchange-recovered-1",
+                client_order_id=order.id,
+                symbol="BTC/USDT",
+                side=OrderSide.BUY,
+                type=OrderType.MARKET,
+                status=OrderStatus.SUBMITTED,
+                amount=Decimal("0.01"),
+                filled=Decimal("0"),
+            )
+        ]
+
+        await engine._reconcile_timed_out_orders()
+
+        # Order should now be tracked as a live order
+        assert order.id in engine._live_orders
+        assert engine._live_orders[order.id].exchange_order_id == "exchange-recovered-1"
+        assert "exchange-recovered-1" in engine._exchange_order_map
+        # Should be removed from timed-out tracking
+        assert order.id not in engine._timed_out_orders
+
+    async def test_reconcile_marks_cancelled_when_not_on_exchange(self, engine, mock_adapter):
+        """Test that timed-out order not found on exchange is marked cancelled."""
+        await engine.start()
+
+        engine._current_price = Decimal("45000")
+        engine._context.buy("BTC/USDT", Decimal("0.01"))
+        order = engine._context._get_pending_orders()[0]
+        engine._timed_out_orders[order.id] = order
+
+        # Exchange has no matching orders
+        mock_adapter.get_open_orders.return_value = []
+
+        await engine._reconcile_timed_out_orders()
+
+        # Order should be marked cancelled and moved to completed
+        assert order.status == OrderStatus.CANCELLED
+        assert order.id not in engine._timed_out_orders
+        assert any(o.id == order.id for o in engine._context._completed_orders)
+
+    async def test_reconcile_processes_fills_for_recovered_order(self, engine, mock_adapter):
+        """Test that fills on recovered timed-out orders are processed."""
+        await engine.start()
+
+        engine._current_price = Decimal("45000")
+        engine._context.buy("BTC/USDT", Decimal("0.01"))
+        order = engine._context._get_pending_orders()[0]
+        engine._timed_out_orders[order.id] = order
+
+        # Exchange has this order already partially filled
+        mock_adapter.get_open_orders.return_value = [
+            OrderResponse(
+                order_id="exchange-recovered-2",
+                client_order_id=order.id,
+                symbol="BTC/USDT",
+                side=OrderSide.BUY,
+                type=OrderType.MARKET,
+                status=OrderStatus.PARTIAL,
+                amount=Decimal("0.01"),
+                filled=Decimal("0.005"),
+                avg_price=Decimal("45000"),
+                fee=Decimal("0.225"),
+                fee_currency="USDT",
+            )
+        ]
+
+        await engine._reconcile_timed_out_orders()
+
+        # Fill should have been processed
+        assert engine._live_orders[order.id].filled_amount == Decimal("0.005")
+        # Position should exist in context
+        pos = engine._context.get_position("BTC/USDT")
+        assert pos is not None and pos.amount > 0
+
+    async def test_timed_out_order_not_resubmitted(self, engine, mock_adapter):
+        """Test that orders in _timed_out_orders are not re-submitted."""
+        await engine.start()
+
+        engine._current_price = Decimal("45000")
+        engine._context.buy("BTC/USDT", Decimal("0.01"))
+        order = engine._context._get_pending_orders()[0]
+        # Simulate timeout
+        engine._timed_out_orders[order.id] = order
+
+        # Reset place_order call count
+        mock_adapter.place_order.reset_mock()
+
+        await engine._process_order_requests()
+
+        # Should NOT have attempted to submit the order again
+        mock_adapter.place_order.assert_not_called()
+
+    async def test_reconcile_noop_when_no_timed_out_orders(self, engine, mock_adapter):
+        """Test reconciliation is a no-op with no timed-out orders."""
+        await engine.start()
+
+        await engine._reconcile_timed_out_orders()
+
+        # get_open_orders should NOT be called
+        mock_adapter.get_open_orders.assert_not_called()
+
+    async def test_reconcile_handles_exchange_error_gracefully(self, engine, mock_adapter):
+        """Test reconciliation handles exchange errors without crashing."""
+        await engine.start()
+
+        engine._current_price = Decimal("45000")
+        engine._context.buy("BTC/USDT", Decimal("0.01"))
+        order = engine._context._get_pending_orders()[0]
+        engine._timed_out_orders[order.id] = order
+
+        mock_adapter.get_open_orders.side_effect = Exception("Network error")
+
+        await engine._reconcile_timed_out_orders()
+
+        # Order should remain in _timed_out_orders for next attempt
+        assert order.id in engine._timed_out_orders

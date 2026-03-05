@@ -260,6 +260,10 @@ class LiveTradingEngine:
         self._live_orders: dict[str, LiveOrder] = {}  # internal_id -> LiveOrder
         self._exchange_order_map: dict[str, str] = {}  # exchange_id -> internal_id
 
+        # Timed-out orders awaiting reconciliation (R5-F3)
+        # Maps client_order_id (= internal_id) -> SimulatedOrder reference
+        self._timed_out_orders: dict[str, Any] = {}
+
         # Pending order requests from strategy
         self._pending_order_requests: list[dict[str, Any]] = []
 
@@ -1269,6 +1273,113 @@ class LiveTradingEngine:
 
                 raise RuntimeError(msg)
 
+    async def _reconcile_timed_out_orders(self) -> None:
+        """Reconcile orders that timed out during submission (R5-F3).
+
+        Queries exchange open orders to find orders that were placed but whose
+        response was lost due to timeout. Matches by client_order_id. If found,
+        creates a LiveOrder and begins tracking. If not found, marks the order
+        as cancelled in the context so the strategy is notified.
+        """
+        if not self._timed_out_orders:
+            return
+
+        logger.info(
+            f"Reconciling {len(self._timed_out_orders)} timed-out orders "
+            f"via open orders query"
+        )
+
+        try:
+            open_orders = await self._adapter.get_open_orders(self._symbol)
+        except Exception as e:
+            logger.warning(f"Failed to fetch open orders for timeout reconciliation: {e}")
+            return
+
+        # Build lookup: client_order_id -> OrderResponse
+        exchange_by_client_id: dict[str, OrderResponse] = {}
+        for resp in open_orders:
+            if resp.client_order_id:
+                exchange_by_client_id[resp.client_order_id] = resp
+
+        reconciled: list[str] = []
+        for client_id, order in list(self._timed_out_orders.items()):
+            exchange_resp = exchange_by_client_id.get(client_id)
+            if exchange_resp:
+                # Order exists on exchange — create LiveOrder and track it
+                live_order = LiveOrder(
+                    internal_id=client_id,
+                    exchange_order_id=exchange_resp.order_id,
+                    symbol=order.symbol,
+                    side=order.side,
+                    order_type=order.type.value,
+                    amount=order.amount,
+                    price=order.price,
+                    status=exchange_resp.status,
+                )
+                live_order.filled_amount = exchange_resp.filled
+                live_order.avg_fill_price = exchange_resp.avg_price
+                live_order.fee = exchange_resp.fee or Decimal("0")
+                live_order.fee_currency = exchange_resp.fee_currency
+                live_order.created_at = exchange_resp.created_at or datetime.now(UTC)
+
+                self._live_orders[client_id] = live_order
+                self._exchange_order_map[exchange_resp.order_id] = client_id
+                order.status = exchange_resp.status
+
+                logger.info(
+                    f"Recovered timed-out order {client_id} -> "
+                    f"exchange:{exchange_resp.order_id} "
+                    f"status={exchange_resp.status.value}"
+                )
+
+                # Buffer "placed" event for audit persistence
+                self._pending_order_events.append({
+                    "type": "placed",
+                    "internal_id": client_id,
+                    "exchange_order_id": exchange_resp.order_id,
+                    "symbol": live_order.symbol,
+                    "side": live_order.side.value,
+                    "order_type": live_order.order_type,
+                    "amount": str(live_order.amount),
+                    "price": str(live_order.price) if live_order.price else None,
+                    "status": live_order.status.value,
+                    "created_at": live_order.created_at.isoformat()
+                    if live_order.created_at
+                    else datetime.now(UTC).isoformat(),
+                })
+
+                # Process any fills that already occurred
+                if exchange_resp.filled > Decimal("0") and exchange_resp.avg_price:
+                    had_open_trade = self._context._open_trade is not None
+                    cb_before = self._risk_manager.state.circuit_breaker_triggered
+                    self._record_fill(
+                        live_order, exchange_resp.avg_price, exchange_resp.filled,
+                        None, exchange_resp.fee or Decimal("0"), source="reconcile",
+                    )
+                    self._check_trade_completion(had_open_trade, cb_before, "reconcile")
+
+                reconciled.append(client_id)
+            else:
+                # Not in open orders — order was either never placed,
+                # already filled, or cancelled. Mark as cancelled in context
+                # so strategy gets notified via on_order_done.
+                logger.warning(
+                    f"Timed-out order {client_id} not found in open orders — "
+                    "marking as cancelled"
+                )
+                order.status = OrderStatus.CANCELLED
+                self._context._completed_orders.append(order)
+                self._context._total_completed_added += 1
+                if order in self._context._pending_orders:
+                    self._context._pending_orders.remove(order)
+                reconciled.append(client_id)
+
+        for client_id in reconciled:
+            del self._timed_out_orders[client_id]
+
+        if reconciled:
+            logger.info(f"Reconciled {len(reconciled)} timed-out orders")
+
     async def _sync_pending_orders(self) -> None:
         """Sync pending order status from exchange with rate limiting.
 
@@ -1276,6 +1387,9 @@ class LiveTradingEngine:
         to avoid excessive API calls. WebSocket updates handle most state changes,
         so polling is primarily a fallback for missed updates.
         """
+        # Reconcile timed-out orders first (R5-F3)
+        await self._reconcile_timed_out_orders()
+
         now = datetime.now(UTC)
         pending_internal_ids = [
             oid
@@ -1541,6 +1655,10 @@ class LiveTradingEngine:
             if order.id in self._live_orders:
                 continue
 
+            # Skip if awaiting timeout reconciliation (R5-F3)
+            if order.id in self._timed_out_orders:
+                continue
+
             # Validate against risk rules
             current_position = Decimal("0")
             pos = self._context.get_position(order.symbol)
@@ -1677,8 +1795,9 @@ class LiveTradingEngine:
                 "Order may have been placed — will reconcile on next sync."
             )
             # Do NOT mark as REJECTED — the order may be live on the exchange.
-            # Leave it in _pending_orders so _sync_pending_orders can find it
-            # via client_order_id on the next bar.
+            # Track by client_order_id so _reconcile_timed_out_orders can query
+            # the exchange and recover the order on the next bar (R5-F3).
+            self._timed_out_orders[order.id] = order
         except Exception as e:
             logger.exception(f"Failed to submit order {order.id}: {e}")
             # Mark as rejected
