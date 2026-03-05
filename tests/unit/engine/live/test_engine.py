@@ -3138,3 +3138,174 @@ class TestOrderTTLExpiry:
         await engine._expire_ttl_orders()
 
         assert live_order.bars_remaining == 0
+
+
+class TestFillPositionCashIntegration:
+    """End-to-end tests for _record_fill → _process_fill(force=True) verifying
+    exact position amount, cash, and fee changes after fills."""
+
+    @pytest.fixture
+    def engine_with_tracked_buy(self, engine):
+        """Engine with a tracked BUY order on the exchange."""
+        order = LiveOrder(
+            internal_id="buy-1",
+            exchange_order_id="exc-buy-1",
+            symbol="BTC/USDT",
+            side=OrderSide.BUY,
+            order_type="limit",
+            amount=Decimal("0.5"),
+            price=Decimal("40000"),
+            status=OrderStatus.SUBMITTED,
+        )
+        order.created_at = datetime(2025, 1, 1, tzinfo=UTC)
+        engine._live_orders["buy-1"] = order
+        engine._exchange_order_map["exc-buy-1"] = "buy-1"
+        return engine
+
+    @pytest.mark.asyncio
+    async def test_buy_fill_updates_position_and_cash(self, engine_with_tracked_buy, mock_adapter):
+        """BUY fill: position increases, cash decreases by (price * amount + fee)."""
+        engine = engine_with_tracked_buy
+        await engine.start()
+
+        initial_cash = engine._context._cash
+        live_order = engine._live_orders["buy-1"]
+
+        engine._record_fill(
+            live_order,
+            fill_price=Decimal("40000"),
+            fill_amount=Decimal("0.5"),
+            fee_delta=Decimal("10"),
+            total_fee=Decimal("10"),
+            source="poll",
+        )
+
+        # Position should be 0.5 BTC
+        pos = engine._context.get_position("BTC/USDT")
+        assert pos is not None
+        assert pos.amount == Decimal("0.5")
+
+        # Cash: initial - (40000 * 0.5 + 10) = initial - 20010
+        expected_cash = initial_cash - Decimal("20010")
+        assert engine._context._cash == expected_cash
+
+        # Fill recorded
+        assert len(engine._context.fills) == 1
+        assert engine._context.fills[0].fee == Decimal("10")
+
+        # Balance check triggered
+        assert engine._has_recent_fill is True
+
+    @pytest.mark.asyncio
+    async def test_sell_fill_updates_position_and_cash(self, engine_with_tracked_buy, mock_adapter):
+        """SELL fill: position decreases, cash increases by (price * amount - fee)."""
+        engine = engine_with_tracked_buy
+        await engine.start()
+
+        # First buy to establish position
+        buy_order = engine._live_orders["buy-1"]
+        engine._record_fill(
+            buy_order,
+            fill_price=Decimal("40000"),
+            fill_amount=Decimal("1.0"),
+            fee_delta=Decimal("20"),
+            total_fee=Decimal("20"),
+            source="poll",
+        )
+        cash_before_sell = engine._context._cash
+
+        # Create sell order
+        sell_order = LiveOrder(
+            internal_id="sell-1",
+            exchange_order_id="exc-sell-1",
+            symbol="BTC/USDT",
+            side=OrderSide.SELL,
+            order_type="limit",
+            amount=Decimal("0.5"),
+            price=Decimal("45000"),
+            status=OrderStatus.SUBMITTED,
+        )
+        engine._live_orders["sell-1"] = sell_order
+
+        engine._record_fill(
+            sell_order,
+            fill_price=Decimal("45000"),
+            fill_amount=Decimal("0.5"),
+            fee_delta=Decimal("11.25"),
+            total_fee=Decimal("11.25"),
+            source="poll",
+        )
+
+        # Position: 1.0 - 0.5 = 0.5
+        pos = engine._context.get_position("BTC/USDT")
+        assert pos.amount == Decimal("0.5")
+
+        # Cash: before + (45000 * 0.5 - 11.25) = before + 22488.75
+        expected_cash = cash_before_sell + Decimal("22488.75")
+        assert engine._context._cash == expected_cash
+
+    @pytest.mark.asyncio
+    async def test_partial_fills_accumulate_correctly(self, engine_with_tracked_buy, mock_adapter):
+        """Two partial fills should accumulate position and deduct cash correctly."""
+        engine = engine_with_tracked_buy
+        await engine.start()
+
+        initial_cash = engine._context._cash
+        live_order = engine._live_orders["buy-1"]
+
+        # First partial: 0.3 of 0.5
+        engine._record_fill(
+            live_order,
+            fill_price=Decimal("40000"),
+            fill_amount=Decimal("0.3"),
+            fee_delta=Decimal("6"),
+            total_fee=Decimal("6"),
+            source="ws",
+        )
+
+        pos = engine._context.get_position("BTC/USDT")
+        assert pos.amount == Decimal("0.3")
+        assert engine._context._cash == initial_cash - Decimal("12006")  # 40000*0.3+6
+
+        # Second partial: remaining 0.2 at slightly different price
+        engine._record_fill(
+            live_order,
+            fill_price=Decimal("40100"),
+            fill_amount=Decimal("0.2"),
+            fee_delta=Decimal("4"),
+            total_fee=Decimal("10"),
+            source="ws",
+        )
+
+        pos = engine._context.get_position("BTC/USDT")
+        assert pos.amount == Decimal("0.5")
+        # Additional cost: 40100*0.2+4 = 8024
+        assert engine._context._cash == initial_cash - Decimal("12006") - Decimal("8024")
+        assert len(engine._context.fills) == 2
+
+    @pytest.mark.asyncio
+    async def test_force_true_allows_negative_cash(self, engine_with_tracked_buy, mock_adapter):
+        """force=True allows fill recording even when cash goes deeply negative."""
+        engine = engine_with_tracked_buy
+        await engine.start()
+
+        # Deplete cash to near-zero
+        engine._context._cash = Decimal("1")
+
+        live_order = engine._live_orders["buy-1"]
+        engine._record_fill(
+            live_order,
+            fill_price=Decimal("40000"),
+            fill_amount=Decimal("0.5"),
+            fee_delta=Decimal("10"),
+            total_fee=Decimal("10"),
+            source="reconcile",
+        )
+
+        # Cash deeply negative: 1 - 20010 = -20009
+        assert engine._context._cash == Decimal("-20009")
+        # Position IS recorded despite negative cash
+        pos = engine._context.get_position("BTC/USDT")
+        assert pos.amount == Decimal("0.5")
+        # Audit event buffered
+        assert any(e["type"] == "fill" for e in engine._pending_order_events)
