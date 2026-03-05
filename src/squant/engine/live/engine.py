@@ -1581,6 +1581,11 @@ class LiveTradingEngine:
             logger.warning("Skipping order processing: circuit breaker triggered")
             return
 
+        # F-7: Per-bar order submission cap to prevent exchange rate limit bans.
+        # Strategies should not submit more than a handful of orders per bar.
+        max_orders_per_bar = 10
+        submitted_count = 0
+
         # Get pending orders from context that haven't been submitted
         for order in self._context._get_pending_orders():
             # Skip if already tracked as live order
@@ -1633,8 +1638,17 @@ class LiveTradingEngine:
                 )
                 continue
 
+            # F-7: enforce per-bar cap
+            if submitted_count >= max_orders_per_bar:
+                logger.warning(
+                    f"Per-bar order cap ({max_orders_per_bar}) reached, "
+                    f"deferring remaining orders to next bar"
+                )
+                break
+
             # Submit order to exchange
             await self._submit_order(order)
+            submitted_count += 1
 
     async def _submit_order(self, order: Any) -> None:
         """Submit order to exchange.
