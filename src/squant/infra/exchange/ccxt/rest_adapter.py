@@ -620,7 +620,7 @@ class CCXTRestAdapter(ExchangeAdapter):
             else None,
             change_24h=Decimal(str(change_24h)) if change_24h is not None else None,
             change_pct_24h=Decimal(str(change_pct_24h)) if change_pct_24h is not None else None,
-            timestamp=self._parse_timestamp(ticker.get("timestamp")),
+            timestamp=self._parse_timestamp(ticker.get("timestamp")) or datetime.now(UTC),
         )
 
     def _transform_order(self, order: dict[str, Any]) -> OrderResponse:

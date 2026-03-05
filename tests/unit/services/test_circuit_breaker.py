@@ -502,7 +502,6 @@ class TestCircuitBreakerBlocksNewSessions:
 
         with patch(
             "squant.infra.redis.get_redis_client",
-            new_callable=AsyncMock,
             return_value=mock_redis_active,
         ):
             with pytest.raises(CircuitBreakerActiveError) as exc_info:
@@ -544,7 +543,6 @@ class TestCircuitBreakerBlocksNewSessions:
             patch("squant.services.strategy.StrategyRepository") as mock_repo_class,
             patch(
                 "squant.infra.redis.get_redis_client",
-                new_callable=AsyncMock,
                 return_value=mock_redis_inactive,
             ),
         ):

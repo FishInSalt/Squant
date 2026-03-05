@@ -482,7 +482,7 @@ class LiveTradingService:
         from squant.infra.redis import get_redis_client
 
         try:
-            redis = await get_redis_client()
+            redis = get_redis_client()
             state_data = await redis.get("squant:circuit_breaker:state")
             if state_data:
                 state = json.loads(state_data)
@@ -760,7 +760,7 @@ class LiveTradingService:
 
                 from squant.infra.redis import get_redis_client
 
-                redis = await get_redis_client()
+                redis = get_redis_client()
                 channel = f"squant:ws:trading:{run_id}"
                 message = json.dumps(
                     {
