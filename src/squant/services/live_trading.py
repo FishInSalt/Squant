@@ -1364,6 +1364,9 @@ class LiveTradingService:
         engine.context._logs.clear()
         for entry in logs_snapshot:
             engine.context._logs.append(entry)
+        # Reset log counter to match restored logs — warmup incremented it
+        # via ctx.buy()/sell() → ctx.log(), causing a false delta on first emit.
+        engine.context._total_logs_added = len(logs_snapshot)
 
         logger.info(
             f"Warmup completed for live session {engine.run_id}: "
