@@ -1173,6 +1173,7 @@ class LiveTradingEngine:
             self._record_fill(
                 live_order, update.avg_price, fill_delta, fee_delta,
                 update.fee or Decimal("0"), source="ws",
+                exchange_timestamp=update.updated_at,
             )
             self._check_trade_completion(had_open_trade, circuit_breaker_before, "ws")
 
@@ -1355,6 +1356,7 @@ class LiveTradingEngine:
                     self._record_fill(
                         live_order, exchange_resp.avg_price, exchange_resp.filled,
                         None, exchange_resp.fee or Decimal("0"), source="reconcile",
+                        exchange_timestamp=exchange_resp.updated_at,
                     )
                     self._check_trade_completion(had_open_trade, cb_before, "reconcile")
 
@@ -1530,6 +1532,7 @@ class LiveTradingEngine:
             self._record_fill(
                 live_order, response.avg_price, fill_amount, fee_delta,
                 response.fee or Decimal("0"), source="poll",
+                exchange_timestamp=response.updated_at,
             )
             self._check_trade_completion(had_open_trade, circuit_breaker_before, "polling")
 
@@ -1541,6 +1544,7 @@ class LiveTradingEngine:
         fee_delta: Decimal | None,
         total_fee: Decimal,
         source: str,
+        exchange_timestamp: datetime | None = None,
     ) -> None:
         """Record an incremental fill from any source (WebSocket, polling, reconcile).
 
@@ -1554,6 +1558,8 @@ class LiveTradingEngine:
             fee_delta: Incremental fee, or None to use total_fee as fallback.
             total_fee: Total cumulative fee (used as fallback when fee_delta is None).
             source: Fill source identifier for audit trail ("ws", "poll", "reconcile").
+            exchange_timestamp: Exchange-reported fill time. Falls back to local
+                UTC time when not available (R5-F4).
         """
         if fill_price is None:
             return
@@ -1567,7 +1573,7 @@ class LiveTradingEngine:
             price=fill_price,
             amount=fill_amount,
             fee=fill_fee,
-            timestamp=datetime.now(UTC),
+            timestamp=exchange_timestamp or datetime.now(UTC),
         )
 
         # force=True: live fills are already executed on the exchange and must
@@ -1591,7 +1597,7 @@ class LiveTradingEngine:
             if live_order.avg_fill_price
             else None,
             "status": live_order.status.value,
-            "timestamp": datetime.now(UTC).isoformat(),
+            "timestamp": (exchange_timestamp or datetime.now(UTC)).isoformat(),
             "fill_source": source,
         })
 
