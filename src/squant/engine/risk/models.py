@@ -118,6 +118,7 @@ class RiskConfig(BaseModel):
     )
     circuit_breaker_loss_count: int = Field(
         default=5,
+        ge=1,
         description="Number of consecutive losses to trigger circuit breaker",
     )
     circuit_breaker_cooldown_minutes: int = Field(

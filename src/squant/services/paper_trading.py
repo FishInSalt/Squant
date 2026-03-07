@@ -500,19 +500,34 @@ class PaperTradingService:
     async def _check_circuit_breaker(self, redis: Any) -> None:
         """Check if circuit breaker is active and raise error if so.
 
+        If the cooldown period has expired, automatically clears the state
+        and allows trading to proceed.
+
         Args:
             redis: Redis client.
 
         Raises:
-            CircuitBreakerActiveError: If circuit breaker is active.
+            CircuitBreakerActiveError: If circuit breaker is active and cooldown not expired.
         """
         import json
+        from datetime import UTC, datetime
 
         try:
             state_data = await redis.get("squant:circuit_breaker:state")
             if state_data:
                 state = json.loads(state_data)
                 if state.get("is_active", False):
+                    # Check if cooldown has expired
+                    cooldown_until = state.get("cooldown_until")
+                    if cooldown_until:
+                        expiry = datetime.fromisoformat(cooldown_until)
+                        if expiry.tzinfo is None:
+                            expiry = expiry.replace(tzinfo=UTC)
+                        if datetime.now(UTC) >= expiry:
+                            # Cooldown expired — auto-clear state
+                            await redis.delete("squant:circuit_breaker:state")
+                            logger.info("Circuit breaker cooldown expired, auto-cleared")
+                            return
                     raise CircuitBreakerActiveError(state.get("trigger_reason"))
         except json.JSONDecodeError:
             pass  # Invalid state, allow trading

@@ -474,11 +474,13 @@ class LiveTradingService:
         """Check if circuit breaker is active and raise error if so.
 
         Fetches Redis client internally so callers never accidentally skip the check.
+        If the cooldown period has expired, automatically clears the state.
 
         Raises:
-            CircuitBreakerActiveError: If circuit breaker is active.
+            CircuitBreakerActiveError: If circuit breaker is active and cooldown not expired.
         """
         import json
+        from datetime import UTC, datetime
 
         from squant.infra.redis import get_redis_client
 
@@ -488,6 +490,16 @@ class LiveTradingService:
             if state_data:
                 state = json.loads(state_data)
                 if state.get("is_active", False):
+                    # Check if cooldown has expired
+                    cooldown_until = state.get("cooldown_until")
+                    if cooldown_until:
+                        expiry = datetime.fromisoformat(cooldown_until)
+                        if expiry.tzinfo is None:
+                            expiry = expiry.replace(tzinfo=UTC)
+                        if datetime.now(UTC) >= expiry:
+                            await redis.delete("squant:circuit_breaker:state")
+                            logger.info("Circuit breaker cooldown expired, auto-cleared")
+                            return
                     raise CircuitBreakerActiveError(state.get("trigger_reason"))
         except CircuitBreakerActiveError:
             raise
