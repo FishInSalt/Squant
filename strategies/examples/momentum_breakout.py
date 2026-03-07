@@ -45,7 +45,7 @@ class MomentumBreakoutStrategy(Strategy):  # noqa: F821
         ema_regime_period (int): 15m 环境 EMA 周期，默认 50
         position_size_pct (float): 每笔仓位占总资金比例，默认 0.04
         max_daily_trades (int): 日内最大交易次数，默认 15
-        pyramid_max (int): 最大加仓次数，默认 2（初始 + 1次加仓）
+        pyramid_max (int): 最大加仓次数，默认 1（最多加仓 1 次）
         stop_loss_atr_mult (float): 止损 ATR 倍数，默认 1.5
         take_profit_atr_mult (float): 止盈 ATR 倍数，默认 3.5
         trailing_stop_atr_mult (float): 追踪止损 ATR 倍数，默认 1.0
@@ -77,7 +77,7 @@ class MomentumBreakoutStrategy(Strategy):  # noqa: F821
         # 仓位管理
         self.position_size_pct = Decimal(str(self.ctx.params.get("position_size_pct", 0.04)))
         self.max_daily_trades = self.ctx.params.get("max_daily_trades", 15)
-        self.pyramid_max = self.ctx.params.get("pyramid_max", 2)
+        self.pyramid_max = self.ctx.params.get("pyramid_max", 1)
 
         # ATR 出场倍数
         self.sl_atr_mult = Decimal(str(self.ctx.params.get("stop_loss_atr_mult", 1.5)))
@@ -241,9 +241,10 @@ class MomentumBreakoutStrategy(Strategy):  # noqa: F821
                 else:
                     exit_reason = f"趋势翻转平仓 5m={htf_bias} PnL={pnl_pct:.4%}"
 
-            # 3. 保本止损：盈利达 breakeven_atr 倍 ATR 后，止损移至成本价
+            # 3. 保本止损：盈利达 breakeven_atr 倍 ATR 后，止损移至成本价 + $0.5
             if exit_reason is None and pnl >= self.breakeven_atr * atr_val:
-                self.trailing_stop = max(self.trailing_stop, entry_price)
+                breakeven_price = entry_price + Decimal("0.5")
+                self.trailing_stop = max(self.trailing_stop, breakeven_price)
 
             # 4. 追踪止损（ATR 动态）
             if exit_reason is None:
