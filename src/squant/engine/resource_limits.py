@@ -143,7 +143,6 @@ def resource_limiter(
             logger.warning(f"Cannot set memory limit: {e}")
 
         limits_set = True
-        logger.debug(f"Resource limits set: CPU={cpu_seconds}s, memory={memory_mb}MB")
 
         yield
 
