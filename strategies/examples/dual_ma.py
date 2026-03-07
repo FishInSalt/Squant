@@ -8,11 +8,12 @@
 - Bar: K线数据 (time, symbol, open, high, low, close, volume)
 - Position: 持仓信息 (symbol, amount, avg_entry_price)
 - OrderSide / OrderType: 订单方向与类型枚举
-- Fill: 成交回报 (symbol, side, price, amount, fee, pnl, ...)
-- OrderStatus: 订单状态枚举 (PENDING, FILLED, CANCELLED, EXPIRED)
+- Fill: 成交回报 (order_id, symbol, side, price, amount, fee, timestamp)
+- OrderStatus: 订单状态枚举 (PENDING, FILLED, PARTIAL, CANCELLED)
 - ta: 内置技术指标模块 (sma, ema, rsi, macd, bollinger_bands, atr, ...)
 - Decimal: 精确小数计算
 - math: 数学函数模块
+- statistics: 统计函数模块 (mean, median, stdev, variance, ...)
 
 策略参数通过 self.ctx.params.get(key, default) 获取。
 """

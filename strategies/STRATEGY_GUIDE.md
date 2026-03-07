@@ -81,7 +81,7 @@ class MyStrategy(Strategy):
         - 根据成交结果调整策略状态
 
         order 对象属性：id, symbol, side, type, amount, price, stop_price,
-                       status, filled_amount, filled_price, filled_at
+                       status, filled, avg_fill_price, filled_at
         """
         pass
 
@@ -151,6 +151,29 @@ class MinimalStrategy(Strategy):
 ```
 
 **与回测的区别**：模拟交易使用实时行情的 bid/ask 价差来成交，更贴近实盘。
+
+### 实盘交易模式（仅收盘K线）
+
+```
+仅在K线收盘时：
+  1. 设置当前K线
+  2. 排空 WebSocket 订单更新缓冲区（处理交易所推送的成交/状态变更）
+  3. 从交易所同步余额（监控用）
+  4. 从交易所同步待处理订单状态（轮询 + 超时调和）
+  5. 过期检查 → 调用交易所取消订单
+  6. 风险管理检查（总亏损超限则自动停止引擎）
+  7. 记录权益快照
+  8. 回调通知：on_fill → on_order_done
+  9. 调用 strategy.on_bar(bar)
+  10. 处理策略提交的订单请求 → 风险验证 → 提交交易所
+  11. 持久化状态
+```
+
+**与模拟交易的区别**：
+- 只处理收盘K线（未收盘K线更新被忽略）
+- 订单通过真实交易所执行，不进行本地撮合
+- 手续费和成交价来自交易所实际数据
+- 支持 Dead Man's Switch（引擎崩溃后自动撤销所有订单）
 
 ---
 
@@ -439,6 +462,7 @@ if order:
     # order.filled        — 已成交数量
     # order.remaining     — 未成交数量 (= amount - filled)
     # order.avg_fill_price — 成交均价
+    # order.triggered     — STOP_LIMIT 是否已触发 (bool)
     # order.bars_remaining — 剩余有效K线数 (None=GTC)
     # order.is_complete   — 是否已结束 (filled 或 cancelled)
 ```
@@ -683,7 +707,7 @@ def on_order_done(self, order):
     - order.id: 订单 ID
     - order.status: OrderStatus.FILLED 或 OrderStatus.CANCELLED
     - order.symbol, order.side, order.type
-    - order.filled_amount, order.filled_price, order.filled_at
+    - order.filled, order.avg_fill_price, order.filled_at
     """
     # 示例：OCO 管理 — 一侧完成后取消另一侧
     # 注意：回调内 cancel_order 的目标订单不会在本轮触发 on_order_done，
@@ -705,8 +729,6 @@ def on_order_done(self, order):
 - **回调内 `cancel_order()` 的关键限制**：在 `on_order_done` 中取消的订单，
   其 `on_order_done` **不会**在本轮触发（回调列表在循环前已固定）。
   因此在取消对侧订单时，**必须同步清理本地 ID**，否则策略状态会卡死
-- RestrictedPython 限制：不能使用 `+=` 等增量赋值，需写成 `self.x = self.x + 1`
-
 ---
 
 ## 12. 成交价格机制
@@ -934,13 +956,13 @@ class StopLossStrategy(Strategy):
                 if self.tp_order_id:
                     self.ctx.cancel_order(self.tp_order_id)
                     self.tp_order_id = None
-                self.ctx.log(f"止损触发 @ {order.filled_price}")
+                self.ctx.log(f"止损触发 @ {order.avg_fill_price}")
             elif order.id == self.tp_order_id:
                 self.tp_order_id = None
                 if self.stop_order_id:
                     self.ctx.cancel_order(self.stop_order_id)
                     self.stop_order_id = None
-                self.ctx.log(f"止盈触发 @ {order.filled_price}")
+                self.ctx.log(f"止盈触发 @ {order.avg_fill_price}")
         elif order.id == self.stop_order_id:
             self.stop_order_id = None
         elif order.id == self.tp_order_id:
@@ -1253,7 +1275,7 @@ class EMATrailingStrategy(Strategy):
         """止损触发后重置状态。"""
         if order.id == self.stop_order_id:
             if order.status == OrderStatus.FILLED:
-                self.ctx.log(f"止损触发 @ {order.filled_price}")
+                self.ctx.log(f"止损触发 @ {order.avg_fill_price}")
             self.stop_order_id = None
             self.highest_since_entry = None
 
