@@ -172,11 +172,14 @@ class BacktestRunner:
     def _setup(self) -> None:
         """Setup backtest components."""
         # Initialize context
+        from squant.config import get_settings
+
         self._context = BacktestContext(
             initial_capital=self.initial_capital,
             commission_rate=self.commission_rate,
             slippage=self.slippage,
             params=self.params,
+            max_bar_history=get_settings().strategy.max_bar_history,
         )
 
         # Initialize matching engine

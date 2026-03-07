@@ -147,6 +147,7 @@ class PaperTradingEngine:
             commission_rate=commission_rate,
             slippage=slippage,
             params=params,
+            max_bar_history=settings.strategy.max_bar_history,
             max_equity_curve=settings.paper_max_equity_curve_size,
             max_completed_orders=settings.paper_max_completed_orders,
             max_fills=settings.paper_max_fills,

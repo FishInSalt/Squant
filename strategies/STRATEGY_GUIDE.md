@@ -278,6 +278,16 @@ def on_bar(self, bar):
 | `ta.lowest` | `(data, period)` | `Decimal \| None` | 区间最低值 |
 | `ta.crossover` | `(fast, slow)` | `bool` | 快线上穿慢线 |
 | `ta.crossunder` | `(fast, slow)` | `bool` | 快线下穿慢线 |
+| `ta.vwap` | `(highs, lows, closes, volumes, period=None)` | `Decimal \| None` | 成交量加权平均价 |
+| `ta.stochastic` | `(highs, lows, closes, k_period=14, d_period=3)` | `tuple \| None` | 随机震荡指标 (%K, %D) |
+| `ta.williams_r` | `(highs, lows, closes, period=14)` | `Decimal \| None` | 威廉指标 (-100~0) |
+| `ta.roc` | `(data, period=12)` | `Decimal \| None` | 变化率 (%) |
+| `ta.obv` | `(closes, volumes)` | `Decimal \| None` | 能量潮 |
+| `ta.keltner_channels` | `(highs, lows, closes, ema_period=20, atr_period=10, multiplier=1.5)` | `tuple \| None` | 肯特纳通道 (upper, middle, lower) |
+| `ta.adx` | `(highs, lows, closes, period=14)` | `Decimal \| None` | 平均方向指数 (0-100) |
+| `ta.cci` | `(highs, lows, closes, period=20)` | `Decimal \| None` | 商品通道指数 |
+| `ta.mfi` | `(highs, lows, closes, volumes, period=14)` | `Decimal \| None` | 资金流量指数 (0-100) |
+| `ta.donchian_channels` | `(highs, lows, period=20)` | `tuple \| None` | 唐奇安通道 (upper, middle, lower) |
 
 ### 使用示例
 
@@ -330,6 +340,46 @@ class TADemoStrategy(Strategy):
                 self.ctx.close_position(bar.symbol)
 ```
 
+### 日内指标示例
+
+```python
+class IntradayStrategy(Strategy):
+    def on_bar(self, bar):
+        highs = self.ctx.get_highs(30)
+        lows = self.ctx.get_lows(30)
+        closes = self.ctx.get_closes(30)
+        volumes = self.ctx.get_volumes(30)
+        if len(closes) < 20:
+            return
+
+        # VWAP — 日内均价参考
+        vwap_val = ta.vwap(highs, lows, closes, volumes)
+
+        # 随机震荡指标
+        stoch = ta.stochastic(highs, lows, closes)
+        if stoch is not None:
+            k, d = stoch
+            if k < Decimal("20") and d < Decimal("20"):
+                self.ctx.log("随机指标超卖")
+
+        # 唐奇安通道突破
+        dc = ta.donchian_channels(highs, lows, 20)
+        if dc is not None:
+            upper, middle, lower = dc
+            if bar.close > upper:
+                self.ctx.log("突破唐奇安上轨")
+
+        # ADX 趋势强度
+        adx_val = ta.adx(highs, lows, closes)
+        if adx_val is not None and adx_val > Decimal("25"):
+            self.ctx.log(f"趋势较强 ADX={adx_val:.1f}")
+
+        # 资金流量指数
+        mfi_val = ta.mfi(highs, lows, closes, volumes)
+        if mfi_val is not None and mfi_val > Decimal("80"):
+            self.ctx.log("MFI 超买")
+```
+
 ### 注意事项
 
 - **数据不足时返回 None**：所有指标在数据不足时返回 `None`，务必检查。
@@ -337,6 +387,7 @@ class TADemoStrategy(Strategy):
 - **ATR 需要三个序列**：`ta.atr()` 需要分别传入 highs、lows、closes。
 - **MACD 需要较多数据**：默认参数 `(12, 26, 9)` 至少需要 34 根K线。
 - **crossover/crossunder 需要序列**：传入至少 2 个值的列表，用于比较相邻两期。
+- **max_bar_history 配置**：策略可通过 `get_closes()` 等获取的最大历史长度由环境变量 `STRATEGY_MAX_BAR_HISTORY` 控制（默认 1000，1m 策略建议设为 1500+ 以支持 24h VWAP）。
 
 ---
 

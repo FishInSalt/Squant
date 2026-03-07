@@ -207,6 +207,12 @@ class StrategySettings(BaseSettings):
         default=60, ge=1, description="CPU time limit per execution (seconds)"
     )
     sandbox_enabled: bool = Field(default=True, description="Enable RestrictedPython sandbox")
+    max_bar_history: int = Field(
+        default=1000,
+        ge=100,
+        le=50000,
+        description="Max bars kept in strategy context history (affects get_closes() etc.)",
+    )
 
 
 class RiskSettings(BaseSettings):
