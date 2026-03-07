@@ -235,7 +235,7 @@ watch(() => props.data, (newData) => {
   }
 }, { deep: true })
 
-watch(() => props.indicators, (newIndicators, oldIndicators) => {
+watch(() => [...props.indicators], (newIndicators, oldIndicators) => {
   if (!chart) return
 
   const oldSet = new Set(oldIndicators || [])
@@ -256,7 +256,7 @@ watch(() => props.indicators, (newIndicators, oldIndicators) => {
       addIndicator(indicator)
     }
   })
-}, { deep: true })
+})
 
 watch(computedHeight, () => {
   nextTick(() => chart?.resize())
