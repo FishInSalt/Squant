@@ -37,7 +37,7 @@ migrate() {
 # 启动后端开发服务器
 run_backend() {
     log_info "Starting backend development server..."
-    uv run uvicorn squant.main:app --reload --host 0.0.0.0 --port 8000
+    uv run uvicorn squant.main:app --reload --host 0.0.0.0 --port 8000 --timeout-keep-alive 30
 }
 
 # 启动前端开发服务器

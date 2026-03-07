@@ -193,6 +193,7 @@ cmd_start() {
         --host "$HOST" \
         --port "$PORT" \
         --reload \
+        --timeout-keep-alive 30 \
         < /dev/null >> "$LOG_FILE" 2>&1 &
 
     local new_pid=$!

@@ -257,6 +257,12 @@ def create_app() -> FastAPI:
             "CORS allow_origins=['*'] — debug mode is ON. "
             "Do NOT use debug=True in production."
         )
+    # GZip compression — reduces large JSON responses (backtest results, equity curves)
+    # by ~70-80%, preventing ERR_CONTENT_LENGTH_MISMATCH in DevContainer proxy chains.
+    from starlette.middleware.gzip import GZipMiddleware
+
+    app.add_middleware(GZipMiddleware, minimum_size=1000)
+
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["*"] if settings.debug else settings.allowed_origins,
