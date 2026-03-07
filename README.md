@@ -33,38 +33,38 @@
 
 ### Market Overview — 行情总览
 
-<!-- 截图：docs/images/market-overview.png
+<!-- 截图：docs/images/market.gif
   页面：/market/hot
   内容：展示多个交易对的实时行情列表，包含价格、24h涨跌幅、成交量等列
   要点：确保列表中有 10+ 个交易对，涨跌互现（红绿交替），体现数据丰富度
 -->
 
-![Market Overview](docs/images/market-overview.png)
+![Market Overview](docs/images/market.gif)
 
 ### K-Line Chart — K线图表
 
-<!-- 截图：docs/images/kline-chart.png
+<!-- 截图：docs/images/kline-chart.gif
   页面：/market/chart/{exchange}/{symbol}（如 /market/chart/okx/BTC-USDT）
   内容：完整的K线图表页面，展示蜡烛图、成交量柱状图、技术指标叠加
   要点：选择 BTC/USDT 1h 周期，确保图表有足够多的K线（100+根），
        如果支持指标叠加（MA/BOLL等）请开启展示
 -->
 
-![K-Line Chart](docs/images/kline-chart.png)
+![K-Line Chart](docs/images/kline-chart.gif)
 
 ### Strategy Editor — 策略编辑
 
-<!-- 截图：docs/images/strategy-editor.png
+<!-- 截图：docs/images/strategy-editor.gif
   页面：/strategy/{id}（选择一个已有策略如双均线策略）
   内容：策略代码编辑器页面，展示 Monaco Editor 中的 Python 策略代码
   要点：确保代码区域可见且有语法高亮，如有参数配置面板也一并截入
 -->
 
-![Strategy Editor](docs/images/strategy-editor.png)
+![Strategy Editor](docs/images/strategy-editor.gif)
 
 ### Backtest Results — 回测结果
 
-<!-- 截图：docs/images/backtest-result.png
+<!-- 截图：docs/images/backtest-result.gif
   页面：/trading/backtest/{id}/result
   内容：回测完成后的结果页面，包含权益曲线图、绩效指标（收益率、夏普比率、
        最大回撤等）、交易记录列表
@@ -74,18 +74,18 @@
        3. 如果页面较长，可以截全页或分两张图（概览 + 交易明细）
 -->
 
-![Backtest Results](docs/images/backtest-result.png)
+![Backtest Results](docs/images/backtest-result.gif)
 
 ### Trading Monitor — 交易监控
 
-<!-- 截图：docs/images/trading-monitor.png
+<!-- 截图：docs/images/trading-monitor.gif
   页面：/trading/monitor/{type}/{id}（模拟交易或实盘的会话详情页）
   内容：实时交易监控面板，展示当前持仓、挂单、实时权益曲线、策略日志
   要点：优先使用模拟交易(paper)的会话，确保有至少一个持仓和几条交易记录，
        实时权益曲线区域可见。如果没有活跃会话，也可用已完成的会话截图
 -->
 
-![Trading Monitor](docs/images/trading-monitor.png)
+![Trading Monitor](docs/images/trading-monitor.gif)
 
 ### Risk Control — 风控中心
 
