@@ -5937,6 +5937,13 @@
               }
             ],
             "title": "Total Bars"
+          },
+          "logs": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Logs"
           }
         },
         "type": "object",

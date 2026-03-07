@@ -3125,6 +3125,8 @@ export interface components {
             fills?: components["schemas"]["FillRecordResponse"][];
             /** Total Bars */
             total_bars?: number | null;
+            /** Logs */
+            logs?: string[];
         };
         /**
          * BacktestListItem
