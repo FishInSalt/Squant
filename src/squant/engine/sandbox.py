@@ -13,6 +13,7 @@ from RestrictedPython import PrintCollector, compile_restricted, safe_builtins
 from RestrictedPython.Eval import default_guarded_getiter
 from RestrictedPython.Guards import (
     guarded_iter_unpack_sequence,
+    guarded_unpack_sequence,
     safer_getattr,
 )
 
@@ -504,6 +505,7 @@ def _build_restricted_globals() -> dict[str, Any]:
         "_getattr_": safer_getattr,
         "_getiter_": default_guarded_getiter,
         "_iter_unpack_sequence_": guarded_iter_unpack_sequence,
+        "_unpack_sequence_": guarded_unpack_sequence,
         # PrintCollector: collects print() output safely instead of writing to stdout
         "_print_": PrintCollector,
         "_getitem_": _guarded_getitem,
