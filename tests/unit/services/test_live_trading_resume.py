@@ -231,6 +231,7 @@ class TestBuildResultForPersistence:
             paper_max_fills=100,
             paper_max_trades=100,
             paper_max_logs=100,
+            strategy=MagicMock(max_bar_history=1000),
         )
 
         class DummyStrategy(Strategy):
@@ -294,6 +295,7 @@ class TestDeltaCounterSync:
             paper_max_fills=100,
             paper_max_trades=100,
             paper_max_logs=100,
+            strategy=MagicMock(max_bar_history=1000),
         )
 
         class DummyStrategy(Strategy):
@@ -364,6 +366,7 @@ class TestRestoreLiveOrders:
             paper_max_fills=100,
             paper_max_trades=100,
             paper_max_logs=100,
+            strategy=MagicMock(max_bar_history=1000),
         )
 
         class DummyStrategy(Strategy):
@@ -439,6 +442,7 @@ class TestRestoreLiveOrders:
             paper_max_fills=100,
             paper_max_trades=100,
             paper_max_logs=100,
+            strategy=MagicMock(max_bar_history=1000),
         )
 
         class DummyStrategy(Strategy):

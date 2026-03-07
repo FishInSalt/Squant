@@ -152,6 +152,7 @@ def engine(run_id, strategy, risk_config, mock_adapter):
         settings.paper_max_fills = 1000
         settings.paper_max_trades = 1000
         settings.paper_max_logs = 1000
+        settings.strategy.max_bar_history = 1000
         mock_settings.return_value = settings
 
         return LiveTradingEngine(
@@ -544,6 +545,7 @@ class TestRiskValidation:
             settings.paper_max_fills = 1000
             settings.paper_max_trades = 1000
             settings.paper_max_logs = 1000
+            settings.strategy.max_bar_history = 1000
             mock_settings.return_value = settings
 
             engine = LiveTradingEngine(
@@ -1369,6 +1371,7 @@ class TestCircuitBreakerIntegration:
             settings.paper_max_fills = 1000
             settings.paper_max_trades = 1000
             settings.paper_max_logs = 1000
+            settings.strategy.max_bar_history = 1000
             mock_settings.return_value = settings
 
             return LiveTradingEngine(

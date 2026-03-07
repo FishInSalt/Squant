@@ -105,7 +105,7 @@ def macd(
     Returns:
         Tuple of (macd_line, signal_line, histogram), or None if insufficient data.
     """
-    if len(data) < slow + signal - 1 or fast <= 0 or slow <= 0 or signal <= 0:
+    if len(data) < slow + signal - 1 or fast <= 0 or slow <= 0 or signal <= 0 or fast >= slow:
         return None
 
     k_fast = Decimal("2") / Decimal(str(fast + 1))

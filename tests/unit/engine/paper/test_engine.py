@@ -1238,6 +1238,7 @@ class TestDeadlockFix:
             settings.paper_max_fills = 1000
             settings.paper_max_trades = 1000
             settings.paper_max_logs = 1000
+            settings.strategy.max_bar_history = 1000
             settings.strategy.cpu_limit_seconds = 5
             settings.strategy.memory_limit_mb = 256
             mock_settings.return_value = settings

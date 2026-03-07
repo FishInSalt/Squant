@@ -56,6 +56,7 @@ def _create_engine(
         settings.paper_max_fills = 5000
         settings.paper_max_trades = 1000
         settings.paper_max_logs = 500
+        settings.strategy.max_bar_history = 1000
         mock_settings.return_value = settings
 
         return PaperTradingEngine(
@@ -482,6 +483,7 @@ class TestTradeCompletionDetection:
             settings.paper_max_fills = 5000
             settings.paper_max_trades = 3  # Very small to trigger maxlen quickly
             settings.paper_max_logs = 500
+            settings.strategy.max_bar_history = 1000
             mock_settings.return_value = settings
 
             engine = PaperTradingEngine(
