@@ -1,0 +1,121 @@
+# 本地部署 Docker Compose (无 Caddy，直接暴露服务)
+# 使用方式: docker compose -f docker-compose.local.yml up -d
+
+services:
+  # PostgreSQL + TimescaleDB
+  postgres:
+    image: timescale/timescaledb:latest-pg16
+    container_name: squant-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${DB_USER:-squant}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-squant123}
+      POSTGRES_DB: ${DB_NAME:-squant}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./scripts/init-db.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    ports:
+      - "127.0.0.1:5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-squant} -d ${DB_NAME:-squant}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - squant-network
+
+  # Redis
+  redis:
+    image: redis:7-alpine
+    container_name: squant-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    ports:
+      - "127.0.0.1:6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - squant-network
+
+  # Backend API
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: production
+    container_name: squant-backend
+    init: true
+    restart: unless-stopped
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://${DB_USER:-squant}:${DB_PASSWORD:-squant123}@postgres:5432/${DB_NAME:-squant}
+      - REDIS_URL=redis://redis:6379/0
+      - SECRET_KEY=${SECRET_KEY:-your-secret-key-change-in-production}
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY:-}
+    volumes:
+      - strategy_files:/app/strategies
+      - logs:/app/logs
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - squant-network
+
+  # Frontend (Nginx + Vue)
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      target: production
+    container_name: squant-frontend
+    restart: unless-stopped
+    ports:
+      - "3000:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - squant-network
+
+  # Nginx 反向代理 (整合前后端)
+  nginx:
+    image: nginx:alpine
+    container_name: squant-nginx
+    restart: unless-stopped
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+      - frontend
+    networks:
+      - squant-network
+
+volumes:
+  postgres_data:
+  redis_data:
+  strategy_files:
+  logs:
+
+networks:
+  squant-network:
+    driver: bridge

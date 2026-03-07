@@ -1,0 +1,423 @@
+"""Session manager for paper trading engines.
+
+Manages all active paper trading sessions and handles candle and ticker distribution.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+from typing import TYPE_CHECKING
+from uuid import UUID
+
+if TYPE_CHECKING:
+    from squant.engine.paper.engine import PaperTradingEngine
+    from squant.infra.exchange.okx.ws_types import WSCandle, WSTicker
+
+logger = logging.getLogger(__name__)
+
+
+class SessionManager:
+    """Manages all active paper trading sessions.
+
+    This is a singleton that:
+    - Tracks all running paper trading engines
+    - Routes candle and ticker data to relevant engines
+    - Handles graceful shutdown of all sessions
+    """
+
+    def __init__(self) -> None:
+        """Initialize session manager."""
+        # Active sessions: run_id -> engine
+        self._sessions: dict[UUID, PaperTradingEngine] = {}
+
+        # Subscription tracking: (symbol, timeframe) -> set of run_ids
+        self._subscriptions: dict[tuple[str, str], set[UUID]] = {}
+
+        # Ticker subscription tracking: symbol -> set of run_ids
+        self._ticker_subscriptions: dict[str, set[UUID]] = {}
+
+        # Lock for thread-safe operations
+        self._lock = asyncio.Lock()
+
+        # Consecutive dispatch error tracking per session (PP-H02)
+        self._consecutive_errors: dict[UUID, int] = {}
+        self._dispatch_error_threshold: int = 5
+
+    @property
+    def session_count(self) -> int:
+        """Get number of active sessions."""
+        return len(self._sessions)
+
+    async def register(self, engine: PaperTradingEngine) -> None:
+        """Register a new paper trading engine.
+
+        Args:
+            engine: Paper trading engine to register.
+        """
+        async with self._lock:
+            run_id = engine.run_id
+            key = (engine.symbol, engine.timeframe)
+
+            if run_id in self._sessions:
+                logger.warning(f"Engine {run_id} already registered")
+                return
+
+            self._sessions[run_id] = engine
+
+            # Track candle subscription
+            if key not in self._subscriptions:
+                self._subscriptions[key] = set()
+            self._subscriptions[key].add(run_id)
+
+            # Track ticker subscription (by symbol only)
+            symbol = engine.symbol
+            if symbol not in self._ticker_subscriptions:
+                self._ticker_subscriptions[symbol] = set()
+            self._ticker_subscriptions[symbol].add(run_id)
+
+            logger.info(
+                f"Registered engine {run_id} for {engine.symbol}:{engine.timeframe}, "
+                f"total sessions: {len(self._sessions)}"
+            )
+
+    async def unregister(self, run_id: UUID) -> None:
+        """Unregister a paper trading engine.
+
+        Args:
+            run_id: Run ID of the engine to unregister.
+        """
+        async with self._lock:
+            engine = self._sessions.pop(run_id, None)
+            if engine is None:
+                logger.warning(f"Engine {run_id} not found for unregistration")
+                return
+
+            # Remove from subscription tracking
+            key = (engine.symbol, engine.timeframe)
+            if key in self._subscriptions:
+                self._subscriptions[key].discard(run_id)
+                if not self._subscriptions[key]:
+                    del self._subscriptions[key]
+
+            # Remove from ticker subscription tracking
+            symbol = engine.symbol
+            if symbol in self._ticker_subscriptions:
+                self._ticker_subscriptions[symbol].discard(run_id)
+                if not self._ticker_subscriptions[symbol]:
+                    del self._ticker_subscriptions[symbol]
+
+            # Clean up error tracking (PP-H02)
+            self._consecutive_errors.pop(run_id, None)
+
+            logger.info(f"Unregistered engine {run_id}, remaining sessions: {len(self._sessions)}")
+
+    async def unregister_and_check_subscription(self, run_id: UUID) -> tuple[str, str] | None:
+        """Unregister an engine and atomically check if subscription can be removed.
+
+        This is an atomic operation that prevents race conditions between
+        unregistering a session and checking if other sessions need the subscription.
+
+        Args:
+            run_id: Run ID of the engine to unregister.
+
+        Returns:
+            Tuple of (symbol, timeframe) if subscription should be removed,
+            None if other sessions still need it or engine not found.
+        """
+        async with self._lock:
+            engine = self._sessions.pop(run_id, None)
+            if engine is None:
+                logger.warning(f"Engine {run_id} not found for unregistration")
+                return None
+
+            key = (engine.symbol, engine.timeframe)
+
+            # Remove from ticker subscription tracking
+            symbol = engine.symbol
+            if symbol in self._ticker_subscriptions:
+                self._ticker_subscriptions[symbol].discard(run_id)
+                if not self._ticker_subscriptions[symbol]:
+                    del self._ticker_subscriptions[symbol]
+
+            # Remove from candle subscription tracking
+            if key in self._subscriptions:
+                self._subscriptions[key].discard(run_id)
+                if not self._subscriptions[key]:
+                    # No other sessions need this subscription
+                    del self._subscriptions[key]
+                    # Clean up error tracking (PP-H02)
+                    self._consecutive_errors.pop(run_id, None)
+                    logger.info(f"Unregistered engine {run_id}, subscription {key} can be removed")
+                    return key
+                else:
+                    logger.info(
+                        f"Unregistered engine {run_id}, "
+                        f"subscription {key} still needed by {len(self._subscriptions[key])} sessions"
+                    )
+                    # Clean up error tracking (PP-H02)
+                    self._consecutive_errors.pop(run_id, None)
+                    return None
+
+            # Clean up error tracking (PP-H02)
+            self._consecutive_errors.pop(run_id, None)
+            logger.info(f"Unregistered engine {run_id}, remaining sessions: {len(self._sessions)}")
+            return None
+
+    def get(self, run_id: UUID) -> PaperTradingEngine | None:
+        """Get a paper trading engine by run ID.
+
+        Args:
+            run_id: Run ID to look up.
+
+        Returns:
+            Engine if found, None otherwise.
+        """
+        return self._sessions.get(run_id)
+
+    def list_sessions(self) -> list[dict]:
+        """List all active sessions.
+
+        Returns:
+            List of session state snapshots.
+        """
+        return [engine.get_state_snapshot() for engine in self._sessions.values()]
+
+    async def dispatch_candle(self, candle: WSCandle) -> None:
+        """Dispatch a candle to all subscribed engines concurrently.
+
+        Uses asyncio.gather() so a slow strategy in one session does not
+        block other sessions subscribed to the same symbol/timeframe.
+
+        Args:
+            candle: WebSocket candle data.
+        """
+        key = (candle.symbol, candle.timeframe)
+
+        # Get subscribed run IDs (snapshot to avoid holding lock during processing)
+        async with self._lock:
+            run_ids = self._subscriptions.get(key, set()).copy()
+
+        if not run_ids:
+            return
+
+        # Build list of (run_id, engine) pairs to dispatch to
+        targets: list[tuple[UUID, PaperTradingEngine]] = []
+        for run_id in run_ids:
+            engine = self._sessions.get(run_id)
+            if engine and engine.is_running:
+                targets.append((run_id, engine))
+
+        if not targets:
+            return
+
+        async def _dispatch_one(
+            run_id: UUID, engine: PaperTradingEngine
+        ) -> tuple[UUID, BaseException | None]:
+            """Process a candle for a single engine, returning any error.
+
+            Catches BaseException (not just Exception) so that
+            asyncio.CancelledError from one engine does not cascade-cancel
+            all sibling engines via asyncio.gather().
+            """
+            try:
+                await engine.process_candle(candle)
+                return (run_id, None)
+            except BaseException as e:
+                logger.exception(f"Error dispatching candle to engine {run_id}: {e}")
+                return (run_id, e)
+
+        # Dispatch concurrently
+        results = await asyncio.gather(
+            *(_dispatch_one(rid, eng) for rid, eng in targets),
+            return_exceptions=False,
+        )
+
+        # Process results: track errors and auto-stop if threshold reached
+        for run_id, error in results:
+            if error is None:
+                self._consecutive_errors.pop(run_id, None)
+            else:
+                error_count = self._consecutive_errors.get(run_id, 0) + 1
+                self._consecutive_errors[run_id] = error_count
+                if error_count >= self._dispatch_error_threshold:
+                    logger.error(
+                        f"Engine {run_id} reached {error_count} consecutive dispatch errors, "
+                        f"stopping automatically"
+                    )
+                    error_msg = f"Auto-stopped: {error_count} consecutive dispatch errors"
+                    engine = self._sessions.get(run_id)
+                    result_data = None
+                    pending_snapshots: list = []
+                    auto_stop_symbol: str | None = None
+                    if engine:
+                        auto_stop_symbol = engine.symbol
+                        try:
+                            await engine.stop(error=error_msg)
+                        except Exception as stop_error:
+                            logger.exception(f"Error auto-stopping engine {run_id}: {stop_error}")
+                        # Capture state before unregistration
+                        try:
+                            result_data = engine.build_result_for_persistence()
+                            pending_snapshots = engine.get_pending_snapshots()
+                        except Exception:
+                            logger.exception(f"Failed to capture state for {run_id}")
+
+                    # Unregister stopped engine to prevent resource leak.
+                    # unregister_and_check_subscription acquires its own lock.
+                    key_to_unsub = await self.unregister_and_check_subscription(run_id)
+                    self._consecutive_errors.pop(run_id, None)
+
+                    # Persist state and update DB — mark as ERROR (not INTERRUPTED)
+                    # to prevent infinite auto-recovery loop on strategy bugs.
+                    try:
+                        from squant.infra.database import get_session_context
+                        from squant.services.paper_trading import PaperTradingService
+
+                        async with get_session_context() as db_session:
+                            service = PaperTradingService(db_session)
+                            if pending_snapshots:
+                                await service._persist_snapshots(str(run_id), pending_snapshots)
+                            await service.mark_session_error(
+                                run_id,
+                                error_message=error_msg,
+                                result=result_data,
+                            )
+                    except Exception as db_err:
+                        logger.error(
+                            f"Failed to update DB for auto-stopped session {run_id}: {db_err}"
+                        )
+
+                    # Unsubscribe ticker (always, ref-counted independently)
+                    # and candles (only if last session for key)
+                    try:
+                        from squant.websocket.manager import get_stream_manager
+
+                        stream_manager = get_stream_manager()
+                        if auto_stop_symbol:
+                            await stream_manager.unsubscribe_ticker(auto_stop_symbol)
+                        if key_to_unsub:
+                            await stream_manager.unsubscribe_candles(*key_to_unsub)
+                        if auto_stop_symbol or key_to_unsub:
+                            logger.info(
+                                f"Unsubscribed ticker+candles after auto-stop {run_id}"
+                            )
+                    except Exception as unsub_err:
+                        logger.warning(f"Failed to unsubscribe after auto-stop: {unsub_err}")
+
+    def dispatch_ticker(self, ticker: WSTicker) -> None:
+        """Dispatch a ticker to all engines subscribed to the ticker's symbol.
+
+        Updates each engine's cached bid/ask for spread-based fill pricing.
+        This is a lightweight synchronous operation (no I/O, no error tracking).
+
+        Args:
+            ticker: WebSocket ticker data with bid/ask prices.
+        """
+        run_ids = self._ticker_subscriptions.get(ticker.symbol)
+        if not run_ids:
+            return
+
+        for run_id in run_ids:
+            engine = self._sessions.get(run_id)
+            if engine and engine.is_running:
+                engine.on_ticker(ticker)
+
+    async def stop_all(self, reason: str = "shutdown") -> None:
+        """Stop all active sessions.
+
+        Args:
+            reason: Reason for stopping (for logging/error message).
+        """
+        logger.info(f"Stopping all paper trading sessions: {reason}")
+
+        # Get all run IDs (snapshot)
+        async with self._lock:
+            run_ids = list(self._sessions.keys())
+
+        # Stop each session and unregister
+        for run_id in run_ids:
+            engine = self._sessions.get(run_id)
+            if engine and engine.is_running:
+                try:
+                    await engine.stop(error=f"Session stopped: {reason}")
+                except Exception as e:
+                    logger.exception(f"Error stopping engine {run_id}: {e}")
+            await self.unregister(run_id)
+
+        logger.info(f"Stopped {len(run_ids)} paper trading sessions")
+
+    def get_subscribed_symbols(self) -> list[tuple[str, str]]:
+        """Get list of (symbol, timeframe) pairs with active subscriptions.
+
+        Returns:
+            List of (symbol, timeframe) tuples.
+        """
+        return list(self._subscriptions.keys())
+
+    def get_sessions_needing_persistence(self) -> list[UUID]:
+        """Get run_ids of sessions that need snapshot persistence.
+
+        Returns:
+            List of run_ids with pending snapshots exceeding batch size.
+        """
+        return [
+            run_id for run_id, engine in self._sessions.items() if engine.should_persist_snapshots()
+        ]
+
+    async def check_health(self, timeout_seconds: int = 300) -> list[UUID]:
+        """Check health of all sessions and return unhealthy run_ids.
+
+        Args:
+            timeout_seconds: Maximum seconds since last activity.
+
+        Returns:
+            List of unhealthy session run_ids.
+        """
+        unhealthy: list[UUID] = []
+        async with self._lock:
+            for run_id, engine in self._sessions.items():
+                if not engine.is_healthy(timeout_seconds):
+                    unhealthy.append(run_id)
+        return unhealthy
+
+    async def cleanup_stale_sessions(
+        self, timeout_seconds: int = 300
+    ) -> tuple[list[UUID], list[tuple[str, str]]]:
+        """Stop and unregister stale sessions.
+
+        Args:
+            timeout_seconds: Maximum seconds since last activity.
+
+        Returns:
+            Tuple of (cleaned run_ids, subscription keys to unsubscribe).
+        """
+        unhealthy = await self.check_health(timeout_seconds)
+        cleaned: list[UUID] = []
+        keys_to_unsub: list[tuple[str, str]] = []
+        for run_id in unhealthy:
+            engine = self._sessions.get(run_id)
+            if engine:
+                logger.warning(f"Cleaning up stale session {run_id}")
+                await engine.stop(error="Session timeout: no activity detected")
+                key = await self.unregister_and_check_subscription(run_id)
+                if key:
+                    keys_to_unsub.append(key)
+                cleaned.append(run_id)
+        return cleaned, keys_to_unsub
+
+
+# Global session manager instance
+_session_manager: SessionManager | None = None
+
+
+def get_session_manager() -> SessionManager:
+    """Get the global session manager instance.
+
+    Returns:
+        SessionManager singleton.
+    """
+    global _session_manager
+    if _session_manager is None:
+        _session_manager = SessionManager()
+    return _session_manager

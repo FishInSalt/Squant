@@ -1,0 +1,863 @@
+<template>
+  <div class="strategy-detail" v-loading="loading">
+    <div class="page-header" v-if="strategy">
+      <div class="header-left">
+        <el-button icon="ArrowLeft" @click="goBack">返回</el-button>
+        <div class="strategy-info">
+          <h1 class="strategy-name">{{ strategy.name }}</h1>
+          <StatusBadge :status="strategy.status === 'active' ? 'active' : 'archived'" />
+          <el-tag size="small" type="info">v{{ strategy.version }}</el-tag>
+        </div>
+        <template v-if="!isEditing">
+          <el-button v-if="strategy.status === 'active'" @click="enterEditMode">
+            <el-icon><Edit /></el-icon>
+            编辑
+          </el-button>
+          <el-button type="danger" plain @click="handleDelete">
+            <el-icon><Delete /></el-icon>
+            删除
+          </el-button>
+        </template>
+        <template v-else>
+          <el-button type="primary" :loading="saving" @click="saveChanges">
+            <el-icon><Check /></el-icon>
+            保存
+          </el-button>
+          <el-button @click="cancelEdit">
+            取消
+          </el-button>
+        </template>
+      </div>
+      <div class="header-right" v-if="!isEditing">
+        <el-button type="primary" @click="goToBacktest">
+          <el-icon><Histogram /></el-icon>
+          回测
+        </el-button>
+        <el-button @click="goToPaper">
+          <el-icon><Monitor /></el-icon>
+          模拟交易
+        </el-button>
+        <el-button @click="goToLive">
+          <el-icon><Connection /></el-icon>
+          实盘交易
+        </el-button>
+      </div>
+    </div>
+
+    <div class="content-grid" v-if="strategy">
+      <div class="main-content">
+        <div class="card info-card">
+          <div class="card-header">
+            <h3 class="card-title">基本信息</h3>
+          </div>
+          <div class="info-grid">
+            <div class="info-item">
+              <span class="label">策略名称</span>
+              <el-input
+                v-if="isEditing"
+                v-model="editName"
+                maxlength="128"
+                show-word-limit
+                placeholder="策略名称"
+              />
+              <span v-else class="value">{{ strategy.name }}</span>
+            </div>
+            <div class="info-item">
+              <span class="label">版本</span>
+              <span class="value">v{{ strategy.version }}</span>
+            </div>
+            <div class="info-item">
+              <span class="label">创建时间</span>
+              <span class="value">{{ formatDateTime(strategy.created_at) }}</span>
+            </div>
+            <div class="info-item">
+              <span class="label">更新时间</span>
+              <span class="value">{{ formatDateTime(strategy.updated_at) }}</span>
+            </div>
+          </div>
+          <div class="description">
+            <h4>描述</h4>
+            <template v-if="isEditing">
+              <el-input
+                v-model="editDescription"
+                type="textarea"
+                :rows="3"
+                placeholder="添加策略描述..."
+                maxlength="1000"
+                show-word-limit
+              />
+            </template>
+            <template v-else>
+              <p v-if="strategy.description">{{ strategy.description }}</p>
+              <p v-else class="empty-description">暂无描述</p>
+            </template>
+          </div>
+        </div>
+
+        <div class="card code-card">
+          <div class="card-header">
+            <h3 class="card-title">策略代码</h3>
+            <span v-if="isEditing && codeChanged" class="unsaved-hint">未保存的更改</span>
+          </div>
+          <div class="editor-container" ref="editorContainerRef"></div>
+        </div>
+      </div>
+
+      <div class="side-content">
+        <div class="card params-card">
+          <div class="card-header">
+            <h3 class="card-title">参数配置</h3>
+          </div>
+          <template v-if="isEditing">
+            <div class="param-edit-list">
+              <div
+                v-for="(param, index) in editParams"
+                :key="index"
+                class="param-edit-row"
+              >
+                <div class="param-edit-header">
+                  <span class="param-index">#{{ index + 1 }}</span>
+                  <el-button
+                    type="danger"
+                    text
+                    size="small"
+                    @click="editParams.splice(index, 1)"
+                  >
+                    <el-icon><Delete /></el-icon>
+                    删除
+                  </el-button>
+                </div>
+                <div class="param-edit-grid">
+                  <div class="param-form-item">
+                    <label>参数名</label>
+                    <el-input v-model="param.key" placeholder="如 fast_period" />
+                  </div>
+                  <div class="param-form-item">
+                    <label>类型</label>
+                    <el-select v-model="param.type" style="width: 100%">
+                      <el-option label="整数" value="integer" />
+                      <el-option label="小数" value="number" />
+                      <el-option label="文本" value="string" />
+                      <el-option label="布尔" value="boolean" />
+                    </el-select>
+                  </div>
+                  <div class="param-form-item">
+                    <label>显示名称</label>
+                    <el-input v-model="param.title" placeholder="如 快线周期" />
+                  </div>
+                  <div class="param-form-item">
+                    <label>默认值</label>
+                    <el-input v-model="param.default_value" placeholder="可选" />
+                  </div>
+                  <template v-if="param.type === 'integer' || param.type === 'number'">
+                    <div class="param-form-item">
+                      <label>最小值</label>
+                      <el-input v-model="param.minimum" placeholder="可选" />
+                    </div>
+                    <div class="param-form-item">
+                      <label>最大值</label>
+                      <el-input v-model="param.maximum" placeholder="可选" />
+                    </div>
+                  </template>
+                </div>
+                <div class="param-form-item param-form-desc">
+                  <label>描述</label>
+                  <el-input v-model="param.description" placeholder="参数用途说明（可选）" />
+                </div>
+              </div>
+            </div>
+            <el-button class="add-param-btn" @click="addParam">
+              <el-icon><Plus /></el-icon>
+              添加参数
+            </el-button>
+          </template>
+          <template v-else>
+            <div v-if="hasParams" class="params-list">
+              <div
+                v-for="(param, key) in strategy.params_schema.properties"
+                :key="key"
+                class="param-item"
+              >
+                <div class="param-header">
+                  <span class="param-name">{{ param.title || key }}</span>
+                  <el-tag size="small" type="info">{{ param.type }}</el-tag>
+                </div>
+                <p class="param-description" v-if="param.description">
+                  {{ param.description }}
+                </p>
+                <div class="param-meta">
+                  <span v-if="param.default !== undefined">
+                    默认值: {{ param.default }}
+                  </span>
+                  <span v-if="param.minimum !== undefined">
+                    最小值: {{ param.minimum }}
+                  </span>
+                  <span v-if="param.maximum !== undefined">
+                    最大值: {{ param.maximum }}
+                  </span>
+                  <span v-if="param.enum">
+                    可选值: {{ param.enum.join(', ') }}
+                  </span>
+                </div>
+              </div>
+            </div>
+            <div v-else class="empty-params">
+              <p>该策略没有可配置的参数</p>
+            </div>
+          </template>
+        </div>
+
+        <div class="card history-card">
+          <div class="card-header">
+            <h3 class="card-title">回测历史</h3>
+          </div>
+          <div v-if="backtestHistory.length > 0" class="history-list">
+            <div
+              v-for="backtest in backtestHistory"
+              :key="backtest.id"
+              class="history-item"
+              @click="goToBacktestResult(backtest.id)"
+            >
+              <StatusBadge :status="backtest.status as any" />
+              <span class="time">{{ formatRelativeTime(backtest.created_at) }}</span>
+            </div>
+          </div>
+          <div v-else class="empty-history">
+            <p>暂无回测记录</p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <ConfirmDialog
+      v-model="showDeleteDialog"
+      title="删除策略"
+      :message="`确定要删除策略 '${strategy?.name}' 吗？此操作不可恢复。`"
+      type="danger"
+      :loading="deleteLoading"
+      @confirm="confirmDelete"
+    />
+  </div>
+</template>
+
+<script setup lang="ts">
+import { ref, computed, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'
+import { useRouter } from 'vue-router'
+import { useStrategyStore } from '@/stores/strategy'
+import StatusBadge from '@/components/common/StatusBadge.vue'
+import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
+import { formatDateTime, formatRelativeTime } from '@/utils/format'
+import { getBacktests } from '@/api/backtest'
+import { useNotification } from '@/composables/useNotification'
+import type { Strategy } from '@/types'
+import loader from '@monaco-editor/loader'
+import type * as Monaco from 'monaco-editor'
+
+const props = defineProps<{
+  id: string
+}>()
+
+const router = useRouter()
+const strategyStore = useStrategyStore()
+const { toastSuccess, toastError } = useNotification()
+
+// State
+const loading = ref(false)
+const strategy = ref<Strategy | null>(null)
+const backtestHistory = ref<{ id: string; created_at: string; status: string }[]>([])
+const showDeleteDialog = ref(false)
+const deleteLoading = ref(false)
+
+// Edit state
+const isEditing = ref(false)
+const saving = ref(false)
+const editName = ref('')
+const editDescription = ref('')
+const editCode = ref('')
+interface EditableParam {
+  key: string
+  type: 'string' | 'number' | 'integer' | 'boolean'
+  title: string
+  description: string
+  default_value: string
+  minimum: string
+  maximum: string
+}
+
+const editParams = ref<EditableParam[]>([])
+
+function addParam() {
+  editParams.value.push({
+    key: '', type: 'integer', title: '', description: '',
+    default_value: '', minimum: '', maximum: '',
+  })
+}
+
+function toNumber(value: string): number | undefined {
+  if (!value) return undefined
+  const n = Number(value)
+  return Number.isNaN(n) ? undefined : n
+}
+
+function convertParamValue(value: string, type: string): unknown {
+  if (!value) return undefined
+  if (type === 'integer') { const n = parseInt(value, 10); return Number.isNaN(n) ? undefined : n }
+  if (type === 'number') { const n = parseFloat(value); return Number.isNaN(n) ? undefined : n }
+  if (type === 'boolean') return value === 'true'
+  return value
+}
+
+function buildParamsSchema(params: EditableParam[]): Record<string, unknown> {
+  const properties: Record<string, Record<string, unknown>> = {}
+  for (const p of params) {
+    if (!p.key.trim()) continue
+    const field: Record<string, unknown> = { type: p.type }
+    if (p.title) field.title = p.title
+    if (p.description) field.description = p.description
+    const defaultVal = convertParamValue(p.default_value, p.type)
+    if (defaultVal !== undefined) field.default = defaultVal
+    const min = toNumber(p.minimum)
+    const max = toNumber(p.maximum)
+    if (min !== undefined && (p.type === 'integer' || p.type === 'number')) field.minimum = min
+    if (max !== undefined && (p.type === 'integer' || p.type === 'number')) field.maximum = max
+    properties[p.key.trim()] = field
+  }
+  return Object.keys(properties).length > 0
+    ? { type: 'object', properties }
+    : {}
+}
+
+function validateParams(): string | null {
+  const keys = editParams.value.map((p) => p.key.trim()).filter(Boolean)
+  const dupes = keys.filter((k, i) => keys.indexOf(k) !== i)
+  if (dupes.length > 0) return `参数名重复：${[...new Set(dupes)].join('、')}`
+  return null
+}
+
+// Monaco Editor
+const editorContainerRef = ref<HTMLElement | null>(null)
+let editorInstance: Monaco.editor.IStandaloneCodeEditor | null = null
+let monacoModule: typeof Monaco | null = null
+
+const hasParams = computed(() => {
+  const schema = strategy.value?.params_schema
+  return schema?.properties && Object.keys(schema.properties).length > 0
+})
+
+const codeChanged = computed(() => {
+  return strategy.value ? editCode.value !== strategy.value.code : false
+})
+
+
+// Monaco Editor setup
+async function initEditor() {
+  if (!editorContainerRef.value) return
+
+  monacoModule = await loader.init()
+  const code = strategy.value?.code || ''
+  editCode.value = code
+
+  editorInstance = monacoModule!.editor.create(editorContainerRef.value, {
+    value: code,
+    language: 'python',
+    theme: 'vs',
+    readOnly: !isEditing.value,
+    minimap: { enabled: false },
+    fontSize: 13,
+    lineHeight: 20,
+    scrollBeyondLastLine: false,
+    automaticLayout: true,
+    tabSize: 4,
+    wordWrap: 'on',
+    renderLineHighlight: isEditing.value ? 'line' : 'none',
+    lineNumbers: 'on',
+    folding: true,
+    scrollbar: {
+      verticalScrollbarSize: 8,
+      horizontalScrollbarSize: 8,
+    },
+  })
+
+  editorInstance.onDidChangeModelContent(() => {
+    editCode.value = editorInstance?.getValue() || ''
+  })
+
+  // Ctrl+S to save
+  if (monacoModule) {
+    editorInstance.addCommand(monacoModule.KeyMod.CtrlCmd | monacoModule.KeyCode.KeyS, () => {
+      if (isEditing.value) {
+        saveChanges()
+      }
+    })
+  }
+
+  updateEditorHeight()
+}
+
+function updateEditorHeight() {
+  if (!editorInstance || !editorContainerRef.value) return
+  const lineCount = editorInstance.getModel()?.getLineCount() || 10
+  const lineHeight = 20
+  const minHeight = 200
+  const maxHeight = 600
+  const height = Math.min(maxHeight, Math.max(minHeight, lineCount * lineHeight + 20))
+  editorContainerRef.value.style.height = `${height}px`
+  editorInstance.layout()
+}
+
+function disposeEditor() {
+  if (editorInstance) {
+    editorInstance.dispose()
+    editorInstance = null
+  }
+}
+
+// Edit mode
+function enterEditMode() {
+  isEditing.value = true
+  editName.value = strategy.value?.name || ''
+  editDescription.value = strategy.value?.description || ''
+  editCode.value = strategy.value?.code || ''
+  const schema = strategy.value?.params_schema
+  editParams.value = Object.entries(schema?.properties || {}).map(([key, field]: [string, any]) => ({
+    key,
+    type: field.type || 'string',
+    title: field.title || '',
+    description: field.description || '',
+    default_value: field.default != null ? String(field.default) : '',
+    minimum: field.minimum != null ? String(field.minimum) : '',
+    maximum: field.maximum != null ? String(field.maximum) : '',
+  }))
+
+  if (editorInstance) {
+    editorInstance.updateOptions({
+      readOnly: false,
+      renderLineHighlight: 'line',
+    })
+  }
+}
+
+function cancelEdit() {
+  isEditing.value = false
+
+  // Restore original code in editor
+  if (editorInstance && strategy.value) {
+    editorInstance.setValue(strategy.value.code || '')
+    editorInstance.updateOptions({
+      readOnly: true,
+      renderLineHighlight: 'none',
+    })
+  }
+
+  editName.value = ''
+  editDescription.value = ''
+  editCode.value = strategy.value?.code || ''
+  editParams.value = []
+}
+
+async function saveChanges() {
+  if (!strategy.value) return
+
+  const updateData: Partial<Strategy> = {}
+  let hasChanges = false
+
+  // Check name changes
+  const newName = editName.value.trim()
+  if (!newName) {
+    toastError('策略名称不能为空')
+    return
+  }
+  if (newName !== strategy.value.name) {
+    updateData.name = newName
+    hasChanges = true
+  }
+
+  // Check code changes
+  if (editCode.value !== strategy.value.code) {
+    updateData.code = editCode.value
+    hasChanges = true
+  }
+
+  // Check description changes
+  const newDesc = editDescription.value.trim()
+  const oldDesc = strategy.value.description || ''
+  if (newDesc !== oldDesc) {
+    updateData.description = newDesc
+    hasChanges = true
+  }
+
+  // Validate and check params_schema changes
+  const paramsError = validateParams()
+  if (paramsError) {
+    toastError(paramsError)
+    return
+  }
+  const newSchema = buildParamsSchema(editParams.value)
+  if (JSON.stringify(newSchema) !== JSON.stringify(strategy.value.params_schema || {})) {
+    updateData.params_schema = newSchema as any
+    hasChanges = true
+  }
+
+  if (!hasChanges) {
+    toastSuccess('没有需要保存的更改')
+    cancelEdit()
+    return
+  }
+
+  saving.value = true
+  try {
+    const updated = await strategyStore.updateStrategy(props.id, updateData)
+    strategy.value = updated
+    isEditing.value = false
+    if (editorInstance) {
+      editorInstance.updateOptions({
+        readOnly: true,
+        renderLineHighlight: 'none',
+      })
+    }
+    toastSuccess(updateData.code ? `保存成功，版本更新至 v${updated.version}` : '保存成功')
+  } catch (error: unknown) {
+    const status = (error as { response?: { status?: number } })?.response?.status
+    if (status === 409) {
+      toastError(`策略名称「${newName}」已存在，请使用其他名称`)
+    }
+    // Other errors already shown by API interceptor
+  } finally {
+    saving.value = false
+  }
+}
+
+// Data loading
+async function loadStrategy() {
+  loading.value = true
+  try {
+    strategy.value = await strategyStore.loadStrategy(props.id)
+
+    if (strategy.value) {
+      editCode.value = strategy.value.code || ''
+
+      // Load backtest history
+      try {
+        const historyResponse = await getBacktests({ strategy_id: props.id, page_size: 10 })
+        backtestHistory.value = historyResponse.data.items
+      } catch {
+        backtestHistory.value = []
+      }
+    }
+  } finally {
+    loading.value = false
+  }
+}
+
+// Navigation
+function goBack() {
+  router.back()
+}
+
+function goToBacktest() {
+  router.push({ path: '/trading/backtest', query: { strategy_id: props.id } })
+}
+
+function goToPaper() {
+  router.push({ path: '/trading/paper', query: { strategy_id: props.id } })
+}
+
+function goToLive() {
+  router.push({ path: '/trading/live', query: { strategy_id: props.id } })
+}
+
+function goToBacktestResult(backtestId: string) {
+  router.push(`/trading/backtest/${backtestId}/result`)
+}
+
+// Delete
+function handleDelete() {
+  showDeleteDialog.value = true
+}
+
+async function confirmDelete() {
+  deleteLoading.value = true
+  try {
+    const success = await strategyStore.deleteStrategy(props.id)
+    if (success) {
+      toastSuccess('策略已删除')
+      router.push('/strategy/list')
+    } else {
+      toastError('删除失败')
+    }
+  } finally {
+    deleteLoading.value = false
+    showDeleteDialog.value = false
+  }
+}
+
+// Lifecycle
+onMounted(async () => {
+  await loadStrategy()
+  await nextTick()
+  initEditor()
+})
+
+onBeforeUnmount(() => {
+  disposeEditor()
+})
+
+// Re-init editor if strategy data loads after mount
+watch(
+  () => strategy.value?.code,
+  (newCode) => {
+    if (newCode && editorInstance && !isEditing.value) {
+      editorInstance.setValue(newCode)
+      updateEditorHeight()
+    }
+  }
+)
+</script>
+
+<style lang="scss" scoped>
+.strategy-detail {
+  .page-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 24px;
+
+    .header-left {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+
+    .strategy-info {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .strategy-name {
+      font-size: 24px;
+      font-weight: 600;
+      margin: 0;
+    }
+
+
+
+    .header-right {
+      display: flex;
+      gap: 12px;
+    }
+  }
+
+  .content-grid {
+    display: grid;
+    grid-template-columns: 1fr 360px;
+    gap: 24px;
+  }
+
+  .info-card {
+    .info-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 16px;
+    }
+
+    .info-item {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+
+      .label {
+        font-size: 12px;
+        color: #909399;
+      }
+
+      .value {
+        font-size: 14px;
+        font-weight: 500;
+      }
+    }
+
+    .description {
+      margin-top: 16px;
+      padding-top: 16px;
+      border-top: 1px solid #ebeef5;
+
+      h4 {
+        font-size: 14px;
+        margin: 0 0 8px;
+      }
+
+      p {
+        margin: 0;
+        color: #606266;
+        line-height: 1.6;
+      }
+
+      .empty-description {
+        color: #c0c4cc;
+        font-style: italic;
+      }
+    }
+  }
+
+  .code-card {
+    margin-top: 24px;
+
+    .card-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .unsaved-hint {
+      font-size: 12px;
+      color: #e6a23c;
+    }
+
+    .editor-container {
+      height: 400px;
+      border: 1px solid #ebeef5;
+      border-radius: 4px;
+      overflow: hidden;
+    }
+  }
+
+  .params-card {
+    .params-list {
+      max-height: 400px;
+      overflow-y: auto;
+    }
+
+    .param-item {
+      padding: 12px 0;
+      border-bottom: 1px solid #ebeef5;
+
+      &:last-child {
+        border-bottom: none;
+      }
+
+      .param-header {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-bottom: 4px;
+      }
+
+      .param-name {
+        font-weight: 500;
+      }
+
+      .param-description {
+        font-size: 12px;
+        color: #909399;
+        margin: 4px 0;
+      }
+
+      .param-meta {
+        font-size: 12px;
+        color: #909399;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+      }
+    }
+
+    .empty-params {
+      color: #909399;
+      text-align: center;
+      padding: 24px 0;
+    }
+
+    .param-edit-list {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      max-height: 400px;
+      overflow-y: auto;
+    }
+
+    .param-edit-row {
+      padding: 12px;
+      border: 1px solid #ebeef5;
+      border-radius: 6px;
+      background: #fafafa;
+    }
+
+    .param-edit-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 8px;
+
+      .param-index {
+        font-size: 12px;
+        font-weight: 600;
+        color: #909399;
+      }
+    }
+
+    .param-edit-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+    }
+
+    .param-form-item {
+      label {
+        display: block;
+        font-size: 12px;
+        color: #909399;
+        margin-bottom: 4px;
+      }
+    }
+
+    .param-form-desc {
+      margin-top: 8px;
+    }
+
+    .add-param-btn {
+      margin-top: 8px;
+      width: 100%;
+    }
+  }
+
+  .history-card {
+    margin-top: 24px;
+
+    .history-list {
+      max-height: 300px;
+      overflow-y: auto;
+    }
+
+    .history-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 8px 0;
+      cursor: pointer;
+      border-bottom: 1px solid #ebeef5;
+
+      &:last-child {
+        border-bottom: none;
+      }
+
+      &:hover {
+        background: #f5f7fa;
+        margin: 0 -16px;
+        padding: 8px 16px;
+      }
+
+      .time {
+        font-size: 12px;
+        color: #909399;
+      }
+    }
+
+    .empty-history {
+      color: #909399;
+      text-align: center;
+      padding: 24px 0;
+    }
+  }
+}
+</style>

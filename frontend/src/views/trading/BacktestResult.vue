@@ -1,0 +1,935 @@
+<template>
+  <div class="backtest-result" v-loading="loading">
+    <div class="page-header" v-if="backtest">
+      <div class="header-left">
+        <el-button icon="ArrowLeft" @click="goBack">返回</el-button>
+        <div class="backtest-info">
+          <h1 class="title">{{ backtest.strategy_name }}</h1>
+          <StatusBadge :status="backtest.status" />
+        </div>
+      </div>
+      <div class="header-right" v-if="backtest.status === 'completed'">
+        <el-button @click="exportResult">
+          <el-icon><Download /></el-icon>
+          导出
+        </el-button>
+        <el-button type="primary" @click="runAgain">
+          再次回测
+        </el-button>
+      </div>
+    </div>
+
+    <div v-if="backtest?.status === 'pending' || backtest?.status === 'running'" class="running-status card">
+      <el-progress
+        :percentage="Math.round(backtest.progress || 0)"
+        :stroke-width="20"
+        striped
+        striped-flow
+      />
+      <p class="status-text">
+        {{ backtest.status === 'pending' ? '正在准备回测...' : '正在回测中...' }}
+      </p>
+      <el-button
+        type="danger"
+        plain
+        :loading="cancelling"
+        :disabled="backtest.status === 'pending'"
+        @click="handleCancel"
+      >
+        取消回测
+      </el-button>
+    </div>
+
+    <div v-if="backtest?.status === 'error'" class="error-status card">
+      <el-icon class="error-icon"><CircleCloseFilled /></el-icon>
+      <p class="error-message">{{ backtest.error_message }}</p>
+      <el-button type="primary" @click="runAgain">重新回测</el-button>
+    </div>
+
+    <div v-if="backtest?.status === 'completed' && result && result.metrics" class="result-content">
+      <div class="config-section card">
+        <div class="card-header">
+          <h3 class="card-title">回测配置</h3>
+        </div>
+        <el-descriptions :column="4" border>
+          <el-descriptions-item label="交易所">{{ formatExchangeName(backtest.exchange) }}</el-descriptions-item>
+          <el-descriptions-item label="交易对">{{ backtest.symbol }}</el-descriptions-item>
+          <el-descriptions-item label="时间周期">{{ backtest.timeframe }}</el-descriptions-item>
+          <el-descriptions-item label="初始资金">{{ formatNumber(backtest.initial_capital ?? 0, 2) }} USDT</el-descriptions-item>
+          <el-descriptions-item label="回测起始">{{ backtest.backtest_start ? formatDateTime(backtest.backtest_start) : '-' }}</el-descriptions-item>
+          <el-descriptions-item label="回测结束">{{ backtest.backtest_end ? formatDateTime(backtest.backtest_end) : '-' }}</el-descriptions-item>
+          <el-descriptions-item label="手续费率">{{ formatNumber((backtest.commission_rate ?? 0) * 100, 4) }}%</el-descriptions-item>
+          <el-descriptions-item label="滑点">{{ backtest.slippage != null ? formatNumber(backtest.slippage * 100, 4) + '%' : '-' }}</el-descriptions-item>
+        </el-descriptions>
+
+        <template v-if="backtest.params && Object.keys(backtest.params).length > 0">
+          <h4 class="sub-title">策略参数</h4>
+          <el-descriptions :column="4" border>
+            <el-descriptions-item v-for="(val, key) in backtest.params" :key="key" :label="String(key)">
+              {{ val }}
+            </el-descriptions-item>
+          </el-descriptions>
+        </template>
+
+        <template v-if="strategy?.code">
+          <div class="code-toggle" @click="codeExpanded = !codeExpanded">
+            <el-icon><component :is="codeExpanded ? 'ArrowDown' : 'ArrowRight'" /></el-icon>
+            <span>策略代码</span>
+          </div>
+          <div v-show="codeExpanded" class="code-block">
+            <pre><code>{{ strategy.code }}</code></pre>
+          </div>
+        </template>
+      </div>
+
+      <div class="metrics-grid">
+        <div class="metric-card card">
+          <span class="label">总收益率</span>
+          <PriceCell
+            :value="result.metrics.total_return_pct"
+            :change="result.metrics.total_return_pct"
+            :decimals="2"
+            show-sign
+            suffix="%"
+            class="value"
+          />
+        </div>
+        <div class="metric-card card">
+          <span class="label">年化收益</span>
+          <PriceCell
+            :value="result.metrics.annualized_return"
+            :change="result.metrics.annualized_return"
+            :decimals="2"
+            show-sign
+            suffix="%"
+            class="value"
+          />
+        </div>
+        <div class="metric-card card">
+          <span class="label">最大回撤</span>
+          <span class="value danger">{{ formatPercent(-result.metrics.max_drawdown_pct) }}</span>
+        </div>
+        <div class="metric-card card">
+          <span class="label">夏普比率</span>
+          <span class="value">{{ formatNumber(result.metrics.sharpe_ratio, 2) }}</span>
+        </div>
+        <div class="metric-card card">
+          <span class="label">胜率</span>
+          <span class="value">{{ formatNumber(result.metrics.win_rate, 2) }}%</span>
+        </div>
+        <div class="metric-card card">
+          <span class="label">盈亏比</span>
+          <span class="value">{{ formatNumber(result.metrics.profit_factor, 2) }}</span>
+        </div>
+        <div class="metric-card card">
+          <span class="label">总交易数</span>
+          <span class="value">{{ result.metrics.total_trades }}</span>
+        </div>
+        <div class="metric-card card">
+          <span class="label">总手续费</span>
+          <span class="value">{{ formatNumber(result.metrics.total_fees, 2) }}</span>
+        </div>
+      </div>
+
+      <div class="chart-section card">
+        <div class="card-header">
+          <h3 class="card-title">收益曲线</h3>
+          <el-switch
+            v-if="result.trades.length > 0"
+            v-model="showTradeMarkers"
+            active-text="显示买卖点"
+            size="small"
+          />
+        </div>
+        <EquityCurve :data="result.equity_curve" :trades="showTradeMarkers ? result.trades : []" height="400px" show-benchmark />
+      </div>
+
+      <div class="kline-section card" v-if="candles.length > 0 || candlesLoading">
+        <div class="card-header">
+          <h3 class="card-title">K线图 · 交易标记</h3>
+          <span class="kline-info" v-if="backtest">
+            {{ backtest.symbol }} · {{ backtest.timeframe }}
+          </span>
+        </div>
+        <div v-if="candlesLoading" class="kline-loading">
+          <el-icon class="is-loading"><Loading /></el-icon>
+          <span>加载K线数据...</span>
+        </div>
+        <BacktestKLineChart
+          v-else
+          :candles="candles"
+          :trades="result.trades"
+          :fills="result.fills"
+          :total-count="totalCandleCount"
+          :on-load-more="loadMoreCandles"
+          height="500px"
+        />
+      </div>
+
+      <div class="trades-section card">
+        <div class="card-header">
+          <h3 class="card-title">交易记录</h3>
+          <div class="trade-summary">
+            <el-tag type="success" size="small" effect="plain">盈利 {{ tradeStats.wins }}</el-tag>
+            <el-tag type="danger" size="small" effect="plain">亏损 {{ tradeStats.losses }}</el-tag>
+            <el-tag size="small" effect="plain">胜率 {{ formatNumber(tradeStats.winRate, 2) }}%</el-tag>
+            <span class="trade-count">共 {{ result.trades.length }} 笔</span>
+          </div>
+        </div>
+        <el-table :data="paginatedTrades" stripe max-height="500" :default-sort="{ prop: 'entry_time', order: 'ascending' }" @sort-change="handleSortChange">
+          <el-table-column prop="entry_time" label="入场时间" width="170" sortable="custom">
+            <template #default="{ row }">
+              {{ formatDateTime(row.entry_time) }}
+            </template>
+          </el-table-column>
+          <el-table-column prop="side" label="类型" width="70">
+            <template #default="{ row }">
+              <el-tag :type="row.side === 'buy' ? 'success' : 'danger'" size="small">
+                {{ row.side === 'buy' ? '做多' : '做空' }}
+              </el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column prop="entry_price" label="入场价" width="120" align="right" sortable="custom">
+            <template #default="{ row }">
+              {{ formatPrice(row.entry_price) }}
+            </template>
+          </el-table-column>
+          <el-table-column label="建仓金额" width="120" align="right">
+            <template #default="{ row }">
+              {{ formatNumber(row.entry_price * row.amount, 2) }}
+            </template>
+          </el-table-column>
+          <el-table-column prop="exit_price" label="出场价" width="120" align="right">
+            <template #default="{ row }">
+              {{ row.exit_price ? formatPrice(row.exit_price) : '-' }}
+            </template>
+          </el-table-column>
+          <el-table-column label="平仓金额" width="120" align="right">
+            <template #default="{ row }">
+              {{ row.exit_price ? formatNumber(row.exit_price * row.amount, 2) : '-' }}
+            </template>
+          </el-table-column>
+          <el-table-column prop="exit_time" label="出场时间" width="170" sortable="custom">
+            <template #default="{ row }">
+              {{ row.exit_time ? formatDateTime(row.exit_time) : '-' }}
+            </template>
+          </el-table-column>
+          <el-table-column prop="amount" label="数量" width="100" align="right">
+            <template #default="{ row }">
+              {{ formatNumber(row.amount, 4) }}
+            </template>
+          </el-table-column>
+          <el-table-column prop="fees" label="手续费" width="90" align="right">
+            <template #default="{ row }">
+              {{ formatNumber(row.fees, 4) }}
+            </template>
+          </el-table-column>
+          <el-table-column prop="pnl" label="盈亏" width="120" align="right" sortable="custom">
+            <template #default="{ row }">
+              <PriceCell
+                v-if="row.pnl !== undefined"
+                :value="row.pnl"
+                :change="row.pnl"
+                show-sign
+              />
+              <span v-else>-</span>
+            </template>
+          </el-table-column>
+          <el-table-column prop="pnl_pct" label="盈亏%" width="100" align="right" sortable="custom">
+            <template #default="{ row }">
+              <PriceCell
+                v-if="row.pnl_pct !== undefined"
+                :value="row.pnl_pct"
+                :change="row.pnl_pct"
+                :decimals="2"
+                show-sign
+                suffix="%"
+              />
+              <span v-else>-</span>
+            </template>
+          </el-table-column>
+        </el-table>
+        <div class="trade-pagination" v-if="result.trades.length > tradesPageSize">
+          <el-pagination
+            v-model:current-page="tradesPage"
+            :page-size="tradesPageSize"
+            :page-sizes="[20, 50, 100]"
+            :total="result.trades.length"
+            layout="total, sizes, prev, pager, next"
+            @size-change="handleTradesPageSizeChange"
+          />
+        </div>
+      </div>
+
+      <div class="fills-section card" v-if="result.fills && result.fills.length > 0">
+        <div class="card-header">
+          <h3 class="card-title">成交明细</h3>
+          <span class="trade-count">共 {{ result.fills.length }} 笔</span>
+        </div>
+        <el-table :data="paginatedFills" stripe max-height="500" :default-sort="{ prop: 'timestamp', order: 'ascending' }" @sort-change="handleFillsSortChange">
+          <el-table-column prop="timestamp" label="时间" width="170" sortable="custom">
+            <template #default="{ row }">
+              {{ formatDateTime(row.timestamp) }}
+            </template>
+          </el-table-column>
+          <el-table-column prop="symbol" label="币对" width="120" />
+          <el-table-column prop="side" label="方向" width="70">
+            <template #default="{ row }">
+              <el-tag :type="row.side === 'buy' ? 'success' : 'danger'" size="small">
+                {{ row.side === 'buy' ? '买入' : '卖出' }}
+              </el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column prop="price" label="价格" width="120" align="right" sortable="custom">
+            <template #default="{ row }">
+              {{ formatPrice(row.price) }}
+            </template>
+          </el-table-column>
+          <el-table-column prop="amount" label="数量" width="100" align="right">
+            <template #default="{ row }">
+              {{ formatNumber(row.amount, 4) }}
+            </template>
+          </el-table-column>
+          <el-table-column label="成交额" width="120" align="right">
+            <template #default="{ row }">
+              {{ formatNumber(row.price * row.amount, 2) }}
+            </template>
+          </el-table-column>
+          <el-table-column prop="fee" label="手续费" width="90" align="right">
+            <template #default="{ row }">
+              {{ formatNumber(row.fee, 4) }}
+            </template>
+          </el-table-column>
+        </el-table>
+        <div class="trade-pagination" v-if="result.fills.length > fillsPageSize">
+          <el-pagination
+            v-model:current-page="fillsPage"
+            :page-size="fillsPageSize"
+            :page-sizes="[20, 50, 100]"
+            :total="result.fills.length"
+            layout="total, sizes, prev, pager, next"
+            @size-change="handleFillsPageSizeChange"
+          />
+        </div>
+      </div>
+
+      <div class="logs-section card" v-if="result.logs && result.logs.length > 0">
+        <div class="card-header">
+          <h3 class="card-title">策略日志</h3>
+          <span class="trade-count">共 {{ result.logs.length }} 条</span>
+        </div>
+        <div class="log-container">
+          <div v-for="(log, index) in result.logs" :key="index" class="log-entry">
+            {{ log }}
+          </div>
+        </div>
+      </div>
+
+      <div class="details-section card">
+        <div class="card-header">
+          <h3 class="card-title">详细指标</h3>
+        </div>
+        <div class="details-grid">
+          <div class="detail-item">
+            <span class="label">总收益</span>
+            <span class="value">{{ formatNumber(result.metrics.total_return, 2) }} USDT</span>
+          </div>
+          <div class="detail-item">
+            <span class="label">年化波动率</span>
+            <span class="value">{{ formatNumber(result.metrics.volatility, 2) }}%</span>
+          </div>
+          <div class="detail-item">
+            <span class="label">索提诺比率</span>
+            <span class="value">{{ formatNumber(result.metrics.sortino_ratio, 2) }}</span>
+          </div>
+          <div class="detail-item">
+            <span class="label">卡尔玛比率</span>
+            <span class="value">{{ formatNumber(result.metrics.calmar_ratio, 2) }}</span>
+          </div>
+          <div class="detail-item">
+            <span class="label">回撤持续时间</span>
+            <span class="value">{{ formatHours(result.metrics.max_drawdown_duration_hours) }}</span>
+          </div>
+          <div class="detail-item">
+            <span class="label">回测天数</span>
+            <span class="value">{{ result.metrics.total_duration_days }}天</span>
+          </div>
+          <div class="detail-item">
+            <span class="label">盈利交易数</span>
+            <span class="value">{{ result.metrics.winning_trades }}</span>
+          </div>
+          <div class="detail-item">
+            <span class="label">亏损交易数</span>
+            <span class="value">{{ result.metrics.losing_trades }}</span>
+          </div>
+          <div class="detail-item">
+            <span class="label">平均收益</span>
+            <span class="value">{{ formatNumber(result.metrics.avg_trade_return, 2) }} USDT</span>
+          </div>
+          <div class="detail-item">
+            <span class="label">平均盈利</span>
+            <span class="value success">{{ formatNumber(result.metrics.avg_win, 2) }} USDT</span>
+          </div>
+          <div class="detail-item">
+            <span class="label">平均亏损</span>
+            <span class="value danger">{{ formatNumber(result.metrics.avg_loss, 2) }} USDT</span>
+          </div>
+          <div class="detail-item">
+            <span class="label">最大连亏</span>
+            <span class="value">{{ result.metrics.max_consecutive_losses }}</span>
+          </div>
+          <div class="detail-item">
+            <span class="label">最大单笔盈利</span>
+            <span class="value success">{{ formatNumber(result.metrics.largest_win, 2) }} USDT</span>
+          </div>
+          <div class="detail-item">
+            <span class="label">最大单笔亏损</span>
+            <span class="value danger">{{ formatNumber(result.metrics.largest_loss, 2) }} USDT</span>
+          </div>
+          <div class="detail-item">
+            <span class="label">平均持仓时间</span>
+            <span class="value">{{ formatHours(result.metrics.avg_trade_duration_hours) }}</span>
+          </div>
+          <div class="detail-item">
+            <span class="label">总手续费</span>
+            <span class="value">{{ formatNumber(result.metrics.total_fees, 2) }} USDT</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</template>
+
+<script setup lang="ts">
+import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { useRouter } from 'vue-router'
+import StatusBadge from '@/components/common/StatusBadge.vue'
+import PriceCell from '@/components/common/PriceCell.vue'
+import EquityCurve from '@/components/charts/EquityCurve.vue'
+import BacktestKLineChart from '@/components/charts/BacktestKLineChart.vue'
+import { formatDateTime, formatPrice, formatNumber, formatPercent, formatExchangeName } from '@/utils/format'
+import { getBacktestStatus, getBacktestResult, getBacktestCandles, exportBacktestResult, cancelBacktest } from '@/api/backtest'
+import { getStrategy } from '@/api/strategy'
+import type { Candle } from '@/types'
+import { useNotification } from '@/composables/useNotification'
+import type { BacktestRun, BacktestResult } from '@/types'
+import type { Strategy } from '@/types/strategy'
+
+const props = defineProps<{
+  id: string
+}>()
+
+const router = useRouter()
+const { toastSuccess, toastError } = useNotification()
+
+const loading = ref(true)
+const cancelling = ref(false)
+const backtest = ref<BacktestRun | null>(null)
+const result = ref<BacktestResult | null>(null)
+const strategy = ref<Strategy | null>(null)
+const codeExpanded = ref(false)
+const showTradeMarkers = ref(true)
+
+const candles = ref<Candle[]>([])
+const candlesLoading = ref(false)
+const totalCandleCount = ref(0)
+
+const tradesPage = ref(1)
+const tradesPageSize = ref(20)
+const tradesSortProp = ref('')
+const tradesSortOrder = ref('')
+
+const fillsPage = ref(1)
+const fillsPageSize = ref(20)
+const fillsSortProp = ref('')
+const fillsSortOrder = ref('')
+
+const sortedTrades = computed(() => {
+  if (!result.value) return []
+  const trades = [...result.value.trades]
+  if (!tradesSortProp.value || !tradesSortOrder.value) return trades
+
+  const prop = tradesSortProp.value
+  const asc = tradesSortOrder.value === 'ascending'
+
+  trades.sort((a: any, b: any) => {
+    let va = a[prop]
+    let vb = b[prop]
+    if (prop === 'entry_time' || prop === 'exit_time') {
+      va = va ? new Date(va).getTime() : 0
+      vb = vb ? new Date(vb).getTime() : 0
+    }
+    if (va < vb) return asc ? -1 : 1
+    if (va > vb) return asc ? 1 : -1
+    return 0
+  })
+  return trades
+})
+
+const paginatedTrades = computed(() => {
+  const start = (tradesPage.value - 1) * tradesPageSize.value
+  return sortedTrades.value.slice(start, start + tradesPageSize.value)
+})
+
+const tradeStats = computed(() => {
+  if (!result.value) return { wins: 0, losses: 0, winRate: 0 }
+  const trades = result.value.trades
+  const wins = trades.filter(t => t.pnl > 0).length
+  const losses = trades.filter(t => t.pnl < 0).length
+  const winRate = trades.length > 0 ? (wins / trades.length) * 100 : 0
+  return { wins, losses, winRate }
+})
+
+const sortedFills = computed(() => {
+  if (!result.value?.fills) return []
+  const fills = [...result.value.fills]
+  if (!fillsSortProp.value || !fillsSortOrder.value) return fills
+
+  const prop = fillsSortProp.value
+  const asc = fillsSortOrder.value === 'ascending'
+
+  fills.sort((a: any, b: any) => {
+    let va = a[prop]
+    let vb = b[prop]
+    if (prop === 'timestamp') {
+      va = va ? new Date(va).getTime() : 0
+      vb = vb ? new Date(vb).getTime() : 0
+    }
+    if (va < vb) return asc ? -1 : 1
+    if (va > vb) return asc ? 1 : -1
+    return 0
+  })
+  return fills
+})
+
+const paginatedFills = computed(() => {
+  const start = (fillsPage.value - 1) * fillsPageSize.value
+  return sortedFills.value.slice(start, start + fillsPageSize.value)
+})
+
+function handleFillsSortChange({ prop, order }: { prop: string; order: string | null }) {
+  fillsSortProp.value = prop || ''
+  fillsSortOrder.value = order || ''
+  fillsPage.value = 1
+}
+
+function handleFillsPageSizeChange(size: number) {
+  fillsPageSize.value = size
+  fillsPage.value = 1
+}
+
+function handleSortChange({ prop, order }: { prop: string; order: string | null }) {
+  tradesSortProp.value = prop || ''
+  tradesSortOrder.value = order || ''
+  tradesPage.value = 1
+}
+
+function handleTradesPageSizeChange(size: number) {
+  tradesPageSize.value = size
+  tradesPage.value = 1
+}
+
+let pollingTimer: ReturnType<typeof setInterval> | null = null
+
+async function loadBacktest() {
+  try {
+    const response = await getBacktestStatus(props.id)
+    backtest.value = response.data
+
+    if (backtest.value.status === 'completed') {
+      await loadResult()
+      stopPolling()
+    } else if (backtest.value.status === 'running' || backtest.value.status === 'pending') {
+      startPolling()
+    } else {
+      // error / cancelled
+      stopPolling()
+    }
+  } catch (error) {
+    console.error('Failed to load backtest:', error)
+    stopPolling()
+    toastError('加载回测数据失败')
+  } finally {
+    loading.value = false
+  }
+}
+
+async function loadResult() {
+  try {
+    const response = await getBacktestResult(props.id)
+    result.value = response.data
+    // Load candle data for K-line chart in background
+    loadCandles()
+    // Load strategy code in background
+    if (backtest.value?.strategy_id) {
+      getStrategy(backtest.value.strategy_id)
+        .then((res) => { strategy.value = res.data })
+        .catch(() => { /* strategy code is optional */ })
+    }
+  } catch (error) {
+    console.error('Failed to load result:', error)
+  }
+}
+
+function transformCandle(c: any): Candle {
+  return {
+    timestamp: new Date(c.timestamp).getTime(),
+    open: c.open,
+    high: c.high,
+    low: c.low,
+    close: c.close,
+    volume: c.volume,
+  }
+}
+
+async function loadCandles() {
+  candlesLoading.value = true
+  try {
+    const response = await getBacktestCandles(props.id, { limit: 1000 })
+    totalCandleCount.value = response.data.total_count
+    candles.value = response.data.candles.map(transformCandle)
+  } catch (error) {
+    console.error('Failed to load candles:', error)
+  } finally {
+    candlesLoading.value = false
+  }
+}
+
+async function loadMoreCandles(params: { before?: number; after?: number }): Promise<Candle[]> {
+  const apiParams: Record<string, unknown> = { limit: 500 }
+  if (params.before) apiParams.before = new Date(params.before).toISOString()
+  if (params.after) apiParams.after = new Date(params.after).toISOString()
+  const response = await getBacktestCandles(props.id, apiParams as any)
+  return response.data.candles.map(transformCandle)
+}
+
+function startPolling() {
+  if (pollingTimer) return
+  pollingTimer = setInterval(loadBacktest, 2000)
+}
+
+function stopPolling() {
+  if (pollingTimer) {
+    clearInterval(pollingTimer)
+    pollingTimer = null
+  }
+}
+
+function goBack() {
+  router.push('/trading/backtest')
+}
+
+function runAgain() {
+  if (backtest.value) {
+    const b = backtest.value
+    const query: Record<string, string> = {
+      strategy_id: b.strategy_id,
+      exchange: b.exchange,
+      symbol: b.symbol,
+      timeframe: b.timeframe,
+      initial_capital: String(b.initial_capital ?? 10000),
+      commission_rate: String((b.commission_rate ?? 0) * 100),
+      slippage: String((b.slippage ?? 0) * 100),
+    }
+    if (b.backtest_start) query.start_date = b.backtest_start
+    if (b.backtest_end) query.end_date = b.backtest_end
+    if (b.params && Object.keys(b.params).length > 0) {
+      query.params = JSON.stringify(b.params)
+    }
+    router.push({ path: '/trading/backtest', query })
+  }
+}
+
+function formatHours(hours: number): string {
+  if (hours === null || hours === undefined || isNaN(hours)) return '-'
+  if (hours >= 24) {
+    const days = hours / 24
+    return `${formatNumber(days, 1)}天`
+  }
+  return `${formatNumber(hours, 1)}小时`
+}
+
+async function exportResult() {
+  try {
+    const response = await exportBacktestResult(props.id, 'csv')
+    const blob = new Blob(['\uFEFF' + response.data.content], { type: response.data.content_type || 'text/csv;charset=utf-8' })
+    const url = window.URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = response.data.filename || `backtest_${props.id}.csv`
+    link.click()
+    window.URL.revokeObjectURL(url)
+    toastSuccess('导出成功')
+  } catch (error) {
+    toastError('导出失败')
+  }
+}
+
+async function handleCancel() {
+  cancelling.value = true
+  try {
+    await cancelBacktest(props.id)
+    toastSuccess('已请求取消回测')
+  } catch {
+    toastError('取消回测失败')
+  } finally {
+    cancelling.value = false
+  }
+}
+
+onMounted(() => {
+  loadBacktest()
+})
+
+onUnmounted(() => {
+  stopPolling()
+})
+</script>
+
+<style lang="scss" scoped>
+.backtest-result {
+  .page-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 24px;
+
+    .header-left {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+
+    .backtest-info {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+
+      .title {
+        font-size: 24px;
+        font-weight: 600;
+        margin: 0;
+      }
+    }
+
+    .header-right {
+      display: flex;
+      gap: 12px;
+    }
+  }
+
+  .running-status {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 60px;
+
+    :deep(.el-progress) {
+      width: 100%;
+      max-width: 600px;
+    }
+
+    .status-text {
+      margin-top: 16px;
+      margin-bottom: 16px;
+      color: #909399;
+    }
+  }
+
+  .error-status {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 60px;
+
+    .error-icon {
+      font-size: 48px;
+      color: #ff4d4f;
+      margin-bottom: 16px;
+    }
+
+    .error-message {
+      color: #ff4d4f;
+      margin-bottom: 16px;
+    }
+  }
+
+  .config-section {
+    margin-bottom: 24px;
+
+    .sub-title {
+      font-size: 14px;
+      font-weight: 600;
+      margin: 16px 0 8px;
+      color: #303133;
+    }
+
+    .code-toggle {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin-top: 16px;
+      cursor: pointer;
+      font-size: 14px;
+      font-weight: 500;
+      color: #606266;
+      user-select: none;
+
+      &:hover {
+        color: #409eff;
+      }
+    }
+
+    .code-block {
+      margin-top: 8px;
+      background: #fafafa;
+      border: 1px solid #ebeef5;
+      border-radius: 4px;
+      max-height: 400px;
+      overflow: auto;
+
+      pre {
+        margin: 0;
+        padding: 16px;
+
+        code {
+          font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+          font-size: 13px;
+          line-height: 1.6;
+          color: #303133;
+          white-space: pre;
+        }
+      }
+    }
+  }
+
+  .metrics-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 16px;
+    margin-bottom: 24px;
+  }
+
+  .metric-card {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 20px;
+
+    .label {
+      font-size: 12px;
+      color: #909399;
+    }
+
+    .value {
+      font-size: 24px;
+      font-weight: 600;
+
+      &.success {
+        color: #00c853;
+      }
+
+      &.danger {
+        color: #ff1744;
+      }
+    }
+  }
+
+  .chart-section {
+    margin-bottom: 24px;
+  }
+
+  .kline-section {
+    margin-bottom: 24px;
+
+    .kline-info {
+      font-size: 13px;
+      color: #909399;
+    }
+
+    .kline-loading {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      height: 200px;
+      color: #909399;
+    }
+  }
+
+  .trades-section,
+  .fills-section {
+    margin-bottom: 24px;
+
+    .trade-summary {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .trade-count {
+      font-size: 12px;
+      color: #909399;
+    }
+
+    .trade-pagination {
+      display: flex;
+      justify-content: flex-end;
+      margin-top: 16px;
+    }
+  }
+
+  .logs-section {
+    margin-bottom: 24px;
+
+    .log-container {
+      max-height: 400px;
+      overflow-y: auto;
+      background: #fafafa;
+      border-radius: 4px;
+      padding: 12px;
+      font-family: Consolas, Monaco, 'Courier New', monospace;
+      font-size: 12px;
+      line-height: 1.6;
+    }
+
+    .log-entry {
+      padding: 2px 0;
+      color: #606266;
+      word-break: break-all;
+    }
+  }
+
+  .details-section {
+    .details-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 16px;
+    }
+
+    .detail-item {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+
+      .label {
+        font-size: 12px;
+        color: #909399;
+      }
+
+      .value {
+        font-size: 16px;
+        font-weight: 500;
+
+        &.success {
+          color: #00c853;
+        }
+
+        &.danger {
+          color: #ff1744;
+        }
+      }
+    }
+  }
+}
+</style>

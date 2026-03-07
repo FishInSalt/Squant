@@ -1,0 +1,89 @@
+version: '3.8'
+
+services:
+  # PostgreSQL with TimescaleDB for testing
+  postgres-test:
+    image: timescale/timescaledb:latest-pg16
+    container_name: squant-postgres-test
+    environment:
+      POSTGRES_USER: squant_test
+      POSTGRES_PASSWORD: squant_test
+      POSTGRES_DB: squant_test
+      PGDATA: /var/lib/postgresql/data/pgdata
+    ports:
+      - "5433:5432"  # 使用5433避免与开发环境冲突
+    volumes:
+      - postgres_test_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U squant_test"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - test-network
+
+  # Redis for testing
+  redis-test:
+    image: redis:7-alpine
+    container_name: squant-redis-test
+    ports:
+      - "6380:6379"  # 使用6380避免与开发环境冲突
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_test_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    networks:
+      - test-network
+
+  # 可选：用于E2E测试的完整应用栈
+  app-test:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: squant-app-test
+    init: true
+    environment:
+      # 数据库配置
+      DATABASE_URL: postgresql+asyncpg://squant_test:squant_test@postgres-test:5432/squant_test
+      REDIS_URL: redis://redis-test:6379/0
+
+      # 安全配置
+      SECRET_KEY: test-secret-key-for-integration-testing-min-32-chars
+      ENCRYPTION_KEY: test-encryption-key-32-character
+
+      # 交易所配置（测试网）
+      DEFAULT_EXCHANGE: okx
+      USE_CCXT_PROVIDER: "true"
+
+      # 测试环境标识
+      ENVIRONMENT: test
+
+      # 日志配置
+      LOG_LEVEL: INFO
+
+    ports:
+      - "8000:8000"  # E2E 测试统一使用 8000 端口
+    depends_on:
+      postgres-test:
+        condition: service_healthy
+      redis-test:
+        condition: service_healthy
+    networks:
+      - test-network
+    profiles:
+      - e2e  # 只在E2E测试时启动
+
+volumes:
+  postgres_test_data:
+    name: squant_postgres_test_data
+  redis_test_data:
+    name: squant_redis_test_data
+
+networks:
+  test-network:
+    name: squant-test-network
+    driver: bridge

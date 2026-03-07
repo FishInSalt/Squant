@@ -1,0 +1,96 @@
+# Dev Container Docker Compose
+# Extends docker-compose.dev.yml for Dev Container support
+
+services:
+  # Dev Container - main development environment
+  devcontainer:
+    build:
+      context: ..
+      dockerfile: .devcontainer/Dockerfile
+    container_name: squant-devcontainer
+    init: true
+    volumes:
+      # Mount workspace
+      - ..:/workspaces/Squant:cached
+      # Named volumes for caching dependencies
+      - squant-venv:/workspaces/Squant/.venv
+      - squant-node-modules:/workspaces/Squant/frontend/node_modules
+      - squant-pnpm-store:/home/vscode/.local/share/pnpm/store
+      # Persist shell history
+      - squant-bash-history:/commandhistory
+      # Mount Claude Code config from host (for authentication)
+      - ~/.claude:/home/vscode/.claude
+    # Keep container running
+    command: sleep infinity
+    environment:
+      # Database connection (use service name, internal port)
+      - DATABASE_URL=postgresql+asyncpg://squant:devpassword@postgres:5432/squant
+      - REDIS_URL=redis://redis:6379/0
+      # Development settings
+      - DEBUG=true
+      - LOG_LEVEL=DEBUG
+      - SECRET_KEY=dev-secret-key-minimum-32-characters-long
+      - ENCRYPTION_KEY=dev-encrypt-key-32chars-ok123456
+      # Exchange settings (use testnet by default)
+      - DEFAULT_EXCHANGE=okx
+      - USE_CCXT_PROVIDER=true
+      # Bash history
+      - HISTFILE=/commandhistory/.bash_history
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - squant-dev
+
+  # PostgreSQL + TimescaleDB
+  postgres:
+    image: timescale/timescaledb:latest-pg16
+    container_name: squant-postgres-dev
+    environment:
+      POSTGRES_USER: squant
+      POSTGRES_PASSWORD: devpassword
+      POSTGRES_DB: squant
+    volumes:
+      - postgres_dev_data:/var/lib/postgresql/data
+      - ../scripts/init-db.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    ports:
+      - "5433:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U squant -d squant"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - squant-dev
+
+  # Redis
+  redis:
+    image: redis:7-alpine
+    container_name: squant-redis-dev
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_dev_data:/data
+    ports:
+      - "6380:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - squant-dev
+
+volumes:
+  postgres_dev_data:
+  redis_dev_data:
+  squant-venv:
+  squant-node-modules:
+  squant-pnpm-store:
+  squant-uv-cache:
+  squant-bash-history:
+
+networks:
+  squant-dev:
+    driver: bridge
