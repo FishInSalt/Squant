@@ -313,6 +313,18 @@
         </div>
       </div>
 
+      <div class="logs-section card" v-if="result.logs && result.logs.length > 0">
+        <div class="card-header">
+          <h3 class="card-title">策略日志</h3>
+          <span class="trade-count">共 {{ result.logs.length }} 条</span>
+        </div>
+        <div class="log-container">
+          <div v-for="(log, index) in result.logs" :key="index" class="log-entry">
+            {{ log }}
+          </div>
+        </div>
+      </div>
+
       <div class="details-section card">
         <div class="card-header">
           <h3 class="card-title">详细指标</h3>
@@ -864,6 +876,27 @@ onUnmounted(() => {
       display: flex;
       justify-content: flex-end;
       margin-top: 16px;
+    }
+  }
+
+  .logs-section {
+    margin-bottom: 24px;
+
+    .log-container {
+      max-height: 400px;
+      overflow-y: auto;
+      background: #fafafa;
+      border-radius: 4px;
+      padding: 12px;
+      font-family: Consolas, Monaco, 'Courier New', monospace;
+      font-size: 12px;
+      line-height: 1.6;
+    }
+
+    .log-entry {
+      padding: 2px 0;
+      color: #606266;
+      word-break: break-all;
     }
   }
 

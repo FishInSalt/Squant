@@ -377,6 +377,12 @@ async def get_backtest_detail(
                     if isinstance(f, dict):
                         fills.append(FillRecordResponse(**f))
 
+        logs: list[str] = []
+        if run.result:
+            raw_logs = run.result.get("logs", [])
+            if isinstance(raw_logs, list):
+                logs = [str(log) for log in raw_logs]
+
         return ApiResponse(
             data=BacktestDetailResponse(
                 run=BacktestRunResponse.model_validate(run),
@@ -385,6 +391,7 @@ async def get_backtest_detail(
                 trades=trades,
                 fills=fills,
                 total_bars=len(equity_curve),
+                logs=logs,
             )
         )
     except BacktestNotFoundError as e:

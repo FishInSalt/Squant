@@ -224,6 +224,7 @@ class BacktestDetailResponse(BaseModel):
     trades: list[TradeRecordResponse] = Field(default_factory=list)
     fills: list[FillRecordResponse] = Field(default_factory=list)
     total_bars: int | None = None
+    logs: list[str] = Field(default_factory=list)
 
 
 class DataAvailabilityResponse(BaseModel):

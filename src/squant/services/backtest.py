@@ -514,6 +514,7 @@ class BacktestService:
                 }
                 for f in result.fills
             ]
+            result_data["logs"] = result.logs
             run = await self.run_repo.update(
                 run.id,
                 status=RunStatus.COMPLETED,

@@ -49,6 +49,7 @@ export interface BacktestResult {
   trades: Trade[]
   fills: Fill[]
   total_bars?: number
+  logs?: string[]
 }
 
 // 回测指标（匹配后端 BacktestMetrics）
