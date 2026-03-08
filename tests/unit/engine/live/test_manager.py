@@ -342,7 +342,7 @@ class TestHealthCheck:
         mock_engine.is_healthy.return_value = False
         await session_manager.register(mock_engine)
 
-        cleaned_ids, keys_to_unsub = await session_manager.cleanup_stale_sessions(
+        cleaned_ids, keys_to_unsub, _ = await session_manager.cleanup_stale_sessions(
             timeout_seconds=300
         )
 

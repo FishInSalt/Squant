@@ -240,14 +240,15 @@ class LiveSessionManager:
 
     async def cleanup_stale_sessions(
         self, timeout_seconds: int = 300
-    ) -> tuple[list[UUID], list[tuple[str, str]]]:
+    ) -> tuple[list[UUID], list[tuple[str, str]], list[str]]:
         """Stop and unregister stale sessions.
 
         Args:
             timeout_seconds: Maximum seconds since last activity.
 
         Returns:
-            Tuple of (cleaned run_ids, subscription keys to unsubscribe).
+            Tuple of (cleaned run_ids, candle keys to unsubscribe,
+            ticker symbols to unsubscribe).
         """
         unhealthy = await self.check_health(timeout_seconds)
         cleaned: list[UUID] = []
@@ -263,7 +264,8 @@ class LiveSessionManager:
                 # Check if this was the last subscriber for this key
                 if key not in self._subscriptions:
                     keys_to_unsub.append(key)
-        return cleaned, keys_to_unsub
+        # Live sessions don't use ticker subscriptions
+        return cleaned, keys_to_unsub, []
 
 
 # Global live session manager instance
