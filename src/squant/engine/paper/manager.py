@@ -383,28 +383,34 @@ class SessionManager:
 
     async def cleanup_stale_sessions(
         self, timeout_seconds: int = 300
-    ) -> tuple[list[UUID], list[tuple[str, str]]]:
+    ) -> tuple[list[UUID], list[tuple[str, str]], list[str]]:
         """Stop and unregister stale sessions.
 
         Args:
             timeout_seconds: Maximum seconds since last activity.
 
         Returns:
-            Tuple of (cleaned run_ids, subscription keys to unsubscribe).
+            Tuple of (cleaned run_ids, candle keys to unsubscribe,
+            ticker symbols to unsubscribe).
         """
         unhealthy = await self.check_health(timeout_seconds)
         cleaned: list[UUID] = []
         keys_to_unsub: list[tuple[str, str]] = []
+        tickers_to_unsub: list[str] = []
         for run_id in unhealthy:
             engine = self._sessions.get(run_id)
             if engine:
+                symbol = engine.symbol
                 logger.warning(f"Cleaning up stale session {run_id}")
                 await engine.stop(error="Session timeout: no activity detected")
                 key = await self.unregister_and_check_subscription(run_id)
                 if key:
                     keys_to_unsub.append(key)
+                # Check if ticker subscription should also be removed
+                if symbol not in self._ticker_subscriptions:
+                    tickers_to_unsub.append(symbol)
                 cleaned.append(run_id)
-        return cleaned, keys_to_unsub
+        return cleaned, keys_to_unsub, tickers_to_unsub
 
 
 # Global session manager instance

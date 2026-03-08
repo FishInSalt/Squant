@@ -181,8 +181,8 @@ class BackgroundTaskManager:
         except Exception as e:
             logger.error(f"Failed to open DB session for pre-cleanup persistence: {e}")
 
-        # cleanup_stale_sessions returns actual cleaned IDs and subscription keys to release
-        cleaned_ids, keys_to_unsub = await session_manager.cleanup_stale_sessions(
+        # cleanup_stale_sessions returns actual cleaned IDs, candle keys, and ticker symbols
+        cleaned_ids, keys_to_unsub, tickers_to_unsub = await session_manager.cleanup_stale_sessions(
             settings.paper_session_timeout_seconds
         )
         if cleaned_ids:
@@ -229,6 +229,17 @@ class BackgroundTaskManager:
                     logger.info(f"Unsubscribed from candles {key} after stale session cleanup")
                 except Exception as e:
                     logger.warning(f"Failed to unsubscribe candles {key}: {e}")
+
+            # Unsubscribe tickers for symbols with no remaining sessions
+            for symbol in tickers_to_unsub:
+                try:
+                    from squant.websocket.manager import get_stream_manager
+
+                    stream_manager = get_stream_manager()
+                    await stream_manager.unsubscribe_ticker(symbol)
+                    logger.info(f"Unsubscribed from ticker {symbol} after stale session cleanup")
+                except Exception as e:
+                    logger.warning(f"Failed to unsubscribe ticker {symbol}: {e}")
 
 
     async def _health_check_live(self, timeout_seconds: int) -> None:
@@ -277,7 +288,7 @@ class BackgroundTaskManager:
             logger.error(f"Failed to open DB session for live pre-cleanup persistence: {e}")
 
         # Clean up stale sessions (stop engines + unregister)
-        cleaned_ids, keys_to_unsub = await live_manager.cleanup_stale_sessions(timeout_seconds)
+        cleaned_ids, keys_to_unsub, _ = await live_manager.cleanup_stale_sessions(timeout_seconds)
         if cleaned_ids:
             logger.warning(f"Cleaned up {len(cleaned_ids)} stale live trading sessions")
 

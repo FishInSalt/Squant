@@ -412,7 +412,13 @@ class PaperTradingEngine:
         Args:
             candle: WebSocket candle data.
         """
-        if not self._is_running or self._warming_up:
+        if not self._is_running:
+            return
+        if self._warming_up:
+            # Update activity timestamp to prevent health check from killing
+            # the session during warmup, but don't process the candle data
+            # (IMP-009: prevent real-time candles from interleaving with replay).
+            self._last_active_at = datetime.now(UTC)
             return
 
         # Verify symbol matches
