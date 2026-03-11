@@ -3,6 +3,7 @@
   "dockerComposeFile": "docker-compose.yml",
   "service": "devcontainer",
   "workspaceFolder": "/workspaces/Squant",
+  "shutdownAction": "none",
 
   // Port forwarding
   "forwardPorts": [8000, 5173, 5433, 6380],
