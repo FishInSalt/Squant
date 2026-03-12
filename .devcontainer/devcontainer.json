@@ -6,10 +6,10 @@
   "shutdownAction": "none",
 
   // Port forwarding
-  "forwardPorts": [8000, 5173, 5433, 6380],
+  "forwardPorts": [8000, 5175, 5433, 6380],
   "portsAttributes": {
     "8000": { "label": "Backend API", "onAutoForward": "notify" },
-    "5173": { "label": "Frontend Dev", "onAutoForward": "openBrowser" },
+    "5175": { "label": "Frontend Dev", "onAutoForward": "openBrowser" },
     "5433": { "label": "PostgreSQL", "onAutoForward": "silent" },
     "6380": { "label": "Redis", "onAutoForward": "silent" }
   },

@@ -36,6 +36,9 @@ services:
       - USE_CCXT_PROVIDER=true
       # Bash history
       - HISTFILE=/commandhistory/.bash_history
+    ports:
+      - "8000:8000"   # Backend API
+      - "5175:5175"   # Frontend Dev
     depends_on:
       postgres:
         condition: service_healthy
