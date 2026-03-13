@@ -239,18 +239,23 @@ class LiveSessionManager:
         return unhealthy
 
     async def cleanup_stale_sessions(
-        self, timeout_seconds: int = 300
+        self,
+        timeout_seconds: int = 300,
+        unhealthy_ids: list[UUID] | None = None,
     ) -> tuple[list[UUID], list[tuple[str, str]], list[str]]:
         """Stop and unregister stale sessions.
 
         Args:
             timeout_seconds: Maximum seconds since last activity.
+            unhealthy_ids: Pre-computed unhealthy IDs to avoid double check_health call.
 
         Returns:
             Tuple of (cleaned run_ids, candle keys to unsubscribe,
             ticker symbols to unsubscribe).
         """
-        unhealthy = await self.check_health(timeout_seconds)
+        unhealthy = (
+            unhealthy_ids if unhealthy_ids is not None else await self.check_health(timeout_seconds)
+        )
         cleaned: list[UUID] = []
         keys_to_unsub: list[tuple[str, str]] = []
         for run_id in unhealthy:

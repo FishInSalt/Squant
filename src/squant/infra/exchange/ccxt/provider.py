@@ -507,8 +507,11 @@ class CCXTStreamProvider:
 
         key = f"ohlcv:{symbol}:{timeframe}"
         if key in self._subscription_tasks:
-            logger.debug(f"Already watching OHLCV: {symbol} {timeframe}")
-            return
+            if not self._subscription_tasks[key].done():
+                logger.debug(f"Already watching OHLCV: {symbol} {timeframe}")
+                return
+            logger.warning(f"Restarting dead OHLCV task for {symbol} {timeframe}")
+            del self._subscription_tasks[key]
 
         task = asyncio.create_task(self._ohlcv_loop(symbol, ccxt_timeframe, timeframe))
         self._subscription_tasks[key] = task
@@ -522,8 +525,11 @@ class CCXTStreamProvider:
         """
         key = f"trades:{symbol}"
         if key in self._subscription_tasks:
-            logger.debug(f"Already watching trades: {symbol}")
-            return
+            if not self._subscription_tasks[key].done():
+                logger.debug(f"Already watching trades: {symbol}")
+                return
+            logger.warning(f"Restarting dead trades task for {symbol}")
+            del self._subscription_tasks[key]
 
         task = asyncio.create_task(self._trades_loop(symbol))
         self._subscription_tasks[key] = task
@@ -538,8 +544,11 @@ class CCXTStreamProvider:
         """
         key = f"orderbook:{symbol}"
         if key in self._subscription_tasks:
-            logger.debug(f"Already watching order book: {symbol}")
-            return
+            if not self._subscription_tasks[key].done():
+                logger.debug(f"Already watching order book: {symbol}")
+                return
+            logger.warning(f"Restarting dead order book task for {symbol}")
+            del self._subscription_tasks[key]
 
         task = asyncio.create_task(self._orderbook_loop(symbol, limit))
         self._subscription_tasks[key] = task
@@ -561,8 +570,11 @@ class CCXTStreamProvider:
 
         key = f"orders:{symbol or 'all'}"
         if key in self._subscription_tasks:
-            logger.debug(f"Already watching orders: {symbol or 'all'}")
-            return
+            if not self._subscription_tasks[key].done():
+                logger.debug(f"Already watching orders: {symbol or 'all'}")
+                return
+            logger.warning(f"Restarting dead orders task for {symbol or 'all'}")
+            del self._subscription_tasks[key]
 
         task = asyncio.create_task(self._orders_loop(symbol))
         self._subscription_tasks[key] = task
@@ -578,8 +590,11 @@ class CCXTStreamProvider:
 
         key = "balance"
         if key in self._subscription_tasks:
-            logger.debug("Already watching balance")
-            return
+            if not self._subscription_tasks[key].done():
+                logger.debug("Already watching balance")
+                return
+            logger.warning("Restarting dead balance task")
+            del self._subscription_tasks[key]
 
         task = asyncio.create_task(self._balance_loop())
         self._subscription_tasks[key] = task
@@ -762,160 +777,188 @@ class CCXTStreamProvider:
     async def _ticker_loop(self, symbol: str) -> None:
         """Background loop for single ticker updates (legacy, used for individual subscriptions)."""
         key = f"ticker:{symbol}"
-        while self._running:
-            try:
-                if not self._exchange:
-                    await asyncio.sleep(1)
-                    continue
+        try:
+            while self._running:
+                try:
+                    if not self._exchange:
+                        await asyncio.sleep(1)
+                        continue
 
-                ticker = await self._exchange.watch_ticker(symbol)
-                self._mark_success(key)
-                ws_ticker = self._transformer.ticker_to_ws_ticker(ticker)
-                await self._dispatch("ticker", ws_ticker)
+                    ticker = await self._exchange.watch_ticker(symbol)
+                    self._mark_success(key)
+                    ws_ticker = self._transformer.ticker_to_ws_ticker(ticker)
+                    await self._dispatch("ticker", ws_ticker)
 
-            except asyncio.CancelledError:
-                break
-            except Exception as e:
-                if not await self._handle_loop_error(key, e):
+                except asyncio.CancelledError:
                     break
-                await asyncio.sleep(1)
+                except Exception as e:
+                    if not await self._handle_loop_error(key, e):
+                        break
+                    await asyncio.sleep(1)
+        finally:
+            self._subscription_tasks.pop(key, None)
+            logger.info(f"Ticker loop exited for {symbol}")
 
     async def _ohlcv_loop(self, symbol: str, ccxt_timeframe: str, timeframe: str) -> None:
         """Background loop for OHLCV/candle updates."""
         key = f"ohlcv:{symbol}:{timeframe}"
         logger.info(f"OHLCV loop started for {symbol} {timeframe}")
-        while self._running:
-            try:
-                if not self._exchange:
-                    await asyncio.sleep(1)
-                    continue
+        try:
+            while self._running:
+                try:
+                    if not self._exchange:
+                        await asyncio.sleep(1)
+                        continue
 
-                logger.debug(f"Calling watch_ohlcv for {symbol} {ccxt_timeframe}")
-                ohlcv_list = await self._exchange.watch_ohlcv(symbol, ccxt_timeframe)
-                self._mark_success(key)
-                logger.debug(f"Received {len(ohlcv_list)} OHLCV candles for {symbol} {timeframe}")
-
-                # Process the latest candle with close detection
-                for ohlcv in ohlcv_list[-1:]:  # Only process the latest
-                    candle_key = f"{symbol}:{timeframe}"
-                    candle_ts = int(ohlcv[0])
-
-                    # Detect candle close: when timestamp changes, previous candle closed
-                    if candle_key in self._last_candle_ts:
-                        if candle_ts != self._last_candle_ts[candle_key]:
-                            # Previous candle has closed - dispatch with is_closed=True
-                            closed_candle = self._transformer.ohlcv_to_ws_candle(
-                                self._last_candle_data[candle_key],
-                                symbol,
-                                timeframe,
-                                is_closed=True,
-                            )
-                            await self._dispatch("candle", closed_candle)
-
-                    # Track current candle state
-                    self._last_candle_ts[candle_key] = candle_ts
-                    self._last_candle_data[candle_key] = ohlcv
-
-                    # Dispatch current (open) candle for real-time UI updates
-                    ws_candle = self._transformer.ohlcv_to_ws_candle(
-                        ohlcv, symbol, timeframe, is_closed=False
+                    logger.debug(f"Calling watch_ohlcv for {symbol} {ccxt_timeframe}")
+                    ohlcv_list = await self._exchange.watch_ohlcv(symbol, ccxt_timeframe)
+                    self._mark_success(key)
+                    logger.debug(
+                        f"Received {len(ohlcv_list)} OHLCV candles for {symbol} {timeframe}"
                     )
-                    await self._dispatch("candle", ws_candle)
 
-            except asyncio.CancelledError:
-                break
-            except Exception as e:
-                if not await self._handle_loop_error(key, e):
+                    # Process the latest candle with close detection
+                    for ohlcv in ohlcv_list[-1:]:  # Only process the latest
+                        candle_key = f"{symbol}:{timeframe}"
+                        candle_ts = int(ohlcv[0])
+
+                        # Detect candle close: when timestamp changes, previous candle closed
+                        if candle_key in self._last_candle_ts:
+                            if candle_ts != self._last_candle_ts[candle_key]:
+                                # Previous candle has closed - dispatch with is_closed=True
+                                closed_candle = self._transformer.ohlcv_to_ws_candle(
+                                    self._last_candle_data[candle_key],
+                                    symbol,
+                                    timeframe,
+                                    is_closed=True,
+                                )
+                                await self._dispatch("candle", closed_candle)
+
+                        # Track current candle state
+                        self._last_candle_ts[candle_key] = candle_ts
+                        self._last_candle_data[candle_key] = ohlcv
+
+                        # Dispatch current (open) candle for real-time UI updates
+                        ws_candle = self._transformer.ohlcv_to_ws_candle(
+                            ohlcv, symbol, timeframe, is_closed=False
+                        )
+                        await self._dispatch("candle", ws_candle)
+
+                except asyncio.CancelledError:
                     break
-                await asyncio.sleep(1)
+                except Exception as e:
+                    if not await self._handle_loop_error(key, e):
+                        break
+                    await asyncio.sleep(1)
+        finally:
+            self._subscription_tasks.pop(key, None)
+            logger.info(f"OHLCV loop exited for {symbol} {timeframe}")
 
     async def _trades_loop(self, symbol: str) -> None:
         """Background loop for trade updates."""
         key = f"trades:{symbol}"
-        while self._running:
-            try:
-                if not self._exchange:
-                    await asyncio.sleep(1)
-                    continue
+        try:
+            while self._running:
+                try:
+                    if not self._exchange:
+                        await asyncio.sleep(1)
+                        continue
 
-                trades = await self._exchange.watch_trades(symbol)
-                self._mark_success(key)
+                    trades = await self._exchange.watch_trades(symbol)
+                    self._mark_success(key)
 
-                for trade in trades:
-                    ws_trade = self._transformer.trade_to_ws_trade(trade)
-                    await self._dispatch("trade", ws_trade)
+                    for trade in trades:
+                        ws_trade = self._transformer.trade_to_ws_trade(trade)
+                        await self._dispatch("trade", ws_trade)
 
-            except asyncio.CancelledError:
-                break
-            except Exception as e:
-                if not await self._handle_loop_error(key, e):
+                except asyncio.CancelledError:
                     break
-                await asyncio.sleep(1)
+                except Exception as e:
+                    if not await self._handle_loop_error(key, e):
+                        break
+                    await asyncio.sleep(1)
+        finally:
+            self._subscription_tasks.pop(key, None)
+            logger.info(f"Trades loop exited for {symbol}")
 
     async def _orderbook_loop(self, symbol: str, limit: int) -> None:
         """Background loop for order book updates."""
         key = f"orderbook:{symbol}"
-        while self._running:
-            try:
-                if not self._exchange:
-                    await asyncio.sleep(1)
-                    continue
+        try:
+            while self._running:
+                try:
+                    if not self._exchange:
+                        await asyncio.sleep(1)
+                        continue
 
-                orderbook = await self._exchange.watch_order_book(symbol, limit)
-                self._mark_success(key)
-                ws_orderbook = self._transformer.orderbook_to_ws_orderbook(orderbook, symbol, limit)
-                await self._dispatch("orderbook", ws_orderbook)
+                    orderbook = await self._exchange.watch_order_book(symbol, limit)
+                    self._mark_success(key)
+                    ws_orderbook = self._transformer.orderbook_to_ws_orderbook(
+                        orderbook, symbol, limit
+                    )
+                    await self._dispatch("orderbook", ws_orderbook)
 
-            except asyncio.CancelledError:
-                break
-            except Exception as e:
-                if not await self._handle_loop_error(key, e):
+                except asyncio.CancelledError:
                     break
-                await asyncio.sleep(1)
+                except Exception as e:
+                    if not await self._handle_loop_error(key, e):
+                        break
+                    await asyncio.sleep(1)
+        finally:
+            self._subscription_tasks.pop(key, None)
+            logger.info(f"Order book loop exited for {symbol}")
 
     async def _orders_loop(self, symbol: str | None) -> None:
         """Background loop for order updates."""
         key = f"orders:{symbol or 'all'}"
-        while self._running:
-            try:
-                if not self._exchange:
-                    await asyncio.sleep(1)
-                    continue
+        try:
+            while self._running:
+                try:
+                    if not self._exchange:
+                        await asyncio.sleep(1)
+                        continue
 
-                orders = await self._exchange.watch_orders(symbol)
-                self._mark_success(key)
+                    orders = await self._exchange.watch_orders(symbol)
+                    self._mark_success(key)
 
-                for order in orders:
-                    ws_order = self._transformer.order_to_ws_order_update(order)
-                    await self._dispatch("order", ws_order)
+                    for order in orders:
+                        ws_order = self._transformer.order_to_ws_order_update(order)
+                        await self._dispatch("order", ws_order)
 
-            except asyncio.CancelledError:
-                break
-            except Exception as e:
-                if not await self._handle_loop_error(key, e):
+                except asyncio.CancelledError:
                     break
-                await asyncio.sleep(1)
+                except Exception as e:
+                    if not await self._handle_loop_error(key, e):
+                        break
+                    await asyncio.sleep(1)
+        finally:
+            self._subscription_tasks.pop(key, None)
+            logger.info(f"Orders loop exited for {symbol or 'all'}")
 
     async def _balance_loop(self) -> None:
         """Background loop for balance updates."""
         key = "balance"
-        while self._running:
-            try:
-                if not self._exchange:
-                    await asyncio.sleep(1)
-                    continue
+        try:
+            while self._running:
+                try:
+                    if not self._exchange:
+                        await asyncio.sleep(1)
+                        continue
 
-                balance = await self._exchange.watch_balance()
-                self._mark_success(key)
-                ws_balance = self._transformer.balance_to_ws_account_update(balance)
-                await self._dispatch("account", ws_balance)
+                    balance = await self._exchange.watch_balance()
+                    self._mark_success(key)
+                    ws_balance = self._transformer.balance_to_ws_account_update(balance)
+                    await self._dispatch("account", ws_balance)
 
-            except asyncio.CancelledError:
-                break
-            except Exception as e:
-                if not await self._handle_loop_error(key, e):
+                except asyncio.CancelledError:
                     break
-                await asyncio.sleep(1)
+                except Exception as e:
+                    if not await self._handle_loop_error(key, e):
+                        break
+                    await asyncio.sleep(1)
+        finally:
+            self._subscription_tasks.pop(key, None)
+            logger.info("Balance loop exited")
 
     # ==================== Dispatch ====================
 

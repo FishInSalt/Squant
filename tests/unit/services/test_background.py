@@ -278,7 +278,9 @@ class TestHealthCheck:
             mock_ctx.return_value.__aexit__ = AsyncMock(return_value=False)
             await manager._health_check()
 
-        mock_session_manager.cleanup_stale_sessions.assert_called_once_with(300)
+        mock_session_manager.cleanup_stale_sessions.assert_called_once_with(
+            300, unhealthy_ids=[unhealthy_id]
+        )
 
     @pytest.mark.asyncio
     async def test_health_check_logs_cleanup_count(self) -> None:
