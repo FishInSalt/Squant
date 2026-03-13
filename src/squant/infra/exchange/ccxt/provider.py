@@ -396,6 +396,22 @@ class CCXTStreamProvider:
 
         return True
 
+    async def _wait_until_ready(self, key: str, timeout: float = 30.0) -> bool:
+        """Wait for the provider to become ready (_running=True).
+
+        Returns True if ready, False if timed out.
+        """
+        if self._running:
+            return True
+        logger.info(f"Waiting for provider to become ready before starting {key}")
+        elapsed = 0.0
+        while not self._running and elapsed < timeout:
+            await asyncio.sleep(0.5)
+            elapsed += 0.5
+        if not self._running:
+            logger.warning(f"Provider not ready after {timeout}s, giving up on {key}")
+        return self._running
+
     def _mark_success(self, key: str) -> None:
         """Mark a successful message receipt for a subscription.
 
@@ -778,6 +794,8 @@ class CCXTStreamProvider:
         """Background loop for single ticker updates (legacy, used for individual subscriptions)."""
         key = f"ticker:{symbol}"
         try:
+            if not await self._wait_until_ready(key):
+                return
             while self._running:
                 try:
                     if not self._exchange:
@@ -804,6 +822,8 @@ class CCXTStreamProvider:
         key = f"ohlcv:{symbol}:{timeframe}"
         logger.info(f"OHLCV loop started for {symbol} {timeframe}")
         try:
+            if not await self._wait_until_ready(key):
+                return
             while self._running:
                 try:
                     if not self._exchange:
@@ -858,6 +878,8 @@ class CCXTStreamProvider:
         """Background loop for trade updates."""
         key = f"trades:{symbol}"
         try:
+            if not await self._wait_until_ready(key):
+                return
             while self._running:
                 try:
                     if not self._exchange:
@@ -885,6 +907,8 @@ class CCXTStreamProvider:
         """Background loop for order book updates."""
         key = f"orderbook:{symbol}"
         try:
+            if not await self._wait_until_ready(key):
+                return
             while self._running:
                 try:
                     if not self._exchange:
@@ -912,6 +936,8 @@ class CCXTStreamProvider:
         """Background loop for order updates."""
         key = f"orders:{symbol or 'all'}"
         try:
+            if not await self._wait_until_ready(key):
+                return
             while self._running:
                 try:
                     if not self._exchange:
@@ -939,6 +965,8 @@ class CCXTStreamProvider:
         """Background loop for balance updates."""
         key = "balance"
         try:
+            if not await self._wait_until_ready(key):
+                return
             while self._running:
                 try:
                     if not self._exchange:
