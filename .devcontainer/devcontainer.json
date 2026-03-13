@@ -103,6 +103,8 @@
   // Mounts for better performance
   "mounts": [
     // Use named volume for uv cache
-    "source=squant-uv-cache,target=/home/vscode/.cache/uv,type=volume"
+    "source=squant-uv-cache,target=/home/vscode/.cache/uv,type=volume",
+    // Isolate Claude Code config from host (prevent path conflicts)
+    "source=claude-config,target=/home/vscode/.claude,type=volume"
   ]
 }
