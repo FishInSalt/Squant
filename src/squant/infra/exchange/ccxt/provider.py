@@ -442,7 +442,7 @@ class CCXTStreamProvider:
                 task.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
                     await task
-            del self._subscription_tasks[key]
+            self._subscription_tasks.pop(key, None)
 
         # Close exchange connection
         if self._exchange:
