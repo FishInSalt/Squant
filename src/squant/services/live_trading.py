@@ -1125,6 +1125,11 @@ class LiveTradingService:
         Queries exchange open orders and compares with saved local state.
         Processes fills that occurred during downtime.
 
+        Tech debt (M-10): This method directly accesses engine private attrs
+        (_live_orders, _exchange_order_map, _record_fill). Ideally the
+        reconciliation logic should live inside LiveTradingEngine. Deferred
+        to a future refactor when the engine undergoes larger changes.
+
         Args:
             engine: Live trading engine with restored live_orders.
             adapter: Connected exchange adapter.
@@ -1280,6 +1285,9 @@ class LiveTradingService:
 
         Exchange balance is source of truth for cash. Position discrepancies
         are logged but not auto-adjusted (preserves avg_entry_price).
+
+        Tech debt (M-10): Directly accesses engine.context._cash. See
+        _reconcile_orders docstring for rationale on deferring this refactor.
 
         Args:
             engine: Live trading engine with restored context.
