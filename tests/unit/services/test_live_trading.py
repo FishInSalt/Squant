@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from decimal import Decimal
-from unittest.mock import AsyncMock, MagicMock, patch
-from uuid import uuid4
+from unittest.mock import AsyncMock, MagicMock, call, patch
+from uuid import UUID, uuid4
 
 import pytest
 
@@ -13,14 +13,18 @@ from squant.engine.risk import RiskConfig
 from squant.models.enums import RunMode, RunStatus
 from squant.models.strategy import StrategyRun
 from squant.services.live_trading import (
+    CircuitBreakerActiveError,
+    ExchangeAccountNotFoundError,
     ExchangeConnectionError,
     LiveEquityCurveRepository,
     LiveStrategyRunRepository,
     LiveTradingError,
     LiveTradingService,
+    MaxSessionsReachedError,
     RiskConfigurationError,
     SessionAlreadyRunningError,
     SessionNotFoundError,
+    SessionNotResumableError,
     StrategyInstantiationError,
 )
 
@@ -1820,3 +1824,1255 @@ class TestCheckUnsubscribe:
                 await service._check_unsubscribe("BTC/USDT", "1m")
 
                 mock_stream.unsubscribe_candles.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# T-1: start() success path and guard tests
+# ---------------------------------------------------------------------------
+
+
+class TestStartSuccessPath:
+    """Tests for the complete start() success flow and guard checks."""
+
+    @pytest.fixture
+    def mock_session(self) -> MagicMock:
+        """Create mock database session."""
+        session = MagicMock()
+        session.commit = AsyncMock()
+        # Mock execute for has_running_session query (returns no duplicate)
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = None
+        session.execute = AsyncMock(return_value=mock_result)
+        return session
+
+    @pytest.fixture
+    def service(self, mock_session: MagicMock) -> LiveTradingService:
+        """Create service with mock session."""
+        return LiveTradingService(mock_session)
+
+    @pytest.fixture
+    def valid_risk_config(self) -> RiskConfig:
+        """Create valid risk configuration."""
+        return RiskConfig(
+            max_position_size=Decimal("0.5"),
+            max_order_size=Decimal("0.1"),
+            daily_trade_limit=100,
+            daily_loss_limit=Decimal("0.05"),
+        )
+
+    @pytest.fixture
+    def mock_exchange_account(self) -> MagicMock:
+        """Create mock exchange account."""
+        account = MagicMock()
+        account.id = uuid4()
+        account.exchange = "okx"
+        account.testnet = False
+        account.is_active = True
+        return account
+
+    @pytest.fixture
+    def mock_strategy_model(self) -> MagicMock:
+        """Create mock strategy DB model."""
+        strategy = MagicMock()
+        strategy.id = str(uuid4())
+        strategy.code = "class MyStrategy(Strategy): pass"
+        return strategy
+
+    @pytest.fixture
+    def start_patches(self, mock_exchange_account, mock_strategy_model):
+        """Provide all patches needed for a successful start() call.
+
+        Yields a dict of all mock objects for assertions.
+        """
+        from squant.infra.exchange.types import AccountBalance, Balance
+
+        strategy_id = uuid4()
+        account_id = mock_exchange_account.id
+        run_id = str(uuid4())
+
+        # Mock run record returned by repo.create
+        mock_run = MagicMock(spec=StrategyRun)
+        mock_run.id = run_id
+
+        # Mock strategy instance
+        mock_strategy_instance = MagicMock()
+
+        # Mock adapter
+        mock_adapter = MagicMock()
+        mock_adapter.connect = AsyncMock()
+        mock_adapter.get_balance = AsyncMock(return_value=AccountBalance(
+            exchange="okx",
+            balances=[
+                Balance(currency="USDT", available=Decimal("10000"), frozen=Decimal("0")),
+            ],
+        ))
+
+        # Mock engine
+        mock_engine = MagicMock()
+        mock_engine.run_id = UUID(run_id)
+        mock_engine.start = AsyncMock()
+
+        # Mock session manager
+        mock_session_manager = MagicMock()
+        mock_session_manager.session_count = 0
+        mock_session_manager.register = AsyncMock()
+
+        # Mock stream manager
+        mock_stream_manager = MagicMock()
+        mock_stream_manager.subscribe_candles = AsyncMock()
+
+        # Mock settings
+        mock_settings = MagicMock()
+        mock_settings.live.max_sessions = 10
+
+        with (
+            patch.object(
+                LiveTradingService, "_check_circuit_breaker", new_callable=AsyncMock
+            ) as mock_cb,
+            patch(
+                "squant.services.live_trading.get_live_session_manager",
+                return_value=mock_session_manager,
+            ) as mock_get_sm,
+            patch(
+                "squant.config.get_settings", return_value=mock_settings
+            ) as mock_get_settings,
+            patch(
+                "squant.services.strategy.StrategyRepository"
+            ) as mock_strat_repo_cls,
+            patch(
+                "squant.services.account.ExchangeAccountRepository"
+            ) as mock_acct_repo_cls,
+            patch.object(
+                LiveTradingService, "_create_adapter", return_value=mock_adapter
+            ) as mock_create_adapter,
+            patch.object(
+                LiveTradingService, "_build_ws_credentials", return_value=None
+            ) as mock_build_ws,
+            patch.object(
+                LiveTradingService,
+                "_instantiate_strategy",
+                return_value=mock_strategy_instance,
+            ) as mock_instantiate,
+            patch(
+                "squant.services.live_trading.LiveTradingEngine",
+                return_value=mock_engine,
+            ) as mock_engine_cls,
+            patch(
+                "squant.websocket.manager.get_stream_manager",
+                return_value=mock_stream_manager,
+            ) as mock_get_stream,
+        ):
+            # Set up strategy repo mock
+            mock_strat_repo = MagicMock()
+            mock_strat_repo.get = AsyncMock(return_value=mock_strategy_model)
+            mock_strat_repo_cls.return_value = mock_strat_repo
+
+            # Set up account repo mock
+            mock_acct_repo = MagicMock()
+            mock_acct_repo.get = AsyncMock(return_value=mock_exchange_account)
+            mock_acct_repo_cls.return_value = mock_acct_repo
+
+            yield {
+                "strategy_id": strategy_id,
+                "account_id": account_id,
+                "run_id": run_id,
+                "mock_run": mock_run,
+                "mock_adapter": mock_adapter,
+                "mock_engine": mock_engine,
+                "mock_engine_cls": mock_engine_cls,
+                "mock_session_manager": mock_session_manager,
+                "mock_stream_manager": mock_stream_manager,
+                "mock_settings": mock_settings,
+                "mock_cb": mock_cb,
+                "mock_strat_repo": mock_strat_repo,
+                "mock_acct_repo": mock_acct_repo,
+                "mock_create_adapter": mock_create_adapter,
+                "mock_build_ws": mock_build_ws,
+                "mock_instantiate": mock_instantiate,
+                "mock_strategy_instance": mock_strategy_instance,
+                "mock_strategy_model": mock_strategy_model,
+                "mock_exchange_account": mock_exchange_account,
+                "mock_get_sm": mock_get_sm,
+            }
+
+    async def test_start_success_full_flow(
+        self,
+        service: LiveTradingService,
+        valid_risk_config: RiskConfig,
+        start_patches: dict,
+    ) -> None:
+        """Test the complete successful start() flow end to end.
+
+        Verifies: circuit breaker check -> session limit -> risk validation ->
+        duplicate check -> strategy lookup -> account lookup -> adapter creation ->
+        connect -> get_balance -> create run record -> instantiate strategy ->
+        create engine -> register session -> subscribe candles -> start engine ->
+        return run.
+        """
+        p = start_patches
+
+        # Mock run_repo.create to return the mock run
+        with patch.object(
+            service.run_repo, "create", new_callable=AsyncMock
+        ) as mock_create:
+            mock_create.return_value = p["mock_run"]
+
+            result = await service.start(
+                strategy_id=p["strategy_id"],
+                symbol="BTC/USDT",
+                exchange_account_id=p["account_id"],
+                timeframe="1m",
+                risk_config=valid_risk_config,
+            )
+
+        # Verify return value
+        assert result is p["mock_run"]
+
+        # Verify circuit breaker was checked
+        p["mock_cb"].assert_called_once()
+
+        # Verify adapter was created and connected
+        p["mock_create_adapter"].assert_called_once_with(p["mock_exchange_account"])
+        p["mock_adapter"].connect.assert_called_once()
+
+        # Verify balance was fetched (initial_equity not provided)
+        p["mock_adapter"].get_balance.assert_called_once()
+
+        # Verify run record was created with correct parameters
+        mock_create.assert_called_once()
+        create_kwargs = mock_create.call_args.kwargs
+        assert create_kwargs["strategy_id"] == str(p["strategy_id"])
+        assert create_kwargs["account_id"] == str(p["account_id"])
+        assert create_kwargs["mode"] == RunMode.LIVE
+        assert create_kwargs["symbol"] == "BTC/USDT"
+        assert create_kwargs["timeframe"] == "1m"
+        assert create_kwargs["initial_capital"] == Decimal("10000")
+        assert create_kwargs["status"] == RunStatus.RUNNING
+
+        # Verify strategy was instantiated from strategy model code
+        p["mock_instantiate"].assert_called_once_with(p["mock_strategy_model"].code)
+
+        # Verify engine was created
+        p["mock_engine_cls"].assert_called_once()
+        engine_kwargs = p["mock_engine_cls"].call_args.kwargs
+        assert engine_kwargs["symbol"] == "BTC/USDT"
+        assert engine_kwargs["timeframe"] == "1m"
+        assert engine_kwargs["adapter"] is p["mock_adapter"]
+        assert engine_kwargs["risk_config"] is valid_risk_config
+        assert engine_kwargs["initial_equity"] == Decimal("10000")
+
+        # Verify session manager registration
+        p["mock_session_manager"].register.assert_called_once_with(p["mock_engine"])
+
+        # Verify stream subscription
+        p["mock_stream_manager"].subscribe_candles.assert_called_once_with("BTC/USDT", "1m")
+
+        # Verify engine was started
+        p["mock_engine"].start.assert_called_once()
+
+        # Verify DB commit
+        service.session.commit.assert_called_once()
+
+    async def test_start_with_explicit_initial_equity(
+        self,
+        service: LiveTradingService,
+        valid_risk_config: RiskConfig,
+        start_patches: dict,
+    ) -> None:
+        """Test start() with explicit initial_equity skips get_balance."""
+        p = start_patches
+
+        with patch.object(
+            service.run_repo, "create", new_callable=AsyncMock
+        ) as mock_create:
+            mock_create.return_value = p["mock_run"]
+
+            result = await service.start(
+                strategy_id=p["strategy_id"],
+                symbol="BTC/USDT",
+                exchange_account_id=p["account_id"],
+                timeframe="1m",
+                risk_config=valid_risk_config,
+                initial_equity=Decimal("5000"),
+            )
+
+        assert result is p["mock_run"]
+
+        # get_balance should NOT be called when initial_equity is provided
+        p["mock_adapter"].get_balance.assert_not_called()
+
+        # But connect should still be called
+        p["mock_adapter"].connect.assert_called_once()
+
+        # Verify initial_capital is the explicit value
+        create_kwargs = mock_create.call_args.kwargs
+        assert create_kwargs["initial_capital"] == Decimal("5000")
+
+    async def test_start_with_params(
+        self,
+        service: LiveTradingService,
+        valid_risk_config: RiskConfig,
+        start_patches: dict,
+    ) -> None:
+        """Test start() passes strategy params to run record and engine."""
+        p = start_patches
+        params = {"fast_period": 10, "slow_period": 20}
+
+        with patch.object(
+            service.run_repo, "create", new_callable=AsyncMock
+        ) as mock_create:
+            mock_create.return_value = p["mock_run"]
+
+            await service.start(
+                strategy_id=p["strategy_id"],
+                symbol="BTC/USDT",
+                exchange_account_id=p["account_id"],
+                timeframe="1m",
+                risk_config=valid_risk_config,
+                params=params,
+            )
+
+        # Verify params passed to run record
+        create_kwargs = mock_create.call_args.kwargs
+        assert create_kwargs["params"] == params
+
+        # Verify params passed to engine
+        engine_kwargs = p["mock_engine_cls"].call_args.kwargs
+        assert engine_kwargs["params"] == params
+
+    async def test_start_max_sessions_reached(
+        self,
+        service: LiveTradingService,
+        valid_risk_config: RiskConfig,
+        start_patches: dict,
+    ) -> None:
+        """Test start() raises MaxSessionsReachedError at session limit."""
+        p = start_patches
+        # Set session count to be at the limit
+        p["mock_session_manager"].session_count = 10
+        p["mock_settings"].live.max_sessions = 10
+
+        with pytest.raises(MaxSessionsReachedError) as exc_info:
+            await service.start(
+                strategy_id=p["strategy_id"],
+                symbol="BTC/USDT",
+                exchange_account_id=p["account_id"],
+                timeframe="1m",
+                risk_config=valid_risk_config,
+            )
+
+        assert exc_info.value.max_sessions == 10
+
+        # Should not have proceeded to strategy lookup
+        p["mock_strat_repo"].get.assert_not_called()
+
+    async def test_start_circuit_breaker_active(
+        self,
+        service: LiveTradingService,
+        valid_risk_config: RiskConfig,
+    ) -> None:
+        """Test start() raises CircuitBreakerActiveError when breaker is active."""
+        with patch.object(
+            LiveTradingService,
+            "_check_circuit_breaker",
+            new_callable=AsyncMock,
+            side_effect=CircuitBreakerActiveError("max daily loss"),
+        ):
+            with pytest.raises(CircuitBreakerActiveError, match="max daily loss"):
+                await service.start(
+                    strategy_id=uuid4(),
+                    symbol="BTC/USDT",
+                    exchange_account_id=uuid4(),
+                    timeframe="1m",
+                    risk_config=valid_risk_config,
+                )
+
+    async def test_start_duplicate_session_rejected(
+        self,
+        service: LiveTradingService,
+        valid_risk_config: RiskConfig,
+        start_patches: dict,
+    ) -> None:
+        """Test start() raises SessionAlreadyRunningError for duplicate symbol."""
+        p = start_patches
+
+        # Simulate has_running_session returning True
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = MagicMock()  # Existing run
+        service.session.execute = AsyncMock(return_value=mock_result)
+
+        with pytest.raises(SessionAlreadyRunningError, match="already running"):
+            await service.start(
+                strategy_id=p["strategy_id"],
+                symbol="BTC/USDT",
+                exchange_account_id=p["account_id"],
+                timeframe="1m",
+                risk_config=valid_risk_config,
+            )
+
+    async def test_start_exchange_account_not_found(
+        self,
+        service: LiveTradingService,
+        valid_risk_config: RiskConfig,
+        start_patches: dict,
+    ) -> None:
+        """Test start() raises ExchangeAccountNotFoundError when account missing."""
+        p = start_patches
+        p["mock_acct_repo"].get = AsyncMock(return_value=None)
+
+        with pytest.raises(ExchangeAccountNotFoundError, match="not found"):
+            await service.start(
+                strategy_id=p["strategy_id"],
+                symbol="BTC/USDT",
+                exchange_account_id=p["account_id"],
+                timeframe="1m",
+                risk_config=valid_risk_config,
+            )
+
+    async def test_start_exchange_account_not_active(
+        self,
+        service: LiveTradingService,
+        valid_risk_config: RiskConfig,
+        start_patches: dict,
+    ) -> None:
+        """Test start() raises ExchangeAccountNotFoundError when account inactive."""
+        p = start_patches
+        p["mock_exchange_account"].is_active = False
+
+        with pytest.raises(ExchangeAccountNotFoundError, match="not active"):
+            await service.start(
+                strategy_id=p["strategy_id"],
+                symbol="BTC/USDT",
+                exchange_account_id=p["account_id"],
+                timeframe="1m",
+                risk_config=valid_risk_config,
+            )
+
+    async def test_start_cleanup_on_engine_creation_failure(
+        self,
+        service: LiveTradingService,
+        valid_risk_config: RiskConfig,
+        start_patches: dict,
+    ) -> None:
+        """Test start() cleans up on failure after run record is created.
+
+        When engine creation or registration fails, the run record should be
+        marked as ERROR and any subscriptions cleaned up.
+        """
+        p = start_patches
+        p["mock_instantiate"].side_effect = StrategyInstantiationError("bad code")
+
+        with patch.object(
+            service.run_repo, "create", new_callable=AsyncMock
+        ) as mock_create:
+            mock_create.return_value = p["mock_run"]
+
+            with patch.object(
+                service.run_repo, "update", new_callable=AsyncMock
+            ) as mock_update:
+                mock_update.return_value = p["mock_run"]
+
+                with pytest.raises(StrategyInstantiationError):
+                    await service.start(
+                        strategy_id=p["strategy_id"],
+                        symbol="BTC/USDT",
+                        exchange_account_id=p["account_id"],
+                        timeframe="1m",
+                        risk_config=valid_risk_config,
+                    )
+
+                # Verify run was marked as ERROR
+                mock_update.assert_called_once()
+                update_args = mock_update.call_args
+                assert update_args[1]["status"] == RunStatus.ERROR
+
+
+# ---------------------------------------------------------------------------
+# T-2: resume() complete flow tests
+# ---------------------------------------------------------------------------
+
+
+class TestResumeSuccessPath:
+    """Tests for the complete resume() success flow."""
+
+    @pytest.fixture
+    def mock_session(self) -> MagicMock:
+        """Create mock database session."""
+        session = MagicMock()
+        session.commit = AsyncMock()
+        # Mock execute for has_running_session query (returns no duplicate)
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = None
+        session.execute = AsyncMock(return_value=mock_result)
+        return session
+
+    @pytest.fixture
+    def service(self, mock_session: MagicMock) -> LiveTradingService:
+        """Create service with mock session."""
+        return LiveTradingService(mock_session)
+
+    @pytest.fixture
+    def risk_config_dict(self) -> dict:
+        """Risk config as stored in run.result."""
+        return {
+            "max_position_size": "0.5",
+            "max_order_size": "0.1",
+            "daily_trade_limit": 100,
+            "daily_loss_limit": "0.1",
+            "max_price_deviation": "0.05",
+            "circuit_breaker_enabled": True,
+            "circuit_breaker_loss_count": 5,
+            "circuit_breaker_cooldown_minutes": 30,
+        }
+
+    @pytest.fixture
+    def saved_result(self, risk_config_dict) -> dict:
+        """A valid saved result dict for resume."""
+        return {
+            "cash": "10000",
+            "equity": "10000",
+            "total_fees": "0",
+            "positions": {},
+            "trades": [],
+            "fills": [],
+            "completed_orders_count": 0,
+            "logs": [],
+            "bar_count": 50,
+            "risk_state": {
+                "total_pnl": "0",
+                "daily_pnl": "0",
+                "consecutive_losses": 0,
+                "circuit_breaker_active": False,
+            },
+            "risk_config": risk_config_dict,
+            "live_orders": {},
+            "exchange_order_map": {},
+        }
+
+    @pytest.fixture
+    def mock_run(self, saved_result) -> MagicMock:
+        """Create a mock StrategyRun with resumable state."""
+        run = MagicMock(spec=StrategyRun)
+        run.id = str(uuid4())
+        run.strategy_id = str(uuid4())
+        run.account_id = str(uuid4())
+        run.symbol = "BTC/USDT"
+        run.timeframe = "1m"
+        run.exchange = "okx"
+        run.initial_capital = Decimal("10000")
+        run.params = {"fast_period": 10}
+        run.status = RunStatus.INTERRUPTED
+        run.result = saved_result
+        return run
+
+    @pytest.fixture
+    def mock_exchange_account(self) -> MagicMock:
+        """Create mock exchange account."""
+        account = MagicMock()
+        account.exchange = "okx"
+        account.testnet = False
+        account.is_active = True
+        return account
+
+    @pytest.fixture
+    def resume_patches(self, mock_run, mock_exchange_account):
+        """Provide all patches needed for a successful resume() call.
+
+        Yields a dict of all mock objects for assertions.
+        """
+        # Mock strategy model
+        mock_strategy_model = MagicMock()
+        mock_strategy_model.code = "class MyStrategy(Strategy): pass"
+
+        # Mock strategy instance
+        mock_strategy_instance = MagicMock()
+
+        # Mock adapter
+        mock_adapter = MagicMock()
+        mock_adapter.connect = AsyncMock()
+
+        # Mock engine with context
+        mock_context = MagicMock()
+        mock_context.restore_state = MagicMock()
+        mock_context._total_fills_added = 0
+        mock_context._total_completed_added = 0
+        mock_context._total_trades_added = 0
+        mock_context._total_logs_added = 0
+
+        mock_engine = MagicMock()
+        mock_engine.run_id = UUID(mock_run.id)
+        mock_engine.context = mock_context
+        mock_engine.start = AsyncMock()
+        mock_engine.stop = AsyncMock()
+        mock_engine.is_running = False
+        mock_engine._live_orders = {}
+        mock_engine._exchange_order_map = {}
+        mock_engine._bar_count = 0
+        mock_engine._risk_manager = MagicMock()
+        mock_engine._warming_up = False
+        mock_engine.symbol = "BTC/USDT"
+        mock_engine.timeframe = "1m"
+        mock_engine.restore_live_orders = MagicMock()
+
+        # Mock session manager
+        mock_session_manager = MagicMock()
+        mock_session_manager.session_count = 0
+        mock_session_manager.register = AsyncMock()
+        mock_session_manager.unregister = AsyncMock()
+
+        # Mock stream manager
+        mock_stream_manager = MagicMock()
+        mock_stream_manager.subscribe_candles = AsyncMock()
+
+        # Mock settings
+        mock_settings = MagicMock()
+        mock_settings.live.max_sessions = 10
+        mock_settings.live.warmup_bars = 200
+
+        # Mock order repo for seed map
+        mock_order_repo = MagicMock()
+        mock_order_repo.list_by_run = AsyncMock(return_value=[])
+
+        with (
+            patch.object(
+                LiveTradingService, "_check_circuit_breaker", new_callable=AsyncMock
+            ) as mock_cb,
+            patch(
+                "squant.config.get_settings", return_value=mock_settings
+            ),
+            patch(
+                "squant.services.live_trading.get_live_session_manager",
+                return_value=mock_session_manager,
+            ),
+            patch(
+                "squant.services.strategy.StrategyRepository"
+            ) as mock_strat_repo_cls,
+            patch(
+                "squant.services.account.ExchangeAccountRepository"
+            ) as mock_acct_repo_cls,
+            patch.object(
+                LiveTradingService, "_create_adapter", return_value=mock_adapter
+            ) as mock_create_adapter,
+            patch.object(
+                LiveTradingService, "_build_ws_credentials", return_value=None
+            ),
+            patch.object(
+                LiveTradingService,
+                "_instantiate_strategy",
+                return_value=mock_strategy_instance,
+            ) as mock_instantiate,
+            patch(
+                "squant.services.live_trading.LiveTradingEngine",
+                return_value=mock_engine,
+            ) as mock_engine_cls,
+            patch(
+                "squant.websocket.manager.get_stream_manager",
+                return_value=mock_stream_manager,
+            ),
+            patch.object(
+                LiveTradingService,
+                "_reconcile_orders",
+                new_callable=AsyncMock,
+                return_value={
+                    "orders_reconciled": 0,
+                    "fills_processed": 0,
+                    "orders_cancelled": 0,
+                    "orders_unknown": 0,
+                    "discrepancies": [],
+                },
+            ) as mock_reconcile_orders,
+            patch.object(
+                LiveTradingService,
+                "_reconcile_positions",
+                new_callable=AsyncMock,
+                return_value={
+                    "cash_adjusted": False,
+                    "position_adjusted": False,
+                    "discrepancies": [],
+                },
+            ) as mock_reconcile_positions,
+            patch.object(
+                LiveTradingService,
+                "_warmup_strategy",
+                new_callable=AsyncMock,
+            ) as mock_warmup,
+            patch(
+                "squant.services.order.OrderRepository",
+                return_value=mock_order_repo,
+            ),
+        ):
+            # Set up strategy repo mock
+            mock_strat_repo = MagicMock()
+            mock_strat_repo.get = AsyncMock(return_value=mock_strategy_model)
+            mock_strat_repo_cls.return_value = mock_strat_repo
+
+            # Set up account repo mock
+            mock_acct_repo = MagicMock()
+            mock_acct_repo.get = AsyncMock(return_value=mock_exchange_account)
+            mock_acct_repo_cls.return_value = mock_acct_repo
+
+            yield {
+                "mock_run": mock_run,
+                "mock_adapter": mock_adapter,
+                "mock_engine": mock_engine,
+                "mock_engine_cls": mock_engine_cls,
+                "mock_context": mock_context,
+                "mock_session_manager": mock_session_manager,
+                "mock_stream_manager": mock_stream_manager,
+                "mock_settings": mock_settings,
+                "mock_cb": mock_cb,
+                "mock_strat_repo": mock_strat_repo,
+                "mock_acct_repo": mock_acct_repo,
+                "mock_create_adapter": mock_create_adapter,
+                "mock_instantiate": mock_instantiate,
+                "mock_strategy_instance": mock_strategy_instance,
+                "mock_strategy_model": mock_strategy_model,
+                "mock_exchange_account": mock_exchange_account,
+                "mock_reconcile_orders": mock_reconcile_orders,
+                "mock_reconcile_positions": mock_reconcile_positions,
+                "mock_warmup": mock_warmup,
+                "mock_order_repo": mock_order_repo,
+            }
+
+    async def test_resume_success_full_flow(
+        self,
+        service: LiveTradingService,
+        mock_run: MagicMock,
+        resume_patches: dict,
+    ) -> None:
+        """Test the complete successful resume() flow end to end.
+
+        Verifies: circuit breaker check -> load run -> validate -> session limit ->
+        duplicate check -> load strategy -> instantiate -> load account ->
+        create adapter -> connect -> restore risk config -> create engine ->
+        restore state -> sync delta counters -> restore live orders ->
+        wire order audit callback -> reconcile orders -> reconcile positions ->
+        register session -> subscribe candles -> start engine -> warmup ->
+        update DB status -> return (run, report).
+        """
+        p = resume_patches
+
+        with (
+            patch.object(
+                service.run_repo, "get", new_callable=AsyncMock
+            ) as mock_get,
+            patch.object(
+                service.run_repo, "update", new_callable=AsyncMock
+            ) as mock_update,
+        ):
+            mock_get.return_value = mock_run
+            mock_update.return_value = mock_run
+
+            result_run, report = await service.resume(
+                run_id=UUID(mock_run.id),
+                warmup_bars=100,
+            )
+
+        # Verify return values
+        assert result_run is mock_run
+        assert "orders_reconciled" in report
+
+        # Verify circuit breaker was checked
+        p["mock_cb"].assert_called_once()
+
+        # Verify run was fetched
+        mock_get.assert_called_once_with(UUID(mock_run.id))
+
+        # Verify strategy was loaded and instantiated
+        p["mock_strat_repo"].get.assert_called_once_with(UUID(mock_run.strategy_id))
+        p["mock_instantiate"].assert_called_once_with(p["mock_strategy_model"].code)
+
+        # Verify exchange account was loaded
+        p["mock_acct_repo"].get.assert_called_once_with(UUID(mock_run.account_id))
+
+        # Verify adapter was created and connected
+        p["mock_create_adapter"].assert_called_once_with(p["mock_exchange_account"])
+        p["mock_adapter"].connect.assert_called_once()
+
+        # Verify engine was created with correct parameters
+        p["mock_engine_cls"].assert_called_once()
+        engine_kwargs = p["mock_engine_cls"].call_args.kwargs
+        assert engine_kwargs["symbol"] == "BTC/USDT"
+        assert engine_kwargs["timeframe"] == "1m"
+        assert engine_kwargs["adapter"] is p["mock_adapter"]
+        assert engine_kwargs["initial_equity"] == Decimal("10000")
+        assert engine_kwargs["params"] == {"fast_period": 10}
+
+        # Verify state was restored
+        p["mock_context"].restore_state.assert_called_once_with(mock_run.result)
+
+        # Verify risk state was restored
+        p["mock_engine"]._risk_manager.restore_state.assert_called_once_with(
+            mock_run.result["risk_state"]
+        )
+
+        # Verify live orders were restored
+        p["mock_engine"].restore_live_orders.assert_called_once_with(mock_run.result)
+
+        # Verify reconciliation was performed
+        p["mock_reconcile_orders"].assert_called_once_with(
+            p["mock_engine"], p["mock_adapter"], "BTC/USDT"
+        )
+        p["mock_reconcile_positions"].assert_called_once_with(
+            p["mock_engine"], p["mock_adapter"], "BTC/USDT"
+        )
+
+        # Verify position reconciliation report is nested in the returned report
+        assert "position_reconciliation" in report
+
+        # Verify session manager registration
+        p["mock_session_manager"].register.assert_called_once_with(p["mock_engine"])
+
+        # Verify stream subscription
+        p["mock_stream_manager"].subscribe_candles.assert_called_once_with(
+            "BTC/USDT", "1m"
+        )
+
+        # Verify engine was started
+        p["mock_engine"].start.assert_called_once()
+
+        # Verify warmup was called with correct bars
+        p["mock_warmup"].assert_called_once_with(p["mock_engine"], mock_run, 100)
+
+        # Verify DB was updated to RUNNING
+        mock_update.assert_called_once()
+        update_kwargs = mock_update.call_args.kwargs
+        assert update_kwargs["status"] == RunStatus.RUNNING
+        assert update_kwargs["error_message"] is None
+        assert update_kwargs["stopped_at"] is None
+
+        # Verify DB commit
+        service.session.commit.assert_called()
+
+    async def test_resume_skips_warmup_when_zero(
+        self,
+        service: LiveTradingService,
+        mock_run: MagicMock,
+        resume_patches: dict,
+    ) -> None:
+        """Test resume() skips warmup when warmup_bars=0."""
+        p = resume_patches
+
+        with (
+            patch.object(
+                service.run_repo, "get", new_callable=AsyncMock, return_value=mock_run
+            ),
+            patch.object(
+                service.run_repo, "update", new_callable=AsyncMock, return_value=mock_run
+            ),
+        ):
+            await service.resume(
+                run_id=UUID(mock_run.id),
+                warmup_bars=0,
+            )
+
+        # Warmup should not be called
+        p["mock_warmup"].assert_not_called()
+
+    async def test_resume_delta_counters_synced(
+        self,
+        service: LiveTradingService,
+        mock_run: MagicMock,
+        resume_patches: dict,
+    ) -> None:
+        """Test resume() syncs delta tracking counters after state restore.
+
+        This prevents already-persisted fills/trades/logs from being
+        re-delivered as new deltas.
+        """
+        p = resume_patches
+
+        # Simulate restored context with historical data
+        p["mock_context"]._total_fills_added = 15
+        p["mock_context"]._total_completed_added = 12
+        p["mock_context"]._total_trades_added = 8
+        p["mock_context"]._total_logs_added = 30
+
+        with (
+            patch.object(
+                service.run_repo, "get", new_callable=AsyncMock, return_value=mock_run
+            ),
+            patch.object(
+                service.run_repo, "update", new_callable=AsyncMock, return_value=mock_run
+            ),
+        ):
+            await service.resume(run_id=UUID(mock_run.id), warmup_bars=0)
+
+        # Verify delta counters were synced to context totals
+        eng = p["mock_engine"]
+        assert eng._last_callback_fill_total == 15
+        assert eng._last_callback_completed_total == 12
+        assert eng._last_emitted_fill_total == 15
+        assert eng._last_emitted_trade_total == 8
+        assert eng._last_emitted_log_total == 30
+
+    async def test_resume_bar_count_restored(
+        self,
+        service: LiveTradingService,
+        mock_run: MagicMock,
+        resume_patches: dict,
+    ) -> None:
+        """Test resume() restores bar_count from saved result."""
+        p = resume_patches
+
+        with (
+            patch.object(
+                service.run_repo, "get", new_callable=AsyncMock, return_value=mock_run
+            ),
+            patch.object(
+                service.run_repo, "update", new_callable=AsyncMock, return_value=mock_run
+            ),
+        ):
+            await service.resume(run_id=UUID(mock_run.id), warmup_bars=0)
+
+        assert p["mock_engine"]._bar_count == 50  # from saved_result
+
+    async def test_resume_cleanup_on_stream_subscribe_failure(
+        self,
+        service: LiveTradingService,
+        mock_run: MagicMock,
+        resume_patches: dict,
+    ) -> None:
+        """Test resume() cleans up on failure after session registration.
+
+        When candle subscription fails, engine should be stopped, unregistered,
+        and the exception re-raised.
+        """
+        p = resume_patches
+        p["mock_stream_manager"].subscribe_candles = AsyncMock(
+            side_effect=Exception("WS connect failed")
+        )
+
+        with (
+            patch.object(
+                service.run_repo, "get", new_callable=AsyncMock, return_value=mock_run
+            ),
+            patch.object(
+                service.run_repo, "update", new_callable=AsyncMock, return_value=mock_run
+            ),
+        ):
+            with pytest.raises(Exception, match="WS connect failed"):
+                await service.resume(run_id=UUID(mock_run.id), warmup_bars=0)
+
+        # Verify cleanup: engine stop was attempted (is_running is False so skip)
+        # Session manager unregister was called
+        p["mock_session_manager"].unregister.assert_called_once_with(
+            p["mock_engine"].run_id
+        )
+
+    async def test_resume_cleanup_on_engine_start_failure(
+        self,
+        service: LiveTradingService,
+        mock_run: MagicMock,
+        resume_patches: dict,
+    ) -> None:
+        """Test resume() cleans up when engine.start() fails.
+
+        All registered resources (session manager, stream subscription)
+        should be cleaned up.
+        """
+        p = resume_patches
+        p["mock_engine"].start = AsyncMock(
+            side_effect=RuntimeError("engine start failed")
+        )
+
+        with (
+            patch.object(
+                service.run_repo, "get", new_callable=AsyncMock, return_value=mock_run
+            ),
+            patch.object(
+                service.run_repo, "update", new_callable=AsyncMock, return_value=mock_run
+            ),
+        ):
+            with pytest.raises(RuntimeError, match="engine start failed"):
+                await service.resume(run_id=UUID(mock_run.id), warmup_bars=0)
+
+        # Session manager unregister was called for cleanup
+        p["mock_session_manager"].unregister.assert_called_once()
+
+    async def test_resume_cleanup_on_warmup_failure(
+        self,
+        service: LiveTradingService,
+        mock_run: MagicMock,
+        resume_patches: dict,
+    ) -> None:
+        """Test resume() cleans up when warmup fails.
+
+        After engine start and subscribe succeed, a warmup failure should
+        trigger full cleanup including unsubscribe.
+        """
+        p = resume_patches
+        p["mock_engine"].is_running = True
+        p["mock_warmup"].side_effect = RuntimeError("data loader failed")
+
+        with (
+            patch.object(
+                service.run_repo, "get", new_callable=AsyncMock, return_value=mock_run
+            ),
+            patch.object(
+                service.run_repo, "update", new_callable=AsyncMock, return_value=mock_run
+            ),
+            patch.object(
+                LiveTradingService,
+                "_check_unsubscribe",
+                new_callable=AsyncMock,
+            ) as mock_unsub,
+        ):
+            with pytest.raises(RuntimeError, match="data loader failed"):
+                await service.resume(run_id=UUID(mock_run.id), warmup_bars=100)
+
+        # Engine stop should be called since it's running
+        p["mock_engine"].stop.assert_called_once()
+
+        # Session manager unregister
+        p["mock_session_manager"].unregister.assert_called_once()
+
+        # Unsubscribe should be called since subscribed=True at failure point
+        mock_unsub.assert_called_once_with("BTC/USDT", "1m")
+
+    async def test_resume_session_not_found(
+        self,
+        service: LiveTradingService,
+    ) -> None:
+        """Test resume() raises SessionNotFoundError when run does not exist."""
+        with patch.object(
+            LiveTradingService, "_check_circuit_breaker", new_callable=AsyncMock
+        ):
+            with patch.object(
+                service.run_repo, "get", new_callable=AsyncMock, return_value=None
+            ):
+                with pytest.raises(SessionNotFoundError):
+                    await service.resume(run_id=uuid4())
+
+    async def test_resume_not_resumable_wrong_status(
+        self,
+        service: LiveTradingService,
+        mock_run: MagicMock,
+    ) -> None:
+        """Test resume() rejects runs with RUNNING status."""
+        mock_run.status = RunStatus.RUNNING
+
+        with patch.object(
+            LiveTradingService, "_check_circuit_breaker", new_callable=AsyncMock
+        ):
+            with patch.object(
+                service.run_repo, "get", new_callable=AsyncMock, return_value=mock_run
+            ):
+                with pytest.raises(SessionNotResumableError, match="status is running"):
+                    await service.resume(run_id=UUID(mock_run.id))
+
+    async def test_resume_max_sessions_reached(
+        self,
+        service: LiveTradingService,
+        mock_run: MagicMock,
+    ) -> None:
+        """Test resume() raises MaxSessionsReachedError at session limit."""
+        mock_settings = MagicMock()
+        mock_settings.live.max_sessions = 5
+
+        mock_session_manager = MagicMock()
+        mock_session_manager.session_count = 5
+
+        with (
+            patch.object(
+                LiveTradingService, "_check_circuit_breaker", new_callable=AsyncMock
+            ),
+            patch.object(
+                service.run_repo, "get", new_callable=AsyncMock, return_value=mock_run
+            ),
+            patch("squant.config.get_settings", return_value=mock_settings),
+            patch(
+                "squant.services.live_trading.get_live_session_manager",
+                return_value=mock_session_manager,
+            ),
+        ):
+            with pytest.raises(MaxSessionsReachedError) as exc_info:
+                await service.resume(run_id=UUID(mock_run.id))
+
+            assert exc_info.value.max_sessions == 5
+
+    async def test_resume_strategy_not_found(
+        self,
+        service: LiveTradingService,
+        mock_run: MagicMock,
+    ) -> None:
+        """Test resume() raises SessionNotResumableError when strategy deleted."""
+        mock_settings = MagicMock()
+        mock_settings.live.max_sessions = 10
+
+        mock_session_manager = MagicMock()
+        mock_session_manager.session_count = 0
+
+        with (
+            patch.object(
+                LiveTradingService, "_check_circuit_breaker", new_callable=AsyncMock
+            ),
+            patch.object(
+                service.run_repo, "get", new_callable=AsyncMock, return_value=mock_run
+            ),
+            patch("squant.config.get_settings", return_value=mock_settings),
+            patch(
+                "squant.services.live_trading.get_live_session_manager",
+                return_value=mock_session_manager,
+            ),
+            patch("squant.services.strategy.StrategyRepository") as mock_strat_cls,
+        ):
+            mock_strat_repo = MagicMock()
+            mock_strat_repo.get = AsyncMock(return_value=None)
+            mock_strat_cls.return_value = mock_strat_repo
+
+            with pytest.raises(SessionNotResumableError, match="strategy no longer exists"):
+                await service.resume(run_id=UUID(mock_run.id))
+
+    async def test_resume_exchange_connection_failure(
+        self,
+        service: LiveTradingService,
+        mock_run: MagicMock,
+        mock_exchange_account: MagicMock,
+    ) -> None:
+        """Test resume() raises ExchangeConnectionError when connect fails."""
+        mock_settings = MagicMock()
+        mock_settings.live.max_sessions = 10
+
+        mock_session_manager = MagicMock()
+        mock_session_manager.session_count = 0
+
+        mock_strategy_model = MagicMock()
+        mock_strategy_model.code = "class X(Strategy): pass"
+
+        mock_adapter = MagicMock()
+        mock_adapter.connect = AsyncMock(side_effect=Exception("TCP timeout"))
+
+        with (
+            patch.object(
+                LiveTradingService, "_check_circuit_breaker", new_callable=AsyncMock
+            ),
+            patch.object(
+                service.run_repo, "get", new_callable=AsyncMock, return_value=mock_run
+            ),
+            patch("squant.config.get_settings", return_value=mock_settings),
+            patch(
+                "squant.services.live_trading.get_live_session_manager",
+                return_value=mock_session_manager,
+            ),
+            patch("squant.services.strategy.StrategyRepository") as mock_strat_cls,
+            patch("squant.services.account.ExchangeAccountRepository") as mock_acct_cls,
+            patch.object(
+                LiveTradingService, "_create_adapter", return_value=mock_adapter
+            ),
+            patch.object(
+                LiveTradingService, "_build_ws_credentials", return_value=None
+            ),
+            patch.object(
+                LiveTradingService, "_instantiate_strategy", return_value=MagicMock()
+            ),
+        ):
+            mock_strat_repo = MagicMock()
+            mock_strat_repo.get = AsyncMock(return_value=mock_strategy_model)
+            mock_strat_cls.return_value = mock_strat_repo
+
+            mock_acct_repo = MagicMock()
+            mock_acct_repo.get = AsyncMock(return_value=mock_exchange_account)
+            mock_acct_cls.return_value = mock_acct_repo
+
+            with pytest.raises(ExchangeConnectionError, match="TCP timeout"):
+                await service.resume(run_id=UUID(mock_run.id))
+
+    async def test_resume_no_risk_config_in_saved_state(
+        self,
+        service: LiveTradingService,
+        mock_run: MagicMock,
+        mock_exchange_account: MagicMock,
+    ) -> None:
+        """Test resume() raises SessionNotResumableError when no risk config saved."""
+        # Remove risk_config from saved result
+        mock_run.result["risk_config"] = None
+
+        mock_settings = MagicMock()
+        mock_settings.live.max_sessions = 10
+
+        mock_session_manager = MagicMock()
+        mock_session_manager.session_count = 0
+
+        mock_strategy_model = MagicMock()
+        mock_strategy_model.code = "class X(Strategy): pass"
+
+        mock_adapter = MagicMock()
+        mock_adapter.connect = AsyncMock()
+
+        with (
+            patch.object(
+                LiveTradingService, "_check_circuit_breaker", new_callable=AsyncMock
+            ),
+            patch.object(
+                service.run_repo, "get", new_callable=AsyncMock, return_value=mock_run
+            ),
+            patch("squant.config.get_settings", return_value=mock_settings),
+            patch(
+                "squant.services.live_trading.get_live_session_manager",
+                return_value=mock_session_manager,
+            ),
+            patch("squant.services.strategy.StrategyRepository") as mock_strat_cls,
+            patch("squant.services.account.ExchangeAccountRepository") as mock_acct_cls,
+            patch.object(
+                LiveTradingService, "_create_adapter", return_value=mock_adapter
+            ),
+            patch.object(
+                LiveTradingService, "_build_ws_credentials", return_value=None
+            ),
+            patch.object(
+                LiveTradingService, "_instantiate_strategy", return_value=MagicMock()
+            ),
+        ):
+            mock_strat_repo = MagicMock()
+            mock_strat_repo.get = AsyncMock(return_value=mock_strategy_model)
+            mock_strat_cls.return_value = mock_strat_repo
+
+            mock_acct_repo = MagicMock()
+            mock_acct_repo.get = AsyncMock(return_value=mock_exchange_account)
+            mock_acct_cls.return_value = mock_acct_repo
+
+            with pytest.raises(SessionNotResumableError, match="no risk config"):
+                await service.resume(run_id=UUID(mock_run.id))
+
+    async def test_resume_reconciliation_report_structure(
+        self,
+        service: LiveTradingService,
+        mock_run: MagicMock,
+        resume_patches: dict,
+    ) -> None:
+        """Test resume() returns properly structured reconciliation report."""
+        p = resume_patches
+
+        # Set specific reconciliation results
+        p["mock_reconcile_orders"].return_value = {
+            "orders_reconciled": 2,
+            "fills_processed": 1,
+            "orders_cancelled": 0,
+            "orders_unknown": 0,
+            "discrepancies": [],
+        }
+        p["mock_reconcile_positions"].return_value = {
+            "cash_adjusted": True,
+            "position_adjusted": False,
+            "discrepancies": [
+                {"type": "cash_mismatch", "local": "10000", "exchange": "9500"}
+            ],
+        }
+
+        with (
+            patch.object(
+                service.run_repo, "get", new_callable=AsyncMock, return_value=mock_run
+            ),
+            patch.object(
+                service.run_repo, "update", new_callable=AsyncMock, return_value=mock_run
+            ),
+        ):
+            _, report = await service.resume(
+                run_id=UUID(mock_run.id), warmup_bars=0
+            )
+
+        assert report["orders_reconciled"] == 2
+        assert report["fills_processed"] == 1
+        assert report["position_reconciliation"]["cash_adjusted"] is True
+        assert len(report["position_reconciliation"]["discrepancies"]) == 1
