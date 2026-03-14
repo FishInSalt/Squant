@@ -15,6 +15,7 @@ from squant.models.strategy import StrategyRun
 from squant.services.live_trading import (
     ExchangeConnectionError,
     LiveEquityCurveRepository,
+    LiveExchangeConnectionError,
     LiveStrategyRunRepository,
     LiveTradingError,
     LiveTradingService,
@@ -748,6 +749,7 @@ class TestStopSession:
         run_id = uuid4()
         mock_run = MagicMock()
         mock_run.id = str(run_id)
+        mock_run.status = RunStatus.RUNNING
 
         with patch.object(service.run_repo, "get", new_callable=AsyncMock) as mock_get:
             mock_get.return_value = mock_run
@@ -773,6 +775,7 @@ class TestStopSession:
         run_id = uuid4()
         mock_run = MagicMock()
         mock_run.id = str(run_id)
+        mock_run.status = RunStatus.RUNNING
 
         with patch.object(service.run_repo, "get", new_callable=AsyncMock) as mock_get:
             mock_get.return_value = mock_run
@@ -820,6 +823,7 @@ class TestStopSession:
         run_id = uuid4()
         mock_run = MagicMock()
         mock_run.id = str(run_id)
+        mock_run.status = RunStatus.RUNNING
 
         with patch.object(service.run_repo, "get", new_callable=AsyncMock) as mock_get:
             mock_get.return_value = mock_run
@@ -1374,6 +1378,7 @@ class TestStopSavesResult:
         run_id = uuid4()
         mock_run = MagicMock()
         mock_run.id = str(run_id)
+        mock_run.status = RunStatus.RUNNING
 
         mock_engine = MagicMock()
         mock_engine.run_id = run_id
@@ -1820,3 +1825,610 @@ class TestCheckUnsubscribe:
                 await service._check_unsubscribe("BTC/USDT", "1m")
 
                 mock_stream.unsubscribe_candles.assert_not_called()
+
+
+# --- Bug Fix Tests ---
+
+
+class TestExchangeConnectionErrorRename:
+    """Tests for C-3: ExchangeConnectionError renamed to LiveExchangeConnectionError."""
+
+    def test_live_exchange_connection_error_exists(self) -> None:
+        """LiveExchangeConnectionError should exist and inherit from LiveTradingError."""
+        from squant.services.live_trading import LiveExchangeConnectionError
+
+        error = LiveExchangeConnectionError("test connection error")
+        assert isinstance(error, LiveTradingError)
+        assert str(error) == "test connection error"
+
+    def test_live_exchange_connection_error_distinct_from_infra(self) -> None:
+        """LiveExchangeConnectionError should be distinct from infra ExchangeConnectionError."""
+        from squant.infra.exchange.exceptions import (
+            ExchangeConnectionError as InfraExchangeConnectionError,
+        )
+        from squant.services.live_trading import LiveExchangeConnectionError
+
+        service_error = LiveExchangeConnectionError("service error")
+        assert not isinstance(service_error, InfraExchangeConnectionError)
+
+    @pytest.mark.asyncio
+    async def test_start_raises_live_exchange_connection_error(self) -> None:
+        """start() should raise LiveExchangeConnectionError when adapter.connect() fails."""
+        from squant.services.live_trading import LiveExchangeConnectionError
+
+        mock_session = MagicMock()
+        mock_session.commit = AsyncMock()
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = None
+        mock_session.execute = AsyncMock(return_value=mock_result)
+
+        service = LiveTradingService(mock_session)
+        risk_config = RiskConfig(
+            max_position_size=Decimal("0.5"),
+            max_order_size=Decimal("0.1"),
+            daily_trade_limit=100,
+            daily_loss_limit=Decimal("0.05"),
+        )
+
+        mock_exchange_account = MagicMock()
+        mock_exchange_account.id = uuid4()
+        mock_exchange_account.exchange = "okx"
+        mock_exchange_account.testnet = False
+        mock_exchange_account.is_active = True
+        mock_exchange_account.api_key_enc = b"encrypted_key"
+        mock_exchange_account.api_secret_enc = b"encrypted_secret"
+        mock_exchange_account.passphrase_enc = b"encrypted_pass"
+        mock_exchange_account.nonce = b"nonce123"
+
+        with (
+            patch("squant.services.strategy.StrategyRepository") as mock_strat_repo_class,
+            patch("squant.services.account.ExchangeAccountRepository") as mock_acct_repo_class,
+            patch("squant.services.account.ExchangeAccountService") as mock_acct_svc_class,
+            patch("squant.services.live_trading.OKXAdapter") as mock_adapter_class,
+        ):
+            mock_strat_repo = MagicMock()
+            mock_strategy = MagicMock()
+            mock_strategy.code = "class MyStrategy(Strategy): pass"
+            mock_strat_repo.get = AsyncMock(return_value=mock_strategy)
+            mock_strat_repo_class.return_value = mock_strat_repo
+
+            mock_acct_repo = MagicMock()
+            mock_acct_repo.get = AsyncMock(return_value=mock_exchange_account)
+            mock_acct_repo_class.return_value = mock_acct_repo
+
+            mock_acct_svc = MagicMock()
+            mock_acct_svc.get_decrypted_credentials.return_value = {
+                "api_key": "test_key",
+                "api_secret": "test_secret",
+                "passphrase": "test_pass",
+            }
+            mock_acct_svc_class.return_value = mock_acct_svc
+
+            mock_adapter = MagicMock()
+            mock_adapter.connect = AsyncMock(side_effect=Exception("Connection refused"))
+            mock_adapter_class.return_value = mock_adapter
+
+            with pytest.raises(LiveExchangeConnectionError) as exc_info:
+                await service.start(
+                    strategy_id=uuid4(),
+                    symbol="BTC/USDT",
+                    exchange_account_id=mock_exchange_account.id,
+                    timeframe="1m",
+                    risk_config=risk_config,
+                )
+
+            assert "Connection refused" in str(exc_info.value)
+
+
+class TestStopStatusGuard:
+    """Tests for C-4: stop() should check run status before stopping."""
+
+    @pytest.fixture
+    def mock_session(self) -> MagicMock:
+        """Create mock database session."""
+        session = MagicMock()
+        session.commit = AsyncMock()
+        return session
+
+    @pytest.fixture
+    def service(self, mock_session: MagicMock) -> LiveTradingService:
+        """Create service with mock session."""
+        return LiveTradingService(mock_session)
+
+    @pytest.mark.asyncio
+    async def test_stop_rejects_already_stopped_session(
+        self, service: LiveTradingService
+    ) -> None:
+        """stop() should raise LiveTradingError for already STOPPED sessions."""
+        run_id = uuid4()
+        mock_run = MagicMock()
+        mock_run.id = str(run_id)
+        mock_run.status = RunStatus.STOPPED
+
+        with patch.object(service.run_repo, "get", new_callable=AsyncMock) as mock_get:
+            mock_get.return_value = mock_run
+
+            with pytest.raises(LiveTradingError, match="Cannot stop session"):
+                await service.stop(run_id)
+
+    @pytest.mark.asyncio
+    async def test_stop_rejects_error_status_session(
+        self, service: LiveTradingService
+    ) -> None:
+        """stop() should raise LiveTradingError for ERROR sessions."""
+        run_id = uuid4()
+        mock_run = MagicMock()
+        mock_run.id = str(run_id)
+        mock_run.status = RunStatus.ERROR
+
+        with patch.object(service.run_repo, "get", new_callable=AsyncMock) as mock_get:
+            mock_get.return_value = mock_run
+
+            with pytest.raises(LiveTradingError, match="Cannot stop session"):
+                await service.stop(run_id)
+
+    @pytest.mark.asyncio
+    async def test_stop_rejects_completed_session(
+        self, service: LiveTradingService
+    ) -> None:
+        """stop() should raise LiveTradingError for COMPLETED sessions."""
+        run_id = uuid4()
+        mock_run = MagicMock()
+        mock_run.id = str(run_id)
+        mock_run.status = RunStatus.COMPLETED
+
+        with patch.object(service.run_repo, "get", new_callable=AsyncMock) as mock_get:
+            mock_get.return_value = mock_run
+
+            with pytest.raises(LiveTradingError, match="Cannot stop session"):
+                await service.stop(run_id)
+
+    @pytest.mark.asyncio
+    async def test_stop_rejects_cancelled_session(
+        self, service: LiveTradingService
+    ) -> None:
+        """stop() should raise LiveTradingError for CANCELLED sessions."""
+        run_id = uuid4()
+        mock_run = MagicMock()
+        mock_run.id = str(run_id)
+        mock_run.status = RunStatus.CANCELLED
+
+        with patch.object(service.run_repo, "get", new_callable=AsyncMock) as mock_get:
+            mock_get.return_value = mock_run
+
+            with pytest.raises(LiveTradingError, match="Cannot stop session"):
+                await service.stop(run_id)
+
+    @pytest.mark.asyncio
+    async def test_stop_allows_running_session(
+        self, service: LiveTradingService
+    ) -> None:
+        """stop() should allow stopping a RUNNING session."""
+        run_id = uuid4()
+        mock_run = MagicMock()
+        mock_run.id = str(run_id)
+        mock_run.status = RunStatus.RUNNING
+
+        with patch.object(service.run_repo, "get", new_callable=AsyncMock) as mock_get:
+            mock_get.return_value = mock_run
+
+            with patch(
+                "squant.services.live_trading.get_live_session_manager"
+            ) as mock_get_manager:
+                mock_manager = MagicMock()
+                mock_manager.get.return_value = None
+                mock_get_manager.return_value = mock_manager
+
+                with patch.object(
+                    service.run_repo, "update", new_callable=AsyncMock
+                ) as mock_update:
+                    mock_update.return_value = mock_run
+
+                    result = await service.stop(run_id)
+                    assert result == mock_run
+
+    @pytest.mark.asyncio
+    async def test_stop_allows_pending_session(
+        self, service: LiveTradingService
+    ) -> None:
+        """stop() should allow stopping a PENDING session."""
+        run_id = uuid4()
+        mock_run = MagicMock()
+        mock_run.id = str(run_id)
+        mock_run.status = RunStatus.PENDING
+
+        with patch.object(service.run_repo, "get", new_callable=AsyncMock) as mock_get:
+            mock_get.return_value = mock_run
+
+            with patch(
+                "squant.services.live_trading.get_live_session_manager"
+            ) as mock_get_manager:
+                mock_manager = MagicMock()
+                mock_manager.get.return_value = None
+                mock_get_manager.return_value = mock_manager
+
+                with patch.object(
+                    service.run_repo, "update", new_callable=AsyncMock
+                ) as mock_update:
+                    mock_update.return_value = mock_run
+
+                    result = await service.stop(run_id)
+                    assert result == mock_run
+
+    @pytest.mark.asyncio
+    async def test_stop_allows_interrupted_session(
+        self, service: LiveTradingService
+    ) -> None:
+        """stop() should allow stopping an INTERRUPTED session."""
+        run_id = uuid4()
+        mock_run = MagicMock()
+        mock_run.id = str(run_id)
+        mock_run.status = RunStatus.INTERRUPTED
+
+        with patch.object(service.run_repo, "get", new_callable=AsyncMock) as mock_get:
+            mock_get.return_value = mock_run
+
+            with patch(
+                "squant.services.live_trading.get_live_session_manager"
+            ) as mock_get_manager:
+                mock_manager = MagicMock()
+                mock_manager.get.return_value = None
+                mock_get_manager.return_value = mock_manager
+
+                with patch.object(
+                    service.run_repo, "update", new_callable=AsyncMock
+                ) as mock_update:
+                    mock_update.return_value = mock_run
+
+                    result = await service.stop(run_id)
+                    assert result == mock_run
+
+    @pytest.mark.asyncio
+    async def test_stop_for_shutdown_skips_status_check(
+        self, service: LiveTradingService
+    ) -> None:
+        """stop(for_shutdown=True) should not check status (cleanup scenario)."""
+        run_id = uuid4()
+        mock_run = MagicMock()
+        mock_run.id = str(run_id)
+        mock_run.status = RunStatus.STOPPED  # Would normally be rejected
+
+        with patch.object(service.run_repo, "get", new_callable=AsyncMock) as mock_get:
+            mock_get.return_value = mock_run
+
+            with patch(
+                "squant.services.live_trading.get_live_session_manager"
+            ) as mock_get_manager:
+                mock_manager = MagicMock()
+                mock_manager.get.return_value = None
+                mock_get_manager.return_value = mock_manager
+
+                with patch.object(
+                    service.run_repo, "update", new_callable=AsyncMock
+                ) as mock_update:
+                    mock_update.return_value = mock_run
+
+                    # Should NOT raise even though status is STOPPED
+                    result = await service.stop(run_id, for_shutdown=True)
+                    assert result == mock_run
+
+
+class TestReconcilePositionsUsesTotal:
+    """Tests for C-2: _reconcile_positions should use total instead of available."""
+
+    @pytest.fixture
+    def mock_session(self) -> MagicMock:
+        """Create mock database session."""
+        return MagicMock()
+
+    @pytest.fixture
+    def service(self, mock_session: MagicMock) -> LiveTradingService:
+        """Create service with mock session."""
+        return LiveTradingService(mock_session)
+
+    @pytest.mark.asyncio
+    async def test_reconcile_uses_total_for_cash(
+        self, service: LiveTradingService
+    ) -> None:
+        """_reconcile_positions should use balance.total (not available) for cash comparison."""
+        from squant.infra.exchange.types import AccountBalance, Balance
+
+        mock_engine = MagicMock()
+        mock_engine.context._cash = Decimal("10000")
+        mock_engine.context.get_position.return_value = None
+
+        mock_adapter = AsyncMock()
+        # Balance: available=8000, frozen=2000 -> total=10000
+        # If using .available, it would see a discrepancy (8000 != 10000)
+        # If using .total, it sees no discrepancy (10000 == 10000)
+        balance = AccountBalance(
+            exchange="okx",
+            balances=[
+                Balance(currency="USDT", available=Decimal("8000"), frozen=Decimal("2000")),
+                Balance(currency="BTC", available=Decimal("0"), frozen=Decimal("0")),
+            ],
+        )
+        mock_adapter.get_balance.return_value = balance
+
+        report = await service._reconcile_positions(mock_engine, mock_adapter, "BTC/USDT")
+
+        # With .total, 10000 == 10000 -> no cash adjustment
+        assert report["cash_adjusted"] is False
+
+    @pytest.mark.asyncio
+    async def test_reconcile_uses_total_for_position(
+        self, service: LiveTradingService
+    ) -> None:
+        """_reconcile_positions should use balance.total (not available) for position amount."""
+        from squant.infra.exchange.types import AccountBalance, Balance
+
+        mock_engine = MagicMock()
+        mock_engine.context._cash = Decimal("10000")
+        mock_pos = MagicMock()
+        mock_pos.amount = Decimal("1.0")
+        mock_engine.context.get_position.return_value = mock_pos
+
+        mock_adapter = AsyncMock()
+        # Balance: available=0.5 BTC, frozen=0.5 BTC -> total=1.0
+        # If using .available, it would see mismatch (0.5 != 1.0)
+        # If using .total, it sees no mismatch (1.0 == 1.0)
+        balance = AccountBalance(
+            exchange="okx",
+            balances=[
+                Balance(currency="USDT", available=Decimal("10000"), frozen=Decimal("0")),
+                Balance(currency="BTC", available=Decimal("0.5"), frozen=Decimal("0.5")),
+            ],
+        )
+        mock_adapter.get_balance.return_value = balance
+
+        report = await service._reconcile_positions(mock_engine, mock_adapter, "BTC/USDT")
+
+        # With .total, 1.0 == 1.0 -> no position adjustment
+        assert report["position_adjusted"] is False
+
+
+class TestResumeFailureUpdatesDB:
+    """Tests for M-4: resume() failure should update DB status to ERROR."""
+
+    @pytest.fixture
+    def mock_session(self) -> MagicMock:
+        """Create mock database session."""
+        session = MagicMock()
+        session.commit = AsyncMock()
+        # Mock execute for has_running_session query
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = None
+        session.execute = AsyncMock(return_value=mock_result)
+        return session
+
+    @pytest.fixture
+    def service(self, mock_session: MagicMock) -> LiveTradingService:
+        """Create service with mock session."""
+        return LiveTradingService(mock_session)
+
+    @pytest.mark.asyncio
+    async def test_resume_failure_marks_db_error(self, service: LiveTradingService) -> None:
+        """When resume() fails after engine registration, DB should be updated to ERROR."""
+        run_id = uuid4()
+        mock_run = MagicMock()
+        mock_run.id = str(run_id)
+        mock_run.strategy_id = str(uuid4())
+        mock_run.status = RunStatus.INTERRUPTED
+        mock_run.symbol = "BTC/USDT"
+        mock_run.timeframe = "1m"
+        mock_run.exchange = "okx"
+        mock_run.account_id = str(uuid4())
+        mock_run.initial_capital = Decimal("10000")
+        mock_run.result = {
+            "cash": "10000",
+            "equity": "10000",
+            "positions": {},
+            "trades": [],
+            "completed_orders_count": 0,
+            "trades_count": 0,
+            "bar_count": 0,
+            "total_fees": "0",
+            "risk_config": {
+                "max_position_size": "0.5",
+                "max_order_size": "0.1",
+                "daily_trade_limit": 100,
+                "daily_loss_limit": "0.05",
+            },
+        }
+        mock_run.params = {}
+
+        with (
+            patch.object(service.run_repo, "get", new_callable=AsyncMock) as mock_get,
+            patch.object(service.run_repo, "update", new_callable=AsyncMock) as mock_update,
+            patch.object(
+                service.run_repo, "has_running_session", new_callable=AsyncMock
+            ) as mock_has_running,
+            patch(
+                "squant.services.live_trading.get_live_session_manager"
+            ) as mock_get_manager,
+            patch("squant.services.strategy.StrategyRepository") as mock_strat_repo_class,
+            patch("squant.services.account.ExchangeAccountRepository") as mock_acct_repo_class,
+            patch("squant.services.account.ExchangeAccountService") as mock_acct_svc_class,
+            patch("squant.services.live_trading.OKXAdapter") as mock_adapter_class,
+            patch("squant.services.live_trading.LiveTradingEngine") as mock_engine_class,
+            patch("squant.websocket.manager.get_stream_manager") as mock_stream_mgr,
+            patch("squant.config.get_settings") as mock_settings,
+        ):
+            # Settings
+            mock_live_settings = MagicMock()
+            mock_live_settings.max_sessions = 10
+            mock_settings_obj = MagicMock()
+            mock_settings_obj.live = mock_live_settings
+            mock_settings.return_value = mock_settings_obj
+
+            # Mock _instantiate_strategy to avoid actual code execution
+            service._instantiate_strategy = MagicMock(return_value=MagicMock())
+
+            mock_get.return_value = mock_run
+            mock_update.return_value = mock_run
+            mock_has_running.return_value = False
+
+            # Session manager
+            mock_manager = MagicMock()
+            mock_manager.get.return_value = None
+            mock_manager.session_count = 0
+            mock_manager.register = AsyncMock()
+            mock_manager.unregister = AsyncMock()
+            mock_get_manager.return_value = mock_manager
+
+            # Strategy
+            mock_strat_repo = MagicMock()
+            mock_strategy = MagicMock()
+            mock_strategy.code = "class S(Strategy): pass"
+            mock_strat_repo.get = AsyncMock(return_value=mock_strategy)
+            mock_strat_repo_class.return_value = mock_strat_repo
+
+            # Account
+            mock_acct = MagicMock()
+            mock_acct.exchange = "okx"
+            mock_acct.testnet = False
+            mock_acct.is_active = True
+            mock_acct_repo = MagicMock()
+            mock_acct_repo.get = AsyncMock(return_value=mock_acct)
+            mock_acct_repo_class.return_value = mock_acct_repo
+
+            mock_acct_svc = MagicMock()
+            mock_acct_svc.get_decrypted_credentials.return_value = {
+                "api_key": "k", "api_secret": "s", "passphrase": "p",
+            }
+            mock_acct_svc_class.return_value = mock_acct_svc
+
+            # Adapter
+            from squant.infra.exchange.types import AccountBalance, Balance
+
+            mock_balance = AccountBalance(
+                exchange="okx",
+                balances=[
+                    Balance(currency="USDT", available=Decimal("10000"), frozen=Decimal("0")),
+                    Balance(currency="BTC", available=Decimal("0"), frozen=Decimal("0")),
+                ],
+            )
+            mock_adapter = MagicMock()
+            mock_adapter.connect = AsyncMock()
+            mock_adapter.get_balance = AsyncMock(return_value=mock_balance)
+            mock_adapter.get_open_orders = AsyncMock(return_value=[])
+            mock_adapter_class.return_value = mock_adapter
+
+            # Engine
+            mock_engine_inst = MagicMock()
+            mock_engine_inst.run_id = run_id
+            mock_engine_inst.is_running = True
+            mock_engine_inst.stop = AsyncMock()
+            mock_engine_inst.context = MagicMock()
+            mock_engine_inst.context._cash = Decimal("10000")
+            mock_engine_inst.context.get_position.return_value = None
+            mock_engine_inst._live_orders = {}
+            mock_engine_class.return_value = mock_engine_inst
+
+            # Order repo for step 10b
+            with patch("squant.services.order.OrderRepository") as mock_order_repo_class:
+                mock_order_repo = MagicMock()
+                mock_order_repo.list_by_run = AsyncMock(return_value=[])
+                mock_order_repo_class.return_value = mock_order_repo
+
+                # Stream manager -- fails on subscribe_candles
+                mock_stream = MagicMock()
+                mock_stream.subscribe_candles = AsyncMock(
+                    side_effect=Exception("Stream subscribe failed")
+                )
+                mock_stream_mgr.return_value = mock_stream
+
+                with pytest.raises(Exception, match="Stream subscribe failed"):
+                    await service.resume(run_id, warmup_bars=0)
+
+            # Verify DB was updated to ERROR status
+            error_update_found = False
+            for call in mock_update.call_args_list:
+                kwargs = call.kwargs if call.kwargs else {}
+                if kwargs.get("status") == RunStatus.ERROR:
+                    assert "Resume failed" in kwargs.get("error_message", "")
+                    error_update_found = True
+                    break
+            assert error_update_found, (
+                "resume() failure should update DB status to ERROR"
+            )
+
+
+class TestStartAdapterCloseOnFailure:
+    """Tests for M-7: adapter should be closed when start() fails during connect/get_balance."""
+
+    @pytest.fixture
+    def mock_session(self) -> MagicMock:
+        """Create mock database session."""
+        session = MagicMock()
+        session.commit = AsyncMock()
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = None
+        session.execute = AsyncMock(return_value=mock_result)
+        return session
+
+    @pytest.fixture
+    def service(self, mock_session: MagicMock) -> LiveTradingService:
+        """Create service with mock session."""
+        return LiveTradingService(mock_session)
+
+    @pytest.mark.asyncio
+    async def test_adapter_closed_on_connect_failure(
+        self, service: LiveTradingService
+    ) -> None:
+        """When adapter.connect() fails, the adapter should be closed before raising."""
+        from squant.services.live_trading import LiveExchangeConnectionError
+
+        mock_exchange_account = MagicMock()
+        mock_exchange_account.id = uuid4()
+        mock_exchange_account.exchange = "okx"
+        mock_exchange_account.testnet = False
+        mock_exchange_account.is_active = True
+
+        risk_config = RiskConfig(
+            max_position_size=Decimal("0.5"),
+            max_order_size=Decimal("0.1"),
+            daily_trade_limit=100,
+            daily_loss_limit=Decimal("0.05"),
+        )
+
+        with (
+            patch("squant.services.strategy.StrategyRepository") as mock_strat_repo_class,
+            patch("squant.services.account.ExchangeAccountRepository") as mock_acct_repo_class,
+            patch("squant.services.account.ExchangeAccountService") as mock_acct_svc_class,
+            patch("squant.services.live_trading.OKXAdapter") as mock_adapter_class,
+        ):
+            mock_strat_repo = MagicMock()
+            mock_strategy = MagicMock()
+            mock_strategy.code = "class MyStrategy(Strategy): pass"
+            mock_strat_repo.get = AsyncMock(return_value=mock_strategy)
+            mock_strat_repo_class.return_value = mock_strat_repo
+
+            mock_acct_repo = MagicMock()
+            mock_acct_repo.get = AsyncMock(return_value=mock_exchange_account)
+            mock_acct_repo_class.return_value = mock_acct_repo
+
+            mock_acct_svc = MagicMock()
+            mock_acct_svc.get_decrypted_credentials.return_value = {
+                "api_key": "test_key",
+                "api_secret": "test_secret",
+                "passphrase": "test_pass",
+            }
+            mock_acct_svc_class.return_value = mock_acct_svc
+
+            mock_adapter = MagicMock()
+            mock_adapter.connect = AsyncMock(side_effect=Exception("Connection refused"))
+            mock_adapter.close = AsyncMock()
+            mock_adapter_class.return_value = mock_adapter
+
+            with pytest.raises(LiveExchangeConnectionError):
+                await service.start(
+                    strategy_id=uuid4(),
+                    symbol="BTC/USDT",
+                    exchange_account_id=mock_exchange_account.id,
+                    timeframe="1m",
+                    risk_config=risk_config,
+                )
+
+            # Verify adapter.close() was called
+            mock_adapter.close.assert_called_once()

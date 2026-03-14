@@ -16,7 +16,7 @@ from httpx import ASGITransport, AsyncClient
 from squant.main import app
 from squant.models.enums import RunMode, RunStatus
 from squant.services.live_trading import (
-    ExchangeConnectionError,
+    LiveExchangeConnectionError,
     LiveTradingError,
     RiskConfigurationError,
     SessionNotFoundError,
@@ -151,7 +151,7 @@ class TestStartLiveTrading:
         with patch("squant.api.v1.live_trading.LiveTradingService") as mock_service_class:
             mock_service = MagicMock()
             mock_service.start = AsyncMock(
-                side_effect=ExchangeConnectionError("Cannot connect to exchange")
+                side_effect=LiveExchangeConnectionError("Cannot connect to exchange")
             )
             mock_service_class.return_value = mock_service
 
@@ -283,6 +283,40 @@ class TestEmergencyClose:
             response = await client.post(f"/api/v1/live/{run_id}/emergency-close")
 
             assert response.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_emergency_close_live_trading_error(self, client: AsyncClient) -> None:
+        """Test C-5: emergency close should catch LiveTradingError and return 400."""
+        run_id = uuid4()
+
+        with patch("squant.api.v1.live_trading.LiveTradingService") as mock_service_class:
+            mock_service = MagicMock()
+            mock_service.emergency_close = AsyncMock(
+                side_effect=LiveTradingError("Cannot close: circuit breaker active")
+            )
+            mock_service_class.return_value = mock_service
+
+            response = await client.post(f"/api/v1/live/{run_id}/emergency-close")
+
+            assert response.status_code == 400
+            assert "circuit breaker" in response.json()["message"]
+
+    @pytest.mark.asyncio
+    async def test_emergency_close_unexpected_error(self, client: AsyncClient) -> None:
+        """Test C-5: emergency close should catch unexpected Exception and return 500."""
+        run_id = uuid4()
+
+        with patch("squant.api.v1.live_trading.LiveTradingService") as mock_service_class:
+            mock_service = MagicMock()
+            mock_service.emergency_close = AsyncMock(
+                side_effect=RuntimeError("Unexpected engine failure")
+            )
+            mock_service_class.return_value = mock_service
+
+            response = await client.post(f"/api/v1/live/{run_id}/emergency-close")
+
+            assert response.status_code == 500
+            assert "Emergency close failed" in response.json()["message"]
 
 
 class TestGetLiveTradingStatus:
