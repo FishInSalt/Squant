@@ -16,10 +16,12 @@ from httpx import ASGITransport, AsyncClient
 from squant.main import app
 from squant.models.enums import RunMode, RunStatus
 from squant.services.live_trading import (
+    ExchangeAccountNotFoundError,
     ExchangeConnectionError,
     LiveTradingError,
     RiskConfigurationError,
     SessionNotFoundError,
+    SessionNotResumableError,
     StrategyInstantiationError,
 )
 from squant.services.strategy import StrategyNotFoundError
@@ -242,6 +244,140 @@ class TestStopLiveTrading:
             response = await client.post(f"/api/v1/live/{run_id}/stop")
 
             assert response.status_code == 404
+
+
+class TestResumeLiveTrading:
+    """Tests for POST /api/v1/live/{run_id}/resume endpoint."""
+
+    @pytest.mark.asyncio
+    async def test_resume_live_trading_success(self, client: AsyncClient, mock_run) -> None:
+        """Test successful resume returns 200 with run data and reconciliation message."""
+        mock_run.status = RunStatus.RUNNING.value
+
+        reconciliation = {"orders_reconciled": 3, "fills_processed": 5}
+
+        with patch("squant.api.v1.live_trading.LiveTradingService") as mock_service_class:
+            mock_service = MagicMock()
+            mock_service.resume = AsyncMock(return_value=(mock_run, reconciliation))
+            mock_service_class.return_value = mock_service
+
+            response = await client.post(f"/api/v1/live/{mock_run.id}/resume")
+
+            assert response.status_code == 200
+            data = response.json()
+            assert data["code"] == 0
+            assert data["data"]["symbol"] == "BTC/USDT"
+            assert data["data"]["status"] == "running"
+            assert "Orders reconciled: 3" in data["message"]
+            assert "fills processed: 5" in data["message"]
+            mock_service.resume.assert_called_once_with(mock_run.id, warmup_bars=200)
+
+    @pytest.mark.asyncio
+    async def test_resume_live_trading_with_custom_warmup_bars(
+        self, client: AsyncClient, mock_run
+    ) -> None:
+        """Test resume with custom warmup_bars from request body."""
+        mock_run.status = RunStatus.RUNNING.value
+
+        reconciliation = {"orders_reconciled": 0, "fills_processed": 0}
+
+        with patch("squant.api.v1.live_trading.LiveTradingService") as mock_service_class:
+            mock_service = MagicMock()
+            mock_service.resume = AsyncMock(return_value=(mock_run, reconciliation))
+            mock_service_class.return_value = mock_service
+
+            response = await client.post(
+                f"/api/v1/live/{mock_run.id}/resume",
+                json={"warmup_bars": 500},
+            )
+
+            assert response.status_code == 200
+            mock_service.resume.assert_called_once_with(mock_run.id, warmup_bars=500)
+
+    @pytest.mark.asyncio
+    async def test_resume_live_trading_session_not_found(self, client: AsyncClient) -> None:
+        """Test resume returns 404 when session does not exist."""
+        run_id = uuid4()
+
+        with patch("squant.api.v1.live_trading.LiveTradingService") as mock_service_class:
+            mock_service = MagicMock()
+            mock_service.resume = AsyncMock(
+                side_effect=SessionNotFoundError(str(run_id))
+            )
+            mock_service_class.return_value = mock_service
+
+            response = await client.post(f"/api/v1/live/{run_id}/resume")
+
+            assert response.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_resume_live_trading_session_not_resumable(self, client: AsyncClient) -> None:
+        """Test resume returns 409 when session is not in a resumable state."""
+        run_id = uuid4()
+
+        with patch("squant.api.v1.live_trading.LiveTradingService") as mock_service_class:
+            mock_service = MagicMock()
+            mock_service.resume = AsyncMock(
+                side_effect=SessionNotResumableError(run_id, "session is currently running")
+            )
+            mock_service_class.return_value = mock_service
+
+            response = await client.post(f"/api/v1/live/{run_id}/resume")
+
+            assert response.status_code == 409
+
+    @pytest.mark.asyncio
+    async def test_resume_live_trading_exchange_account_not_found(
+        self, client: AsyncClient
+    ) -> None:
+        """Test resume returns 404 when exchange account is not found."""
+        run_id = uuid4()
+        account_id = str(uuid4())
+
+        with patch("squant.api.v1.live_trading.LiveTradingService") as mock_service_class:
+            mock_service = MagicMock()
+            mock_service.resume = AsyncMock(
+                side_effect=ExchangeAccountNotFoundError(account_id, "not found")
+            )
+            mock_service_class.return_value = mock_service
+
+            response = await client.post(f"/api/v1/live/{run_id}/resume")
+
+            assert response.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_resume_live_trading_exchange_connection_error(
+        self, client: AsyncClient
+    ) -> None:
+        """Test resume returns 503 when exchange connection fails."""
+        run_id = uuid4()
+
+        with patch("squant.api.v1.live_trading.LiveTradingService") as mock_service_class:
+            mock_service = MagicMock()
+            mock_service.resume = AsyncMock(
+                side_effect=ExchangeConnectionError("Cannot connect to exchange")
+            )
+            mock_service_class.return_value = mock_service
+
+            response = await client.post(f"/api/v1/live/{run_id}/resume")
+
+            assert response.status_code == 503
+
+    @pytest.mark.asyncio
+    async def test_resume_live_trading_general_error(self, client: AsyncClient) -> None:
+        """Test resume returns 400 for general LiveTradingError."""
+        run_id = uuid4()
+
+        with patch("squant.api.v1.live_trading.LiveTradingService") as mock_service_class:
+            mock_service = MagicMock()
+            mock_service.resume = AsyncMock(
+                side_effect=LiveTradingError("Something went wrong during resume")
+            )
+            mock_service_class.return_value = mock_service
+
+            response = await client.post(f"/api/v1/live/{run_id}/resume")
+
+            assert response.status_code == 400
 
 
 class TestEmergencyClose:
