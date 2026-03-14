@@ -642,7 +642,7 @@ class TestApiErrorFormatConsistency:
         with patch("squant.api.v1.live_trading.LiveTradingService") as mock_service_class:
             mock_service = MagicMock()
             mock_service.start = AsyncMock(
-                side_effect=ExchangeConnectionError("Connection timeout")
+                side_effect=LiveExchangeConnectionError("Connection timeout")
             )
             mock_service_class.return_value = mock_service
 

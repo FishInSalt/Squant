@@ -907,7 +907,7 @@ class TestStopSession:
                         # Should not raise despite unsubscribe failure
                         result = await service.emergency_close(run_id)
 
-                        assert result["status"] == "closed"
+                        assert result["status"] == "completed"
                         service.session.commit.assert_called_once()
 
 
@@ -992,7 +992,7 @@ class TestEmergencyClose:
 
                         result = await service.emergency_close(run_id)
 
-                        assert result["status"] == "closed"
+                        assert result["status"] == "completed"
                         assert result["orders_cancelled"] == 2
                         assert result["positions_closed"] == 1
                         mock_engine.emergency_close.assert_called_once()
@@ -1203,6 +1203,7 @@ class TestGetRun:
         run_id = uuid4()
         mock_run = MagicMock()
         mock_run.id = str(run_id)
+        mock_run.mode = RunMode.LIVE
 
         with patch.object(service.run_repo, "get", new_callable=AsyncMock) as mock_get:
             mock_get.return_value = mock_run
