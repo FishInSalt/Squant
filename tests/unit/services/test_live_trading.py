@@ -903,7 +903,7 @@ class TestStopSession:
                         # Should not raise despite unsubscribe failure
                         result = await service.emergency_close(run_id)
 
-                        assert result["status"] == "closed"
+                        assert result["status"] == "completed"
                         service.session.commit.assert_called_once()
 
 
@@ -988,7 +988,7 @@ class TestEmergencyClose:
 
                         result = await service.emergency_close(run_id)
 
-                        assert result["status"] == "closed"
+                        assert result["status"] == "completed"
                         assert result["orders_cancelled"] == 2
                         assert result["positions_closed"] == 1
                         mock_engine.emergency_close.assert_called_once()
@@ -1199,6 +1199,7 @@ class TestGetRun:
         run_id = uuid4()
         mock_run = MagicMock()
         mock_run.id = str(run_id)
+        mock_run.mode = RunMode.LIVE
 
         with patch.object(service.run_repo, "get", new_callable=AsyncMock) as mock_get:
             mock_get.return_value = mock_run
@@ -1820,3 +1821,208 @@ class TestCheckUnsubscribe:
                 await service._check_unsubscribe("BTC/USDT", "1m")
 
                 mock_stream.unsubscribe_candles.assert_not_called()
+
+
+# --- Bug Fix Tests ---
+
+
+class TestGetRunModeValidation:
+    """Tests for M-5: get_run must validate run.mode == LIVE."""
+
+    @pytest.fixture
+    def service(self) -> LiveTradingService:
+        """Create service with mock session."""
+        mock_session = MagicMock()
+        return LiveTradingService(mock_session)
+
+    @pytest.mark.asyncio
+    async def test_get_run_rejects_backtest_run(self, service: LiveTradingService) -> None:
+        """get_run should raise SessionNotFoundError for backtest runs."""
+        run_id = uuid4()
+        mock_run = MagicMock()
+        mock_run.id = str(run_id)
+        mock_run.mode = RunMode.BACKTEST
+
+        with patch.object(service.run_repo, "get", new_callable=AsyncMock) as mock_get:
+            mock_get.return_value = mock_run
+
+            with pytest.raises(SessionNotFoundError):
+                await service.get_run(run_id)
+
+    @pytest.mark.asyncio
+    async def test_get_run_rejects_paper_run(self, service: LiveTradingService) -> None:
+        """get_run should raise SessionNotFoundError for paper trading runs."""
+        run_id = uuid4()
+        mock_run = MagicMock()
+        mock_run.id = str(run_id)
+        mock_run.mode = RunMode.PAPER
+
+        with patch.object(service.run_repo, "get", new_callable=AsyncMock) as mock_get:
+            mock_get.return_value = mock_run
+
+            with pytest.raises(SessionNotFoundError):
+                await service.get_run(run_id)
+
+    @pytest.mark.asyncio
+    async def test_get_run_accepts_live_run(self, service: LiveTradingService) -> None:
+        """get_run should succeed for live trading runs."""
+        run_id = uuid4()
+        mock_run = MagicMock()
+        mock_run.id = str(run_id)
+        mock_run.mode = RunMode.LIVE
+
+        with patch.object(service.run_repo, "get", new_callable=AsyncMock) as mock_get:
+            mock_get.return_value = mock_run
+
+            result = await service.get_run(run_id)
+            assert result == mock_run
+
+
+class TestEmergencyCloseStatusValue:
+    """Tests for m-6: emergency_close should return 'completed' not 'closed'."""
+
+    @pytest.fixture
+    def mock_session(self) -> MagicMock:
+        """Create mock database session."""
+        session = MagicMock()
+        session.commit = AsyncMock()
+        return session
+
+    @pytest.fixture
+    def service(self, mock_session: MagicMock) -> LiveTradingService:
+        """Create service with mock session."""
+        return LiveTradingService(mock_session)
+
+    @pytest.mark.asyncio
+    async def test_emergency_close_returns_completed_status(
+        self, service: LiveTradingService
+    ) -> None:
+        """emergency_close should return status='completed', not 'closed'."""
+        run_id = uuid4()
+        mock_run = MagicMock()
+        mock_run.id = str(run_id)
+        mock_run.mode = RunMode.LIVE
+
+        with patch.object(service.run_repo, "get", new_callable=AsyncMock) as mock_get:
+            mock_get.return_value = mock_run
+
+            mock_engine = MagicMock()
+            mock_engine.run_id = run_id
+            mock_engine.symbol = "BTC/USDT"
+            mock_engine.timeframe = "1m"
+            mock_engine.emergency_close = AsyncMock(
+                return_value={"orders_cancelled": 2, "positions_closed": 1}
+            )
+
+            with patch(
+                "squant.services.live_trading.get_live_session_manager"
+            ) as mock_get_manager:
+                mock_manager = MagicMock()
+                mock_manager.get.return_value = mock_engine
+                mock_manager.unregister = AsyncMock()
+                mock_manager.get_subscribed_symbols.return_value = set()
+                mock_get_manager.return_value = mock_manager
+
+                with patch.object(service.run_repo, "update", new_callable=AsyncMock):
+                    with patch(
+                        "squant.websocket.manager.get_stream_manager"
+                    ) as mock_stream_manager:
+                        mock_stream = MagicMock()
+                        mock_stream.unsubscribe_candles = AsyncMock()
+                        mock_stream_manager.return_value = mock_stream
+
+                        result = await service.emergency_close(run_id)
+
+                        assert result["status"] == "completed"
+
+    @pytest.mark.asyncio
+    async def test_emergency_close_inactive_returns_not_active(
+        self, service: LiveTradingService
+    ) -> None:
+        """emergency_close for inactive session should return 'not_active'."""
+        run_id = uuid4()
+        mock_run = MagicMock()
+        mock_run.id = str(run_id)
+        mock_run.mode = RunMode.LIVE
+
+        with patch.object(service.run_repo, "get", new_callable=AsyncMock) as mock_get:
+            mock_get.return_value = mock_run
+
+            with patch(
+                "squant.services.live_trading.get_live_session_manager"
+            ) as mock_get_manager:
+                mock_manager = MagicMock()
+                mock_manager.get.return_value = None
+                mock_get_manager.return_value = mock_manager
+
+                result = await service.emergency_close(run_id)
+
+                assert result["status"] == "not_active"
+
+
+class TestReconcileOrdersAvgPriceComment:
+    """Tests for M-6: _reconcile_orders uses avg_price as precision trade-off."""
+
+    @pytest.fixture
+    def mock_session(self) -> MagicMock:
+        """Create mock database session."""
+        session = MagicMock()
+        session.commit = AsyncMock()
+        return session
+
+    @pytest.fixture
+    def service(self, mock_session: MagicMock) -> LiveTradingService:
+        """Create service with mock session."""
+        return LiveTradingService(mock_session)
+
+    @pytest.mark.asyncio
+    async def test_reconcile_logs_approximate_fill_price(
+        self, service: LiveTradingService
+    ) -> None:
+        """When reconciling fills, a warning should be logged about using avg_price."""
+        from squant.infra.exchange.types import OrderResponse, OrderStatus as ExOrderStatus
+
+        run_id = uuid4()
+        mock_engine = MagicMock()
+        mock_engine.symbol = "BTC/USDT"
+
+        # Create a live order that had partial fill before crash
+        live_order = MagicMock()
+        live_order.exchange_order_id = "EX123"
+        live_order.filled_amount = Decimal("0.5")  # was 0.5 filled before crash
+        live_order.fee = Decimal("0.1")
+        live_order.status = "open"
+
+        mock_engine._live_orders = {"order1": live_order}
+        mock_engine._exchange_order_map = {"EX123": "order1"}
+        mock_engine._record_fill = MagicMock()
+
+        # Exchange now shows fully filled with avg_price covering both fills
+        mock_adapter = AsyncMock()
+        mock_adapter.get_open_orders = AsyncMock(return_value=[])
+
+        final_state = MagicMock()
+        final_state.filled = Decimal("1.0")  # now fully filled
+        final_state.avg_price = Decimal("105")  # blended avg price
+        final_state.fee = Decimal("0.2")
+        final_state.status = ExOrderStatus.FILLED if hasattr(ExOrderStatus, "FILLED") else "filled"
+        final_state.updated_at = datetime.now(UTC)
+        mock_adapter.get_order = AsyncMock(return_value=final_state)
+
+        with patch("squant.services.live_trading.logger") as mock_logger:
+            report = await service._reconcile_orders(
+                mock_engine, mock_adapter, "BTC/USDT"
+            )
+
+            # Verify fill was processed
+            assert report["fills_processed"] == 1
+            mock_engine._record_fill.assert_called_once()
+
+            # Verify warning was logged about approximate fill price
+            warning_calls = [
+                call for call in mock_logger.warning.call_args_list
+                if "approximate" in str(call).lower() or "avg_price" in str(call).lower()
+            ]
+            assert len(warning_calls) > 0, (
+                "Expected a warning log about using avg_price as approximate fill price"
+            )
