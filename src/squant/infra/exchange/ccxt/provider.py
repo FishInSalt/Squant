@@ -442,7 +442,7 @@ class CCXTStreamProvider:
                 task.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
                     await task
-            del self._subscription_tasks[key]
+            self._subscription_tasks.pop(key, None)
 
         # Close exchange connection
         if self._exchange:
@@ -681,10 +681,12 @@ class CCXTStreamProvider:
         Uses watch_tickers (plural) to batch multiple symbols into a single
         WebSocket connection, which is much more efficient than individual
         watch_ticker calls.
-        """
-        consecutive_errors = 0
-        max_errors = 10
 
+        Error handling delegates to _handle_loop_error() for consistent
+        reconnection behavior with other loops (same threshold, shared
+        error counters, exponential backoff).
+        """
+        key = "batch_tickers"
         logger.info("Batch tickers loop started")
 
         while self._running:
@@ -706,8 +708,7 @@ class CCXTStreamProvider:
                 tickers = await self._exchange.watch_tickers(symbols)
 
                 # Reset error count on success
-                consecutive_errors = 0
-                self._last_successful_message = time.time()
+                self._mark_success(key)
 
                 # Process all received tickers
                 for symbol, ticker in tickers.items():
@@ -738,40 +739,9 @@ class CCXTStreamProvider:
                         # Don't count this as a consecutive error, just continue
                         continue
 
-                consecutive_errors += 1
-                logger.warning(
-                    f"Error in batch tickers loop (attempt {consecutive_errors}/{max_errors}): {e}"
-                )
-
-                if consecutive_errors >= max_errors:
-                    self._reconnect_attempt += 1
-                    delay = self._get_reconnect_delay(self._reconnect_attempt)
-
-                    logger.warning(
-                        f"Too many consecutive errors in batch tickers loop, "
-                        f"reconnecting in {delay:.1f}s (attempt {self._reconnect_attempt})"
-                    )
-
-                    # Wait with exponential backoff before reconnecting
-                    await asyncio.sleep(delay)
-
-                    # Try to reconnect
-                    if await self.reconnect():
-                        consecutive_errors = 0
-                        self._reconnect_attempt = 0  # Reset on success
-                    else:
-                        # Check if we've exceeded max reconnect attempts
-                        if self._reconnect_attempt >= 10:
-                            logger.error(
-                                f"Max reconnection attempts ({self._reconnect_attempt}) reached, "
-                                "stopping batch tickers loop"
-                            )
-                            # Fire critical alert (LIVE-CN-002)
-                            self._fire_reconnect_exhausted_alert("batch_tickers")
-                            break
-                        # Otherwise keep trying with backoff
-                else:
-                    await asyncio.sleep(1)
+                if not await self._handle_loop_error(key, e):
+                    break
+                await asyncio.sleep(1)
 
         logger.info("Batch tickers loop stopped")
 

@@ -76,10 +76,14 @@ class StrategyInstantiationError(LiveTradingError):
     pass
 
 
-class ExchangeConnectionError(LiveTradingError):
-    """Error connecting to exchange."""
+class LiveExchangeConnectionError(LiveTradingError):
+    """Error connecting to exchange in live trading service layer."""
 
     pass
+
+
+# Backward compatibility alias
+ExchangeConnectionError = LiveExchangeConnectionError
 
 
 class ExchangeAccountNotFoundError(LiveTradingError):
@@ -375,7 +379,11 @@ class LiveTradingService:
                 initial_equity = quote_balance.available if quote_balance else Decimal("0")
                 logger.info(f"Fetched initial equity from exchange: {initial_equity}")
         except Exception as e:
-            raise ExchangeConnectionError(f"Failed to connect to exchange: {e}") from e
+            try:
+                await adapter.close()
+            except Exception:
+                pass
+            raise LiveExchangeConnectionError(f"Failed to connect to exchange: {e}") from e
 
         # Create run record
         run = await self.run_repo.create(
@@ -545,7 +553,7 @@ class LiveTradingService:
             account_service = ExchangeAccountService(self.session)
             credentials = account_service.get_decrypted_credentials(account)
         except DecryptionError as e:
-            raise ExchangeConnectionError(f"Failed to decrypt credentials: {e}") from e
+            raise LiveExchangeConnectionError(f"Failed to decrypt credentials: {e}") from e
 
         exchange = account.exchange.lower()
 
@@ -829,11 +837,20 @@ class LiveTradingService:
 
         Raises:
             SessionNotFoundError: If session not found.
+            LiveTradingError: If session is in a terminal state (not for_shutdown).
         """
         # Get run record
         run = await self.run_repo.get(run_id)
         if not run:
             raise SessionNotFoundError(run_id)
+
+        # Check status guard (skip for shutdown cleanup)
+        if not for_shutdown and run.status not in (
+            RunStatus.RUNNING, RunStatus.PENDING, RunStatus.INTERRUPTED
+        ):
+            raise LiveTradingError(
+                f"Cannot stop session {run_id}: current status is {run.status.value}"
+            )
 
         # Get engine from session manager
         session_manager = get_live_session_manager()
@@ -944,7 +961,7 @@ class LiveTradingService:
 
         return {
             "run_id": str(run_id),
-            "status": "closed",
+            "status": "completed",
             **results,
         }
 
@@ -1156,6 +1173,17 @@ class LiveTradingService:
                     fee_delta = (exchange_order.fee or Decimal("0")) - live_order.fee
                     if fee_delta < 0:
                         fee_delta = Decimal("0")
+                    # Precision trade-off: using exchange avg_price as the fill price
+                    # for the incremental fill. The REST API only provides the blended
+                    # average price across all fills, not the price of each individual
+                    # fill. The trades/fills endpoint would give exact per-fill prices
+                    # but ExchangeAdapter does not expose it. This is acceptable for
+                    # reconciliation purposes where approximate PnL tracking suffices.
+                    logger.warning(
+                        f"Reconcile fill for order {internal_id}: using approximate "
+                        f"avg_price={exchange_order.avg_price} for delta={fill_delta} "
+                        f"(exchange does not provide incremental fill price via REST)"
+                    )
                     engine._record_fill(
                         live_order, exchange_order.avg_price, fill_delta,
                         fee_delta, exchange_order.fee or Decimal("0"),
@@ -1181,6 +1209,16 @@ class LiveTradingService:
                         fee_delta = (final_state.fee or Decimal("0")) - live_order.fee
                         if fee_delta < 0:
                             fee_delta = Decimal("0")
+                        # Precision trade-off: same as open-order path above.
+                        # Using final_state.avg_price (blended average) as the fill
+                        # price for the incremental amount. The actual per-fill price
+                        # would require a get_order_trades() API that ExchangeAdapter
+                        # does not currently provide.
+                        logger.warning(
+                            f"Reconcile fill for order {internal_id}: using approximate "
+                            f"avg_price={final_state.avg_price} for delta={fill_delta} "
+                            f"(exchange does not provide incremental fill price via REST)"
+                        )
                         engine._record_fill(
                             live_order, final_state.avg_price, fill_delta,
                             fee_delta, final_state.fee or Decimal("0"),
@@ -1268,7 +1306,7 @@ class LiveTradingService:
         quote_currency = symbol.split("/")[1]
         quote_balance = balance.get_balance(quote_currency)
         if quote_balance:
-            exchange_cash = quote_balance.available
+            exchange_cash = quote_balance.total
             local_cash = engine.context._cash
             diff = abs(exchange_cash - local_cash)
             threshold = max(local_cash * Decimal("0.01"), Decimal("1"))
@@ -1288,7 +1326,7 @@ class LiveTradingService:
         # Reconcile base currency (position)
         base_currency = symbol.split("/")[0]
         base_balance = balance.get_balance(base_currency)
-        exchange_amount = base_balance.available if base_balance else Decimal("0")
+        exchange_amount = base_balance.total if base_balance else Decimal("0")
         local_pos = engine.context.get_position(symbol)
         local_amount = local_pos.amount if local_pos else Decimal("0")
 
@@ -1478,7 +1516,7 @@ class LiveTradingService:
         try:
             await adapter.connect()
         except Exception as e:
-            raise ExchangeConnectionError(
+            raise LiveExchangeConnectionError(
                 f"Failed to reconnect to exchange: {e}"
             ) from e
 
@@ -1625,6 +1663,17 @@ class LiveTradingService:
                 except Exception:
                     pass
 
+            # Update DB status to ERROR so the session is not left in an inconsistent state
+            try:
+                await self.run_repo.update(
+                    run.id,
+                    status=RunStatus.ERROR,
+                    error_message=f"Resume failed: {e}",
+                )
+                await self.session.commit()
+            except Exception:
+                pass
+
             raise
 
     async def list_runs(
@@ -1663,10 +1712,12 @@ class LiveTradingService:
             StrategyRun.
 
         Raises:
-            SessionNotFoundError: If not found.
+            SessionNotFoundError: If not found or if mode is not LIVE.
         """
         run = await self.run_repo.get(run_id)
         if not run:
+            raise SessionNotFoundError(run_id)
+        if run.mode != RunMode.LIVE:
             raise SessionNotFoundError(run_id)
         return run
 

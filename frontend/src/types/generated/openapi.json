@@ -10217,6 +10217,22 @@
             "title": "Min Order Value",
             "description": "Minimum order value in quote currency (e.g., USDT)",
             "default": "10"
+          },
+          "order_poll_interval": {
+            "type": "number",
+            "maximum": 300.0,
+            "exclusiveMinimum": 0.0,
+            "title": "Order Poll Interval",
+            "description": "Minimum seconds between order status polls (default 30s)",
+            "default": 30.0
+          },
+          "balance_check_interval": {
+            "type": "number",
+            "maximum": 3600.0,
+            "exclusiveMinimum": 0.0,
+            "title": "Balance Check Interval",
+            "description": "Seconds between balance sync checks (default 300s)",
+            "default": 300.0
           }
         },
         "type": "object",
