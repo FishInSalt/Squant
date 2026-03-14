@@ -1,5 +1,6 @@
 """Unit tests for CCXTStreamProvider."""
 
+import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -663,3 +664,181 @@ class TestCandleCloseDetection:
 
         assert "BTC/USDT:1h" not in provider._last_candle_ts
         assert "BTC/USDT:1h" not in provider._last_candle_data
+
+
+class TestBatchTickersLoopErrorHandling:
+    """Tests that _batch_tickers_loop uses _handle_loop_error for consistent reconnect logic.
+
+    Bug M-9: _batch_tickers_loop had its own independent error handling with:
+    - Local consecutive_errors counter instead of shared self._consecutive_errors dict
+    - Tolerance of 10 consecutive errors (other loops use 5 via _handle_loop_error)
+    - Its own reconnect_attempt local variable instead of self._reconnect_attempt
+
+    These tests verify the fix: _batch_tickers_loop now delegates to _handle_loop_error().
+    """
+
+    @pytest.mark.asyncio
+    async def test_batch_tickers_loop_uses_shared_consecutive_errors(self) -> None:
+        """_batch_tickers_loop should track errors in self._consecutive_errors, not a local var."""
+        provider = CCXTStreamProvider("okx")
+        provider._running = True
+        provider._connected = True
+
+        mock_exchange = MagicMock()
+        # First call raises, second call we stop the loop
+        call_count = 0
+
+        async def watch_tickers_side_effect(symbols):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                raise RuntimeError("Connection lost")
+            # Stop the loop on subsequent calls
+            provider._running = False
+            raise asyncio.CancelledError()
+
+        mock_exchange.watch_tickers = AsyncMock(side_effect=watch_tickers_side_effect)
+        provider._exchange = mock_exchange
+        provider._watched_ticker_symbols = {"BTC/USDT"}
+
+        # Mock _handle_loop_error to avoid actual reconnect logic
+        handle_error_calls = []
+
+        async def mock_handle_loop_error(key, error):
+            handle_error_calls.append((key, error))
+            provider._running = False  # Stop loop after handling error
+            return False
+
+        provider._handle_loop_error = mock_handle_loop_error  # type: ignore[assignment]
+
+        await provider._batch_tickers_loop()
+
+        # _handle_loop_error should have been called
+        assert len(handle_error_calls) == 1
+        key, error = handle_error_calls[0]
+        assert key == "batch_tickers"
+        assert isinstance(error, RuntimeError)
+        assert "Connection lost" in str(error)
+
+    @pytest.mark.asyncio
+    async def test_batch_tickers_loop_uses_same_threshold_as_other_loops(self) -> None:
+        """_batch_tickers_loop should use _max_consecutive_errors (5), not a local max of 10."""
+        provider = CCXTStreamProvider("okx")
+        provider._running = True
+        provider._connected = True
+
+        mock_exchange = MagicMock()
+        mock_exchange.watch_tickers = AsyncMock(side_effect=RuntimeError("Connection lost"))
+        provider._exchange = mock_exchange
+        provider._watched_ticker_symbols = {"BTC/USDT"}
+
+        # Track how many times _handle_loop_error is called
+        handle_error_call_count = 0
+
+        async def mock_handle_loop_error(key, error):
+            nonlocal handle_error_call_count
+            handle_error_call_count += 1
+            # After _max_consecutive_errors calls, stop the loop
+            if handle_error_call_count >= provider._max_consecutive_errors:
+                provider._running = False
+                return False
+            return True
+
+        provider._handle_loop_error = mock_handle_loop_error  # type: ignore[assignment]
+
+        # Use timeout to prevent hanging if buggy code doesn't delegate to _handle_loop_error
+        try:
+            await asyncio.wait_for(provider._batch_tickers_loop(), timeout=5.0)
+        except asyncio.TimeoutError:
+            provider._running = False
+            pytest.fail(
+                "_batch_tickers_loop timed out — likely not delegating to _handle_loop_error"
+            )
+
+        # Should have called _handle_loop_error exactly _max_consecutive_errors times
+        assert handle_error_call_count == provider._max_consecutive_errors
+
+    @pytest.mark.asyncio
+    async def test_batch_tickers_loop_marks_success_via_mark_success(self) -> None:
+        """_batch_tickers_loop should call _mark_success on successful ticker fetch."""
+        provider = CCXTStreamProvider("okx")
+        provider._running = True
+        provider._connected = True
+
+        mock_exchange = MagicMock()
+        call_count = 0
+
+        async def watch_tickers_side_effect(symbols):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return {"BTC/USDT": {"symbol": "BTC/USDT", "last": 50000.0}}
+            provider._running = False
+            raise asyncio.CancelledError()
+
+        mock_exchange.watch_tickers = AsyncMock(side_effect=watch_tickers_side_effect)
+        provider._exchange = mock_exchange
+        provider._watched_ticker_symbols = {"BTC/USDT"}
+        provider._handlers = []
+
+        # Track _mark_success calls
+        mark_success_calls = []
+        original_mark_success = provider._mark_success
+
+        def mock_mark_success(key):
+            mark_success_calls.append(key)
+            original_mark_success(key)
+
+        provider._mark_success = mock_mark_success  # type: ignore[assignment]
+
+        await provider._batch_tickers_loop()
+
+        assert len(mark_success_calls) >= 1
+        assert mark_success_calls[0] == "batch_tickers"
+
+    @pytest.mark.asyncio
+    async def test_batch_tickers_loop_invalid_symbol_not_passed_to_handle_loop_error(
+        self,
+    ) -> None:
+        """Invalid symbol errors should still be handled specially, not via _handle_loop_error."""
+        provider = CCXTStreamProvider("okx")
+        provider._running = True
+        provider._connected = True
+
+        mock_exchange = MagicMock()
+        call_count = 0
+
+        async def watch_tickers_side_effect(symbols):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                raise Exception("okx does not have market symbol ZEC/USDT")
+            # After removing invalid symbol, stop the loop
+            provider._running = False
+            return {"BTC/USDT": {"symbol": "BTC/USDT", "last": 50000.0}}
+
+        mock_exchange.watch_tickers = AsyncMock(side_effect=watch_tickers_side_effect)
+        provider._exchange = mock_exchange
+        # Include a valid symbol so the loop doesn't stall after removing ZEC/USDT
+        provider._watched_ticker_symbols = {"ZEC/USDT", "BTC/USDT"}
+        provider._handlers = []
+
+        # Track _handle_loop_error calls
+        handle_error_calls = []
+
+        async def mock_handle_loop_error(key, error):
+            handle_error_calls.append((key, error))
+            return True
+
+        provider._handle_loop_error = mock_handle_loop_error  # type: ignore[assignment]
+
+        try:
+            await asyncio.wait_for(provider._batch_tickers_loop(), timeout=5.0)
+        except asyncio.TimeoutError:
+            provider._running = False
+            pytest.fail("_batch_tickers_loop timed out")
+
+        # Invalid symbol errors should NOT be passed to _handle_loop_error
+        assert len(handle_error_calls) == 0
+        # The invalid symbol should be removed from the watch list
+        assert "ZEC/USDT" not in provider._watched_ticker_symbols
