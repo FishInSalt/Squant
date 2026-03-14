@@ -57,6 +57,18 @@ class RiskConfigRequest(BaseModel):
         le=100000,
         description="Minimum order value in quote currency (e.g., USDT)",
     )
+    order_poll_interval: float = Field(
+        default=30.0,
+        gt=0,
+        le=300,
+        description="Minimum seconds between order status polls (default 30s)",
+    )
+    balance_check_interval: float = Field(
+        default=300.0,
+        gt=0,
+        le=3600,
+        description="Seconds between balance sync checks (default 300s)",
+    )
 
 
 class StartLiveTradingRequest(BaseModel):

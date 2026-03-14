@@ -80,6 +80,8 @@ async def start_live_trading(
         max_price_deviation=request.risk_config.price_deviation_limit,
         circuit_breaker_loss_count=request.risk_config.circuit_breaker_threshold,
         min_order_value=request.risk_config.min_order_value,
+        order_poll_interval=request.risk_config.order_poll_interval,
+        balance_check_interval=request.risk_config.balance_check_interval,
     )
 
     try:
@@ -136,6 +138,8 @@ async def stop_live_trading(
         return ApiResponse(data=LiveTradingRunResponse.model_validate(run))
     except SessionNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
+    except LiveTradingError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 @router.post("/{run_id}/resume", response_model=ApiResponse[LiveTradingRunResponse])

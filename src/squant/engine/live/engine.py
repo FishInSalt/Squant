@@ -474,13 +474,18 @@ class LiveTradingEngine:
     # Timeframe to seconds mapping for adaptive health check timeout
     _TIMEFRAME_SECONDS: dict[str, int] = {
         "1m": 60,
+        "3m": 180,
         "5m": 300,
         "15m": 900,
         "30m": 1800,
         "1h": 3600,
+        "2h": 7200,
         "4h": 14400,
+        "6h": 21600,
+        "12h": 43200,
         "1d": 86400,
         "1w": 604800,
+        "1M": 2592000,
     }
 
     def is_healthy(self, timeout_seconds: int = 300) -> bool:
@@ -1479,12 +1484,21 @@ class LiveTradingEngine:
         placed. We query get_order to determine the actual outcome before
         falling back to CANCELLED (M-1 fix).
 
+        Note: For timed-out orders we may have a stashed exchange_order_id
+        (if the WS push arrived before reconciliation). If not available,
+        we attempt to query by client_order_id — some exchanges (OKX)
+        support this while others may raise OrderNotFound.
+
         Args:
             client_id: The client/internal order ID.
             order: The SimulatedOrder reference from _timed_out_orders.
         """
+        # Prefer exchange_order_id if we received it via WS before reconciliation.
+        # Fall back to client_id (works on OKX, may fail on other exchanges).
+        exchange_oid = self._exchange_order_map.get(client_id)
+        query_id = exchange_oid or client_id
         try:
-            response = await self._adapter.get_order(order.symbol, client_id)
+            response = await self._adapter.get_order(order.symbol, query_id)
         except Exception as e:
             logger.warning(
                 f"Failed to query timed-out order {client_id} — "
