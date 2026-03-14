@@ -936,6 +936,97 @@ class TestEmergencyClose:
         # Strategy should NOT have been called (no order placed)
         mock_adapter.place_order.assert_not_called()
 
+    @pytest.mark.asyncio
+    async def test_emergency_close_fill_updates_local_state(self, engine, mock_adapter):
+        """Test C-1: emergency_close calls _record_fill to update local state.
+
+        When an emergency close order is filled, _record_fill must be called
+        so that local position and cash state stay in sync with the exchange.
+        Without this, the local context would still show the old position
+        even though the exchange has closed it.
+        """
+        await engine.start()
+
+        # Simulate a position
+        engine.context._positions["BTC/USDT"] = MagicMock()
+        engine.context._positions["BTC/USDT"].is_open = True
+        engine.context._positions["BTC/USDT"].amount = Decimal("0.5")
+
+        # Mock place_order to return FILLED immediately (typical for market orders)
+        mock_adapter.place_order.return_value = OrderResponse(
+            order_id="close-123",
+            symbol="BTC/USDT",
+            side=OrderSide.SELL,
+            type=OrderType.MARKET,
+            status=OrderStatus.FILLED,
+            amount=Decimal("0.5"),
+            filled=Decimal("0.5"),
+            avg_price=Decimal("42000"),
+            fee=Decimal("0.21"),
+            fee_currency="USDT",
+        )
+
+        with patch.object(engine, "_record_fill") as mock_record_fill:
+            results = await engine.emergency_close()
+
+            assert results["positions_closed"] == 1
+            # _record_fill must be called with fill details from the order response
+            mock_record_fill.assert_called_once()
+            call_kwargs = mock_record_fill.call_args.kwargs
+            # LiveOrder arg
+            live_order_arg = call_kwargs["live_order"]
+            assert live_order_arg.symbol == "BTC/USDT"
+            assert live_order_arg.side == OrderSide.SELL
+            # fill_price
+            assert call_kwargs["fill_price"] == Decimal("42000")
+            # fill_amount
+            assert call_kwargs["fill_amount"] == Decimal("0.5")
+
+    @pytest.mark.asyncio
+    async def test_emergency_close_polled_fill_updates_local_state(self, engine, mock_adapter):
+        """Test C-1: emergency_close calls _record_fill even after polling.
+
+        When the order is not immediately filled and requires polling,
+        _record_fill should still be called once the order reaches FILLED.
+        """
+        await engine.start()
+
+        # Simulate a position
+        engine.context._positions["BTC/USDT"] = MagicMock()
+        engine.context._positions["BTC/USDT"].is_open = True
+        engine.context._positions["BTC/USDT"].amount = Decimal("0.5")
+
+        # place_order returns SUBMITTED (not immediately filled)
+        mock_adapter.place_order.return_value = OrderResponse(
+            order_id="close-123",
+            symbol="BTC/USDT",
+            side=OrderSide.SELL,
+            type=OrderType.MARKET,
+            status=OrderStatus.SUBMITTED,
+            amount=Decimal("0.5"),
+            filled=Decimal("0"),
+        )
+
+        # get_order returns FILLED on first poll
+        mock_adapter.get_order.return_value = OrderResponse(
+            order_id="close-123",
+            symbol="BTC/USDT",
+            side=OrderSide.SELL,
+            type=OrderType.MARKET,
+            status=OrderStatus.FILLED,
+            amount=Decimal("0.5"),
+            filled=Decimal("0.5"),
+            avg_price=Decimal("42000"),
+            fee=Decimal("0.21"),
+            fee_currency="USDT",
+        )
+
+        with patch.object(engine, "_record_fill") as mock_record_fill:
+            results = await engine.emergency_close()
+
+            assert results["positions_closed"] == 1
+            mock_record_fill.assert_called_once()
+
 
 class TestOrderUpdates:
     """Tests for WebSocket order updates."""
@@ -2294,7 +2385,77 @@ class TestBalanceSyncFailure:
 
         await engine._sync_balance()
 
-        assert engine._last_exchange_balance == Decimal("9500")
+        # C-2: should use total (available + frozen) = 10000, not just available
+        assert engine._last_exchange_balance == Decimal("10000")
+
+    @pytest.mark.asyncio
+    async def test_balance_sync_uses_total_not_available_for_quote(
+        self, engine, mock_adapter, caplog
+    ):
+        """Test C-2: _sync_balance uses total (available + frozen) for cash comparison.
+
+        When there are pending orders, some USDT is frozen as margin. Using
+        only 'available' would show a false discrepancy since the frozen
+        portion is still part of the account balance.
+        """
+        await engine.start()
+        engine._last_balance_check = None
+
+        # 9500 available + 500 frozen = 10000 total (matches initial_equity)
+        mock_adapter.get_balance.return_value = AccountBalance(
+            exchange="okx",
+            balances=[
+                Balance(currency="USDT", available=Decimal("9500"), frozen=Decimal("500")),
+                Balance(currency="BTC", available=Decimal("0.5"), frozen=Decimal("0.1")),
+            ],
+        )
+
+        import logging
+
+        with caplog.at_level(logging.WARNING):
+            await engine._sync_balance()
+
+        # total=10000 matches initial_equity=10000, so NO discrepancy warning
+        assert not any("Cash discrepancy" in msg for msg in caplog.messages)
+        # _last_exchange_balance should be total (10000), not available (9500)
+        assert engine._last_exchange_balance == Decimal("10000")
+
+    @pytest.mark.asyncio
+    async def test_balance_sync_uses_total_not_available_for_base(
+        self, engine, mock_adapter, caplog
+    ):
+        """Test C-2: _sync_balance uses total for base currency position comparison.
+
+        When there are open sell orders, some BTC is frozen. The position
+        comparison should use total (available + frozen) to match the local
+        position tracking which includes all held BTC.
+        """
+        await engine.start()
+        engine._last_balance_check = None
+
+        # Set local position to 0.6 BTC (matching total)
+        from squant.engine.backtest.types import Position
+
+        engine.context._positions["BTC/USDT"] = Position(
+            symbol="BTC/USDT", amount=Decimal("0.6"), avg_entry_price=Decimal("45000")
+        )
+
+        # Exchange: 0.5 available + 0.1 frozen = 0.6 total
+        mock_adapter.get_balance.return_value = AccountBalance(
+            exchange="okx",
+            balances=[
+                Balance(currency="USDT", available=Decimal("10000"), frozen=Decimal("0")),
+                Balance(currency="BTC", available=Decimal("0.5"), frozen=Decimal("0.1")),
+            ],
+        )
+
+        import logging
+
+        with caplog.at_level(logging.WARNING):
+            await engine._sync_balance()
+
+        # total=0.6 matches local=0.6, so NO position mismatch warning
+        assert not any("Position mismatch" in msg for msg in caplog.messages)
 
     @pytest.mark.asyncio
     async def test_balance_sync_logs_cash_discrepancy(self, engine, mock_adapter, caplog):
@@ -3312,3 +3473,225 @@ class TestFillPositionCashIntegration:
         assert pos.amount == Decimal("0.5")
         # Audit event buffered
         assert any(e["type"] == "fill" for e in engine._pending_order_events)
+
+
+class TestDmsTimeoutAdaptation:
+    """Tests for M-3: DMS timeout adapts to timeframe."""
+
+    def test_dms_timeout_default_1m(self, engine):
+        """Test DMS timeout for 1m timeframe is at least 60s."""
+        # 1m = 60s, timeout = max(60_000, 60*2*1000) = max(60000, 120000) = 120000
+        assert engine._dms_timeout_ms >= 60_000
+
+    def test_dms_timeout_adapts_to_5m(self, run_id, strategy, risk_config, mock_adapter):
+        """Test M-3: DMS timeout for 5m timeframe uses timeframe-based calculation.
+
+        For 5m candles (300s), using 60s timeout would cause frequent false
+        triggering since bars are 5 minutes apart. The timeout should be
+        at least 2x the timeframe duration.
+        """
+        with patch("squant.config.get_settings") as mock_settings:
+            settings = MagicMock()
+            settings.paper_max_equity_curve_size = 10000
+            settings.paper_max_completed_orders = 1000
+            settings.paper_max_fills = 1000
+            settings.paper_max_trades = 1000
+            settings.paper_max_logs = 1000
+            settings.strategy.max_bar_history = 1000
+            mock_settings.return_value = settings
+
+            engine_5m = LiveTradingEngine(
+                run_id=run_id,
+                strategy=strategy,
+                symbol="BTC/USDT",
+                timeframe="5m",
+                adapter=mock_adapter,
+                risk_config=risk_config,
+                initial_equity=Decimal("10000"),
+                params={},
+            )
+
+        # 5m = 300s, timeout = max(60_000, 300*2*1000) = max(60000, 600000) = 600000
+        assert engine_5m._dms_timeout_ms == 600_000
+
+    def test_dms_timeout_adapts_to_1h(self, run_id, strategy, risk_config, mock_adapter):
+        """Test M-3: DMS timeout for 1h timeframe is at least 2x the period.
+
+        For 1h candles (3600s), timeout should be at least 7200s = 7200000ms.
+        """
+        with patch("squant.config.get_settings") as mock_settings:
+            settings = MagicMock()
+            settings.paper_max_equity_curve_size = 10000
+            settings.paper_max_completed_orders = 1000
+            settings.paper_max_fills = 1000
+            settings.paper_max_trades = 1000
+            settings.paper_max_logs = 1000
+            settings.strategy.max_bar_history = 1000
+            mock_settings.return_value = settings
+
+            engine_1h = LiveTradingEngine(
+                run_id=run_id,
+                strategy=strategy,
+                symbol="BTC/USDT",
+                timeframe="1h",
+                adapter=mock_adapter,
+                risk_config=risk_config,
+                initial_equity=Decimal("10000"),
+                params={},
+            )
+
+        # 1h = 3600s, timeout = max(60_000, 3600*2*1000) = max(60000, 7200000) = 7200000
+        assert engine_1h._dms_timeout_ms == 7_200_000
+
+    def test_dms_timeout_minimum_60s_for_short_timeframes(
+        self, run_id, strategy, risk_config, mock_adapter
+    ):
+        """Test that DMS timeout has a floor of 60s even for very short timeframes."""
+        # For 1m: max(60000, 60*2*1000) = max(60000, 120000) = 120000
+        # The minimum bound is 60_000 but 1m already gives 120_000
+        with patch("squant.config.get_settings") as mock_settings:
+            settings = MagicMock()
+            settings.paper_max_equity_curve_size = 10000
+            settings.paper_max_completed_orders = 1000
+            settings.paper_max_fills = 1000
+            settings.paper_max_trades = 1000
+            settings.paper_max_logs = 1000
+            settings.strategy.max_bar_history = 1000
+            mock_settings.return_value = settings
+
+            engine_1m = LiveTradingEngine(
+                run_id=run_id,
+                strategy=strategy,
+                symbol="BTC/USDT",
+                timeframe="1m",
+                adapter=mock_adapter,
+                risk_config=risk_config,
+                initial_equity=Decimal("10000"),
+                params={},
+            )
+
+        assert engine_1m._dms_timeout_ms >= 60_000
+
+
+class TestPendingOrderEventLimit:
+    """Tests for M-8: bounded _pending_order_events on persist failure."""
+
+    @pytest.mark.asyncio
+    async def test_pending_events_bounded_on_persist_failure(self, engine, mock_adapter):
+        """Test M-8: _pending_order_events does not grow unbounded on persist failure.
+
+        When order event persistence fails repeatedly, the events are put back
+        for retry. Without a limit, this can consume unbounded memory.
+        After the fix, old events are dropped when the limit is exceeded.
+        """
+        await engine.start()
+
+        # Set up a failing persist callback
+        engine._on_order_persist = AsyncMock(side_effect=Exception("DB unavailable"))
+
+        # Fill the pending events list beyond the limit (1000)
+        engine._pending_order_events = [
+            {"type": "fill", "seq": i} for i in range(1200)
+        ]
+
+        # Create a candle to trigger process_candle which flushes events
+        candle = WSCandle(
+            symbol="BTC/USDT",
+            timeframe="1m",
+            timestamp=datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC),
+            open=Decimal("45000"),
+            high=Decimal("46000"),
+            low=Decimal("44000"),
+            close=Decimal("45500"),
+            volume=Decimal("100"),
+            is_closed=True,
+        )
+        await engine.process_candle(candle)
+
+        # After persist failure, events should be put back but capped at 1000
+        assert len(engine._pending_order_events) <= 1000
+
+    @pytest.mark.asyncio
+    async def test_pending_events_discard_oldest_on_overflow(
+        self, engine, mock_adapter, caplog
+    ):
+        """Test M-8: oldest events are discarded when limit exceeded.
+
+        The most recent events should be retained as they are more
+        likely to be relevant for audit.
+        """
+        await engine.start()
+
+        engine._on_order_persist = AsyncMock(side_effect=Exception("DB down"))
+
+        # Fill with identifiable events
+        engine._pending_order_events = [
+            {"type": "fill", "seq": i} for i in range(1100)
+        ]
+
+        candle = WSCandle(
+            symbol="BTC/USDT",
+            timeframe="1m",
+            timestamp=datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC),
+            open=Decimal("45000"),
+            high=Decimal("46000"),
+            low=Decimal("44000"),
+            close=Decimal("45500"),
+            volume=Decimal("100"),
+            is_closed=True,
+        )
+
+        import logging
+
+        with caplog.at_level(logging.WARNING):
+            await engine.process_candle(candle)
+
+        # Should have logged a warning about discarding events
+        assert any("discard" in msg.lower() or "drop" in msg.lower()
+                    for msg in caplog.messages)
+        assert len(engine._pending_order_events) <= 1000
+
+
+class TestRealizedPnlNoneProtection:
+    """Tests for C-6: realized_pnl sum with None pnl values."""
+
+    @pytest.mark.asyncio
+    async def test_bar_update_event_handles_none_pnl(self, engine):
+        """Test C-6: _build_bar_update_event handles trades with pnl=None.
+
+        If a trade's pnl is None (e.g., from a partially deserialized trade),
+        the sum operation should not raise TypeError.
+        """
+        await engine.start()
+
+        from squant.engine.backtest.types import TradeRecord
+
+        # Create trades with mixed pnl values (some None)
+        trade_ok = TradeRecord(
+            symbol="BTC/USDT",
+            side=OrderSide.BUY,
+            entry_time=datetime(2024, 1, 1, tzinfo=UTC),
+            entry_price=Decimal("45000"),
+            exit_time=datetime(2024, 1, 1, 1, 0, 0, tzinfo=UTC),
+            exit_price=Decimal("46000"),
+            amount=Decimal("0.1"),
+            pnl=Decimal("100"),
+        )
+        trade_none = TradeRecord(
+            symbol="BTC/USDT",
+            side=OrderSide.BUY,
+            entry_time=datetime(2024, 1, 1, tzinfo=UTC),
+            entry_price=Decimal("45000"),
+            amount=Decimal("0.1"),
+        )
+        trade_none.pnl = None  # type: ignore[assignment]
+
+        engine._context._trades.clear()
+        engine._context._trades.append(trade_ok)
+        engine._context._trades.append(trade_none)
+
+        # This should NOT raise TypeError
+        event = engine._build_bar_update_event()
+
+        # realized_pnl should sum only non-None pnl values
+        assert Decimal(event["realized_pnl"]) == Decimal("100")

@@ -330,8 +330,11 @@ class LiveTradingEngine:
         self._sync_failure_threshold: int = 5
 
         # Dead Man's Switch (F-2): exchange cancels all orders if heartbeat stops
+        # M-3: Adapt DMS timeout to timeframe so longer candle periods (5m, 1h)
+        # don't cause false DMS triggers between bars.
         self._dms_enabled: bool = False
-        self._dms_timeout_ms: int = 60_000  # 60s timeout — heartbeat sent every bar
+        tf_seconds = self._TIMEFRAME_SECONDS.get(self._timeframe, 300)
+        self._dms_timeout_ms: int = max(60_000, tf_seconds * 2 * 1000)
 
     @property
     def run_id(self) -> UUID:
@@ -454,6 +457,9 @@ class LiveTradingEngine:
             await paper_manager.stop_all(reason=f"Circuit breaker: {reason}")
         except Exception as e:
             logger.exception(f"Error stopping paper sessions: {e}")
+
+    # Maximum pending order events to prevent unbounded growth on persist failure (M-8)
+    _MAX_PENDING_ORDER_EVENTS: int = 1000
 
     # Timeframe to seconds mapping for adaptive health check timeout
     _TIMEFRAME_SECONDS: dict[str, int] = {
@@ -802,6 +808,33 @@ class LiveTradingEngine:
                     final = await self._wait_for_order_fill(sym, resp)
                     if final.status == OrderStatus.FILLED:
                         results["positions_closed"] += 1
+                        # C-1: Update local state via _record_fill so position
+                        # and cash stay in sync with the exchange after close.
+                        temp_order = LiveOrder(
+                            internal_id=f"emergency-{final.order_id}",
+                            exchange_order_id=final.order_id,
+                            symbol=sym,
+                            side=final.side,
+                            order_type=final.type.value
+                            if hasattr(final.type, "value")
+                            else str(final.type),
+                            amount=final.amount,
+                            price=final.avg_price,
+                            status=OrderStatus.FILLED,
+                        )
+                        temp_order.filled_amount = final.filled
+                        temp_order.avg_fill_price = final.avg_price
+                        temp_order.fee = final.fee or Decimal("0")
+                        temp_order.fee_currency = final.fee_currency
+                        self._record_fill(
+                            live_order=temp_order,
+                            fill_price=final.avg_price,
+                            fill_amount=final.filled,
+                            fee_delta=final.fee,
+                            total_fee=final.fee or Decimal("0"),
+                            source="emergency_close",
+                            exchange_timestamp=final.updated_at,
+                        )
                     else:
                         logger.warning(
                             f"Emergency close order not filled: {sym} "
@@ -1084,6 +1117,20 @@ class LiveTradingEngine:
                         logger.warning(f"Order persist callback failed for {self._run_id}: {e}")
                         # Put events back for retry on next bar
                         self._pending_order_events = events_to_persist + self._pending_order_events
+                        # M-8: Cap pending events to prevent unbounded growth
+                        if len(self._pending_order_events) > self._MAX_PENDING_ORDER_EVENTS:
+                            discarded = (
+                                len(self._pending_order_events)
+                                - self._MAX_PENDING_ORDER_EVENTS
+                            )
+                            self._pending_order_events = self._pending_order_events[
+                                -self._MAX_PENDING_ORDER_EVENTS:
+                            ]
+                            logger.warning(
+                                f"Dropped {discarded} oldest pending order events "
+                                f"(limit={self._MAX_PENDING_ORDER_EVENTS}) "
+                                f"for {self._run_id}"
+                            )
 
                 # Emit bar update event via WebSocket
                 if self._on_event:
@@ -1237,7 +1284,7 @@ class LiveTradingEngine:
             quote_currency = self._symbol.split("/")[1]  # e.g., "USDT" from "BTC/USDT"
             quote_balance = balance.get_balance(quote_currency)
             if quote_balance:
-                exchange_cash = quote_balance.available
+                exchange_cash = quote_balance.total
                 self._last_exchange_balance = exchange_cash
                 local_cash = self._context._cash
                 diff = abs(exchange_cash - local_cash)
@@ -1251,7 +1298,7 @@ class LiveTradingEngine:
             # Reconcile base currency position (LIVE-005)
             base_currency = self._symbol.split("/")[0]  # e.g., "BTC" from "BTC/USDT"
             base_balance = balance.get_balance(base_currency)
-            exchange_amount = base_balance.available if base_balance else Decimal("0")
+            exchange_amount = base_balance.total if base_balance else Decimal("0")
             local_pos = self._context.get_position(self._symbol)
             local_amount = local_pos.amount if local_pos else Decimal("0")
 
@@ -2133,7 +2180,9 @@ class LiveTradingEngine:
             "cash": str(ctx._cash),
             "equity": str(ctx.equity),
             "unrealized_pnl": str(ctx._get_unrealized_pnl()),
-            "realized_pnl": str(sum(t.pnl for t in ctx._trades)),
+            "realized_pnl": str(
+                sum((t.pnl for t in ctx._trades if t.pnl is not None), Decimal("0"))
+            ),
             "total_fees": str(ctx._total_fees),
             "completed_orders_count": len(ctx._completed_orders),
             "trades_count": len(ctx._trades),
