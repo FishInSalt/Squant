@@ -58,6 +58,11 @@ _WS_STATUS_MAP: dict[str, OrderStatus] = {
     "rejected": OrderStatus.REJECTED,
 }
 
+# Module-level set to prevent GC of fire-and-forget tasks (m-2 fix).
+# Python's event loop only keeps weak references to tasks, so untracked
+# tasks may be garbage-collected before completion.
+_background_tasks: set[asyncio.Task[Any]] = set()
+
 
 class LiveOrder:
     """Represents a live order with exchange tracking.
@@ -145,7 +150,7 @@ def _fire_notification(
         from squant.services.notification import emit_notification
 
         loop = asyncio.get_running_loop()
-        loop.create_task(
+        task = loop.create_task(
             emit_notification(
                 level=level,
                 event_type=event_type,
@@ -155,6 +160,8 @@ def _fire_notification(
                 run_id=str(run_id),
             )
         )
+        _background_tasks.add(task)
+        task.add_done_callback(_background_tasks.discard)
     except Exception as e:
         logger.debug(f"Failed to fire notification for {run_id}: {e}")
 
@@ -308,7 +315,7 @@ class LiveTradingEngine:
         # Order sync rate limiting - avoid excessive polling
         # Track last poll time per order to avoid redundant API calls
         self._order_last_poll: dict[str, datetime] = {}  # exchange_order_id -> last poll time
-        self._order_poll_min_interval = 30.0  # Minimum seconds between polls for same order
+        self._order_poll_min_interval = risk_config.order_poll_interval  # m-7: configurable
 
         # Last exchange balance for diagnostics (LIVE-012)
         self._last_exchange_balance: Decimal | None = None
@@ -319,9 +326,12 @@ class LiveTradingEngine:
 
         # Balance sync rate limiting (R5-F5): avoid excessive API calls
         # Balance is monitoring-only, so checking every 5 minutes is sufficient.
-        self._balance_check_interval: float = 300.0  # seconds
+        self._balance_check_interval: float = risk_config.balance_check_interval  # m-7: configurable
         self._last_balance_check: datetime | None = None
         self._has_recent_fill: bool = False  # set True on fill, triggers immediate check
+
+        # Instance-level set to prevent GC of fire-and-forget tasks (m-2 fix)
+        self._background_tasks: set[asyncio.Task[Any]] = set()
 
         # Exchange connection failure tracking (LV-3)
         # Separate counters for balance and order sync (R3-011)
@@ -602,7 +612,9 @@ class LiveTradingEngine:
                     "stopped_at": self._stopped_at.isoformat() if self._stopped_at else None,
                 }
                 loop = asyncio.get_running_loop()
-                loop.create_task(self._on_event(event))
+                task = loop.create_task(self._on_event(event))
+                self._background_tasks.add(task)
+                task.add_done_callback(self._background_tasks.discard)
             except Exception:
                 pass
 
@@ -1137,7 +1149,9 @@ class LiveTradingEngine:
                     try:
                         event = self._build_bar_update_event()
                         loop = asyncio.get_running_loop()
-                        loop.create_task(self._on_event(event))
+                        task = loop.create_task(self._on_event(event))
+                        self._background_tasks.add(task)
+                        task.add_done_callback(self._background_tasks.discard)
                     except Exception as e:
                         logger.debug(f"Event emit failed for {self._run_id}: {e}")
 
@@ -1444,18 +1458,10 @@ class LiveTradingEngine:
 
                 reconciled.append(client_id)
             else:
-                # Not in open orders — order was either never placed,
-                # already filled, or cancelled. Mark as cancelled in context
-                # so strategy gets notified via on_order_done.
-                logger.warning(
-                    f"Timed-out order {client_id} not found in open orders — "
-                    "marking as cancelled"
-                )
-                order.status = OrderStatus.CANCELLED
-                self._context._completed_orders.append(order)
-                self._context._total_completed_added += 1
-                if order in self._context._pending_orders:
-                    self._context._pending_orders.remove(order)
+                # Not in open orders — order may have been filled, cancelled,
+                # or never placed. Query the exchange for the final status
+                # before assuming cancelled (M-1 fix).
+                await self._reconcile_missing_timed_out_order(client_id, order)
                 reconciled.append(client_id)
 
         for client_id in reconciled:
@@ -1463,6 +1469,97 @@ class LiveTradingEngine:
 
         if reconciled:
             logger.info(f"Reconciled {len(reconciled)} timed-out orders")
+
+    async def _reconcile_missing_timed_out_order(
+        self, client_id: str, order: Any
+    ) -> None:
+        """Query exchange for final status of a timed-out order not in open_orders.
+
+        The order may have been filled (no longer open), cancelled, or never
+        placed. We query get_order to determine the actual outcome before
+        falling back to CANCELLED (M-1 fix).
+
+        Args:
+            client_id: The client/internal order ID.
+            order: The SimulatedOrder reference from _timed_out_orders.
+        """
+        try:
+            response = await self._adapter.get_order(order.symbol, client_id)
+        except Exception as e:
+            logger.warning(
+                f"Failed to query timed-out order {client_id} — "
+                f"marking as cancelled: {e}"
+            )
+            order.status = OrderStatus.CANCELLED
+            self._context._completed_orders.append(order)
+            self._context._total_completed_added += 1
+            if order in self._context._pending_orders:
+                self._context._pending_orders.remove(order)
+            return
+
+        if response.status == OrderStatus.FILLED:
+            # Order was filled on exchange — create LiveOrder and record fill
+            logger.info(
+                f"Timed-out order {client_id} was FILLED on exchange "
+                f"(order_id={response.order_id})"
+            )
+            live_order = LiveOrder(
+                internal_id=client_id,
+                exchange_order_id=response.order_id,
+                symbol=order.symbol,
+                side=order.side,
+                order_type=order.type.value,
+                amount=order.amount,
+                price=order.price,
+                status=OrderStatus.FILLED,
+            )
+            live_order.filled_amount = response.filled
+            live_order.avg_fill_price = response.avg_price
+            live_order.fee = response.fee or Decimal("0")
+            live_order.fee_currency = response.fee_currency
+            live_order.created_at = response.created_at or datetime.now(UTC)
+
+            self._live_orders[client_id] = live_order
+            self._exchange_order_map[response.order_id] = client_id
+            order.status = OrderStatus.FILLED
+
+            # Record the fill
+            if response.filled > Decimal("0") and response.avg_price:
+                had_open_trade = self._context._open_trade is not None
+                cb_before = self._risk_manager.state.circuit_breaker_triggered
+                self._record_fill(
+                    live_order, response.avg_price, response.filled,
+                    None, response.fee or Decimal("0"), source="reconcile",
+                    exchange_timestamp=response.updated_at,
+                )
+                self._check_trade_completion(had_open_trade, cb_before, "reconcile")
+
+            # Buffer audit event
+            self._pending_order_events.append({
+                "type": "placed",
+                "internal_id": client_id,
+                "exchange_order_id": response.order_id,
+                "symbol": live_order.symbol,
+                "side": live_order.side.value,
+                "order_type": live_order.order_type,
+                "amount": str(live_order.amount),
+                "price": str(live_order.price) if live_order.price else None,
+                "status": live_order.status.value,
+                "created_at": live_order.created_at.isoformat()
+                if live_order.created_at
+                else datetime.now(UTC).isoformat(),
+            })
+        else:
+            # Order is CANCELLED, REJECTED, or other terminal state
+            logger.warning(
+                f"Timed-out order {client_id} not found in open orders — "
+                f"exchange status: {response.status.value}, marking as cancelled"
+            )
+            order.status = OrderStatus.CANCELLED
+            self._context._completed_orders.append(order)
+            self._context._total_completed_added += 1
+            if order in self._context._pending_orders:
+                self._context._pending_orders.remove(order)
 
     async def _sync_pending_orders(self) -> None:
         """Sync pending order status from exchange with rate limiting.
@@ -1583,6 +1680,17 @@ class LiveTradingEngine:
             # Clean up exchange_order_map if present
             if order.exchange_order_id and order.exchange_order_id in self._exchange_order_map:
                 del self._exchange_order_map[order.exchange_order_id]
+
+            # Move corresponding SimulatedOrder to completed_orders so strategy
+            # receives on_order_done notification (m-4 fix)
+            if order.status == OrderStatus.REJECTED:
+                for pending in list(self._context._pending_orders):
+                    if pending.id == internal_id:
+                        pending.status = OrderStatus.REJECTED
+                        self._context._completed_orders.append(pending)
+                        self._context._total_completed_added += 1
+                        self._context._pending_orders.remove(pending)
+                        break
 
     async def _expire_ttl_orders(self) -> None:
         """Cancel live orders whose bars_remaining TTL has expired.

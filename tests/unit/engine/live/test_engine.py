@@ -8,7 +8,7 @@ from uuid import uuid4
 import pytest
 
 from squant.engine.backtest.strategy_base import Strategy
-from squant.engine.backtest.types import Bar
+from squant.engine.backtest.types import Bar, SimulatedOrder
 from squant.engine.live.engine import LiveOrder, LiveTradingEngine
 from squant.engine.risk import RiskConfig
 from squant.infra.exchange.okx.ws_types import WSCandle, WSOrderUpdate
@@ -3549,6 +3549,199 @@ class TestDmsTimeoutAdaptation:
         """Test that DMS timeout has a floor of 60s even for very short timeframes."""
         # For 1m: max(60000, 60*2*1000) = max(60000, 120000) = 120000
         # The minimum bound is 60_000 but 1m already gives 120_000
+
+
+class TestReconcileTimedOutOrdersFilledCheck:
+    """Tests for M-1: timed-out order not in open_orders may be FILLED, not CANCELLED."""
+
+    @pytest.fixture
+    def engine_with_timed_out_order(self, engine):
+        """Create an engine with a timed-out order in _timed_out_orders."""
+        order = SimulatedOrder.create(
+            symbol="BTC/USDT",
+            side=OrderSide.BUY,
+            order_type=OrderType.MARKET,
+            amount=Decimal("0.1"),
+        )
+        engine._timed_out_orders[order.id] = order
+        engine._context._pending_orders.append(order)
+        return engine, order
+
+    @pytest.mark.asyncio
+    async def test_timed_out_order_filled_on_exchange_is_not_cancelled(
+        self, engine_with_timed_out_order, mock_adapter
+    ):
+        """When a timed-out order is not in open_orders but is FILLED on exchange,
+        it should be treated as filled, not cancelled."""
+        engine, order = engine_with_timed_out_order
+        await engine.start()
+
+        # open_orders returns empty (order not there because it's already filled)
+        mock_adapter.get_open_orders = AsyncMock(return_value=[])
+
+        # get_order returns FILLED status
+        mock_adapter.get_order = AsyncMock(
+            return_value=OrderResponse(
+                order_id="exchange-filled-123",
+                client_order_id=order.id,
+                symbol="BTC/USDT",
+                side=OrderSide.BUY,
+                type=OrderType.MARKET,
+                status=OrderStatus.FILLED,
+                amount=Decimal("0.1"),
+                filled=Decimal("0.1"),
+                avg_price=Decimal("45000"),
+                fee=Decimal("0.045"),
+                fee_currency="USDT",
+            )
+        )
+
+        await engine._reconcile_timed_out_orders()
+
+        # Order should NOT be cancelled
+        assert order.status != OrderStatus.CANCELLED
+        # Order should be FILLED
+        assert order.status == OrderStatus.FILLED
+        # A LiveOrder should be created and tracked
+        assert order.id in engine._live_orders
+        live_order = engine._live_orders[order.id]
+        assert live_order.exchange_order_id == "exchange-filled-123"
+        assert live_order.status == OrderStatus.FILLED
+        # Fill should be recorded (position updated)
+        pos = engine._context.get_position("BTC/USDT")
+        assert pos.amount == Decimal("0.1")
+        # Timed out order should be removed from tracking
+        assert order.id not in engine._timed_out_orders
+
+    @pytest.mark.asyncio
+    async def test_timed_out_order_cancelled_on_exchange_is_cancelled(
+        self, engine_with_timed_out_order, mock_adapter
+    ):
+        """When a timed-out order is not in open_orders and is CANCELLED on exchange,
+        it should be marked as cancelled."""
+        engine, order = engine_with_timed_out_order
+        await engine.start()
+
+        mock_adapter.get_open_orders = AsyncMock(return_value=[])
+        mock_adapter.get_order = AsyncMock(
+            return_value=OrderResponse(
+                order_id="exchange-cancelled-123",
+                client_order_id=order.id,
+                symbol="BTC/USDT",
+                side=OrderSide.BUY,
+                type=OrderType.MARKET,
+                status=OrderStatus.CANCELLED,
+                amount=Decimal("0.1"),
+                filled=Decimal("0"),
+            )
+        )
+
+        await engine._reconcile_timed_out_orders()
+
+        assert order.status == OrderStatus.CANCELLED
+        assert order.id not in engine._timed_out_orders
+
+    @pytest.mark.asyncio
+    async def test_timed_out_order_query_fails_marks_cancelled(
+        self, engine_with_timed_out_order, mock_adapter
+    ):
+        """When get_order fails for a timed-out order not in open_orders,
+        it should fall back to marking as cancelled."""
+        engine, order = engine_with_timed_out_order
+        await engine.start()
+
+        mock_adapter.get_open_orders = AsyncMock(return_value=[])
+        mock_adapter.get_order = AsyncMock(side_effect=Exception("API error"))
+
+        await engine._reconcile_timed_out_orders()
+
+        assert order.status == OrderStatus.CANCELLED
+        assert order.id not in engine._timed_out_orders
+
+
+class TestBackgroundTaskGCProtection:
+    """Tests for m-2: create_task references must be held to prevent GC."""
+
+    def test_module_level_background_tasks_set_exists(self):
+        """The module should define a _background_tasks set for fire-and-forget tasks."""
+        import squant.engine.live.engine as engine_module
+
+        assert hasattr(engine_module, "_background_tasks")
+        assert isinstance(engine_module._background_tasks, set)
+
+    def test_engine_instance_has_background_tasks_set(self, engine):
+        """Engine instances should have a _background_tasks set for instance-level tasks."""
+        assert hasattr(engine, "_background_tasks")
+        assert isinstance(engine._background_tasks, set)
+
+
+class TestZombieOrderNotification:
+    """Tests for m-4: zombie orders marked REJECTED must notify strategy via on_order_done."""
+
+    @pytest.mark.asyncio
+    async def test_zombie_order_moves_to_completed_orders(self, engine, mock_adapter):
+        """When a zombie order is marked REJECTED, the corresponding SimulatedOrder
+        should be moved to completed_orders so strategy gets on_order_done callback."""
+        await engine.start()
+
+        # Create a SimulatedOrder in pending_orders
+        sim_order = SimulatedOrder.create(
+            symbol="BTC/USDT",
+            side=OrderSide.BUY,
+            order_type=OrderType.MARKET,
+            amount=Decimal("0.1"),
+        )
+        engine._context._pending_orders.append(sim_order)
+
+        # Create a LiveOrder with NO exchange_order_id (zombie condition)
+        live_order = LiveOrder(
+            internal_id=sim_order.id,
+            exchange_order_id=None,
+            symbol="BTC/USDT",
+            side=OrderSide.BUY,
+            order_type="market",
+            amount=Decimal("0.1"),
+            price=None,
+            status=OrderStatus.PENDING,
+        )
+        live_order.created_at = datetime(2020, 1, 1, tzinfo=UTC)  # Old enough to be stale
+        engine._live_orders[sim_order.id] = live_order
+
+        completed_before = len(engine._context._completed_orders)
+
+        engine._cleanup_stale_orders()
+
+        # Zombie order should be removed from _live_orders
+        assert sim_order.id not in engine._live_orders
+        # SimulatedOrder should be moved to completed_orders
+        assert len(engine._context._completed_orders) == completed_before + 1
+        completed = engine._context._completed_orders[-1]
+        assert completed.id == sim_order.id
+        assert completed.status == OrderStatus.REJECTED
+        # SimulatedOrder should be removed from pending_orders
+        assert sim_order not in engine._context._pending_orders
+
+
+class TestConfigurableIntervals:
+    """Tests for m-7: _order_poll_min_interval and _balance_check_interval configurable."""
+
+    def test_default_intervals(self, engine):
+        """Default intervals should match the original hardcoded values."""
+        assert engine._order_poll_min_interval == 30.0
+        assert engine._balance_check_interval == 300.0
+
+    def test_custom_intervals_from_risk_config(self, run_id, strategy, mock_adapter):
+        """Intervals should be configurable via RiskConfig."""
+        risk_config = RiskConfig(
+            max_position_size=Decimal("0.5"),
+            max_order_size=Decimal("0.1"),
+            daily_trade_limit=100,
+            daily_loss_limit=Decimal("0.1"),
+            max_price_deviation=Decimal("0.05"),
+            order_poll_interval=15.0,
+            balance_check_interval=120.0,
+        )
+
         with patch("squant.config.get_settings") as mock_settings:
             settings = MagicMock()
             settings.paper_max_equity_curve_size = 10000
@@ -3559,7 +3752,7 @@ class TestDmsTimeoutAdaptation:
             settings.strategy.max_bar_history = 1000
             mock_settings.return_value = settings
 
-            engine_1m = LiveTradingEngine(
+            engine = LiveTradingEngine(
                 run_id=run_id,
                 strategy=strategy,
                 symbol="BTC/USDT",
@@ -3570,7 +3763,14 @@ class TestDmsTimeoutAdaptation:
                 params={},
             )
 
-        assert engine_1m._dms_timeout_ms >= 60_000
+        assert engine._order_poll_min_interval == 15.0
+        assert engine._balance_check_interval == 120.0
+
+    def test_default_risk_config_intervals(self):
+        """RiskConfig should have default values for the new interval fields."""
+        config = RiskConfig()
+        assert config.order_poll_interval == 30.0
+        assert config.balance_check_interval == 300.0
 
 
 class TestPendingOrderEventLimit:
