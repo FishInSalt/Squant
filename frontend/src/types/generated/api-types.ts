@@ -5224,6 +5224,18 @@ export interface components {
              * @default 10
              */
             min_order_value: number | string;
+            /**
+             * Order Poll Interval
+             * @description Minimum seconds between order status polls (default 30s)
+             * @default 30
+             */
+            order_poll_interval: number;
+            /**
+             * Balance Check Interval
+             * @description Seconds between balance sync checks (default 300s)
+             * @default 300
+             */
+            balance_check_interval: number;
         };
         /**
          * RiskRuleListItem
