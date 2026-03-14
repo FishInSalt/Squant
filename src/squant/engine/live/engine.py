@@ -1494,8 +1494,12 @@ class LiveTradingEngine:
             order: The SimulatedOrder reference from _timed_out_orders.
         """
         # Prefer exchange_order_id if we received it via WS before reconciliation.
+        # _exchange_order_map is {exchange_id: internal_id}, so reverse-lookup.
         # Fall back to client_id (works on OKX, may fail on other exchanges).
-        exchange_oid = self._exchange_order_map.get(client_id)
+        exchange_oid = next(
+            (eid for eid, iid in self._exchange_order_map.items() if iid == client_id),
+            None,
+        )
         query_id = exchange_oid or client_id
         try:
             response = await self._adapter.get_order(order.symbol, query_id)
