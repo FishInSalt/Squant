@@ -76,10 +76,14 @@ class StrategyInstantiationError(LiveTradingError):
     pass
 
 
-class ExchangeConnectionError(LiveTradingError):
-    """Error connecting to exchange."""
+class LiveExchangeConnectionError(LiveTradingError):
+    """Error connecting to exchange in live trading service layer."""
 
     pass
+
+
+# Backward compatibility alias
+ExchangeConnectionError = LiveExchangeConnectionError
 
 
 class ExchangeAccountNotFoundError(LiveTradingError):
@@ -375,7 +379,11 @@ class LiveTradingService:
                 initial_equity = quote_balance.available if quote_balance else Decimal("0")
                 logger.info(f"Fetched initial equity from exchange: {initial_equity}")
         except Exception as e:
-            raise ExchangeConnectionError(f"Failed to connect to exchange: {e}") from e
+            try:
+                await adapter.close()
+            except Exception:
+                pass
+            raise LiveExchangeConnectionError(f"Failed to connect to exchange: {e}") from e
 
         # Create run record
         run = await self.run_repo.create(
@@ -545,7 +553,7 @@ class LiveTradingService:
             account_service = ExchangeAccountService(self.session)
             credentials = account_service.get_decrypted_credentials(account)
         except DecryptionError as e:
-            raise ExchangeConnectionError(f"Failed to decrypt credentials: {e}") from e
+            raise LiveExchangeConnectionError(f"Failed to decrypt credentials: {e}") from e
 
         exchange = account.exchange.lower()
 
@@ -829,11 +837,20 @@ class LiveTradingService:
 
         Raises:
             SessionNotFoundError: If session not found.
+            LiveTradingError: If session is in a terminal state (not for_shutdown).
         """
         # Get run record
         run = await self.run_repo.get(run_id)
         if not run:
             raise SessionNotFoundError(run_id)
+
+        # Check status guard (skip for shutdown cleanup)
+        if not for_shutdown and run.status not in (
+            RunStatus.RUNNING, RunStatus.PENDING, RunStatus.INTERRUPTED
+        ):
+            raise LiveTradingError(
+                f"Cannot stop session {run_id}: current status is {run.status.value}"
+            )
 
         # Get engine from session manager
         session_manager = get_live_session_manager()
@@ -1268,7 +1285,7 @@ class LiveTradingService:
         quote_currency = symbol.split("/")[1]
         quote_balance = balance.get_balance(quote_currency)
         if quote_balance:
-            exchange_cash = quote_balance.available
+            exchange_cash = quote_balance.total
             local_cash = engine.context._cash
             diff = abs(exchange_cash - local_cash)
             threshold = max(local_cash * Decimal("0.01"), Decimal("1"))
@@ -1288,7 +1305,7 @@ class LiveTradingService:
         # Reconcile base currency (position)
         base_currency = symbol.split("/")[0]
         base_balance = balance.get_balance(base_currency)
-        exchange_amount = base_balance.available if base_balance else Decimal("0")
+        exchange_amount = base_balance.total if base_balance else Decimal("0")
         local_pos = engine.context.get_position(symbol)
         local_amount = local_pos.amount if local_pos else Decimal("0")
 
@@ -1478,7 +1495,7 @@ class LiveTradingService:
         try:
             await adapter.connect()
         except Exception as e:
-            raise ExchangeConnectionError(
+            raise LiveExchangeConnectionError(
                 f"Failed to reconnect to exchange: {e}"
             ) from e
 
@@ -1624,6 +1641,17 @@ class LiveTradingService:
                     await self._check_unsubscribe(run.symbol, run.timeframe)
                 except Exception:
                     pass
+
+            # Update DB status to ERROR so the session is not left in an inconsistent state
+            try:
+                await self.run_repo.update(
+                    run.id,
+                    status=RunStatus.ERROR,
+                    error_message=f"Resume failed: {e}",
+                )
+                await self.session.commit()
+            except Exception:
+                pass
 
             raise
 

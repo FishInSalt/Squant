@@ -28,7 +28,7 @@ from squant.schemas.live_trading import (
 )
 from squant.services.live_trading import (
     ExchangeAccountNotFoundError,
-    ExchangeConnectionError,
+    LiveExchangeConnectionError,
     LiveTradingError,
     LiveTradingService,
     RiskConfigurationError,
@@ -101,7 +101,7 @@ async def start_live_trading(
         raise HTTPException(status_code=400, detail=f"Risk configuration error: {e}")
     except StrategyInstantiationError as e:
         raise HTTPException(status_code=400, detail=str(e))
-    except ExchangeConnectionError as e:
+    except LiveExchangeConnectionError as e:
         raise HTTPException(status_code=503, detail=str(e))
     except LiveTradingError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -176,7 +176,7 @@ async def resume_live_trading(
         raise HTTPException(status_code=409, detail=str(e))
     except ExchangeAccountNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
-    except ExchangeConnectionError as e:
+    except LiveExchangeConnectionError as e:
         raise HTTPException(status_code=503, detail=str(e))
     except LiveTradingError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -222,6 +222,11 @@ async def emergency_close(
         )
     except SessionNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
+    except LiveTradingError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.exception(f"Emergency close failed for {run_id}")
+        raise HTTPException(status_code=500, detail=f"Emergency close failed: {e}")
 
 
 @router.get("/{run_id}/status", response_model=ApiResponse[LiveTradingStatusResponse])
