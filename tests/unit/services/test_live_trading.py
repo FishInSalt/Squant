@@ -13,15 +13,19 @@ from squant.engine.risk import RiskConfig
 from squant.models.enums import RunMode, RunStatus
 from squant.models.strategy import StrategyRun
 from squant.services.live_trading import (
+    CircuitBreakerActiveError,
+    ExchangeAccountNotFoundError,
     ExchangeConnectionError,
     LiveEquityCurveRepository,
     LiveExchangeConnectionError,
     LiveStrategyRunRepository,
     LiveTradingError,
     LiveTradingService,
+    MaxSessionsReachedError,
     RiskConfigurationError,
     SessionAlreadyRunningError,
     SessionNotFoundError,
+    SessionNotResumableError,
     StrategyInstantiationError,
 )
 
@@ -2637,12 +2641,6 @@ class TestReconcileOrdersAvgPriceComment:
             assert len(warning_calls) > 0, (
                 "Expected a warning log about using avg_price as approximate fill price"
             )
-from unittest.mock import AsyncMock, MagicMock, call, patch
-from uuid import UUID, uuid4
-    CircuitBreakerActiveError,
-    ExchangeAccountNotFoundError,
-    MaxSessionsReachedError,
-    SessionNotResumableError,
 
 
 # ---------------------------------------------------------------------------
