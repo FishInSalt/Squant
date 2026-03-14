@@ -749,7 +749,7 @@ class TestBatchTickersLoopErrorHandling:
         # Use timeout to prevent hanging if buggy code doesn't delegate to _handle_loop_error
         try:
             await asyncio.wait_for(provider._batch_tickers_loop(), timeout=5.0)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             provider._running = False
             pytest.fail(
                 "_batch_tickers_loop timed out — likely not delegating to _handle_loop_error"
@@ -834,7 +834,7 @@ class TestBatchTickersLoopErrorHandling:
 
         try:
             await asyncio.wait_for(provider._batch_tickers_loop(), timeout=5.0)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             provider._running = False
             pytest.fail("_batch_tickers_loop timed out")
 

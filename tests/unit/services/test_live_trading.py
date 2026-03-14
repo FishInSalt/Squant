@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from decimal import Decimal
-from unittest.mock import AsyncMock, MagicMock, call, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID, uuid4
 
 import pytest
@@ -17,7 +17,6 @@ from squant.services.live_trading import (
     ExchangeAccountNotFoundError,
     ExchangeConnectionError,
     LiveEquityCurveRepository,
-    LiveExchangeConnectionError,
     LiveStrategyRunRepository,
     LiveTradingError,
     LiveTradingService,
@@ -2593,9 +2592,8 @@ class TestReconcileOrdersAvgPriceComment:
         self, service: LiveTradingService
     ) -> None:
         """When reconciling fills, a warning should be logged about using avg_price."""
-        from squant.infra.exchange.types import OrderResponse, OrderStatus as ExOrderStatus
+        from squant.infra.exchange.types import OrderStatus as ExOrderStatus
 
-        run_id = uuid4()
         mock_engine = MagicMock()
         mock_engine.symbol = "BTC/USDT"
 
@@ -2752,7 +2750,7 @@ class TestStartSuccessPath:
             ) as mock_get_sm,
             patch(
                 "squant.config.get_settings", return_value=mock_settings
-            ) as mock_get_settings,
+            ),
             patch(
                 "squant.services.strategy.StrategyRepository"
             ) as mock_strat_repo_cls,
@@ -2777,7 +2775,7 @@ class TestStartSuccessPath:
             patch(
                 "squant.websocket.manager.get_stream_manager",
                 return_value=mock_stream_manager,
-            ) as mock_get_stream,
+            ),
         ):
             # Set up strategy repo mock
             mock_strat_repo = MagicMock()

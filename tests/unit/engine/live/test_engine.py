@@ -4368,7 +4368,7 @@ class TestTotalLossLimitAutoStop:
 
         with patch(
             "squant.engine.live.engine._fire_notification"
-        ) as mock_notify:
+        ):
             await engine.process_candle(closed_candle)
 
         # Engine should have been stopped
