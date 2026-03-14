@@ -961,7 +961,7 @@ class LiveTradingService:
 
         return {
             "run_id": str(run_id),
-            "status": "closed",
+            "status": "completed",
             **results,
         }
 
@@ -1173,6 +1173,17 @@ class LiveTradingService:
                     fee_delta = (exchange_order.fee or Decimal("0")) - live_order.fee
                     if fee_delta < 0:
                         fee_delta = Decimal("0")
+                    # Precision trade-off: using exchange avg_price as the fill price
+                    # for the incremental fill. The REST API only provides the blended
+                    # average price across all fills, not the price of each individual
+                    # fill. The trades/fills endpoint would give exact per-fill prices
+                    # but ExchangeAdapter does not expose it. This is acceptable for
+                    # reconciliation purposes where approximate PnL tracking suffices.
+                    logger.warning(
+                        f"Reconcile fill for order {internal_id}: using approximate "
+                        f"avg_price={exchange_order.avg_price} for delta={fill_delta} "
+                        f"(exchange does not provide incremental fill price via REST)"
+                    )
                     engine._record_fill(
                         live_order, exchange_order.avg_price, fill_delta,
                         fee_delta, exchange_order.fee or Decimal("0"),
@@ -1198,6 +1209,16 @@ class LiveTradingService:
                         fee_delta = (final_state.fee or Decimal("0")) - live_order.fee
                         if fee_delta < 0:
                             fee_delta = Decimal("0")
+                        # Precision trade-off: same as open-order path above.
+                        # Using final_state.avg_price (blended average) as the fill
+                        # price for the incremental amount. The actual per-fill price
+                        # would require a get_order_trades() API that ExchangeAdapter
+                        # does not currently provide.
+                        logger.warning(
+                            f"Reconcile fill for order {internal_id}: using approximate "
+                            f"avg_price={final_state.avg_price} for delta={fill_delta} "
+                            f"(exchange does not provide incremental fill price via REST)"
+                        )
                         engine._record_fill(
                             live_order, final_state.avg_price, fill_delta,
                             fee_delta, final_state.fee or Decimal("0"),
@@ -1691,10 +1712,12 @@ class LiveTradingService:
             StrategyRun.
 
         Raises:
-            SessionNotFoundError: If not found.
+            SessionNotFoundError: If not found or if mode is not LIVE.
         """
         run = await self.run_repo.get(run_id)
         if not run:
+            raise SessionNotFoundError(run_id)
+        if run.mode != RunMode.LIVE:
             raise SessionNotFoundError(run_id)
         return run
 
