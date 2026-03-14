@@ -1,13 +1,20 @@
 """Pydantic schemas for live trading API requests and responses."""
 
+import re
 from datetime import datetime
 from decimal import Decimal
 from typing import Any
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from squant.schemas.types import NumberDecimal
+
+VALID_TIMEFRAMES = frozenset(
+    {"1m", "3m", "5m", "15m", "30m", "1h", "2h", "4h", "6h", "12h", "1d", "1w", "1M"}
+)
+
+_SYMBOL_PATTERN = re.compile(r"^[A-Z0-9]+/[A-Z0-9]+$")
 
 
 class RiskConfigRequest(BaseModel):
@@ -64,6 +71,30 @@ class StartLiveTradingRequest(BaseModel):
         ..., min_length=1, max_length=8, description="Candle timeframe (e.g., 1m)"
     )
     risk_config: RiskConfigRequest = Field(..., description="Risk management configuration")
+
+    @field_validator("symbol")
+    @classmethod
+    def validate_symbol_format(cls, v: str) -> str:
+        """Validate symbol is in BASE/QUOTE format (e.g., BTC/USDT)."""
+        if not _SYMBOL_PATTERN.match(v):
+            raise ValueError(
+                f"Invalid symbol format: '{v}'. "
+                "Must be in BASE/QUOTE format with uppercase alphanumeric characters "
+                "(e.g., BTC/USDT, ETH/BTC)"
+            )
+        return v
+
+    @field_validator("timeframe")
+    @classmethod
+    def validate_timeframe(cls, v: str) -> str:
+        """Validate timeframe is a supported value."""
+        if v not in VALID_TIMEFRAMES:
+            raise ValueError(
+                f"Invalid timeframe: '{v}'. "
+                f"Must be one of: {', '.join(sorted(VALID_TIMEFRAMES))}"
+            )
+        return v
+
     initial_equity: Decimal | None = Field(
         None,
         gt=0,

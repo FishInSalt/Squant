@@ -303,6 +303,5 @@ class RiskState(BaseModel):
         if now >= breaker_time:
             self.circuit_breaker_triggered = False
             self.circuit_breaker_until = None
-            self.consecutive_losses = 0
             return True
         return False
