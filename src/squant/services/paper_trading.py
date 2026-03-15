@@ -975,8 +975,13 @@ class PaperTradingService:
         engine._last_emitted_fill_total = ctx._total_fills_added
         engine._last_emitted_trade_total = ctx._total_trades_added
         engine._last_emitted_log_total = ctx._total_logs_added
-        # Restore cached realized PnL from completed trades
-        engine._cached_realized_pnl = sum(t.pnl for t in ctx._trades)
+        # Restore cached realized PnL from persisted value (not deque sum).
+        # The _trades deque has a maxlen — evicted trades would make a
+        # recomputed sum lower than the true cumulative realized PnL.
+        if run.result and "realized_pnl" in run.result:
+            engine._cached_realized_pnl = Decimal(str(run.result["realized_pnl"]))
+        else:
+            engine._cached_realized_pnl = sum(t.pnl for t in ctx._trades)
 
         # Register with session manager
         await session_manager.register(engine)

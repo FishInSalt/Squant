@@ -333,22 +333,20 @@ class PaperTradingEngine:
     async def stop(self, error: str | None = None) -> None:
         """Stop the paper trading engine.
 
-        Waits for any in-progress candle processing to complete,
-        then calls strategy.on_stop() and marks the engine as stopped.
+        Always acquires _processing_lock before checking state (PP-C05).
+        This guarantees that any in-progress process_candle() — including
+        its _persist_on_early_stop() — has completed before this method
+        returns, so callers can safely read engine state afterward.
 
         Args:
             error: Optional error message if stopping due to error.
         """
-        if not self._is_running:
-            logger.warning(f"Engine {self._run_id} not running")
-            return
-
-        logger.info(f"Stopping paper trading engine {self._run_id}")
-
         if error:
             self._error_message = error
 
-        # Wait for any in-progress candle processing to finish (PP-C05)
+        # Always acquire the lock so callers are guaranteed that
+        # process_candle() has finished when stop() returns.
+        # _stop_impl() handles the already-stopped case internally.
         async with self._processing_lock:
             self._stop_impl()
 
@@ -1099,6 +1097,11 @@ class PaperTradingEngine:
         """
         result = self._context.build_result_snapshot()
         result["bar_count"] = self._bar_count
+        # Override context's deque-based realized_pnl with the incremental
+        # cache.  The deque has a maxlen and evicts old trades, causing the
+        # sum to undercount once the cap is reached.  The cache is always
+        # correct because it accumulates on each trade close.
+        result["realized_pnl"] = str(self._cached_realized_pnl)
         if self._risk_manager:
             result["risk_state"] = self._risk_manager.get_state_summary()
             result["risk_config"] = self._risk_manager.config.model_dump(mode="json")
