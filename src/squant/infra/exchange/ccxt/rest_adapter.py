@@ -678,12 +678,24 @@ class CCXTRestAdapter(ExchangeAdapter):
         amount = Decimal(str(order.get("amount", 0)))
         filled = Decimal(str(order.get("filled", 0)))
 
+        try:
+            side = OrderSide(order.get("side", "buy"))
+        except ValueError:
+            logger.warning(f"Unknown order side '{order.get('side')}', defaulting to BUY")
+            side = OrderSide.BUY
+
+        try:
+            order_type = OrderType(order.get("type", "market"))
+        except ValueError:
+            logger.warning(f"Unknown order type '{order.get('type')}', defaulting to MARKET")
+            order_type = OrderType.MARKET
+
         return OrderResponse(
             order_id=str(order.get("id", "")),
             client_order_id=order.get("clientOrderId"),
             symbol=order.get("symbol", ""),
-            side=OrderSide(order.get("side", "buy")),
-            type=OrderType(order.get("type", "market")),
+            side=side,
+            type=order_type,
             status=self._map_order_status(order.get("status", ""), filled, amount),
             price=Decimal(str(order["price"])) if order.get("price") is not None else None,
             amount=amount,
