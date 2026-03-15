@@ -21,6 +21,7 @@ from squant.schemas.live_trading import (
     LiveTradingListItem,
     LiveTradingRunResponse,
     LiveTradingStatusResponse,
+    RemainingPosition,
     ResumeLiveTradingRequest,
     RiskStateResponse,
     StartLiveTradingRequest,
@@ -222,6 +223,10 @@ async def emergency_close(
                 message=result.get("message"),
                 orders_cancelled=result.get("orders_cancelled"),
                 positions_closed=result.get("positions_closed"),
+                remaining_positions=[
+                    RemainingPosition(**rp) for rp in result.get("remaining_positions", [])
+                ] or None,
+                errors=result.get("errors") or None,
             )
         )
     except SessionNotFoundError as e:
