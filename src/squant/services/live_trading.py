@@ -949,6 +949,9 @@ class LiveTradingService:
         # Execute emergency close
         results = await engine.emergency_close()
 
+        # Persist engine final state (M-1: same as normal stop path)
+        result_data = engine.build_result_for_persistence()
+
         # Unregister from session manager
         await session_manager.unregister(run_id)
 
@@ -957,6 +960,7 @@ class LiveTradingService:
         await self.run_repo.update(
             run.id,
             status=RunStatus.STOPPED,
+            result=result_data,
             stopped_at=datetime.now(UTC),
             error_message="Emergency close executed",
         )

@@ -4531,3 +4531,16 @@ class TestGetStateSnapshotLiveOrders:
         assert len(live_orders) == 1
         assert live_orders[0]["internal_id"] == "pending-id"
 
+
+class TestAdapterCloseOnStop:
+    """Tests for M-2: engine stop() should close the REST adapter."""
+
+    async def test_stop_closes_adapter(self, engine):
+        """Engine stop should close the REST adapter to release aiohttp resources."""
+        await engine.start()
+
+        engine._adapter.close = AsyncMock()
+        await engine.stop()
+
+        engine._adapter.close.assert_awaited_once()
+

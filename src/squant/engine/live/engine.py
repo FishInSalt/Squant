@@ -597,6 +597,12 @@ class LiveTradingEngine:
 
         self._stopped_at = datetime.now(UTC)
 
+        # Close REST adapter connection to release aiohttp resources (M-2)
+        try:
+            await self._adapter.close()
+        except Exception as e:
+            logger.debug(f"Error closing adapter for {self._run_id}: {e}")
+
         # Notification: engine stopped (LIVE-011)
         _fire_notification(
             self._run_id,

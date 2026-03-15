@@ -4010,3 +4010,73 @@ class TestResumeSuccessPath:
         assert report["fills_processed"] == 1
         assert report["position_reconciliation"]["cash_adjusted"] is True
         assert len(report["position_reconciliation"]["discrepancies"]) == 1
+
+
+class TestEmergencyClosePersistence:
+    """Tests for M-1: emergency close should persist engine result."""
+
+    @pytest.fixture
+    def mock_session(self) -> MagicMock:
+        """Create mock database session."""
+        session = MagicMock()
+        session.commit = AsyncMock()
+        return session
+
+    @pytest.fixture
+    def service(self, mock_session: MagicMock) -> LiveTradingService:
+        """Create service with mock session."""
+        return LiveTradingService(mock_session)
+
+    async def test_emergency_close_persists_result(
+        self, service: LiveTradingService
+    ) -> None:
+        """After emergency close, run_repo.update should be called with result data."""
+        run_id = uuid4()
+        mock_run = MagicMock()
+        mock_run.id = str(run_id)
+        mock_run.mode = RunMode.LIVE
+
+        result_data = {"cash": "1000", "bar_count": 5}
+
+        mock_engine = MagicMock()
+        mock_engine.run_id = run_id
+        mock_engine.symbol = "BTC/USDT"
+        mock_engine.timeframe = "1m"
+        mock_engine.emergency_close = AsyncMock(
+            return_value={"orders_cancelled": 1, "positions_closed": 1}
+        )
+        mock_engine.build_result_for_persistence = MagicMock(return_value=result_data)
+
+        with patch.object(service.run_repo, "get", new_callable=AsyncMock) as mock_get:
+            mock_get.return_value = mock_run
+
+            with patch(
+                "squant.services.live_trading.get_live_session_manager"
+            ) as mock_get_manager:
+                mock_manager = MagicMock()
+                mock_manager.get.return_value = mock_engine
+                mock_manager.unregister = AsyncMock()
+                mock_manager.get_subscribed_symbols.return_value = set()
+                mock_get_manager.return_value = mock_manager
+
+                with patch.object(
+                    service.run_repo, "update", new_callable=AsyncMock
+                ) as mock_update:
+                    mock_update.return_value = mock_run
+
+                    with patch(
+                        "squant.websocket.manager.get_stream_manager"
+                    ) as mock_stream_manager:
+                        mock_stream = MagicMock()
+                        mock_stream.unsubscribe_candles = AsyncMock()
+                        mock_stream_manager.return_value = mock_stream
+
+                        await service.emergency_close(run_id)
+
+                        # Verify build_result_for_persistence was called
+                        mock_engine.build_result_for_persistence.assert_called_once()
+
+                        # Verify update was called with result=result_data
+                        mock_update.assert_called_once()
+                        call_kwargs = mock_update.call_args.kwargs
+                        assert call_kwargs.get("result") == result_data
