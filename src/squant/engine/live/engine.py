@@ -1263,6 +1263,11 @@ class LiveTradingEngine:
             if update.fee is not None:
                 fee_delta = update.fee - old_fee
                 if fee_delta < 0:
+                    logger.warning(
+                        f"Negative fee delta {fee_delta} for order {internal_id} "
+                        f"(old_fee={old_fee}, new_fee={update.fee}). "
+                        f"Possible fee rebate — clamping to 0."
+                    )
                     fee_delta = Decimal("0")
 
             self._record_fill(
@@ -1777,6 +1782,11 @@ class LiveTradingEngine:
             if response.fee is not None:
                 fee_delta = response.fee - old_fee
                 if fee_delta < 0:
+                    logger.warning(
+                        f"Negative fee delta {fee_delta} for order {live_order.internal_id} "
+                        f"(old_fee={old_fee}, new_fee={response.fee}). "
+                        f"Possible fee rebate — clamping to 0."
+                    )
                     fee_delta = Decimal("0")
 
             had_open_trade = self._context._open_trade is not None
@@ -2170,6 +2180,16 @@ class LiveTradingEngine:
     def has_pending_risk_triggers(self) -> bool:
         """Check if there are pending risk triggers to persist."""
         return len(self._pending_risk_triggers) > 0
+
+    def get_pending_order_events(self) -> list[dict[str, Any]]:
+        """Return and clear pending order events (for flushing on stop).
+
+        Used by the service layer after engine.stop() to ensure fills generated
+        during order cancellation (M-6) are persisted to the audit log.
+        """
+        events = self._pending_order_events.copy()
+        self._pending_order_events.clear()
+        return events
 
     def get_state_snapshot(self) -> dict[str, Any]:
         """Get current engine state snapshot for API responses.

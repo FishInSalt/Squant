@@ -4544,3 +4544,121 @@ class TestAdapterCloseOnStop:
 
         engine._adapter.close.assert_awaited_once()
 
+
+class TestNegativeFeeDeltaLogsWarning:
+    """Tests for M-3: negative fee delta should log a warning before clamping."""
+
+    def _make_live_order(self, internal_id: str, exchange_order_id: str) -> LiveOrder:
+        order = LiveOrder(
+            internal_id=internal_id,
+            exchange_order_id=exchange_order_id,
+            symbol="BTC/USDT",
+            side=OrderSide.BUY,
+            order_type="market",
+            amount=Decimal("0.1"),
+            price=None,
+            status=OrderStatus.SUBMITTED,
+        )
+        order.fee = Decimal("0.5")
+        return order
+
+    def test_negative_fee_delta_ws_logs_warning(self, engine, caplog):
+        """Negative fee delta via WS update should produce a warning log."""
+        import logging
+
+        internal_id = "order-ws-1"
+        exchange_id = "exchange-ws-1"
+
+        live_order = self._make_live_order(internal_id, exchange_id)
+        live_order.fee = Decimal("0.5")
+        engine._live_orders[internal_id] = live_order
+        engine._exchange_order_map[exchange_id] = internal_id
+
+        # WS update with fee=0.3 < old fee=0.5 -> negative delta
+        update = WSOrderUpdate(
+            order_id=exchange_id,
+            symbol="BTC/USDT",
+            side="buy",
+            order_type="market",
+            status="filled",
+            size=Decimal("0.1"),
+            filled_size=Decimal("0.1"),
+            avg_price=Decimal("45000"),
+            fee=Decimal("0.3"),
+        )
+
+        with caplog.at_level(logging.WARNING, logger="squant.engine.live.engine"):
+            engine._process_single_ws_update(update)
+
+        warning_messages = [r.message for r in caplog.records if r.levelno == logging.WARNING]
+        assert any(
+            "Negative fee delta" in m or "fee rebate" in m for m in warning_messages
+        ), f"Expected warning about negative fee delta, got: {warning_messages}"
+
+    def test_negative_fee_delta_poll_logs_warning(self, engine, caplog):
+        """Negative fee delta via polling should produce a warning log."""
+        import logging
+
+        internal_id = "order-poll-1"
+        exchange_id = "exchange-poll-1"
+
+        live_order = self._make_live_order(internal_id, exchange_id)
+        live_order.fee = Decimal("0.5")
+        live_order.filled_amount = Decimal("0.05")
+        engine._live_orders[internal_id] = live_order
+        engine._exchange_order_map[exchange_id] = internal_id
+
+        # Polling response with fee=0.3 < old fee=0.5 -> negative delta
+        response = OrderResponse(
+            order_id=exchange_id,
+            symbol="BTC/USDT",
+            side=OrderSide.BUY,
+            type=OrderType.MARKET,
+            status=OrderStatus.FILLED,
+            price=None,
+            amount=Decimal("0.1"),
+            filled=Decimal("0.1"),
+            avg_price=Decimal("45000"),
+            fee=Decimal("0.3"),
+        )
+
+        with caplog.at_level(logging.WARNING, logger="squant.engine.live.engine"):
+            engine._update_order_from_response(live_order, response)
+
+        warning_messages = [r.message for r in caplog.records if r.levelno == logging.WARNING]
+        assert any(
+            "Negative fee delta" in m or "fee rebate" in m for m in warning_messages
+        ), f"Expected warning about negative fee delta, got: {warning_messages}"
+
+
+class TestGetPendingOrderEvents:
+    """Tests for M-6: get_pending_order_events() returns and clears buffered events."""
+
+    def test_get_pending_order_events_returns_and_clears(self, engine):
+        """get_pending_order_events returns all buffered events and clears the buffer."""
+        engine._pending_order_events.append({"type": "fill", "internal_id": "x"})
+        engine._pending_order_events.append({"type": "placed", "internal_id": "y"})
+
+        events = engine.get_pending_order_events()
+
+        assert len(events) == 2
+        assert events[0] == {"type": "fill", "internal_id": "x"}
+        assert events[1] == {"type": "placed", "internal_id": "y"}
+        assert len(engine._pending_order_events) == 0
+
+    def test_get_pending_order_events_empty(self, engine):
+        """get_pending_order_events returns empty list when no events buffered."""
+        events = engine.get_pending_order_events()
+        assert events == []
+        assert len(engine._pending_order_events) == 0
+
+    def test_get_pending_order_events_returns_copy(self, engine):
+        """get_pending_order_events returns a copy; modifying result doesn't affect engine."""
+        engine._pending_order_events.append({"type": "fill", "internal_id": "x"})
+
+        events = engine.get_pending_order_events()
+        events.append({"type": "extra", "internal_id": "z"})
+
+        # Engine buffer was cleared — adding to returned list doesn't re-populate
+        assert len(engine._pending_order_events) == 0
+

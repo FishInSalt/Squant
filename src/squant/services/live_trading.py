@@ -880,6 +880,17 @@ class LiveTradingService:
             # Stop engine (may trigger final fills from cancel responses)
             await engine.stop(cancel_orders=cancel_orders)
 
+            # Flush any order events generated during stop (M-6: cancel fills)
+            # process_candle() no longer runs after stop, so events from
+            # _cancel_all_orders() would otherwise be lost.
+            if engine._on_order_persist:
+                pending_events = engine.get_pending_order_events()
+                if pending_events:
+                    try:
+                        await engine._on_order_persist(str(run_id), pending_events)
+                    except Exception as e:
+                        logger.warning(f"Failed to persist stop-time order events: {e}")
+
             # Capture result AFTER stop so final fills from order cancellation
             # are included in the persisted state (crash recovery accuracy)
             result_data = engine.build_result_for_persistence()
