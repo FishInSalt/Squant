@@ -369,14 +369,15 @@ class LiveTradingService:
         # Build WS credentials for private order push (LIVE-CN-001)
         ws_credentials = self._build_ws_credentials(exchange_account)
 
+        quote_currency = symbol.split("/")[1]  # e.g., "USDT"
+
         # Connect to exchange and get initial equity if not provided
         try:
             await adapter.connect()
             if initial_equity is None:
                 balance = await adapter.get_balance()
-                quote_currency = symbol.split("/")[1]  # e.g., "USDT"
                 quote_balance = balance.get_balance(quote_currency)
-                initial_equity = quote_balance.available if quote_balance else Decimal("0")
+                initial_equity = quote_balance.total if quote_balance else Decimal("0")
                 logger.info(f"Fetched initial equity from exchange: {initial_equity}")
         except Exception as e:
             try:
@@ -384,6 +385,17 @@ class LiveTradingService:
             except Exception:
                 pass
             raise LiveExchangeConnectionError(f"Failed to connect to exchange: {e}") from e
+
+        # Validate initial equity is positive to prevent division-by-zero in risk calculations
+        if initial_equity <= Decimal("0"):
+            try:
+                await adapter.close()
+            except Exception:
+                pass
+            raise LiveTradingError(
+                f"Insufficient {quote_currency} balance to start live trading. "
+                f"Available balance: {initial_equity}"
+            )
 
         # Create run record
         run = await self.run_repo.create(
@@ -581,9 +593,7 @@ class LiveTradingService:
             return CCXTRestAdapter("bybit", ccxt_credentials)
         raise ValueError(f"Unsupported exchange: {exchange}")
 
-    def _build_ws_credentials(
-        self, account: ExchangeAccount
-    ) -> ExchangeCredentials | None:
+    def _build_ws_credentials(self, account: ExchangeAccount) -> ExchangeCredentials | None:
         """Build ExchangeCredentials for private WS order push (LIVE-CN-001).
 
         Returns None if credentials cannot be decrypted (engine falls back to polling).
@@ -598,12 +608,16 @@ class LiveTradingService:
             logger.warning(f"Cannot build WS credentials: {e}. Order updates via polling only.")
             return None
 
-        return ExchangeCredentials(
-            api_key=creds["api_key"],
-            api_secret=creds["api_secret"],
-            passphrase=creds.get("passphrase"),
-            sandbox=account.testnet,
-        )
+        try:
+            return ExchangeCredentials(
+                api_key=creds["api_key"],
+                api_secret=creds["api_secret"],
+                passphrase=creds.get("passphrase"),
+                sandbox=account.testnet,
+            )
+        except (KeyError, TypeError) as e:
+            logger.warning(f"Malformed credentials for WS: {e}. Order updates via polling only.")
+            return None
 
     def _instantiate_strategy(self, code: str) -> Strategy:
         """Compile strategy code and instantiate the strategy class.
@@ -753,9 +767,7 @@ class LiveTradingService:
                                 side=OrderSide(event["side"]),
                                 type=OrderType(event["order_type"]),
                                 amount=Decimal(event["amount"]),
-                                price=Decimal(event["price"])
-                                if event.get("price")
-                                else None,
+                                price=Decimal(event["price"]) if event.get("price") else None,
                                 status=OrderStatus(event["status"]),
                             )
                             order_id_map[event["internal_id"]] = order.id
@@ -784,15 +796,11 @@ class LiveTradingService:
                                 "status": OrderStatus(event["status"]),
                             }
                             if event.get("avg_fill_price"):
-                                update_kwargs["avg_price"] = Decimal(
-                                    event["avg_fill_price"]
-                                )
+                                update_kwargs["avg_price"] = Decimal(event["avg_fill_price"])
                             await order_repo.update(db_order_id, **update_kwargs)
 
                     except Exception as e:
-                        logger.warning(
-                            f"Failed to persist order event {event.get('type')}: {e}"
-                        )
+                        logger.warning(f"Failed to persist order event {event.get('type')}: {e}")
 
         return _persist_orders
 
@@ -846,7 +854,9 @@ class LiveTradingService:
 
         # Check status guard (skip for shutdown cleanup)
         if not for_shutdown and run.status not in (
-            RunStatus.RUNNING, RunStatus.PENDING, RunStatus.INTERRUPTED
+            RunStatus.RUNNING,
+            RunStatus.PENDING,
+            RunStatus.INTERRUPTED,
         ):
             raise LiveTradingError(
                 f"Cannot stop session {run_id}: current status is {run.status.value}"
@@ -867,6 +877,17 @@ class LiveTradingService:
 
             # Stop engine (may trigger final fills from cancel responses)
             await engine.stop(cancel_orders=cancel_orders)
+
+            # Flush any order events generated during stop (M-6: cancel fills)
+            # process_candle() no longer runs after stop, so events from
+            # _cancel_all_orders() would otherwise be lost.
+            if engine._on_order_persist:
+                pending_events = engine.get_pending_order_events()
+                if pending_events:
+                    try:
+                        await engine._on_order_persist(str(run_id), pending_events)
+                    except Exception as e:
+                        logger.warning(f"Failed to persist stop-time order events: {e}")
 
             # Capture result AFTER stop so final fills from order cancellation
             # are included in the persisted state (crash recovery accuracy)
@@ -937,6 +958,19 @@ class LiveTradingService:
         # Execute emergency close
         results = await engine.emergency_close()
 
+        # Flush any order events generated during emergency close (Issue 2:
+        # same reasoning as M-6 in stop() — fill/cancel audit events would be lost)
+        if engine._on_order_persist:
+            pending_events = engine.get_pending_order_events()
+            if pending_events:
+                try:
+                    await engine._on_order_persist(str(run_id), pending_events)
+                except Exception as e:
+                    logger.warning(f"Failed to persist emergency-close order events: {e}")
+
+        # Persist engine final state (M-1: same as normal stop path)
+        result_data = engine.build_result_for_persistence()
+
         # Unregister from session manager
         await session_manager.unregister(run_id)
 
@@ -945,6 +979,7 @@ class LiveTradingService:
         await self.run_repo.update(
             run.id,
             status=RunStatus.STOPPED,
+            result=result_data,
             stopped_at=datetime.now(UTC),
             error_message="Emergency close executed",
         )
@@ -961,7 +996,6 @@ class LiveTradingService:
 
         return {
             "run_id": str(run_id),
-            "status": "completed",
             **results,
         }
 
@@ -1190,8 +1224,11 @@ class LiveTradingService:
                         f"(exchange does not provide incremental fill price via REST)"
                     )
                     engine._record_fill(
-                        live_order, exchange_order.avg_price, fill_delta,
-                        fee_delta, exchange_order.fee or Decimal("0"),
+                        live_order,
+                        exchange_order.avg_price,
+                        fill_delta,
+                        fee_delta,
+                        exchange_order.fee or Decimal("0"),
                         source="reconcile",
                         exchange_timestamp=exchange_order.updated_at,
                     )
@@ -1225,8 +1262,11 @@ class LiveTradingService:
                             f"(exchange does not provide incremental fill price via REST)"
                         )
                         engine._record_fill(
-                            live_order, final_state.avg_price, fill_delta,
-                            fee_delta, final_state.fee or Decimal("0"),
+                            live_order,
+                            final_state.avg_price,
+                            fill_delta,
+                            fee_delta,
+                            final_state.fee or Decimal("0"),
                             source="reconcile",
                             exchange_timestamp=final_state.updated_at,
                         )
@@ -1240,8 +1280,7 @@ class LiveTradingService:
                     report["orders_reconciled"] += 1
                 except Exception as e:
                     logger.warning(
-                        f"Failed to query order {internal_id} "
-                        f"(exchange_id={exchange_oid}): {e}"
+                        f"Failed to query order {internal_id} (exchange_id={exchange_oid}): {e}"
                     )
                     live_order.status = OrderStatus.CANCELLED
                     orders_to_remove.append(internal_id)
@@ -1262,11 +1301,13 @@ class LiveTradingService:
                     f"id={order.order_id}, status={order.status.value}"
                 )
                 report["orders_unknown"] += 1
-                report["discrepancies"].append({
-                    "type": "untracked_exchange_order",
-                    "exchange_order_id": order.order_id,
-                    "status": order.status.value,
-                })
+                report["discrepancies"].append(
+                    {
+                        "type": "untracked_exchange_order",
+                        "exchange_order_id": order.order_id,
+                        "status": order.status.value,
+                    }
+                )
 
         logger.info(
             f"Order reconciliation: reconciled={report['orders_reconciled']}, "
@@ -1320,14 +1361,14 @@ class LiveTradingService:
             threshold = max(local_cash * Decimal("0.01"), Decimal("1"))
 
             if diff > threshold:
-                logger.warning(
-                    f"Cash discrepancy: local={local_cash}, exchange={exchange_cash}"
+                logger.warning(f"Cash discrepancy: local={local_cash}, exchange={exchange_cash}")
+                report["discrepancies"].append(
+                    {
+                        "type": "cash_mismatch",
+                        "local": str(local_cash),
+                        "exchange": str(exchange_cash),
+                    }
                 )
-                report["discrepancies"].append({
-                    "type": "cash_mismatch",
-                    "local": str(local_cash),
-                    "exchange": str(exchange_cash),
-                })
                 engine.context._cash = exchange_cash
                 report["cash_adjusted"] = True
 
@@ -1347,12 +1388,14 @@ class LiveTradingService:
                     f"Position discrepancy for {symbol}: "
                     f"local={local_amount}, exchange={exchange_amount}"
                 )
-                report["discrepancies"].append({
-                    "type": "position_mismatch",
-                    "symbol": symbol,
-                    "local": str(local_amount),
-                    "exchange": str(exchange_amount),
-                })
+                report["discrepancies"].append(
+                    {
+                        "type": "position_mismatch",
+                        "symbol": symbol,
+                        "local": str(local_amount),
+                        "exchange": str(exchange_amount),
+                    }
+                )
                 report["position_adjusted"] = True
 
         return report
@@ -1381,11 +1424,7 @@ class LiveTradingService:
 
         settings = get_settings()
 
-        tf_durations = {
-            "1m": 60, "5m": 300, "15m": 900, "30m": 1800,
-            "1h": 3600, "4h": 14400, "1d": 86400, "1w": 604800,
-        }
-        tf_seconds = tf_durations.get(run.timeframe, 60)
+        tf_seconds = LiveTradingEngine._TIMEFRAME_SECONDS.get(run.timeframe, 60)
         end_time = datetime.now(UTC)
         start_time = end_time - timedelta(seconds=int(tf_seconds * warmup_bars * 1.2))
 
@@ -1476,9 +1515,7 @@ class LiveTradingService:
             )
 
         if not run.result or "cash" not in run.result:
-            raise SessionNotResumableError(
-                run_id, "no saved state; session cannot be resumed"
-            )
+            raise SessionNotResumableError(run_id, "no saved state; session cannot be resumed")
 
         if not run.account_id:
             raise SessionNotResumableError(
@@ -1524,18 +1561,14 @@ class LiveTradingService:
         try:
             await adapter.connect()
         except Exception as e:
-            raise LiveExchangeConnectionError(
-                f"Failed to reconnect to exchange: {e}"
-            ) from e
+            raise LiveExchangeConnectionError(f"Failed to reconnect to exchange: {e}") from e
 
         # 7. Restore risk config
         risk_config = None
         if run.result.get("risk_config"):
             risk_config = RiskConfig(**run.result["risk_config"])
         if risk_config is None:
-            raise SessionNotResumableError(
-                run_id, "no risk config in saved state"
-            )
+            raise SessionNotResumableError(run_id, "no risk config in saved state")
 
         # 8. Create engine (on_order_persist wired after step 10 with seed map)
         engine = LiveTradingEngine(
@@ -1598,20 +1631,14 @@ class LiveTradingService:
             seed_map=seed_map,
         )
         if seed_map:
-            logger.info(
-                f"Resume: seeded order audit map with {len(seed_map)} orders"
-            )
+            logger.info(f"Resume: seeded order audit map with {len(seed_map)} orders")
 
         # 11. Order reconciliation
-        reconciliation_report = await self._reconcile_orders(
-            engine, adapter, run.symbol
-        )
+        reconciliation_report = await self._reconcile_orders(engine, adapter, run.symbol)
         logger.info(f"Order reconciliation for {run_id}: {reconciliation_report}")
 
         # 12. Position/balance reconciliation
-        position_report = await self._reconcile_positions(
-            engine, adapter, run.symbol
-        )
+        position_report = await self._reconcile_positions(engine, adapter, run.symbol)
         reconciliation_report["position_reconciliation"] = position_report
 
         # 13. Register with session manager

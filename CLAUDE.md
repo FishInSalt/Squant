@@ -252,7 +252,7 @@ These constructors have been frequent sources of errors in tests and fixtures:
 - `CCXTRestAdapter(exchange_id: str, credentials: ExchangeCredentials | None)` — not a dict
 - `StreamManager()` — takes NO arguments; redis is set internally via `get_settings()`
 - `LiveTradingEngine(run_id, symbol, strategy, adapter, risk_config, ...)` — `adapter` is an `ExchangeAdapter`
-- `RiskManager(config: RiskConfig)` — uses `threading.RLock()` internally for thread safety
+- `RiskManager(config: RiskConfig, initial_equity: Decimal)` — uses `threading.RLock()` internally for thread safety
 
 ### Known Gotchas
 

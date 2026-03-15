@@ -1024,3 +1024,69 @@ class TestCCXTRestAdapterPartialStatus:
         }
         result = adapter._transform_order(order_data)
         assert result.status == OrderStatus.PARTIAL
+
+
+class TestTransformOrderEnumValidation:
+    """Tests for _transform_order enum validation with unexpected exchange values."""
+
+    def test_unknown_side_does_not_raise(self):
+        """_transform_order with an unrecognised side value should not raise ValueError."""
+        adapter = CCXTRestAdapter("okx")
+        order_data = {
+            "id": "abc",
+            "symbol": "BTC/USDT",
+            "side": "short",  # not a valid OrderSide value
+            "type": "market",
+            "amount": 0.1,
+            "filled": 0.0,
+            "status": "open",
+        }
+        result = adapter._transform_order(order_data)
+        assert result.side == OrderSide.BUY  # safe default
+
+    def test_unknown_type_does_not_raise(self):
+        """_transform_order with an unrecognised type value should not raise ValueError."""
+        adapter = CCXTRestAdapter("okx")
+        order_data = {
+            "id": "xyz",
+            "symbol": "ETH/USDT",
+            "side": "sell",
+            "type": "conditional",  # not a valid OrderType value
+            "amount": 1.0,
+            "filled": 0.0,
+            "status": "open",
+        }
+        result = adapter._transform_order(order_data)
+        assert result.type == OrderType.MARKET  # safe default
+
+    def test_unknown_side_and_type_both_default(self):
+        """_transform_order with both unknown side and type defaults both fields gracefully."""
+        adapter = CCXTRestAdapter("okx")
+        order_data = {
+            "id": "bad",
+            "symbol": "SOL/USDT",
+            "side": "long",  # invalid
+            "type": "trigger",  # invalid
+            "amount": 2.0,
+            "filled": 0.0,
+            "status": "open",
+        }
+        result = adapter._transform_order(order_data)
+        assert result.side == OrderSide.BUY
+        assert result.type == OrderType.MARKET
+
+    def test_valid_side_and_type_still_work(self):
+        """_transform_order with valid side/type values continues to work correctly."""
+        adapter = CCXTRestAdapter("okx")
+        order_data = {
+            "id": "ok",
+            "symbol": "BTC/USDT",
+            "side": "sell",
+            "type": "limit",
+            "amount": 0.5,
+            "filled": 0.0,
+            "status": "open",
+        }
+        result = adapter._transform_order(order_data)
+        assert result.side == OrderSide.SELL
+        assert result.type == OrderType.LIMIT

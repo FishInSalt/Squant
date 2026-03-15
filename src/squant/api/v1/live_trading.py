@@ -21,6 +21,7 @@ from squant.schemas.live_trading import (
     LiveTradingListItem,
     LiveTradingRunResponse,
     LiveTradingStatusResponse,
+    RemainingPosition,
     ResumeLiveTradingRequest,
     RiskStateResponse,
     StartLiveTradingRequest,
@@ -222,6 +223,12 @@ async def emergency_close(
                 message=result.get("message"),
                 orders_cancelled=result.get("orders_cancelled"),
                 positions_closed=result.get("positions_closed"),
+                remaining_positions=[
+                    RemainingPosition(**rp)
+                    for rp in (result.get("remaining_positions") or [])
+                ]
+                or None,
+                errors=result.get("errors") or None,
             )
         )
     except SessionNotFoundError as e:
@@ -281,7 +288,7 @@ async def get_live_trading_status(
                     exchange_order_id=order.get("exchange_order_id"),
                     symbol=order.get("symbol", ""),
                     side=order.get("side", ""),
-                    type=order.get("type", ""),
+                    type=order.get("order_type", order.get("type", "")),
                     amount=Decimal(str(order.get("amount", 0))),
                     filled_amount=Decimal(str(order.get("filled_amount", 0))),
                     price=Decimal(str(order["price"])) if order.get("price") else None,
@@ -511,7 +518,9 @@ async def get_live_trading_run(
 async def get_equity_curve(
     run_id: UUID,
     session: AsyncSession = Depends(get_session),
-    since: datetime | None = Query(None, description="Only return records after this time (ISO 8601)"),
+    since: datetime | None = Query(
+        None, description="Only return records after this time (ISO 8601)"
+    ),
 ) -> ApiResponse[list[EquityCurvePoint]]:
     """Get equity curve for a live trading run.
 

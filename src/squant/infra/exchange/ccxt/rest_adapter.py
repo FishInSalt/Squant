@@ -406,8 +406,10 @@ class CCXTRestAdapter(ExchangeAdapter):
             )
 
         return await with_retry(
-            self._place_order_impl, request,
-            config=_PLACE_ORDER_RETRY, operation_name="place_order",
+            self._place_order_impl,
+            request,
+            config=_PLACE_ORDER_RETRY,
+            operation_name="place_order",
         )
 
     async def _place_order_impl(self, request: OrderRequest) -> OrderResponse:
@@ -466,8 +468,10 @@ class CCXTRestAdapter(ExchangeAdapter):
     async def cancel_order(self, request: CancelOrderRequest) -> OrderResponse:
         """Cancel an existing order."""
         return await with_retry(
-            self._cancel_order_impl, request,
-            config=_READ_RETRY, operation_name="cancel_order",
+            self._cancel_order_impl,
+            request,
+            config=_READ_RETRY,
+            operation_name="cancel_order",
         )
 
     async def _cancel_order_impl(self, request: CancelOrderRequest) -> OrderResponse:
@@ -516,8 +520,11 @@ class CCXTRestAdapter(ExchangeAdapter):
     async def get_order(self, symbol: str, order_id: str) -> OrderResponse:
         """Get order details by ID."""
         return await with_retry(
-            self._get_order_impl, symbol, order_id,
-            config=_READ_RETRY, operation_name="get_order",
+            self._get_order_impl,
+            symbol,
+            order_id,
+            config=_READ_RETRY,
+            operation_name="get_order",
         )
 
     async def _get_order_impl(self, symbol: str, order_id: str) -> OrderResponse:
@@ -573,8 +580,10 @@ class CCXTRestAdapter(ExchangeAdapter):
             )
 
         return await with_retry(
-            self._get_open_orders_impl, symbol,
-            config=_READ_RETRY, operation_name="get_open_orders",
+            self._get_open_orders_impl,
+            symbol,
+            config=_READ_RETRY,
+            operation_name="get_open_orders",
         )
 
     async def _get_open_orders_impl(self, symbol: str | None = None) -> list[OrderResponse]:
@@ -636,9 +645,7 @@ class CCXTRestAdapter(ExchangeAdapter):
             ) from e
         except Exception as e:
             # Non-fatal: log and continue — DMS is a safety net, not critical path
-            logger.warning(
-                f"Failed to set dead man's switch on {self._exchange_id}: {e}"
-            )
+            logger.warning(f"Failed to set dead man's switch on {self._exchange_id}: {e}")
 
     # ==================== Transformation Helpers ====================
 
@@ -678,12 +685,24 @@ class CCXTRestAdapter(ExchangeAdapter):
         amount = Decimal(str(order.get("amount", 0)))
         filled = Decimal(str(order.get("filled", 0)))
 
+        try:
+            side = OrderSide(order.get("side", "buy"))
+        except ValueError:
+            logger.warning(f"Unknown order side '{order.get('side')}', defaulting to BUY")
+            side = OrderSide.BUY
+
+        try:
+            order_type = OrderType(order.get("type", "market"))
+        except ValueError:
+            logger.warning(f"Unknown order type '{order.get('type')}', defaulting to MARKET")
+            order_type = OrderType.MARKET
+
         return OrderResponse(
             order_id=str(order.get("id", "")),
             client_order_id=order.get("clientOrderId"),
             symbol=order.get("symbol", ""),
-            side=OrderSide(order.get("side", "buy")),
-            type=OrderType(order.get("type", "market")),
+            side=side,
+            type=order_type,
             status=self._map_order_status(order.get("status", ""), filled, amount),
             price=Decimal(str(order["price"])) if order.get("price") is not None else None,
             amount=amount,

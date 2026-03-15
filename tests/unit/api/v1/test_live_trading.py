@@ -301,9 +301,7 @@ class TestResumeLiveTrading:
 
         with patch("squant.api.v1.live_trading.LiveTradingService") as mock_service_class:
             mock_service = MagicMock()
-            mock_service.resume = AsyncMock(
-                side_effect=SessionNotFoundError(str(run_id))
-            )
+            mock_service.resume = AsyncMock(side_effect=SessionNotFoundError(str(run_id)))
             mock_service_class.return_value = mock_service
 
             response = await client.post(f"/api/v1/live/{run_id}/resume")
@@ -346,9 +344,7 @@ class TestResumeLiveTrading:
             assert response.status_code == 404
 
     @pytest.mark.asyncio
-    async def test_resume_live_trading_exchange_connection_error(
-        self, client: AsyncClient
-    ) -> None:
+    async def test_resume_live_trading_exchange_connection_error(self, client: AsyncClient) -> None:
         """Test resume returns 503 when exchange connection fails."""
         run_id = uuid4()
 
@@ -453,6 +449,50 @@ class TestEmergencyClose:
 
             assert response.status_code == 500
             assert "Emergency close failed" in response.json()["message"]
+
+    @pytest.mark.asyncio
+    async def test_emergency_close_partial_includes_remaining_positions_and_errors(
+        self, client: AsyncClient, mock_run
+    ) -> None:
+        """Test C-2: partial close result includes remaining_positions and errors in response."""
+        with patch("squant.api.v1.live_trading.LiveTradingService") as mock_service_class:
+            mock_service = MagicMock()
+            mock_service.emergency_close = AsyncMock(
+                return_value={
+                    "status": "partial",
+                    "message": "Partial emergency close: 1 position could not be closed",
+                    "orders_cancelled": 3,
+                    "positions_closed": 2,
+                    "remaining_positions": [
+                        {"symbol": "ETH/USDT", "amount": "0.5", "side": "long"},
+                    ],
+                    "errors": [
+                        {"symbol": "ETH/USDT", "error": "Insufficient liquidity"},
+                    ],
+                }
+            )
+            mock_service_class.return_value = mock_service
+
+            response = await client.post(f"/api/v1/live/{mock_run.id}/emergency-close")
+
+            assert response.status_code == 200
+            data = response.json()
+            assert data["data"]["status"] == "partial"
+            assert data["data"]["orders_cancelled"] == 3
+            assert data["data"]["positions_closed"] == 2
+
+            remaining = data["data"]["remaining_positions"]
+            assert remaining is not None
+            assert len(remaining) == 1
+            assert remaining[0]["symbol"] == "ETH/USDT"
+            assert remaining[0]["amount"] == "0.5"
+            assert remaining[0]["side"] == "long"
+
+            errors = data["data"]["errors"]
+            assert errors is not None
+            assert len(errors) == 1
+            assert errors[0]["symbol"] == "ETH/USDT"
+            assert errors[0]["error"] == "Insufficient liquidity"
 
 
 class TestGetLiveTradingStatus:
