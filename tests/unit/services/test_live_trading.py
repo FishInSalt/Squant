@@ -759,7 +759,7 @@ class TestStartSession:
             mock_adapter.close = AsyncMock()
 
             mock_quote_balance = MagicMock()
-            mock_quote_balance.available = Decimal("0")
+            mock_quote_balance.total = Decimal("0")
 
             mock_account_balance = MagicMock()
             mock_account_balance.get_balance.return_value = mock_quote_balance

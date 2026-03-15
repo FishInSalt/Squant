@@ -377,7 +377,7 @@ class LiveTradingService:
             if initial_equity is None:
                 balance = await adapter.get_balance()
                 quote_balance = balance.get_balance(quote_currency)
-                initial_equity = quote_balance.available if quote_balance else Decimal("0")
+                initial_equity = quote_balance.total if quote_balance else Decimal("0")
                 logger.info(f"Fetched initial equity from exchange: {initial_equity}")
         except Exception as e:
             try:
@@ -957,6 +957,16 @@ class LiveTradingService:
 
         # Execute emergency close
         results = await engine.emergency_close()
+
+        # Flush any order events generated during emergency close (Issue 2:
+        # same reasoning as M-6 in stop() — fill/cancel audit events would be lost)
+        if engine._on_order_persist:
+            pending_events = engine.get_pending_order_events()
+            if pending_events:
+                try:
+                    await engine._on_order_persist(str(run_id), pending_events)
+                except Exception as e:
+                    logger.warning(f"Failed to persist emergency-close order events: {e}")
 
         # Persist engine final state (M-1: same as normal stop path)
         result_data = engine.build_result_for_persistence()

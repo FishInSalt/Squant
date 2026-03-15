@@ -224,7 +224,8 @@ async def emergency_close(
                 orders_cancelled=result.get("orders_cancelled"),
                 positions_closed=result.get("positions_closed"),
                 remaining_positions=[
-                    RemainingPosition(**rp) for rp in result.get("remaining_positions", [])
+                    RemainingPosition(**rp)
+                    for rp in (result.get("remaining_positions") or [])
                 ]
                 or None,
                 errors=result.get("errors") or None,
