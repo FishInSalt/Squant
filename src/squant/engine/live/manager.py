@@ -263,7 +263,10 @@ class LiveSessionManager:
             if engine:
                 logger.warning(f"Cleaning up stale live session {run_id}")
                 key = (engine.symbol, engine.timeframe)
-                await engine.stop(error="Session timeout: no activity detected")
+                try:
+                    await engine.stop(error="Session timeout: no activity detected")
+                except Exception as e:
+                    logger.exception(f"Error stopping stale engine {run_id}: {e}")
                 await self.unregister(run_id)
                 cleaned.append(run_id)
                 # Check if this was the last subscriber for this key

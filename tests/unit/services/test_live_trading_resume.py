@@ -645,7 +645,7 @@ class TestReconcilePositions:
         report = await service._reconcile_positions(engine, adapter, "BTC/USDT")
 
         assert not report["cash_adjusted"]
-        assert not report["position_adjusted"]
+        assert not report["position_discrepancy"]
 
     async def test_cash_mismatch_adjusted(self, service):
         """Cash discrepancy should be adjusted to exchange value."""

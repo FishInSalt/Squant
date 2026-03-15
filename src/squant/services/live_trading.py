@@ -471,6 +471,12 @@ class LiveTradingService:
                         f"Failed to cleanup engine during error handling: {cleanup_error}"
                     )
 
+            # Cleanup: close adapter to release aiohttp resources (fix #1)
+            try:
+                await adapter.close()
+            except Exception as cleanup_error:
+                logger.warning(f"Failed to close adapter during error handling: {cleanup_error}")
+
             # Cleanup: unsubscribe from WebSocket if subscribed
             if subscribed:
                 try:
@@ -1340,7 +1346,7 @@ class LiveTradingService:
         """
         report: dict[str, Any] = {
             "cash_adjusted": False,
-            "position_adjusted": False,
+            "position_discrepancy": False,
             "discrepancies": [],
         }
 
@@ -1396,7 +1402,7 @@ class LiveTradingService:
                         "exchange": str(exchange_amount),
                     }
                 )
-                report["position_adjusted"] = True
+                report["position_discrepancy"] = True
 
         return report
 
@@ -1590,6 +1596,8 @@ class LiveTradingService:
         # 9. Restore trading state
         engine.context.restore_state(run.result)
         engine._bar_count = run.result.get("bar_count", 0)
+        if run.result.get("last_bar_time"):
+            engine._last_bar_time = datetime.fromisoformat(run.result["last_bar_time"])
 
         if run.result.get("risk_state"):
             engine._risk_manager.restore_state(run.result["risk_state"])
