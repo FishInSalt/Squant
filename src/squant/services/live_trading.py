@@ -610,12 +610,16 @@ class LiveTradingService:
             logger.warning(f"Cannot build WS credentials: {e}. Order updates via polling only.")
             return None
 
-        return ExchangeCredentials(
-            api_key=creds["api_key"],
-            api_secret=creds["api_secret"],
-            passphrase=creds.get("passphrase"),
-            sandbox=account.testnet,
-        )
+        try:
+            return ExchangeCredentials(
+                api_key=creds["api_key"],
+                api_secret=creds["api_secret"],
+                passphrase=creds.get("passphrase"),
+                sandbox=account.testnet,
+            )
+        except (KeyError, TypeError) as e:
+            logger.warning(f"Malformed credentials for WS: {e}. Order updates via polling only.")
+            return None
 
     def _instantiate_strategy(self, code: str) -> Strategy:
         """Compile strategy code and instantiate the strategy class.
@@ -1408,11 +1412,7 @@ class LiveTradingService:
 
         settings = get_settings()
 
-        tf_durations = {
-            "1m": 60, "5m": 300, "15m": 900, "30m": 1800,
-            "1h": 3600, "4h": 14400, "1d": 86400, "1w": 604800,
-        }
-        tf_seconds = tf_durations.get(run.timeframe, 60)
+        tf_seconds = LiveTradingEngine._TIMEFRAME_SECONDS.get(run.timeframe, 60)
         end_time = datetime.now(UTC)
         start_time = end_time - timedelta(seconds=int(tf_seconds * warmup_bars * 1.2))
 

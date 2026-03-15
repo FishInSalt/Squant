@@ -4080,3 +4080,261 @@ class TestEmergencyClosePersistence:
                         mock_update.assert_called_once()
                         call_kwargs = mock_update.call_args.kwargs
                         assert call_kwargs.get("result") == result_data
+
+
+# --- M-5: Warmup timeframe coverage tests ---
+
+
+class TestWarmupTimeframeCoverage:
+    """Tests that _warmup_strategy uses the correct seconds for all timeframes."""
+
+    @pytest.fixture
+    def service(self) -> LiveTradingService:
+        """Create service with mock session."""
+        return LiveTradingService(MagicMock())
+
+    @pytest.fixture
+    def mock_run(self) -> MagicMock:
+        """Create a mock StrategyRun."""
+        run = MagicMock()
+        run.exchange = "okx"
+        run.symbol = "BTC/USDT"
+        run.id = str(uuid4())
+        return run
+
+    @pytest.fixture
+    def mock_engine(self) -> MagicMock:
+        """Create a mock LiveTradingEngine with context."""
+        engine = MagicMock()
+        engine.run_id = str(uuid4())
+        ctx = MagicMock()
+        ctx._logs = []
+        ctx._total_logs_added = 0
+        ctx._pending_orders = MagicMock()
+        engine.context = ctx
+        engine._strategy = MagicMock()
+        return engine
+
+    @pytest.mark.asyncio
+    async def test_warmup_uses_correct_seconds_for_2h(
+        self, service: LiveTradingService, mock_run: MagicMock, mock_engine: MagicMock
+    ) -> None:
+        """2h timeframe should use 7200 seconds, not the fallback of 60."""
+        mock_run.timeframe = "2h"
+        warmup_bars = 100
+
+        captured_start_time: list[datetime] = []
+        captured_end_time: list[datetime] = []
+
+        async def fake_load_bars(**kwargs: object) -> object:
+            captured_start_time.append(kwargs["start"])  # type: ignore[arg-type]
+            captured_end_time.append(kwargs["end"])  # type: ignore[arg-type]
+            return
+            yield  # make it an async generator
+
+        with (
+            patch("squant.services.data_loader.DataLoader") as mock_loader_class,
+            patch("squant.config.get_settings") as mock_get_settings,
+            patch("squant.engine.resource_limits.resource_limiter"),
+        ):
+            mock_settings = MagicMock()
+            mock_settings.strategy.cpu_limit_seconds = 5
+            mock_settings.strategy.memory_limit_mb = 256
+            mock_get_settings.return_value = mock_settings
+
+            mock_loader = MagicMock()
+            mock_loader.load_bars = fake_load_bars
+            mock_loader_class.return_value = mock_loader
+
+            await service._warmup_strategy(mock_engine, mock_run, warmup_bars)
+
+        assert len(captured_start_time) == 1
+        assert len(captured_end_time) == 1
+
+        delta = captured_end_time[0] - captured_start_time[0]
+        expected_seconds = int(7200 * warmup_bars * 1.2)
+        actual_seconds = int(delta.total_seconds())
+        # Allow 2 seconds of tolerance for execution time
+        assert abs(actual_seconds - expected_seconds) <= 2, (
+            f"Expected ~{expected_seconds}s delta for 2h timeframe, got {actual_seconds}s. "
+            "Old 'tf_durations' dict would give 60s, yielding only 7200s total."
+        )
+
+    @pytest.mark.asyncio
+    async def test_warmup_uses_correct_seconds_for_3m(
+        self, service: LiveTradingService, mock_run: MagicMock, mock_engine: MagicMock
+    ) -> None:
+        """3m timeframe (missing from old dict) should use 180 seconds."""
+        mock_run.timeframe = "3m"
+        warmup_bars = 50
+
+        captured_start_time: list[datetime] = []
+        captured_end_time: list[datetime] = []
+
+        async def fake_load_bars(**kwargs: object) -> object:
+            captured_start_time.append(kwargs["start"])  # type: ignore[arg-type]
+            captured_end_time.append(kwargs["end"])  # type: ignore[arg-type]
+            return
+            yield  # make it an async generator
+
+        with (
+            patch("squant.services.data_loader.DataLoader") as mock_loader_class,
+            patch("squant.config.get_settings") as mock_get_settings,
+            patch("squant.engine.resource_limits.resource_limiter"),
+        ):
+            mock_settings = MagicMock()
+            mock_settings.strategy.cpu_limit_seconds = 5
+            mock_settings.strategy.memory_limit_mb = 256
+            mock_get_settings.return_value = mock_settings
+
+            mock_loader = MagicMock()
+            mock_loader.load_bars = fake_load_bars
+            mock_loader_class.return_value = mock_loader
+
+            await service._warmup_strategy(mock_engine, mock_run, warmup_bars)
+
+        delta = captured_end_time[0] - captured_start_time[0]
+        expected_seconds = int(180 * warmup_bars * 1.2)
+        actual_seconds = int(delta.total_seconds())
+        assert abs(actual_seconds - expected_seconds) <= 2, (
+            f"Expected ~{expected_seconds}s for 3m timeframe, got {actual_seconds}s."
+        )
+
+    @pytest.mark.asyncio
+    async def test_warmup_uses_correct_seconds_for_12h(
+        self, service: LiveTradingService, mock_run: MagicMock, mock_engine: MagicMock
+    ) -> None:
+        """12h timeframe (missing from old dict) should use 43200 seconds."""
+        mock_run.timeframe = "12h"
+        warmup_bars = 20
+
+        captured_start_time: list[datetime] = []
+        captured_end_time: list[datetime] = []
+
+        async def fake_load_bars(**kwargs: object) -> object:
+            captured_start_time.append(kwargs["start"])  # type: ignore[arg-type]
+            captured_end_time.append(kwargs["end"])  # type: ignore[arg-type]
+            return
+            yield  # make it an async generator
+
+        with (
+            patch("squant.services.data_loader.DataLoader") as mock_loader_class,
+            patch("squant.config.get_settings") as mock_get_settings,
+            patch("squant.engine.resource_limits.resource_limiter"),
+        ):
+            mock_settings = MagicMock()
+            mock_settings.strategy.cpu_limit_seconds = 5
+            mock_settings.strategy.memory_limit_mb = 256
+            mock_get_settings.return_value = mock_settings
+
+            mock_loader = MagicMock()
+            mock_loader.load_bars = fake_load_bars
+            mock_loader_class.return_value = mock_loader
+
+            await service._warmup_strategy(mock_engine, mock_run, warmup_bars)
+
+        delta = captured_end_time[0] - captured_start_time[0]
+        expected_seconds = int(43200 * warmup_bars * 1.2)
+        actual_seconds = int(delta.total_seconds())
+        assert abs(actual_seconds - expected_seconds) <= 2, (
+            f"Expected ~{expected_seconds}s for 12h timeframe, got {actual_seconds}s."
+        )
+
+
+# --- M-7: _build_ws_credentials error handling tests ---
+
+
+class TestBuildWsCredentials:
+    """Tests for _build_ws_credentials with malformed credentials."""
+
+    @pytest.fixture
+    def service(self) -> LiveTradingService:
+        """Create service with mock session."""
+        return LiveTradingService(MagicMock())
+
+    @pytest.fixture
+    def mock_account(self) -> MagicMock:
+        """Create a mock ExchangeAccount."""
+        account = MagicMock()
+        account.testnet = False
+        return account
+
+    def test_missing_api_key_returns_none(
+        self, service: LiveTradingService, mock_account: MagicMock
+    ) -> None:
+        """If decrypted credentials lack api_key, return None gracefully."""
+        with patch("squant.services.account.ExchangeAccountService") as mock_svc_class:
+            mock_svc = MagicMock()
+            # Returns dict with api_secret but NO api_key
+            mock_svc.get_decrypted_credentials.return_value = {"api_secret": "some_secret"}
+            mock_svc_class.return_value = mock_svc
+
+            result = service._build_ws_credentials(mock_account)
+
+        assert result is None
+
+    def test_missing_api_secret_returns_none(
+        self, service: LiveTradingService, mock_account: MagicMock
+    ) -> None:
+        """If decrypted credentials lack api_secret, return None gracefully."""
+        with patch("squant.services.account.ExchangeAccountService") as mock_svc_class:
+            mock_svc = MagicMock()
+            # Returns dict with api_key but NO api_secret
+            mock_svc.get_decrypted_credentials.return_value = {"api_key": "some_key"}
+            mock_svc_class.return_value = mock_svc
+
+            result = service._build_ws_credentials(mock_account)
+
+        assert result is None
+
+    def test_empty_credentials_returns_none(
+        self, service: LiveTradingService, mock_account: MagicMock
+    ) -> None:
+        """If decrypted credentials are empty dict, return None gracefully."""
+        with patch("squant.services.account.ExchangeAccountService") as mock_svc_class:
+            mock_svc = MagicMock()
+            mock_svc.get_decrypted_credentials.return_value = {}
+            mock_svc_class.return_value = mock_svc
+
+            result = service._build_ws_credentials(mock_account)
+
+        assert result is None
+
+    def test_valid_credentials_returns_exchange_credentials(
+        self, service: LiveTradingService, mock_account: MagicMock
+    ) -> None:
+        """Valid credentials should still return ExchangeCredentials."""
+        from squant.infra.exchange.ccxt.types import ExchangeCredentials
+
+        with patch("squant.services.account.ExchangeAccountService") as mock_svc_class:
+            mock_svc = MagicMock()
+            mock_svc.get_decrypted_credentials.return_value = {
+                "api_key": "my_key",
+                "api_secret": "my_secret",
+                "passphrase": "my_pass",
+            }
+            mock_svc_class.return_value = mock_svc
+
+            result = service._build_ws_credentials(mock_account)
+
+        assert result is not None
+        assert isinstance(result, ExchangeCredentials)
+        assert result.api_key == "my_key"
+        assert result.api_secret == "my_secret"
+        assert result.passphrase == "my_pass"
+        assert result.sandbox is False
+
+    def test_decryption_error_returns_none(
+        self, service: LiveTradingService, mock_account: MagicMock
+    ) -> None:
+        """DecryptionError should return None (existing behavior preserved)."""
+        from squant.utils.crypto import DecryptionError
+
+        with patch("squant.services.account.ExchangeAccountService") as mock_svc_class:
+            mock_svc = MagicMock()
+            mock_svc.get_decrypted_credentials.side_effect = DecryptionError("bad key")
+            mock_svc_class.return_value = mock_svc
+
+            result = service._build_ws_credentials(mock_account)
+
+        assert result is None
