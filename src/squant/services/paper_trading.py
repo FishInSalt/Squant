@@ -744,6 +744,7 @@ class PaperTradingService:
                     "fills": run.result.get("fills", []),
                     "open_trade": run.result.get("open_trade"),
                     "logs": run.result.get("logs", []),
+                    "risk_state": run.result.get("risk_state"),
                 }
             )
         else:
@@ -974,6 +975,8 @@ class PaperTradingService:
         engine._last_emitted_fill_total = ctx._total_fills_added
         engine._last_emitted_trade_total = ctx._total_trades_added
         engine._last_emitted_log_total = ctx._total_logs_added
+        # Restore cached realized PnL from completed trades
+        engine._cached_realized_pnl = sum(t.pnl for t in ctx._trades)
 
         # Register with session manager
         await session_manager.register(engine)
@@ -986,13 +989,19 @@ class PaperTradingService:
             subscribed = True
             await stream_manager.subscribe_ticker(run.symbol)
 
+            # Set _warming_up BEFORE start() to prevent real-time candles from
+            # being processed in the window between start() and warmup begin.
+            # Without this, a candle arriving right after start() but before
+            # _warming_up=True would be processed against restored (not warmed-up)
+            # strategy state.
+            if warmup_bars > 0:
+                engine._warming_up = True
+
             # Start engine (calls strategy.on_init())
             await engine.start()
 
             # Warmup: replay historical bars through strategy to rebuild internal state.
-            # Set _warming_up flag to prevent real-time candles from interleaving (IMP-009).
             if warmup_bars > 0:
-                engine._warming_up = True
                 try:
                     await self._warmup_strategy(engine, run, warmup_bars)
                 finally:
