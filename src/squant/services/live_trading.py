@@ -1596,6 +1596,8 @@ class LiveTradingService:
         # 9. Restore trading state
         engine.context.restore_state(run.result)
         engine._bar_count = run.result.get("bar_count", 0)
+        if run.result.get("last_bar_time"):
+            engine._last_bar_time = datetime.fromisoformat(run.result["last_bar_time"])
 
         if run.result.get("risk_state"):
             engine._risk_manager.restore_state(run.result["risk_state"])

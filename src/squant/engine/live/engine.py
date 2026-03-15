@@ -2281,6 +2281,7 @@ class LiveTradingEngine:
         """
         result = self._context.build_result_snapshot()
         result["bar_count"] = self._bar_count
+        result["last_bar_time"] = self._last_bar_time.isoformat() if self._last_bar_time else None
         result["risk_state"] = self._risk_manager.get_state_summary()
         result["risk_config"] = self._risk_manager.config.model_dump(mode="json")
         result["live_orders"] = {

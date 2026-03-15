@@ -266,12 +266,7 @@ class LiveSessionManager:
                 try:
                     await engine.stop(error="Session timeout: no activity detected")
                 except Exception as e:
-                    # stop() failed — ensure adapter resources are released (fix #10)
                     logger.exception(f"Error stopping stale engine {run_id}: {e}")
-                    try:
-                        await engine._adapter.close()
-                    except Exception:
-                        pass
                 await self.unregister(run_id)
                 cleaned.append(run_id)
                 # Check if this was the last subscriber for this key
