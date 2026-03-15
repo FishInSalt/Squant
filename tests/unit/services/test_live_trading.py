@@ -1773,9 +1773,7 @@ class TestMarkOrphanedWithRecovery:
             assert update_kwargs["status"] == RunStatus.INTERRUPTED
 
     @pytest.mark.asyncio
-    async def test_mark_orphaned_without_equity_curve(
-        self, service: LiveTradingService
-    ) -> None:
+    async def test_mark_orphaned_without_equity_curve(self, service: LiveTradingService) -> None:
         """Test mark_orphaned_sessions when no result and no equity curve data."""
         mock_run = MagicMock()
         mock_run.id = str(uuid4())
@@ -2067,9 +2065,7 @@ class TestStopStatusGuard:
         return LiveTradingService(mock_session)
 
     @pytest.mark.asyncio
-    async def test_stop_rejects_already_stopped_session(
-        self, service: LiveTradingService
-    ) -> None:
+    async def test_stop_rejects_already_stopped_session(self, service: LiveTradingService) -> None:
         """stop() should raise LiveTradingError for already STOPPED sessions."""
         run_id = uuid4()
         mock_run = MagicMock()
@@ -2083,9 +2079,7 @@ class TestStopStatusGuard:
                 await service.stop(run_id)
 
     @pytest.mark.asyncio
-    async def test_stop_rejects_error_status_session(
-        self, service: LiveTradingService
-    ) -> None:
+    async def test_stop_rejects_error_status_session(self, service: LiveTradingService) -> None:
         """stop() should raise LiveTradingError for ERROR sessions."""
         run_id = uuid4()
         mock_run = MagicMock()
@@ -2099,9 +2093,7 @@ class TestStopStatusGuard:
                 await service.stop(run_id)
 
     @pytest.mark.asyncio
-    async def test_stop_rejects_completed_session(
-        self, service: LiveTradingService
-    ) -> None:
+    async def test_stop_rejects_completed_session(self, service: LiveTradingService) -> None:
         """stop() should raise LiveTradingError for COMPLETED sessions."""
         run_id = uuid4()
         mock_run = MagicMock()
@@ -2115,9 +2107,7 @@ class TestStopStatusGuard:
                 await service.stop(run_id)
 
     @pytest.mark.asyncio
-    async def test_stop_rejects_cancelled_session(
-        self, service: LiveTradingService
-    ) -> None:
+    async def test_stop_rejects_cancelled_session(self, service: LiveTradingService) -> None:
         """stop() should raise LiveTradingError for CANCELLED sessions."""
         run_id = uuid4()
         mock_run = MagicMock()
@@ -2131,9 +2121,7 @@ class TestStopStatusGuard:
                 await service.stop(run_id)
 
     @pytest.mark.asyncio
-    async def test_stop_allows_running_session(
-        self, service: LiveTradingService
-    ) -> None:
+    async def test_stop_allows_running_session(self, service: LiveTradingService) -> None:
         """stop() should allow stopping a RUNNING session."""
         run_id = uuid4()
         mock_run = MagicMock()
@@ -2143,9 +2131,7 @@ class TestStopStatusGuard:
         with patch.object(service.run_repo, "get", new_callable=AsyncMock) as mock_get:
             mock_get.return_value = mock_run
 
-            with patch(
-                "squant.services.live_trading.get_live_session_manager"
-            ) as mock_get_manager:
+            with patch("squant.services.live_trading.get_live_session_manager") as mock_get_manager:
                 mock_manager = MagicMock()
                 mock_manager.get.return_value = None
                 mock_get_manager.return_value = mock_manager
@@ -2159,9 +2145,7 @@ class TestStopStatusGuard:
                     assert result == mock_run
 
     @pytest.mark.asyncio
-    async def test_stop_allows_pending_session(
-        self, service: LiveTradingService
-    ) -> None:
+    async def test_stop_allows_pending_session(self, service: LiveTradingService) -> None:
         """stop() should allow stopping a PENDING session."""
         run_id = uuid4()
         mock_run = MagicMock()
@@ -2171,9 +2155,7 @@ class TestStopStatusGuard:
         with patch.object(service.run_repo, "get", new_callable=AsyncMock) as mock_get:
             mock_get.return_value = mock_run
 
-            with patch(
-                "squant.services.live_trading.get_live_session_manager"
-            ) as mock_get_manager:
+            with patch("squant.services.live_trading.get_live_session_manager") as mock_get_manager:
                 mock_manager = MagicMock()
                 mock_manager.get.return_value = None
                 mock_get_manager.return_value = mock_manager
@@ -2187,9 +2169,7 @@ class TestStopStatusGuard:
                     assert result == mock_run
 
     @pytest.mark.asyncio
-    async def test_stop_allows_interrupted_session(
-        self, service: LiveTradingService
-    ) -> None:
+    async def test_stop_allows_interrupted_session(self, service: LiveTradingService) -> None:
         """stop() should allow stopping an INTERRUPTED session."""
         run_id = uuid4()
         mock_run = MagicMock()
@@ -2199,9 +2179,7 @@ class TestStopStatusGuard:
         with patch.object(service.run_repo, "get", new_callable=AsyncMock) as mock_get:
             mock_get.return_value = mock_run
 
-            with patch(
-                "squant.services.live_trading.get_live_session_manager"
-            ) as mock_get_manager:
+            with patch("squant.services.live_trading.get_live_session_manager") as mock_get_manager:
                 mock_manager = MagicMock()
                 mock_manager.get.return_value = None
                 mock_get_manager.return_value = mock_manager
@@ -2215,9 +2193,7 @@ class TestStopStatusGuard:
                     assert result == mock_run
 
     @pytest.mark.asyncio
-    async def test_stop_for_shutdown_skips_status_check(
-        self, service: LiveTradingService
-    ) -> None:
+    async def test_stop_for_shutdown_skips_status_check(self, service: LiveTradingService) -> None:
         """stop(for_shutdown=True) should not check status (cleanup scenario)."""
         run_id = uuid4()
         mock_run = MagicMock()
@@ -2227,9 +2203,7 @@ class TestStopStatusGuard:
         with patch.object(service.run_repo, "get", new_callable=AsyncMock) as mock_get:
             mock_get.return_value = mock_run
 
-            with patch(
-                "squant.services.live_trading.get_live_session_manager"
-            ) as mock_get_manager:
+            with patch("squant.services.live_trading.get_live_session_manager") as mock_get_manager:
                 mock_manager = MagicMock()
                 mock_manager.get.return_value = None
                 mock_get_manager.return_value = mock_manager
@@ -2258,9 +2232,7 @@ class TestReconcilePositionsUsesTotal:
         return LiveTradingService(mock_session)
 
     @pytest.mark.asyncio
-    async def test_reconcile_uses_total_for_cash(
-        self, service: LiveTradingService
-    ) -> None:
+    async def test_reconcile_uses_total_for_cash(self, service: LiveTradingService) -> None:
         """_reconcile_positions should use balance.total (not available) for cash comparison."""
         from squant.infra.exchange.types import AccountBalance, Balance
 
@@ -2287,9 +2259,7 @@ class TestReconcilePositionsUsesTotal:
         assert report["cash_adjusted"] is False
 
     @pytest.mark.asyncio
-    async def test_reconcile_uses_total_for_position(
-        self, service: LiveTradingService
-    ) -> None:
+    async def test_reconcile_uses_total_for_position(self, service: LiveTradingService) -> None:
         """_reconcile_positions should use balance.total (not available) for position amount."""
         from squant.infra.exchange.types import AccountBalance, Balance
 
@@ -2374,9 +2344,7 @@ class TestResumeFailureUpdatesDB:
             patch.object(
                 service.run_repo, "has_running_session", new_callable=AsyncMock
             ) as mock_has_running,
-            patch(
-                "squant.services.live_trading.get_live_session_manager"
-            ) as mock_get_manager,
+            patch("squant.services.live_trading.get_live_session_manager") as mock_get_manager,
             patch("squant.services.strategy.StrategyRepository") as mock_strat_repo_class,
             patch("squant.services.account.ExchangeAccountRepository") as mock_acct_repo_class,
             patch("squant.services.account.ExchangeAccountService") as mock_acct_svc_class,
@@ -2425,7 +2393,9 @@ class TestResumeFailureUpdatesDB:
 
             mock_acct_svc = MagicMock()
             mock_acct_svc.get_decrypted_credentials.return_value = {
-                "api_key": "k", "api_secret": "s", "passphrase": "p",
+                "api_key": "k",
+                "api_secret": "s",
+                "passphrase": "p",
             }
             mock_acct_svc_class.return_value = mock_acct_svc
 
@@ -2480,9 +2450,7 @@ class TestResumeFailureUpdatesDB:
                     assert "Resume failed" in kwargs.get("error_message", "")
                     error_update_found = True
                     break
-            assert error_update_found, (
-                "resume() failure should update DB status to ERROR"
-            )
+            assert error_update_found, "resume() failure should update DB status to ERROR"
 
 
 class TestStartAdapterCloseOnFailure:
@@ -2504,9 +2472,7 @@ class TestStartAdapterCloseOnFailure:
         return LiveTradingService(mock_session)
 
     @pytest.mark.asyncio
-    async def test_adapter_closed_on_connect_failure(
-        self, service: LiveTradingService
-    ) -> None:
+    async def test_adapter_closed_on_connect_failure(self, service: LiveTradingService) -> None:
         """When adapter.connect() fails, the adapter should be closed before raising."""
         from squant.services.live_trading import LiveExchangeConnectionError
 
@@ -2657,9 +2623,7 @@ class TestEmergencyCloseStatusValue:
                 }
             )
 
-            with patch(
-                "squant.services.live_trading.get_live_session_manager"
-            ) as mock_get_manager:
+            with patch("squant.services.live_trading.get_live_session_manager") as mock_get_manager:
                 mock_manager = MagicMock()
                 mock_manager.get.return_value = mock_engine
                 mock_manager.unregister = AsyncMock()
@@ -2691,9 +2655,7 @@ class TestEmergencyCloseStatusValue:
         with patch.object(service.run_repo, "get", new_callable=AsyncMock) as mock_get:
             mock_get.return_value = mock_run
 
-            with patch(
-                "squant.services.live_trading.get_live_session_manager"
-            ) as mock_get_manager:
+            with patch("squant.services.live_trading.get_live_session_manager") as mock_get_manager:
                 mock_manager = MagicMock()
                 mock_manager.get.return_value = None
                 mock_get_manager.return_value = mock_manager
@@ -2719,9 +2681,7 @@ class TestReconcileOrdersAvgPriceComment:
         return LiveTradingService(mock_session)
 
     @pytest.mark.asyncio
-    async def test_reconcile_logs_approximate_fill_price(
-        self, service: LiveTradingService
-    ) -> None:
+    async def test_reconcile_logs_approximate_fill_price(self, service: LiveTradingService) -> None:
         """When reconciling fills, a warning should be logged about using avg_price."""
         from squant.infra.exchange.types import OrderStatus as ExOrderStatus
 
@@ -2747,16 +2707,12 @@ class TestReconcileOrdersAvgPriceComment:
         final_state.filled = Decimal("1.0")  # now fully filled
         final_state.avg_price = Decimal("105")  # blended avg price
         final_state.fee = Decimal("0.2")
-        final_state.status = (
-            ExOrderStatus.FILLED if hasattr(ExOrderStatus, "FILLED") else "filled"
-        )
+        final_state.status = ExOrderStatus.FILLED if hasattr(ExOrderStatus, "FILLED") else "filled"
         final_state.updated_at = datetime.now(UTC)
         mock_adapter.get_order = AsyncMock(return_value=final_state)
 
         with patch("squant.services.live_trading.logger") as mock_logger:
-            report = await service._reconcile_orders(
-                mock_engine, mock_adapter, "BTC/USDT"
-            )
+            report = await service._reconcile_orders(mock_engine, mock_adapter, "BTC/USDT")
 
             # Verify fill was processed
             assert report["fills_processed"] == 1
@@ -2764,7 +2720,8 @@ class TestReconcileOrdersAvgPriceComment:
 
             # Verify warning was logged about approximate fill price
             warning_calls = [
-                call for call in mock_logger.warning.call_args_list
+                call
+                for call in mock_logger.warning.call_args_list
                 if "approximate" in str(call).lower() or "avg_price" in str(call).lower()
             ]
             assert len(warning_calls) > 0, (
@@ -2846,12 +2803,14 @@ class TestStartSuccessPath:
         # Mock adapter
         mock_adapter = MagicMock()
         mock_adapter.connect = AsyncMock()
-        mock_adapter.get_balance = AsyncMock(return_value=AccountBalance(
-            exchange="okx",
-            balances=[
-                Balance(currency="USDT", available=Decimal("10000"), frozen=Decimal("0")),
-            ],
-        ))
+        mock_adapter.get_balance = AsyncMock(
+            return_value=AccountBalance(
+                exchange="okx",
+                balances=[
+                    Balance(currency="USDT", available=Decimal("10000"), frozen=Decimal("0")),
+                ],
+            )
+        )
 
         # Mock engine
         mock_engine = MagicMock()
@@ -2879,15 +2838,9 @@ class TestStartSuccessPath:
                 "squant.services.live_trading.get_live_session_manager",
                 return_value=mock_session_manager,
             ) as mock_get_sm,
-            patch(
-                "squant.config.get_settings", return_value=mock_settings
-            ),
-            patch(
-                "squant.services.strategy.StrategyRepository"
-            ) as mock_strat_repo_cls,
-            patch(
-                "squant.services.account.ExchangeAccountRepository"
-            ) as mock_acct_repo_cls,
+            patch("squant.config.get_settings", return_value=mock_settings),
+            patch("squant.services.strategy.StrategyRepository") as mock_strat_repo_cls,
+            patch("squant.services.account.ExchangeAccountRepository") as mock_acct_repo_cls,
             patch.object(
                 LiveTradingService, "_create_adapter", return_value=mock_adapter
             ) as mock_create_adapter,
@@ -2958,9 +2911,7 @@ class TestStartSuccessPath:
         p = start_patches
 
         # Mock run_repo.create to return the mock run
-        with patch.object(
-            service.run_repo, "create", new_callable=AsyncMock
-        ) as mock_create:
+        with patch.object(service.run_repo, "create", new_callable=AsyncMock) as mock_create:
             mock_create.return_value = p["mock_run"]
 
             result = await service.start(
@@ -3028,9 +2979,7 @@ class TestStartSuccessPath:
         """Test start() with explicit initial_equity skips get_balance."""
         p = start_patches
 
-        with patch.object(
-            service.run_repo, "create", new_callable=AsyncMock
-        ) as mock_create:
+        with patch.object(service.run_repo, "create", new_callable=AsyncMock) as mock_create:
             mock_create.return_value = p["mock_run"]
 
             result = await service.start(
@@ -3064,9 +3013,7 @@ class TestStartSuccessPath:
         p = start_patches
         params = {"fast_period": 10, "slow_period": 20}
 
-        with patch.object(
-            service.run_repo, "create", new_callable=AsyncMock
-        ) as mock_create:
+        with patch.object(service.run_repo, "create", new_callable=AsyncMock) as mock_create:
             mock_create.return_value = p["mock_run"]
 
             await service.start(
@@ -3208,14 +3155,10 @@ class TestStartSuccessPath:
         p = start_patches
         p["mock_instantiate"].side_effect = StrategyInstantiationError("bad code")
 
-        with patch.object(
-            service.run_repo, "create", new_callable=AsyncMock
-        ) as mock_create:
+        with patch.object(service.run_repo, "create", new_callable=AsyncMock) as mock_create:
             mock_create.return_value = p["mock_run"]
 
-            with patch.object(
-                service.run_repo, "update", new_callable=AsyncMock
-            ) as mock_update:
+            with patch.object(service.run_repo, "update", new_callable=AsyncMock) as mock_update:
                 mock_update.return_value = p["mock_run"]
 
                 with pytest.raises(StrategyInstantiationError):
@@ -3383,25 +3326,17 @@ class TestResumeSuccessPath:
             patch.object(
                 LiveTradingService, "_check_circuit_breaker", new_callable=AsyncMock
             ) as mock_cb,
-            patch(
-                "squant.config.get_settings", return_value=mock_settings
-            ),
+            patch("squant.config.get_settings", return_value=mock_settings),
             patch(
                 "squant.services.live_trading.get_live_session_manager",
                 return_value=mock_session_manager,
             ),
-            patch(
-                "squant.services.strategy.StrategyRepository"
-            ) as mock_strat_repo_cls,
-            patch(
-                "squant.services.account.ExchangeAccountRepository"
-            ) as mock_acct_repo_cls,
+            patch("squant.services.strategy.StrategyRepository") as mock_strat_repo_cls,
+            patch("squant.services.account.ExchangeAccountRepository") as mock_acct_repo_cls,
             patch.object(
                 LiveTradingService, "_create_adapter", return_value=mock_adapter
             ) as mock_create_adapter,
-            patch.object(
-                LiveTradingService, "_build_ws_credentials", return_value=None
-            ),
+            patch.object(LiveTradingService, "_build_ws_credentials", return_value=None),
             patch.object(
                 LiveTradingService,
                 "_instantiate_strategy",
@@ -3499,12 +3434,8 @@ class TestResumeSuccessPath:
         p = resume_patches
 
         with (
-            patch.object(
-                service.run_repo, "get", new_callable=AsyncMock
-            ) as mock_get,
-            patch.object(
-                service.run_repo, "update", new_callable=AsyncMock
-            ) as mock_update,
+            patch.object(service.run_repo, "get", new_callable=AsyncMock) as mock_get,
+            patch.object(service.run_repo, "update", new_callable=AsyncMock) as mock_update,
         ):
             mock_get.return_value = mock_run
             mock_update.return_value = mock_run
@@ -3570,9 +3501,7 @@ class TestResumeSuccessPath:
         p["mock_session_manager"].register.assert_called_once_with(p["mock_engine"])
 
         # Verify stream subscription
-        p["mock_stream_manager"].subscribe_candles.assert_called_once_with(
-            "BTC/USDT", "1m"
-        )
+        p["mock_stream_manager"].subscribe_candles.assert_called_once_with("BTC/USDT", "1m")
 
         # Verify engine was started
         p["mock_engine"].start.assert_called_once()
@@ -3600,12 +3529,8 @@ class TestResumeSuccessPath:
         p = resume_patches
 
         with (
-            patch.object(
-                service.run_repo, "get", new_callable=AsyncMock, return_value=mock_run
-            ),
-            patch.object(
-                service.run_repo, "update", new_callable=AsyncMock, return_value=mock_run
-            ),
+            patch.object(service.run_repo, "get", new_callable=AsyncMock, return_value=mock_run),
+            patch.object(service.run_repo, "update", new_callable=AsyncMock, return_value=mock_run),
         ):
             await service.resume(
                 run_id=UUID(mock_run.id),
@@ -3635,12 +3560,8 @@ class TestResumeSuccessPath:
         p["mock_context"]._total_logs_added = 30
 
         with (
-            patch.object(
-                service.run_repo, "get", new_callable=AsyncMock, return_value=mock_run
-            ),
-            patch.object(
-                service.run_repo, "update", new_callable=AsyncMock, return_value=mock_run
-            ),
+            patch.object(service.run_repo, "get", new_callable=AsyncMock, return_value=mock_run),
+            patch.object(service.run_repo, "update", new_callable=AsyncMock, return_value=mock_run),
         ):
             await service.resume(run_id=UUID(mock_run.id), warmup_bars=0)
 
@@ -3662,12 +3583,8 @@ class TestResumeSuccessPath:
         p = resume_patches
 
         with (
-            patch.object(
-                service.run_repo, "get", new_callable=AsyncMock, return_value=mock_run
-            ),
-            patch.object(
-                service.run_repo, "update", new_callable=AsyncMock, return_value=mock_run
-            ),
+            patch.object(service.run_repo, "get", new_callable=AsyncMock, return_value=mock_run),
+            patch.object(service.run_repo, "update", new_callable=AsyncMock, return_value=mock_run),
         ):
             await service.resume(run_id=UUID(mock_run.id), warmup_bars=0)
 
@@ -3690,21 +3607,15 @@ class TestResumeSuccessPath:
         )
 
         with (
-            patch.object(
-                service.run_repo, "get", new_callable=AsyncMock, return_value=mock_run
-            ),
-            patch.object(
-                service.run_repo, "update", new_callable=AsyncMock, return_value=mock_run
-            ),
+            patch.object(service.run_repo, "get", new_callable=AsyncMock, return_value=mock_run),
+            patch.object(service.run_repo, "update", new_callable=AsyncMock, return_value=mock_run),
         ):
             with pytest.raises(Exception, match="WS connect failed"):
                 await service.resume(run_id=UUID(mock_run.id), warmup_bars=0)
 
         # Verify cleanup: engine stop was attempted (is_running is False so skip)
         # Session manager unregister was called
-        p["mock_session_manager"].unregister.assert_called_once_with(
-            p["mock_engine"].run_id
-        )
+        p["mock_session_manager"].unregister.assert_called_once_with(p["mock_engine"].run_id)
 
     async def test_resume_cleanup_on_engine_start_failure(
         self,
@@ -3718,17 +3629,11 @@ class TestResumeSuccessPath:
         should be cleaned up.
         """
         p = resume_patches
-        p["mock_engine"].start = AsyncMock(
-            side_effect=RuntimeError("engine start failed")
-        )
+        p["mock_engine"].start = AsyncMock(side_effect=RuntimeError("engine start failed"))
 
         with (
-            patch.object(
-                service.run_repo, "get", new_callable=AsyncMock, return_value=mock_run
-            ),
-            patch.object(
-                service.run_repo, "update", new_callable=AsyncMock, return_value=mock_run
-            ),
+            patch.object(service.run_repo, "get", new_callable=AsyncMock, return_value=mock_run),
+            patch.object(service.run_repo, "update", new_callable=AsyncMock, return_value=mock_run),
         ):
             with pytest.raises(RuntimeError, match="engine start failed"):
                 await service.resume(run_id=UUID(mock_run.id), warmup_bars=0)
@@ -3752,12 +3657,8 @@ class TestResumeSuccessPath:
         p["mock_warmup"].side_effect = RuntimeError("data loader failed")
 
         with (
-            patch.object(
-                service.run_repo, "get", new_callable=AsyncMock, return_value=mock_run
-            ),
-            patch.object(
-                service.run_repo, "update", new_callable=AsyncMock, return_value=mock_run
-            ),
+            patch.object(service.run_repo, "get", new_callable=AsyncMock, return_value=mock_run),
+            patch.object(service.run_repo, "update", new_callable=AsyncMock, return_value=mock_run),
             patch.object(
                 LiveTradingService,
                 "_check_unsubscribe",
@@ -3781,12 +3682,8 @@ class TestResumeSuccessPath:
         service: LiveTradingService,
     ) -> None:
         """Test resume() raises SessionNotFoundError when run does not exist."""
-        with patch.object(
-            LiveTradingService, "_check_circuit_breaker", new_callable=AsyncMock
-        ):
-            with patch.object(
-                service.run_repo, "get", new_callable=AsyncMock, return_value=None
-            ):
+        with patch.object(LiveTradingService, "_check_circuit_breaker", new_callable=AsyncMock):
+            with patch.object(service.run_repo, "get", new_callable=AsyncMock, return_value=None):
                 with pytest.raises(SessionNotFoundError):
                     await service.resume(run_id=uuid4())
 
@@ -3798,9 +3695,7 @@ class TestResumeSuccessPath:
         """Test resume() rejects runs with RUNNING status."""
         mock_run.status = RunStatus.RUNNING
 
-        with patch.object(
-            LiveTradingService, "_check_circuit_breaker", new_callable=AsyncMock
-        ):
+        with patch.object(LiveTradingService, "_check_circuit_breaker", new_callable=AsyncMock):
             with patch.object(
                 service.run_repo, "get", new_callable=AsyncMock, return_value=mock_run
             ):
@@ -3820,12 +3715,8 @@ class TestResumeSuccessPath:
         mock_session_manager.session_count = 5
 
         with (
-            patch.object(
-                LiveTradingService, "_check_circuit_breaker", new_callable=AsyncMock
-            ),
-            patch.object(
-                service.run_repo, "get", new_callable=AsyncMock, return_value=mock_run
-            ),
+            patch.object(LiveTradingService, "_check_circuit_breaker", new_callable=AsyncMock),
+            patch.object(service.run_repo, "get", new_callable=AsyncMock, return_value=mock_run),
             patch("squant.config.get_settings", return_value=mock_settings),
             patch(
                 "squant.services.live_trading.get_live_session_manager",
@@ -3850,12 +3741,8 @@ class TestResumeSuccessPath:
         mock_session_manager.session_count = 0
 
         with (
-            patch.object(
-                LiveTradingService, "_check_circuit_breaker", new_callable=AsyncMock
-            ),
-            patch.object(
-                service.run_repo, "get", new_callable=AsyncMock, return_value=mock_run
-            ),
+            patch.object(LiveTradingService, "_check_circuit_breaker", new_callable=AsyncMock),
+            patch.object(service.run_repo, "get", new_callable=AsyncMock, return_value=mock_run),
             patch("squant.config.get_settings", return_value=mock_settings),
             patch(
                 "squant.services.live_trading.get_live_session_manager",
@@ -3890,12 +3777,8 @@ class TestResumeSuccessPath:
         mock_adapter.connect = AsyncMock(side_effect=Exception("TCP timeout"))
 
         with (
-            patch.object(
-                LiveTradingService, "_check_circuit_breaker", new_callable=AsyncMock
-            ),
-            patch.object(
-                service.run_repo, "get", new_callable=AsyncMock, return_value=mock_run
-            ),
+            patch.object(LiveTradingService, "_check_circuit_breaker", new_callable=AsyncMock),
+            patch.object(service.run_repo, "get", new_callable=AsyncMock, return_value=mock_run),
             patch("squant.config.get_settings", return_value=mock_settings),
             patch(
                 "squant.services.live_trading.get_live_session_manager",
@@ -3903,15 +3786,9 @@ class TestResumeSuccessPath:
             ),
             patch("squant.services.strategy.StrategyRepository") as mock_strat_cls,
             patch("squant.services.account.ExchangeAccountRepository") as mock_acct_cls,
-            patch.object(
-                LiveTradingService, "_create_adapter", return_value=mock_adapter
-            ),
-            patch.object(
-                LiveTradingService, "_build_ws_credentials", return_value=None
-            ),
-            patch.object(
-                LiveTradingService, "_instantiate_strategy", return_value=MagicMock()
-            ),
+            patch.object(LiveTradingService, "_create_adapter", return_value=mock_adapter),
+            patch.object(LiveTradingService, "_build_ws_credentials", return_value=None),
+            patch.object(LiveTradingService, "_instantiate_strategy", return_value=MagicMock()),
         ):
             mock_strat_repo = MagicMock()
             mock_strat_repo.get = AsyncMock(return_value=mock_strategy_model)
@@ -3947,12 +3824,8 @@ class TestResumeSuccessPath:
         mock_adapter.connect = AsyncMock()
 
         with (
-            patch.object(
-                LiveTradingService, "_check_circuit_breaker", new_callable=AsyncMock
-            ),
-            patch.object(
-                service.run_repo, "get", new_callable=AsyncMock, return_value=mock_run
-            ),
+            patch.object(LiveTradingService, "_check_circuit_breaker", new_callable=AsyncMock),
+            patch.object(service.run_repo, "get", new_callable=AsyncMock, return_value=mock_run),
             patch("squant.config.get_settings", return_value=mock_settings),
             patch(
                 "squant.services.live_trading.get_live_session_manager",
@@ -3960,15 +3833,9 @@ class TestResumeSuccessPath:
             ),
             patch("squant.services.strategy.StrategyRepository") as mock_strat_cls,
             patch("squant.services.account.ExchangeAccountRepository") as mock_acct_cls,
-            patch.object(
-                LiveTradingService, "_create_adapter", return_value=mock_adapter
-            ),
-            patch.object(
-                LiveTradingService, "_build_ws_credentials", return_value=None
-            ),
-            patch.object(
-                LiveTradingService, "_instantiate_strategy", return_value=MagicMock()
-            ),
+            patch.object(LiveTradingService, "_create_adapter", return_value=mock_adapter),
+            patch.object(LiveTradingService, "_build_ws_credentials", return_value=None),
+            patch.object(LiveTradingService, "_instantiate_strategy", return_value=MagicMock()),
         ):
             mock_strat_repo = MagicMock()
             mock_strat_repo.get = AsyncMock(return_value=mock_strategy_model)
@@ -4001,22 +3868,14 @@ class TestResumeSuccessPath:
         p["mock_reconcile_positions"].return_value = {
             "cash_adjusted": True,
             "position_adjusted": False,
-            "discrepancies": [
-                {"type": "cash_mismatch", "local": "10000", "exchange": "9500"}
-            ],
+            "discrepancies": [{"type": "cash_mismatch", "local": "10000", "exchange": "9500"}],
         }
 
         with (
-            patch.object(
-                service.run_repo, "get", new_callable=AsyncMock, return_value=mock_run
-            ),
-            patch.object(
-                service.run_repo, "update", new_callable=AsyncMock, return_value=mock_run
-            ),
+            patch.object(service.run_repo, "get", new_callable=AsyncMock, return_value=mock_run),
+            patch.object(service.run_repo, "update", new_callable=AsyncMock, return_value=mock_run),
         ):
-            _, report = await service.resume(
-                run_id=UUID(mock_run.id), warmup_bars=0
-            )
+            _, report = await service.resume(run_id=UUID(mock_run.id), warmup_bars=0)
 
         assert report["orders_reconciled"] == 2
         assert report["fills_processed"] == 1
@@ -4039,9 +3898,7 @@ class TestEmergencyClosePersistence:
         """Create service with mock session."""
         return LiveTradingService(mock_session)
 
-    async def test_emergency_close_persists_result(
-        self, service: LiveTradingService
-    ) -> None:
+    async def test_emergency_close_persists_result(self, service: LiveTradingService) -> None:
         """After emergency close, run_repo.update should be called with result data."""
         run_id = uuid4()
         mock_run = MagicMock()
@@ -4062,9 +3919,7 @@ class TestEmergencyClosePersistence:
         with patch.object(service.run_repo, "get", new_callable=AsyncMock) as mock_get:
             mock_get.return_value = mock_run
 
-            with patch(
-                "squant.services.live_trading.get_live_session_manager"
-            ) as mock_get_manager:
+            with patch("squant.services.live_trading.get_live_session_manager") as mock_get_manager:
                 mock_manager = MagicMock()
                 mock_manager.get.return_value = mock_engine
                 mock_manager.unregister = AsyncMock()

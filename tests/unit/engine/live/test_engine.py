@@ -2024,8 +2024,12 @@ class TestFillProcessing:
             patch.object(engine._context, "_move_completed_orders"),
         ):
             engine._record_fill(
-                live_order, Decimal("45000"), Decimal("0.5"),
-                Decimal("0.225"), Decimal("0.225"), source="poll",
+                live_order,
+                Decimal("45000"),
+                Decimal("0.5"),
+                Decimal("0.225"),
+                Decimal("0.225"),
+                source="poll",
             )
 
             mock_fill.assert_called_once()
@@ -2049,8 +2053,12 @@ class TestFillProcessing:
             patch.object(engine._context, "_move_completed_orders"),
         ):
             engine._record_fill(
-                live_order, Decimal("45000"), Decimal("1.0"),
-                None, Decimal("0.45"), source="poll",
+                live_order,
+                Decimal("45000"),
+                Decimal("1.0"),
+                None,
+                Decimal("0.45"),
+                source="poll",
             )
 
             fill_arg = mock_fill.call_args[0][0]
@@ -2169,9 +2177,7 @@ class TestFillProcessing:
         assert engine._risk_manager.state.consecutive_losses == 1
 
     @pytest.mark.asyncio
-    async def test_polling_path_triggers_circuit_breaker(
-        self, engine_with_buy_order, mock_adapter
-    ):
+    async def test_polling_path_triggers_circuit_breaker(self, engine_with_buy_order, mock_adapter):
         """Test that polling path triggers circuit breaker after consecutive losses."""
         engine = engine_with_buy_order
         await engine.start()
@@ -2480,16 +2486,16 @@ class TestBalanceSyncFailure:
         assert engine.context.cash == engine._initial_equity
 
     @pytest.mark.asyncio
-    async def test_balance_sync_no_warning_for_small_discrepancy(self, engine, mock_adapter, caplog):
+    async def test_balance_sync_no_warning_for_small_discrepancy(
+        self, engine, mock_adapter, caplog
+    ):
         """Test that small cash discrepancy does not trigger warning."""
         await engine.start()
         # Exchange balance close to initial_equity (within 5%)
         mock_adapter.get_balance.return_value = AccountBalance(
             exchange="okx",
             balances=[
-                Balance(
-                    currency="USDT", available=Decimal("9800"), frozen=Decimal("0")
-                ),
+                Balance(currency="USDT", available=Decimal("9800"), frozen=Decimal("0")),
             ],
         )
 
@@ -2563,9 +2569,7 @@ class TestSyncConsecutiveFailures:
             await engine._sync_balance()
 
     @pytest.mark.asyncio
-    async def test_balance_sync_failure_via_process_candle_calls_stop(
-        self, engine, mock_adapter
-    ):
+    async def test_balance_sync_failure_via_process_candle_calls_stop(self, engine, mock_adapter):
         """Test that balance sync failure through process_candle properly stops engine.
 
         This verifies the ISSUE-202 fix: instead of silently setting _is_running=False,
@@ -3790,9 +3794,7 @@ class TestPendingOrderEventLimit:
         engine._on_order_persist = AsyncMock(side_effect=Exception("DB unavailable"))
 
         # Fill the pending events list beyond the limit (1000)
-        engine._pending_order_events = [
-            {"type": "fill", "seq": i} for i in range(1200)
-        ]
+        engine._pending_order_events = [{"type": "fill", "seq": i} for i in range(1200)]
 
         # Create a candle to trigger process_candle which flushes events
         candle = WSCandle(
@@ -3812,9 +3814,7 @@ class TestPendingOrderEventLimit:
         assert len(engine._pending_order_events) <= 1000
 
     @pytest.mark.asyncio
-    async def test_pending_events_discard_oldest_on_overflow(
-        self, engine, mock_adapter, caplog
-    ):
+    async def test_pending_events_discard_oldest_on_overflow(self, engine, mock_adapter, caplog):
         """Test M-8: oldest events are discarded when limit exceeded.
 
         The most recent events should be retained as they are more
@@ -3825,9 +3825,7 @@ class TestPendingOrderEventLimit:
         engine._on_order_persist = AsyncMock(side_effect=Exception("DB down"))
 
         # Fill with identifiable events
-        engine._pending_order_events = [
-            {"type": "fill", "seq": i} for i in range(1100)
-        ]
+        engine._pending_order_events = [{"type": "fill", "seq": i} for i in range(1100)]
 
         candle = WSCandle(
             symbol="BTC/USDT",
@@ -3847,8 +3845,7 @@ class TestPendingOrderEventLimit:
             await engine.process_candle(candle)
 
         # Should have logged a warning about discarding events
-        assert any("discard" in msg.lower() or "drop" in msg.lower()
-                    for msg in caplog.messages)
+        assert any("discard" in msg.lower() or "drop" in msg.lower() for msg in caplog.messages)
         assert len(engine._pending_order_events) <= 1000
 
 
@@ -4046,9 +4043,7 @@ class TestDeadManSwitch:
     async def test_activate_dms_failure_silent(self, engine, mock_adapter):
         """Test _activate_dead_man_switch does not raise on failure."""
         mock_adapter.supports_dead_man_switch = True
-        mock_adapter.setup_dead_man_switch = AsyncMock(
-            side_effect=Exception("Exchange error")
-        )
+        mock_adapter.setup_dead_man_switch = AsyncMock(side_effect=Exception("Exchange error"))
 
         # Should not raise
         await engine._activate_dead_man_switch()
@@ -4080,9 +4075,7 @@ class TestDeadManSwitch:
     async def test_refresh_dms_failure_silent(self, engine, mock_adapter):
         """Test _refresh_dead_man_switch does not raise on failure."""
         engine._dms_enabled = True
-        mock_adapter.setup_dead_man_switch = AsyncMock(
-            side_effect=Exception("Heartbeat failed")
-        )
+        mock_adapter.setup_dead_man_switch = AsyncMock(side_effect=Exception("Heartbeat failed"))
 
         # Should not raise
         await engine._refresh_dead_man_switch()
@@ -4166,9 +4159,7 @@ class TestTriggerGlobalCircuitBreaker:
         mock_paper_manager.stop_all = AsyncMock()
 
         with (
-            patch(
-                "squant.infra.redis.get_redis_client", return_value=mock_redis
-            ),
+            patch("squant.infra.redis.get_redis_client", return_value=mock_redis),
             patch(
                 "squant.engine.live.manager.get_live_session_manager",
                 return_value=mock_live_manager,
@@ -4208,9 +4199,7 @@ class TestTriggerGlobalCircuitBreaker:
         mock_paper_manager.stop_all = AsyncMock()
 
         with (
-            patch(
-                "squant.infra.redis.get_redis_client", return_value=mock_redis
-            ),
+            patch("squant.infra.redis.get_redis_client", return_value=mock_redis),
             patch(
                 "squant.engine.live.manager.get_live_session_manager",
                 return_value=mock_live_manager,
@@ -4243,9 +4232,7 @@ class TestTriggerGlobalCircuitBreaker:
         mock_paper_manager.stop_all = AsyncMock()
 
         with (
-            patch(
-                "squant.infra.redis.get_redis_client", return_value=mock_redis
-            ),
+            patch("squant.infra.redis.get_redis_client", return_value=mock_redis),
             patch(
                 "squant.engine.live.manager.get_live_session_manager",
                 return_value=mock_live_manager,
@@ -4272,16 +4259,12 @@ class TestTriggerGlobalCircuitBreaker:
         mock_redis.set = AsyncMock()
 
         mock_live_manager = MagicMock()
-        mock_live_manager.stop_all = AsyncMock(
-            side_effect=Exception("Live manager error")
-        )
+        mock_live_manager.stop_all = AsyncMock(side_effect=Exception("Live manager error"))
         mock_paper_manager = MagicMock()
         mock_paper_manager.stop_all = AsyncMock()
 
         with (
-            patch(
-                "squant.infra.redis.get_redis_client", return_value=mock_redis
-            ),
+            patch("squant.infra.redis.get_redis_client", return_value=mock_redis),
             patch(
                 "squant.engine.live.manager.get_live_session_manager",
                 return_value=mock_live_manager,
@@ -4366,9 +4349,7 @@ class TestTotalLossLimitAutoStop:
         engine._risk_manager.state.total_pnl = Decimal("-2500")
         engine._risk_manager.state.unrealized_pnl = Decimal("0")
 
-        with patch(
-            "squant.engine.live.engine._fire_notification"
-        ):
+        with patch("squant.engine.live.engine._fire_notification"):
             await engine.process_candle(closed_candle)
 
         # Engine should have been stopped
@@ -4389,9 +4370,7 @@ class TestTotalLossLimitAutoStop:
         # overwrites state.unrealized_pnl, so use total_pnl alone to trigger.
         engine._risk_manager.state.total_pnl = Decimal("-2500")
 
-        with patch(
-            "squant.engine.live.engine._fire_notification"
-        ):
+        with patch("squant.engine.live.engine._fire_notification"):
             await engine.process_candle(closed_candle)
 
         assert engine.is_running is False
@@ -4411,9 +4390,7 @@ class TestTotalLossLimitAutoStop:
         engine._risk_manager.state.total_pnl = Decimal("-2100")
         engine._risk_manager.state.unrealized_pnl = Decimal("0")
 
-        with patch(
-            "squant.engine.live.engine._fire_notification"
-        ):
+        with patch("squant.engine.live.engine._fire_notification"):
             await engine.process_candle(closed_candle)
 
         # total_loss_limit_triggered should be set in risk state
@@ -4482,7 +4459,9 @@ class TestGetStateSnapshotLiveOrders:
         assert "updated_at" in lo, "Missing 'updated_at'"
 
         # Must NOT have wrong field names
-        assert "exchange_id" not in lo, "Wrong field name 'exchange_id' should be 'exchange_order_id'"
+        assert "exchange_id" not in lo, (
+            "Wrong field name 'exchange_id' should be 'exchange_order_id'"
+        )
         assert "filled" not in lo, "Wrong field name 'filled' should be 'filled_amount'"
 
         # Values must be correct
@@ -4591,9 +4570,9 @@ class TestNegativeFeeDeltaLogsWarning:
             engine._process_single_ws_update(update)
 
         warning_messages = [r.message for r in caplog.records if r.levelno == logging.WARNING]
-        assert any(
-            "Negative fee delta" in m or "fee rebate" in m for m in warning_messages
-        ), f"Expected warning about negative fee delta, got: {warning_messages}"
+        assert any("Negative fee delta" in m or "fee rebate" in m for m in warning_messages), (
+            f"Expected warning about negative fee delta, got: {warning_messages}"
+        )
 
     def test_negative_fee_delta_poll_logs_warning(self, engine, caplog):
         """Negative fee delta via polling should produce a warning log."""
@@ -4626,9 +4605,9 @@ class TestNegativeFeeDeltaLogsWarning:
             engine._update_order_from_response(live_order, response)
 
         warning_messages = [r.message for r in caplog.records if r.levelno == logging.WARNING]
-        assert any(
-            "Negative fee delta" in m or "fee rebate" in m for m in warning_messages
-        ), f"Expected warning about negative fee delta, got: {warning_messages}"
+        assert any("Negative fee delta" in m or "fee rebate" in m for m in warning_messages), (
+            f"Expected warning about negative fee delta, got: {warning_messages}"
+        )
 
 
 class TestGetPendingOrderEvents:
@@ -4661,4 +4640,3 @@ class TestGetPendingOrderEvents:
 
         # Engine buffer was cleared — adding to returned list doesn't re-populate
         assert len(engine._pending_order_events) == 0
-

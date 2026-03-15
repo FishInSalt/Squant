@@ -225,7 +225,8 @@ async def emergency_close(
                 positions_closed=result.get("positions_closed"),
                 remaining_positions=[
                     RemainingPosition(**rp) for rp in result.get("remaining_positions", [])
-                ] or None,
+                ]
+                or None,
                 errors=result.get("errors") or None,
             )
         )
@@ -516,7 +517,9 @@ async def get_live_trading_run(
 async def get_equity_curve(
     run_id: UUID,
     session: AsyncSession = Depends(get_session),
-    since: datetime | None = Query(None, description="Only return records after this time (ISO 8601)"),
+    since: datetime | None = Query(
+        None, description="Only return records after this time (ISO 8601)"
+    ),
 ) -> ApiResponse[list[EquityCurvePoint]]:
     """Get equity curve for a live trading run.
 

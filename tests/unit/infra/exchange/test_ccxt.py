@@ -1065,8 +1065,8 @@ class TestTransformOrderEnumValidation:
         order_data = {
             "id": "bad",
             "symbol": "SOL/USDT",
-            "side": "long",      # invalid
-            "type": "trigger",   # invalid
+            "side": "long",  # invalid
+            "type": "trigger",  # invalid
             "amount": 2.0,
             "filled": 0.0,
             "status": "open",

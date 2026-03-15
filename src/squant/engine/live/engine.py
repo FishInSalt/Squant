@@ -326,7 +326,9 @@ class LiveTradingEngine:
 
         # Balance sync rate limiting (R5-F5): avoid excessive API calls
         # Balance is monitoring-only, so checking every 5 minutes is sufficient.
-        self._balance_check_interval: float = risk_config.balance_check_interval  # m-7: configurable
+        self._balance_check_interval: float = (
+            risk_config.balance_check_interval
+        )  # m-7: configurable
         self._last_balance_check: datetime | None = None
         self._has_recent_fill: bool = False  # set True on fill, triggers immediate check
 
@@ -440,9 +442,7 @@ class LiveTradingEngine:
             redis = get_redis_client()
             now = datetime.now(UTC)
             cooldown_minutes = self._risk_manager.config.circuit_breaker_cooldown_minutes
-            cooldown_until = datetime.fromtimestamp(
-                now.timestamp() + cooldown_minutes * 60, tz=UTC
-            )
+            cooldown_until = datetime.fromtimestamp(now.timestamp() + cooldown_minutes * 60, tz=UTC)
             state = CircuitBreakerState(
                 is_active=True,
                 triggered_at=now,
@@ -647,9 +647,7 @@ class LiveTradingEngine:
             self._private_ws.add_handler(self._handle_private_ws_message)
             await self._private_ws.connect()
             await self._private_ws.watch_orders(self._symbol)
-            logger.info(
-                f"Private WS connected for {self._run_id} orders on {self._symbol}"
-            )
+            logger.info(f"Private WS connected for {self._run_id} orders on {self._symbol}")
         except Exception as e:
             logger.warning(
                 f"Failed to start private WS for {self._run_id}: {e}. "
@@ -705,8 +703,7 @@ class LiveTradingEngine:
             await self._adapter.setup_dead_man_switch(self._dms_timeout_ms)
             self._dms_enabled = True
             logger.info(
-                f"Dead Man's Switch activated for {self._run_id} "
-                f"(timeout={self._dms_timeout_ms}ms)"
+                f"Dead Man's Switch activated for {self._run_id} (timeout={self._dms_timeout_ms}ms)"
             )
         except Exception as e:
             logger.warning(f"Failed to activate Dead Man's Switch: {e}")
@@ -860,8 +857,7 @@ class LiveTradingEngine:
                         )
                     else:
                         logger.warning(
-                            f"Emergency close order not filled: {sym} "
-                            f"status={final.status.value}"
+                            f"Emergency close order not filled: {sym} status={final.status.value}"
                         )
                         results["errors"].append(
                             {
@@ -878,9 +874,7 @@ class LiveTradingEngine:
                         }
                     )
 
-            await asyncio.gather(
-                *[_wait_single(sym, resp) for sym, resp in pending_close_orders]
-            )
+            await asyncio.gather(*[_wait_single(sym, resp) for sym, resp in pending_close_orders])
 
             # TRD-038#5: Collect remaining positions based on unfilled orders
             error_symbols = {err["symbol"] for err in results["errors"]}
@@ -1021,9 +1015,7 @@ class LiveTradingEngine:
                         details={
                             "symbol": self._symbol,
                             "total_pnl": float(self._risk_manager.state.total_pnl),
-                            "unrealized_pnl": float(
-                                self._risk_manager.state.unrealized_pnl
-                            ),
+                            "unrealized_pnl": float(self._risk_manager.state.unrealized_pnl),
                         },
                     )
 
@@ -1050,9 +1042,7 @@ class LiveTradingEngine:
                         self._pending_snapshots.append(latest_snapshot)
 
                 # Notify strategy of fills and completed orders (before on_bar)
-                fill_delta = (
-                    self._context._total_fills_added - self._last_callback_fill_total
-                )
+                fill_delta = self._context._total_fills_added - self._last_callback_fill_total
                 if fill_delta > 0:
                     recent_fills = list(self._context._fills)[-fill_delta:]
                     for fill in recent_fills:
@@ -1064,22 +1054,17 @@ class LiveTradingEngine:
                 self._last_callback_fill_total = self._context._total_fills_added
 
                 completed_delta = (
-                    self._context._total_completed_added
-                    - self._last_callback_completed_total
+                    self._context._total_completed_added - self._last_callback_completed_total
                 )
                 if completed_delta > 0:
-                    recent_completed = list(self._context._completed_orders)[
-                        -completed_delta:
-                    ]
+                    recent_completed = list(self._context._completed_orders)[-completed_delta:]
                     for order in recent_completed:
                         try:
                             self._strategy.on_order_done(order)
                         except Exception as e:
                             self._context.log(f"ERROR in on_order_done: {e}")
                             logger.warning(f"Strategy on_order_done error: {e}")
-                self._last_callback_completed_total = (
-                    self._context._total_completed_added
-                )
+                self._last_callback_completed_total = self._context._total_completed_added
 
                 # Call strategy on_bar with resource limits (STR-013)
                 from squant.config import get_settings
@@ -1110,9 +1095,7 @@ class LiveTradingEngine:
                     # Strategy errors (KeyError, IndexError, etc.) should be isolated
                     # — consistent with paper engine and backtest runner behavior.
                     # Only system-level errors (exchange, data integrity) should stop the engine.
-                    logger.warning(
-                        f"Strategy on_bar error in live engine {self._run_id}: {e}"
-                    )
+                    logger.warning(f"Strategy on_bar error in live engine {self._run_id}: {e}")
                     self._context.log(f"ERROR in on_bar: {e}")
 
                 # Process pending order requests from strategy
@@ -1133,9 +1116,7 @@ class LiveTradingEngine:
                     events_to_persist = self._pending_order_events.copy()
                     self._pending_order_events.clear()
                     try:
-                        await self._on_order_persist(
-                            str(self._run_id), events_to_persist
-                        )
+                        await self._on_order_persist(str(self._run_id), events_to_persist)
                     except Exception as e:
                         logger.warning(f"Order persist callback failed for {self._run_id}: {e}")
                         # Put events back for retry on next bar
@@ -1143,11 +1124,10 @@ class LiveTradingEngine:
                         # M-8: Cap pending events to prevent unbounded growth
                         if len(self._pending_order_events) > self._MAX_PENDING_ORDER_EVENTS:
                             discarded = (
-                                len(self._pending_order_events)
-                                - self._MAX_PENDING_ORDER_EVENTS
+                                len(self._pending_order_events) - self._MAX_PENDING_ORDER_EVENTS
                             )
                             self._pending_order_events = self._pending_order_events[
-                                -self._MAX_PENDING_ORDER_EVENTS:
+                                -self._MAX_PENDING_ORDER_EVENTS :
                             ]
                             logger.warning(
                                 f"Dropped {discarded} oldest pending order events "
@@ -1271,8 +1251,12 @@ class LiveTradingEngine:
                     fee_delta = Decimal("0")
 
             self._record_fill(
-                live_order, update.avg_price, fill_delta, fee_delta,
-                update.fee or Decimal("0"), source="ws",
+                live_order,
+                update.avg_price,
+                fill_delta,
+                fee_delta,
+                update.fee or Decimal("0"),
+                source="ws",
                 exchange_timestamp=update.updated_at,
             )
             self._check_trade_completion(had_open_trade, circuit_breaker_before, "ws")
@@ -1381,7 +1365,10 @@ class LiveTradingEngine:
                     event_type="balance_sync_failure",
                     title="余额同步失败",
                     message=f"实盘会话 {self._symbol} 连续{self._balance_consecutive_failures}次余额同步失败",
-                    details={"symbol": self._symbol, "failures": self._balance_consecutive_failures},
+                    details={
+                        "symbol": self._symbol,
+                        "failures": self._balance_consecutive_failures,
+                    },
                 )
 
                 raise RuntimeError(msg)
@@ -1398,8 +1385,7 @@ class LiveTradingEngine:
             return
 
         logger.info(
-            f"Reconciling {len(self._timed_out_orders)} timed-out orders "
-            f"via open orders query"
+            f"Reconciling {len(self._timed_out_orders)} timed-out orders via open orders query"
         )
 
         try:
@@ -1446,28 +1432,34 @@ class LiveTradingEngine:
                 )
 
                 # Buffer "placed" event for audit persistence
-                self._pending_order_events.append({
-                    "type": "placed",
-                    "internal_id": client_id,
-                    "exchange_order_id": exchange_resp.order_id,
-                    "symbol": live_order.symbol,
-                    "side": live_order.side.value,
-                    "order_type": live_order.order_type,
-                    "amount": str(live_order.amount),
-                    "price": str(live_order.price) if live_order.price else None,
-                    "status": live_order.status.value,
-                    "created_at": live_order.created_at.isoformat()
-                    if live_order.created_at
-                    else datetime.now(UTC).isoformat(),
-                })
+                self._pending_order_events.append(
+                    {
+                        "type": "placed",
+                        "internal_id": client_id,
+                        "exchange_order_id": exchange_resp.order_id,
+                        "symbol": live_order.symbol,
+                        "side": live_order.side.value,
+                        "order_type": live_order.order_type,
+                        "amount": str(live_order.amount),
+                        "price": str(live_order.price) if live_order.price else None,
+                        "status": live_order.status.value,
+                        "created_at": live_order.created_at.isoformat()
+                        if live_order.created_at
+                        else datetime.now(UTC).isoformat(),
+                    }
+                )
 
                 # Process any fills that already occurred
                 if exchange_resp.filled > Decimal("0") and exchange_resp.avg_price:
                     had_open_trade = self._context._open_trade is not None
                     cb_before = self._risk_manager.state.circuit_breaker_triggered
                     self._record_fill(
-                        live_order, exchange_resp.avg_price, exchange_resp.filled,
-                        None, exchange_resp.fee or Decimal("0"), source="reconcile",
+                        live_order,
+                        exchange_resp.avg_price,
+                        exchange_resp.filled,
+                        None,
+                        exchange_resp.fee or Decimal("0"),
+                        source="reconcile",
                         exchange_timestamp=exchange_resp.updated_at,
                     )
                     self._check_trade_completion(had_open_trade, cb_before, "reconcile")
@@ -1486,9 +1478,7 @@ class LiveTradingEngine:
         if reconciled:
             logger.info(f"Reconciled {len(reconciled)} timed-out orders")
 
-    async def _reconcile_missing_timed_out_order(
-        self, client_id: str, order: Any
-    ) -> None:
+    async def _reconcile_missing_timed_out_order(self, client_id: str, order: Any) -> None:
         """Query exchange for final status of a timed-out order not in open_orders.
 
         The order may have been filled (no longer open), cancelled, or never
@@ -1516,8 +1506,7 @@ class LiveTradingEngine:
             response = await self._adapter.get_order(order.symbol, query_id)
         except Exception as e:
             logger.warning(
-                f"Failed to query timed-out order {client_id} — "
-                f"marking as cancelled: {e}"
+                f"Failed to query timed-out order {client_id} — marking as cancelled: {e}"
             )
             order.status = OrderStatus.CANCELLED
             self._context._completed_orders.append(order)
@@ -1529,8 +1518,7 @@ class LiveTradingEngine:
         if response.status == OrderStatus.FILLED:
             # Order was filled on exchange — create LiveOrder and record fill
             logger.info(
-                f"Timed-out order {client_id} was FILLED on exchange "
-                f"(order_id={response.order_id})"
+                f"Timed-out order {client_id} was FILLED on exchange (order_id={response.order_id})"
             )
             live_order = LiveOrder(
                 internal_id=client_id,
@@ -1557,27 +1545,33 @@ class LiveTradingEngine:
                 had_open_trade = self._context._open_trade is not None
                 cb_before = self._risk_manager.state.circuit_breaker_triggered
                 self._record_fill(
-                    live_order, response.avg_price, response.filled,
-                    None, response.fee or Decimal("0"), source="reconcile",
+                    live_order,
+                    response.avg_price,
+                    response.filled,
+                    None,
+                    response.fee or Decimal("0"),
+                    source="reconcile",
                     exchange_timestamp=response.updated_at,
                 )
                 self._check_trade_completion(had_open_trade, cb_before, "reconcile")
 
             # Buffer audit event
-            self._pending_order_events.append({
-                "type": "placed",
-                "internal_id": client_id,
-                "exchange_order_id": response.order_id,
-                "symbol": live_order.symbol,
-                "side": live_order.side.value,
-                "order_type": live_order.order_type,
-                "amount": str(live_order.amount),
-                "price": str(live_order.price) if live_order.price else None,
-                "status": live_order.status.value,
-                "created_at": live_order.created_at.isoformat()
-                if live_order.created_at
-                else datetime.now(UTC).isoformat(),
-            })
+            self._pending_order_events.append(
+                {
+                    "type": "placed",
+                    "internal_id": client_id,
+                    "exchange_order_id": response.order_id,
+                    "symbol": live_order.symbol,
+                    "side": live_order.side.value,
+                    "order_type": live_order.order_type,
+                    "amount": str(live_order.amount),
+                    "price": str(live_order.price) if live_order.price else None,
+                    "status": live_order.status.value,
+                    "created_at": live_order.created_at.isoformat()
+                    if live_order.created_at
+                    else datetime.now(UTC).isoformat(),
+                }
+            )
         else:
             # Order is CANCELLED, REJECTED, or other terminal state
             logger.warning(
@@ -1793,8 +1787,12 @@ class LiveTradingEngine:
             circuit_breaker_before = self._risk_manager.state.circuit_breaker_triggered
 
             self._record_fill(
-                live_order, response.avg_price, fill_amount, fee_delta,
-                response.fee or Decimal("0"), source="poll",
+                live_order,
+                response.avg_price,
+                fill_amount,
+                fee_delta,
+                response.fee or Decimal("0"),
+                source="poll",
                 exchange_timestamp=response.updated_at,
             )
             self._check_trade_completion(had_open_trade, circuit_breaker_before, "polling")
@@ -1851,21 +1849,23 @@ class LiveTradingEngine:
         self._has_recent_fill = True
 
         # Buffer "fill" event for audit persistence (LIVE-013)
-        self._pending_order_events.append({
-            "type": "fill",
-            "internal_id": live_order.internal_id,
-            "fill_price": str(fill_price),
-            "fill_amount": str(fill_amount),
-            "fee": str(fill_fee),
-            "fee_currency": live_order.fee_currency,
-            "total_filled": str(live_order.filled_amount),
-            "avg_fill_price": str(live_order.avg_fill_price)
-            if live_order.avg_fill_price
-            else None,
-            "status": live_order.status.value,
-            "timestamp": (exchange_timestamp or datetime.now(UTC)).isoformat(),
-            "fill_source": source,
-        })
+        self._pending_order_events.append(
+            {
+                "type": "fill",
+                "internal_id": live_order.internal_id,
+                "fill_price": str(fill_price),
+                "fill_amount": str(fill_amount),
+                "fee": str(fill_fee),
+                "fee_currency": live_order.fee_currency,
+                "total_filled": str(live_order.filled_amount),
+                "avg_fill_price": str(live_order.avg_fill_price)
+                if live_order.avg_fill_price
+                else None,
+                "status": live_order.status.value,
+                "timestamp": (exchange_timestamp or datetime.now(UTC)).isoformat(),
+                "fill_source": source,
+            }
+        )
 
     def _check_trade_completion(
         self,
@@ -2049,20 +2049,22 @@ class LiveTradingEngine:
             )
 
             # Buffer "placed" event for audit persistence (LIVE-013)
-            self._pending_order_events.append({
-                "type": "placed",
-                "internal_id": live_order.internal_id,
-                "exchange_order_id": live_order.exchange_order_id,
-                "symbol": live_order.symbol,
-                "side": live_order.side.value,
-                "order_type": live_order.order_type,
-                "amount": str(live_order.amount),
-                "price": str(live_order.price) if live_order.price else None,
-                "status": live_order.status.value,
-                "created_at": live_order.created_at.isoformat()
-                if live_order.created_at
-                else datetime.now(UTC).isoformat(),
-            })
+            self._pending_order_events.append(
+                {
+                    "type": "placed",
+                    "internal_id": live_order.internal_id,
+                    "exchange_order_id": live_order.exchange_order_id,
+                    "symbol": live_order.symbol,
+                    "side": live_order.side.value,
+                    "order_type": live_order.order_type,
+                    "amount": str(live_order.amount),
+                    "price": str(live_order.price) if live_order.price else None,
+                    "status": live_order.status.value,
+                    "created_at": live_order.created_at.isoformat()
+                    if live_order.created_at
+                    else datetime.now(UTC).isoformat(),
+                }
+            )
 
         except TimeoutError:
             logger.error(

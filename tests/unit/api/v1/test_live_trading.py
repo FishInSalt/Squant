@@ -301,9 +301,7 @@ class TestResumeLiveTrading:
 
         with patch("squant.api.v1.live_trading.LiveTradingService") as mock_service_class:
             mock_service = MagicMock()
-            mock_service.resume = AsyncMock(
-                side_effect=SessionNotFoundError(str(run_id))
-            )
+            mock_service.resume = AsyncMock(side_effect=SessionNotFoundError(str(run_id)))
             mock_service_class.return_value = mock_service
 
             response = await client.post(f"/api/v1/live/{run_id}/resume")
@@ -346,9 +344,7 @@ class TestResumeLiveTrading:
             assert response.status_code == 404
 
     @pytest.mark.asyncio
-    async def test_resume_live_trading_exchange_connection_error(
-        self, client: AsyncClient
-    ) -> None:
+    async def test_resume_live_trading_exchange_connection_error(self, client: AsyncClient) -> None:
         """Test resume returns 503 when exchange connection fails."""
         run_id = uuid4()
 
