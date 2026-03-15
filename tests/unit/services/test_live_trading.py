@@ -2285,7 +2285,7 @@ class TestReconcilePositionsUsesTotal:
         report = await service._reconcile_positions(mock_engine, mock_adapter, "BTC/USDT")
 
         # With .total, 1.0 == 1.0 -> no position adjustment
-        assert report["position_adjusted"] is False
+        assert report["position_discrepancy"] is False
 
 
 class TestResumeFailureUpdatesDB:
@@ -3368,7 +3368,7 @@ class TestResumeSuccessPath:
                 new_callable=AsyncMock,
                 return_value={
                     "cash_adjusted": False,
-                    "position_adjusted": False,
+                    "position_discrepancy": False,
                     "discrepancies": [],
                 },
             ) as mock_reconcile_positions,
@@ -3867,7 +3867,7 @@ class TestResumeSuccessPath:
         }
         p["mock_reconcile_positions"].return_value = {
             "cash_adjusted": True,
-            "position_adjusted": False,
+            "position_discrepancy": False,
             "discrepancies": [{"type": "cash_mismatch", "local": "10000", "exchange": "9500"}],
         }
 

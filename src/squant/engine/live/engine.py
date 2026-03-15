@@ -122,10 +122,10 @@ def _serialize_live_order(order: LiveOrder) -> dict[str, Any]:
         "side": order.side.value,
         "order_type": order.order_type,
         "amount": str(order.amount),
-        "price": str(order.price) if order.price else None,
+        "price": str(order.price) if order.price is not None else None,
         "status": order.status.value,
         "filled_amount": str(order.filled_amount),
-        "avg_fill_price": str(order.avg_fill_price) if order.avg_fill_price else None,
+        "avg_fill_price": str(order.avg_fill_price) if order.avg_fill_price is not None else None,
         "fee": str(order.fee),
         "fee_currency": order.fee_currency,
         "created_at": order.created_at.isoformat() if order.created_at else None,
@@ -261,6 +261,7 @@ class LiveTradingEngine:
         self._stopped_at: datetime | None = None
         self._error_message: str | None = None
         self._bar_count = 0
+        self._last_bar_time: datetime | None = None  # Dedup: last processed candle time (fix #5)
         self._last_active_at: datetime | None = None
         self._circuit_breaker_triggered = False  # Set when risk manager triggers circuit breaker
         self._warming_up = False  # True during strategy warmup on resume (IMP-009)
@@ -737,6 +738,11 @@ class LiveTradingEngine:
     async def emergency_close(self) -> dict[str, Any]:
         """Emergency close all positions at market price.
 
+        Acquires _processing_lock to prevent interleaving with process_candle().
+        Without this, emergency_close could cancel orders and place market closes
+        while process_candle is suspended at an await point, leading to the
+        strategy submitting new orders during the close operation (fix #2).
+
         Note: DMS is NOT refreshed here — market orders fill in seconds, well within
         the 60s DMS window. If the process crashes mid-close, DMS will cancel any
         remaining open orders on the exchange as intended.
@@ -763,148 +769,157 @@ class LiveTradingEngine:
                 "errors": None,
             }
 
+        # Acquire processing lock to prevent interleaving with process_candle (fix #2).
+        # Set _emergency_close_in_progress BEFORE acquiring the lock so that if
+        # process_candle is currently holding the lock and reaches an await point,
+        # it will see the flag and exit early on the next iteration.
         self._emergency_close_in_progress = True
-        try:
-            # Update activity timestamp to prevent health check timeout during close (LV-6)
-            self._last_active_at = datetime.now(UTC)
-            logger.warning(f"Emergency close triggered for run {self._run_id}")
+        async with self._processing_lock:
+            try:
+                # Update activity timestamp to prevent health check timeout during close (LV-6)
+                self._last_active_at = datetime.now(UTC)
+                logger.warning(f"Emergency close triggered for run {self._run_id}")
 
-            # Notification: emergency close (LIVE-011)
-            _fire_notification(
-                self._run_id,
-                level="critical",
-                event_type="emergency_close",
-                title="紧急平仓触发",
-                message=f"实盘会话 {self._symbol} 开始执行紧急平仓",
-                details={"symbol": self._symbol},
-            )
+                # Notification: emergency close (LIVE-011)
+                _fire_notification(
+                    self._run_id,
+                    level="critical",
+                    event_type="emergency_close",
+                    title="紧急平仓触发",
+                    message=f"实盘会话 {self._symbol} 开始执行紧急平仓",
+                    details={"symbol": self._symbol},
+                )
 
-            results: dict[str, Any] = {
-                "run_id": str(self._run_id),
-                "orders_cancelled": 0,
-                "positions_closed": 0,
-                "remaining_positions": [],
-                "errors": [],
-            }
+                results: dict[str, Any] = {
+                    "run_id": str(self._run_id),
+                    "orders_cancelled": 0,
+                    "positions_closed": 0,
+                    "remaining_positions": [],
+                    "errors": [],
+                }
 
-            # Cancel all open orders first
-            cancelled = await self._cancel_all_orders()
-            results["orders_cancelled"] = len(cancelled)
+                # Cancel all open orders first
+                cancelled = await self._cancel_all_orders()
+                results["orders_cancelled"] = len(cancelled)
 
-            # Close all positions at market and wait for fills
-            pending_close_orders: list[tuple[str, OrderResponse]] = []  # (symbol, response)
-            for symbol, position in list(self._context.positions.items()):
-                if position.is_open:
+                # Close all positions at market and wait for fills
+                pending_close_orders: list[tuple[str, OrderResponse]] = []
+                for symbol, position in list(self._context.positions.items()):
+                    if position.is_open:
+                        try:
+                            # Place market order to close
+                            side = OrderSide.SELL if position.amount > 0 else OrderSide.BUY
+                            order_request = OrderRequest(
+                                symbol=symbol,
+                                side=side,
+                                type="market",
+                                amount=abs(position.amount),
+                            )
+
+                            response = await self._adapter.place_order(order_request)
+                            pending_close_orders.append((symbol, response))
+                            self._last_active_at = datetime.now(UTC)
+                            logger.info(
+                                f"Emergency close order placed: {symbol} {side.value} "
+                                f"{abs(position.amount)} (order_id={response.order_id})"
+                            )
+
+                        except Exception as e:
+                            logger.exception(f"Error closing position for {symbol}: {e}")
+                            results["errors"].append(
+                                {
+                                    "symbol": symbol,
+                                    "error": str(e),
+                                }
+                            )
+
+                # Wait for close orders to fill in parallel (LIVE-OP-002)
+                async def _wait_single(sym: str, resp: OrderResponse) -> None:
                     try:
-                        # Place market order to close
-                        side = OrderSide.SELL if position.amount > 0 else OrderSide.BUY
-                        order_request = OrderRequest(
-                            symbol=symbol,
-                            side=side,
-                            type="market",
-                            amount=abs(position.amount),
-                        )
-
-                        response = await self._adapter.place_order(order_request)
-                        pending_close_orders.append((symbol, response))
-                        self._last_active_at = datetime.now(UTC)
-                        logger.info(
-                            f"Emergency close order placed: {symbol} {side.value} "
-                            f"{abs(position.amount)} (order_id={response.order_id})"
-                        )
-
+                        final = await self._wait_for_order_fill(sym, resp)
+                        if final.status == OrderStatus.FILLED:
+                            results["positions_closed"] += 1
+                            # C-1: Update local state via _record_fill so position
+                            # and cash stay in sync with the exchange after close.
+                            temp_order = LiveOrder(
+                                internal_id=f"emergency-{final.order_id}",
+                                exchange_order_id=final.order_id,
+                                symbol=sym,
+                                side=final.side,
+                                order_type=final.type.value
+                                if hasattr(final.type, "value")
+                                else str(final.type),
+                                amount=final.amount,
+                                price=final.avg_price,
+                                status=OrderStatus.FILLED,
+                            )
+                            temp_order.filled_amount = final.filled
+                            temp_order.avg_fill_price = final.avg_price
+                            temp_order.fee = final.fee or Decimal("0")
+                            temp_order.fee_currency = final.fee_currency
+                            self._record_fill(
+                                live_order=temp_order,
+                                fill_price=final.avg_price,
+                                fill_amount=final.filled,
+                                fee_delta=final.fee,
+                                total_fee=final.fee or Decimal("0"),
+                                source="emergency_close",
+                                exchange_timestamp=final.updated_at,
+                            )
+                        else:
+                            logger.warning(
+                                f"Emergency close order not filled: "
+                                f"{sym} status={final.status.value}"
+                            )
+                            results["errors"].append(
+                                {
+                                    "symbol": sym,
+                                    "error": f"Order not filled: status={final.status.value}",
+                                }
+                            )
                     except Exception as e:
-                        logger.exception(f"Error closing position for {symbol}: {e}")
-                        results["errors"].append(
-                            {
-                                "symbol": symbol,
-                                "error": str(e),
-                            }
-                        )
-
-            # Wait for close orders to fill in parallel (LIVE-OP-002)
-            async def _wait_single(sym: str, resp: OrderResponse) -> None:
-                try:
-                    final = await self._wait_for_order_fill(sym, resp)
-                    if final.status == OrderStatus.FILLED:
-                        results["positions_closed"] += 1
-                        # C-1: Update local state via _record_fill so position
-                        # and cash stay in sync with the exchange after close.
-                        temp_order = LiveOrder(
-                            internal_id=f"emergency-{final.order_id}",
-                            exchange_order_id=final.order_id,
-                            symbol=sym,
-                            side=final.side,
-                            order_type=final.type.value
-                            if hasattr(final.type, "value")
-                            else str(final.type),
-                            amount=final.amount,
-                            price=final.avg_price,
-                            status=OrderStatus.FILLED,
-                        )
-                        temp_order.filled_amount = final.filled
-                        temp_order.avg_fill_price = final.avg_price
-                        temp_order.fee = final.fee or Decimal("0")
-                        temp_order.fee_currency = final.fee_currency
-                        self._record_fill(
-                            live_order=temp_order,
-                            fill_price=final.avg_price,
-                            fill_amount=final.filled,
-                            fee_delta=final.fee,
-                            total_fee=final.fee or Decimal("0"),
-                            source="emergency_close",
-                            exchange_timestamp=final.updated_at,
-                        )
-                    else:
-                        logger.warning(
-                            f"Emergency close order not filled: {sym} status={final.status.value}"
-                        )
+                        logger.exception(f"Error waiting for close order fill: {sym}: {e}")
                         results["errors"].append(
                             {
                                 "symbol": sym,
-                                "error": f"Order not filled: status={final.status.value}",
+                                "error": f"Fill wait failed: {e}",
                             }
                         )
-                except Exception as e:
-                    logger.exception(f"Error waiting for close order fill: {sym}: {e}")
-                    results["errors"].append(
-                        {
-                            "symbol": sym,
-                            "error": f"Fill wait failed: {e}",
-                        }
-                    )
 
-            await asyncio.gather(*[_wait_single(sym, resp) for sym, resp in pending_close_orders])
-
-            # TRD-038#5: Collect remaining positions based on unfilled orders
-            error_symbols = {err["symbol"] for err in results["errors"]}
-            for symbol, position in self._context.positions.items():
-                if position.is_open and symbol in error_symbols:
-                    results["remaining_positions"].append(
-                        {
-                            "symbol": symbol,
-                            "amount": str(position.amount),
-                            "side": "long" if position.amount > 0 else "short",
-                        }
-                    )
-
-            # Set status based on results
-            if results["remaining_positions"]:
-                results["status"] = "partial"
-                results["message"] = (
-                    f"Partial close: {results['positions_closed']} closed, "
-                    f"{len(results['remaining_positions'])} remaining"
+                await asyncio.gather(
+                    *[_wait_single(sym, resp) for sym, resp in pending_close_orders]
                 )
-            else:
-                results["status"] = "completed"
-                results["message"] = None
 
-            # Stop the engine
-            await self.stop(error="Emergency close executed", cancel_orders=False)
+                # TRD-038#5: Collect remaining positions based on unfilled orders
+                error_symbols = {err["symbol"] for err in results["errors"]}
+                for symbol, position in self._context.positions.items():
+                    if position.is_open and symbol in error_symbols:
+                        results["remaining_positions"].append(
+                            {
+                                "symbol": symbol,
+                                "amount": str(position.amount),
+                                "side": "long" if position.amount > 0 else "short",
+                            }
+                        )
 
-            return results
-        finally:
-            self._emergency_close_in_progress = False
+                # Set status based on results
+                if results["remaining_positions"]:
+                    results["status"] = "partial"
+                    results["message"] = (
+                        f"Partial close: {results['positions_closed']} closed, "
+                        f"{len(results['remaining_positions'])} remaining"
+                    )
+                else:
+                    results["status"] = "completed"
+                    results["message"] = None
+
+                # Stop the engine — does NOT acquire _processing_lock (R3-002)
+                # so this is safe to call while holding the lock.
+                await self.stop(error="Emergency close executed", cancel_orders=False)
+
+                return results
+            finally:
+                self._emergency_close_in_progress = False
 
     async def process_candle(self, candle: WSCandle) -> None:
         """Process a WebSocket candle update.
@@ -956,6 +971,15 @@ class LiveTradingEngine:
         # Verify symbol matches
         if candle.symbol != self._symbol:
             logger.warning(f"Symbol mismatch: expected {self._symbol}, got {candle.symbol}")
+            return
+
+        # Dedup: skip candles that don't advance in time (fix #5).
+        # WebSocket reconnections or message replays can deliver duplicate closed candles.
+        if self._last_bar_time is not None and candle.timestamp <= self._last_bar_time:
+            logger.debug(
+                f"Skipping duplicate/stale candle: time={candle.timestamp}, "
+                f"last={self._last_bar_time}"
+            )
             return
 
         # Acquire processing lock to prevent race with stop() (R3-002)
@@ -1102,6 +1126,7 @@ class LiveTradingEngine:
                 await self._process_order_requests()
 
                 self._bar_count += 1
+                self._last_bar_time = bar.time  # Dedup tracking (fix #5)
 
                 # Persist result state for crash recovery
                 if self._on_result:
@@ -1209,15 +1234,25 @@ class LiveTradingEngine:
             logger.warning(f"Live order not found for internal ID: {internal_id}")
             return
 
-        # Convert string status to OrderStatus enum
-        new_status = _WS_STATUS_MAP.get(update.status, OrderStatus.PENDING)
+        # Convert string status to OrderStatus enum.
+        # Unknown statuses are logged and the order retains its current status
+        # to prevent a filled order from regressing to PENDING (fix #3).
+        mapped_status = _WS_STATUS_MAP.get(update.status)
+        if mapped_status is None:
+            logger.error(
+                f"Unknown WS order status '{update.status}' for order {internal_id} "
+                f"— keeping current status {live_order.status.value}"
+            )
+            return
+        new_status = mapped_status
 
         # Update order state
         old_status = live_order.status
         old_filled = live_order.filled_amount  # Save before updating
         old_fee = live_order.fee  # Save old fee for incremental calculation
         live_order.status = new_status
-        live_order.filled_amount = update.filled_size
+        # Guard against filled_amount regression from out-of-order WS messages (fix #4)
+        live_order.filled_amount = max(live_order.filled_amount, update.filled_size)
         live_order.avg_fill_price = update.avg_price
         live_order.fee = update.fee or Decimal("0")
         live_order.fee_currency = update.fee_currency
