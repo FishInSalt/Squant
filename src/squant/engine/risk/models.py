@@ -117,7 +117,7 @@ class RiskConfig(BaseModel):
         description="Enable circuit breaker on consecutive losses",
     )
     circuit_breaker_loss_count: int = Field(
-        default=5,
+        default=3,  # Aligned with API schema default (schemas/live_trading.py)
         ge=1,
         description="Number of consecutive losses to trigger circuit breaker",
     )

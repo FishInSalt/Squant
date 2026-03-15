@@ -1975,6 +1975,9 @@ class LiveTradingEngine:
                         },
                     }
                 )
+                # Cap pending risk triggers to prevent unbounded growth (m-2)
+                if len(self._pending_risk_triggers) > 100:
+                    self._pending_risk_triggers = self._pending_risk_triggers[-100:]
                 continue
 
             # F-7: enforce per-bar cap

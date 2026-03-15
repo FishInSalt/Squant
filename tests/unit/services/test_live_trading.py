@@ -1006,7 +1006,11 @@ class TestStopSession:
             mock_engine.symbol = "BTC/USDT"
             mock_engine.timeframe = "1m"
             mock_engine.emergency_close = AsyncMock(
-                return_value={"orders_cancelled": 1, "positions_closed": 0}
+                return_value={
+                    "status": "completed",
+                    "orders_cancelled": 1,
+                    "positions_closed": 0,
+                }
             )
 
             with patch("squant.services.live_trading.get_live_session_manager") as mock_get_manager:
@@ -1094,7 +1098,11 @@ class TestEmergencyClose:
             mock_engine.symbol = "BTC/USDT"
             mock_engine.timeframe = "1m"
             mock_engine.emergency_close = AsyncMock(
-                return_value={"orders_cancelled": 2, "positions_closed": 1}
+                return_value={
+                    "status": "completed",
+                    "orders_cancelled": 2,
+                    "positions_closed": 1,
+                }
             )
 
             with patch("squant.services.live_trading.get_live_session_manager") as mock_get_manager:
@@ -2642,7 +2650,11 @@ class TestEmergencyCloseStatusValue:
             mock_engine.symbol = "BTC/USDT"
             mock_engine.timeframe = "1m"
             mock_engine.emergency_close = AsyncMock(
-                return_value={"orders_cancelled": 2, "positions_closed": 1}
+                return_value={
+                    "status": "completed",
+                    "orders_cancelled": 2,
+                    "positions_closed": 1,
+                }
             )
 
             with patch(

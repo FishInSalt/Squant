@@ -992,7 +992,6 @@ class LiveTradingService:
 
         return {
             "run_id": str(run_id),
-            "status": "completed",
             **results,
         }
 
