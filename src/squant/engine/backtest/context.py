@@ -1136,7 +1136,7 @@ class BacktestContext:
             self._total_fees = Decimal(str(state["total_fees"]))
 
         # Restore positions
-        if "positions" in state:
+        if state.get("positions") is not None:
             self._positions.clear()
             for symbol, pos_data in state["positions"].items():
                 pos = Position(
@@ -1150,7 +1150,7 @@ class BacktestContext:
                     self._last_prices[symbol] = Decimal(str(pos_data["current_price"]))
 
         # Restore closed trades (for display and metrics)
-        if "trades" in state:
+        if state.get("trades") is not None:
             self._trades.clear()
             for t in state["trades"]:
                 trade = TradeRecord(
@@ -1173,7 +1173,7 @@ class BacktestContext:
             self._total_trades_added = len(self._trades)
 
         # Restore fills (for display and strategy access after resume)
-        if "fills" in state:
+        if state.get("fills") is not None:
             self._fills.clear()
             for f in state["fills"]:
                 fill = Fill(
@@ -1193,7 +1193,7 @@ class BacktestContext:
         self._total_completed_added = self._restored_completed_orders_count
 
         # Restore logs
-        if "logs" in state:
+        if state.get("logs") is not None:
             self._logs.clear()
             for log_entry in state["logs"]:
                 self._logs.append(log_entry)

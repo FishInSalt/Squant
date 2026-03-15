@@ -264,6 +264,7 @@ class LiveTradingEngine:
         self._last_bar_time: datetime | None = None  # Dedup: last processed candle time (fix #5)
         self._last_active_at: datetime | None = None
         self._circuit_breaker_triggered = False  # Set when risk manager triggers circuit breaker
+        self._circuit_breaker_losses: int = 0  # Snapshot of consecutive_losses at trigger time
         self._warming_up = False  # True during strategy warmup on resume (IMP-009)
 
         # Live order tracking
@@ -424,7 +425,7 @@ class LiveTradingEngine:
 
         reason = (
             f"Auto-triggered by session {self._run_id}: "
-            f"{self._risk_manager.state.consecutive_losses} consecutive losses"
+            f"{self._circuit_breaker_losses} consecutive losses"
         )
 
         logger.critical(
@@ -1933,9 +1934,10 @@ class LiveTradingEngine:
         )
 
         if not circuit_breaker_before and self._risk_manager.state.circuit_breaker_triggered:
+            self._circuit_breaker_losses = self._risk_manager.state.consecutive_losses
             logger.warning(
                 f"Circuit breaker triggered for session {self._run_id} "
-                f"after {self._risk_manager.state.consecutive_losses} "
+                f"after {self._circuit_breaker_losses} "
                 f"consecutive losses (detected via {source})"
             )
             self._circuit_breaker_triggered = True
