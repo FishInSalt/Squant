@@ -369,12 +369,13 @@ class LiveTradingService:
         # Build WS credentials for private order push (LIVE-CN-001)
         ws_credentials = self._build_ws_credentials(exchange_account)
 
+        quote_currency = symbol.split("/")[1]  # e.g., "USDT"
+
         # Connect to exchange and get initial equity if not provided
         try:
             await adapter.connect()
             if initial_equity is None:
                 balance = await adapter.get_balance()
-                quote_currency = symbol.split("/")[1]  # e.g., "USDT"
                 quote_balance = balance.get_balance(quote_currency)
                 initial_equity = quote_balance.available if quote_balance else Decimal("0")
                 logger.info(f"Fetched initial equity from exchange: {initial_equity}")
@@ -384,6 +385,17 @@ class LiveTradingService:
             except Exception:
                 pass
             raise LiveExchangeConnectionError(f"Failed to connect to exchange: {e}") from e
+
+        # Validate initial equity is positive to prevent division-by-zero in risk calculations
+        if initial_equity <= Decimal("0"):
+            try:
+                await adapter.close()
+            except Exception:
+                pass
+            raise LiveTradingError(
+                f"Insufficient {quote_currency} balance to start live trading. "
+                f"Available balance: {initial_equity}"
+            )
 
         # Create run record
         run = await self.run_repo.create(

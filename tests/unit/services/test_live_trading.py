@@ -719,6 +719,125 @@ class TestStartSession:
 
             assert "Connection refused" in str(exc_info.value)
 
+    @pytest.mark.asyncio
+    async def test_start_zero_balance_raises_live_trading_error(
+        self,
+        service: LiveTradingService,
+        valid_risk_config: RiskConfig,
+        mock_exchange_account: MagicMock,
+    ) -> None:
+        """Test that starting with zero balance raises LiveTradingError."""
+        strategy_id = uuid4()
+
+        with (
+            patch("squant.services.strategy.StrategyRepository") as mock_strat_repo_class,
+            patch("squant.services.account.ExchangeAccountRepository") as mock_acct_repo_class,
+            patch("squant.services.account.ExchangeAccountService") as mock_acct_svc_class,
+            patch("squant.services.live_trading.OKXAdapter") as mock_adapter_class,
+        ):
+            mock_strat_repo = MagicMock()
+            mock_strategy = MagicMock()
+            mock_strategy.code = "class MyStrategy(Strategy): pass"
+            mock_strat_repo.get = AsyncMock(return_value=mock_strategy)
+            mock_strat_repo_class.return_value = mock_strat_repo
+
+            mock_acct_repo = MagicMock()
+            mock_acct_repo.get = AsyncMock(return_value=mock_exchange_account)
+            mock_acct_repo_class.return_value = mock_acct_repo
+
+            mock_acct_svc = MagicMock()
+            mock_acct_svc.get_decrypted_credentials.return_value = {
+                "api_key": "test_key",
+                "api_secret": "test_secret",
+                "passphrase": "test_pass",
+            }
+            mock_acct_svc_class.return_value = mock_acct_svc
+
+            # Adapter connects fine but reports zero balance
+            mock_adapter = MagicMock()
+            mock_adapter.connect = AsyncMock()
+            mock_adapter.close = AsyncMock()
+
+            mock_quote_balance = MagicMock()
+            mock_quote_balance.available = Decimal("0")
+
+            mock_account_balance = MagicMock()
+            mock_account_balance.get_balance.return_value = mock_quote_balance
+
+            mock_adapter.get_balance = AsyncMock(return_value=mock_account_balance)
+            mock_adapter_class.return_value = mock_adapter
+
+            with pytest.raises(LiveTradingError) as exc_info:
+                await service.start(
+                    strategy_id=strategy_id,
+                    symbol="BTC/USDT",
+                    exchange_account_id=mock_exchange_account.id,
+                    timeframe="1m",
+                    risk_config=valid_risk_config,
+                )
+
+            assert "USDT" in str(exc_info.value)
+            # Adapter must be closed before raising
+            mock_adapter.close.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_start_none_balance_raises_live_trading_error(
+        self,
+        service: LiveTradingService,
+        valid_risk_config: RiskConfig,
+        mock_exchange_account: MagicMock,
+    ) -> None:
+        """Test that starting with None quote balance (missing currency) raises LiveTradingError."""
+        strategy_id = uuid4()
+
+        with (
+            patch("squant.services.strategy.StrategyRepository") as mock_strat_repo_class,
+            patch("squant.services.account.ExchangeAccountRepository") as mock_acct_repo_class,
+            patch("squant.services.account.ExchangeAccountService") as mock_acct_svc_class,
+            patch("squant.services.live_trading.OKXAdapter") as mock_adapter_class,
+        ):
+            mock_strat_repo = MagicMock()
+            mock_strategy = MagicMock()
+            mock_strategy.code = "class MyStrategy(Strategy): pass"
+            mock_strat_repo.get = AsyncMock(return_value=mock_strategy)
+            mock_strat_repo_class.return_value = mock_strat_repo
+
+            mock_acct_repo = MagicMock()
+            mock_acct_repo.get = AsyncMock(return_value=mock_exchange_account)
+            mock_acct_repo_class.return_value = mock_acct_repo
+
+            mock_acct_svc = MagicMock()
+            mock_acct_svc.get_decrypted_credentials.return_value = {
+                "api_key": "test_key",
+                "api_secret": "test_secret",
+                "passphrase": "test_pass",
+            }
+            mock_acct_svc_class.return_value = mock_acct_svc
+
+            # Adapter connects fine but returns None for quote balance
+            mock_adapter = MagicMock()
+            mock_adapter.connect = AsyncMock()
+            mock_adapter.close = AsyncMock()
+
+            mock_account_balance = MagicMock()
+            mock_account_balance.get_balance.return_value = None  # No USDT balance entry
+
+            mock_adapter.get_balance = AsyncMock(return_value=mock_account_balance)
+            mock_adapter_class.return_value = mock_adapter
+
+            with pytest.raises(LiveTradingError) as exc_info:
+                await service.start(
+                    strategy_id=strategy_id,
+                    symbol="BTC/USDT",
+                    exchange_account_id=mock_exchange_account.id,
+                    timeframe="1m",
+                    risk_config=valid_risk_config,
+                )
+
+            assert "USDT" in str(exc_info.value)
+            # Adapter must be closed before raising
+            mock_adapter.close.assert_called_once()
+
 
 class TestStopSession:
     """Tests for stopping live trading sessions."""
