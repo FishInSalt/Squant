@@ -201,6 +201,7 @@ class PaperTradingEngine:
         # Pending equity snapshots for batch persistence (fallback when callback fails)
         self._pending_snapshots: list[EquitySnapshot] = []
         self._snapshot_batch_size = 10  # Persist every N bars
+        self._max_pending_snapshots = 1000  # Cap to prevent unbounded memory growth
 
         # Lock to ensure stop() waits for in-progress candle processing (PP-C05)
         self._processing_lock = asyncio.Lock()
@@ -215,6 +216,10 @@ class PaperTradingEngine:
         # Strategy callback tracking (on_fill / on_order_done)
         self._last_callback_fill_total = 0
         self._last_callback_completed_total = 0
+
+        # Incremental realized PnL cache — updated in _process_fill_safe()
+        # on trade completion, avoids O(n) sum over all trades each bar.
+        self._cached_realized_pnl = Decimal("0")
 
     @property
     def run_id(self) -> UUID:
@@ -328,27 +333,34 @@ class PaperTradingEngine:
     async def stop(self, error: str | None = None) -> None:
         """Stop the paper trading engine.
 
-        Waits for any in-progress candle processing to complete,
-        then calls strategy.on_stop() and marks the engine as stopped.
+        Always acquires _processing_lock before checking state (PP-C05).
+        This guarantees that any in-progress process_candle() — including
+        its _persist_on_early_stop() — has completed before this method
+        returns, so callers can safely read engine state afterward.
 
         Args:
             error: Optional error message if stopping due to error.
         """
-        if not self._is_running:
-            logger.warning(f"Engine {self._run_id} not running")
-            return
-
-        logger.info(f"Stopping paper trading engine {self._run_id}")
-
         if error:
             self._error_message = error
 
-        # Wait for any in-progress candle processing to finish (PP-C05)
+        # Always acquire the lock so callers are guaranteed that
+        # process_candle() has finished when stop() returns.
+        # _stop_impl() handles the already-stopped case internally.
         async with self._processing_lock:
             self._stop_impl()
 
     def _stop_impl(self) -> None:
-        """Internal stop logic (must be called with _processing_lock held or from within it)."""
+        """Internal stop logic (must be called with _processing_lock held or from within it).
+
+        Guarded against double invocation: if the engine is already stopped
+        (e.g., risk auto-stop in process_candle followed by service.stop()),
+        this method returns immediately to avoid calling on_stop() twice and
+        emitting duplicate WebSocket events.
+        """
+        if not self._is_running:
+            return
+
         try:
             # Call strategy cleanup
             self._strategy.on_stop()
@@ -504,6 +516,9 @@ class PaperTradingEngine:
                         self._context.log(msg)
                         self._error_message = msg
                         self._stop_impl()
+                        # Persist final state before returning — steps 6 & 8
+                        # would otherwise be skipped by the early return.
+                        await self._persist_on_early_stop()
                         return
 
                 # 6. Persist snapshot: try synchronous callback first, fall back to batch
@@ -519,7 +534,7 @@ class PaperTradingEngine:
                                 f"Snapshot persist callback failed for {self._run_id}: {e}"
                             )
                     if not persisted:
-                        self._pending_snapshots.append(latest_snapshot)
+                        self._append_pending_snapshot(latest_snapshot)
 
                 # 6b. Sync ticker ask to context for accurate market order cost
                 # estimation in strategy.buy() — prevents underestimating cost
@@ -572,6 +587,7 @@ class PaperTradingEngine:
                     logger.error(f"Strategy resource limit exceeded: {e}")
                     self._error_message = f"Strategy resource limit exceeded: {e}"
                     self._stop_impl()
+                    await self._persist_on_early_stop()
                     raise
                 except Exception as e:
                     # TRD-025#3: strategy errors (e.g., insufficient cash) should
@@ -694,6 +710,13 @@ class PaperTradingEngine:
             )
             if fill:
                 if not self._validate_order_risk(order, current_price):
+                    # Log explicitly that a stop order was cancelled by risk rules,
+                    # since this permanently removes the user's stop protection.
+                    short_id = order.id[:8]
+                    self._context.log(
+                        f"止损单 #{short_id} 因风控被取消 "
+                        f"(触发价={order.stop_price}, 当前价={current_price})"
+                    )
                     continue
                 short_id = order.id[:8]
                 self._context.log(f"止损触发 #{short_id} 触发价={order.stop_price}")
@@ -869,10 +892,12 @@ class PaperTradingEngine:
             self._risk_manager.record_order_fill()
 
         # Check if a trade was completed (closed) by this fill
-        if self._risk_manager and had_open_trade and self._context._open_trade is None:
+        if had_open_trade and self._context._open_trade is None:
             # _open_trade went from non-None to None — a trade just closed
             completed_trade = self._context._trades[-1]
-            self._risk_manager.record_trade_result(completed_trade.pnl)
+            self._cached_realized_pnl += completed_trade.pnl
+            if self._risk_manager:
+                self._risk_manager.record_trade_result(completed_trade.pnl)
 
         # Emit real-time fill event via WebSocket (best-effort, never block engine)
         if self._on_event and not self._warming_up:
@@ -922,6 +947,54 @@ class PaperTradingEngine:
             ],
             "open_trade": _serialize_open_trade(ctx._open_trade),
         }
+
+    def _append_pending_snapshot(self, snapshot: EquitySnapshot) -> None:
+        """Add a snapshot to the pending list with overflow protection.
+
+        If the pending list exceeds _max_pending_snapshots, the oldest half
+        is dropped. This prevents unbounded memory growth when both the
+        per-bar callback and background batch persistence are failing.
+        """
+        self._pending_snapshots.append(snapshot)
+        if len(self._pending_snapshots) > self._max_pending_snapshots:
+            drop_count = self._max_pending_snapshots // 2
+            logger.warning(
+                f"Pending snapshots for {self._run_id} exceeded {self._max_pending_snapshots}, "
+                f"dropping oldest {drop_count} (persistence may be failing)"
+            )
+            self._pending_snapshots = self._pending_snapshots[drop_count:]
+
+    async def _persist_on_early_stop(self) -> None:
+        """Persist snapshot and result state when process_candle exits early.
+
+        Called after _stop_impl() for risk auto-stop or resource limit exceeded,
+        which would otherwise skip the normal persistence steps (6 and 8).
+        Best-effort: failures are logged but do not propagate.
+        """
+        # Step 6: persist latest equity snapshot
+        if self._context.equity_curve:
+            latest_snapshot = self._context.equity_curve[-1]
+            persisted = False
+            if self._on_snapshot:
+                try:
+                    await self._on_snapshot(str(self._run_id), latest_snapshot)
+                    persisted = True
+                except Exception as e:
+                    logger.warning(
+                        f"Snapshot persist on early stop failed for {self._run_id}: {e}"
+                    )
+            if not persisted:
+                self._append_pending_snapshot(latest_snapshot)
+
+        # Step 8: persist result state for crash recovery
+        if self._on_result:
+            try:
+                result_data = self.build_result_for_persistence()
+                await self._on_result(str(self._run_id), result_data)
+            except Exception as e:
+                logger.warning(
+                    f"Result persist on early stop failed for {self._run_id}: {e}"
+                )
 
     def _candle_to_bar(self, candle: WSCandle) -> Bar:
         """Convert WSCandle to Bar.
@@ -1024,6 +1097,11 @@ class PaperTradingEngine:
         """
         result = self._context.build_result_snapshot()
         result["bar_count"] = self._bar_count
+        # Override context's deque-based realized_pnl with the incremental
+        # cache.  The deque has a maxlen and evicts old trades, causing the
+        # sum to undercount once the cap is reached.  The cache is always
+        # correct because it accumulates on each trade close.
+        result["realized_pnl"] = str(self._cached_realized_pnl)
         if self._risk_manager:
             result["risk_state"] = self._risk_manager.get_state_summary()
             result["risk_config"] = self._risk_manager.config.model_dump(mode="json")
@@ -1052,7 +1130,7 @@ class PaperTradingEngine:
             "cash": str(ctx._cash),
             "equity": str(ctx.equity),
             "unrealized_pnl": str(ctx._get_unrealized_pnl()),
-            "realized_pnl": str(sum(t.pnl for t in ctx._trades)),
+            "realized_pnl": str(self._cached_realized_pnl),
             "total_fees": str(ctx._total_fees),
             "completed_orders_count": len(ctx._completed_orders),
             "trades_count": len(ctx._trades),

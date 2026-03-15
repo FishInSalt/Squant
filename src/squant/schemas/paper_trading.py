@@ -5,7 +5,7 @@ from decimal import Decimal
 from typing import Any
 from uuid import UUID
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, ValidationError, model_validator
 
 from squant.schemas.backtest import FillRecordResponse, TradeRecordResponse
 from squant.schemas.live_trading import RiskConfigRequest
@@ -91,7 +91,7 @@ class PaperTradingRunResponse(BaseModel):
         """
         try:
             return handler(data)
-        except Exception:
+        except (ValidationError, AttributeError, TypeError):
             if isinstance(data, dict):
                 raise
             # ORM object: build dict manually, excluding result-only fields
