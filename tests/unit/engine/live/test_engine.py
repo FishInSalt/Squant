@@ -1160,7 +1160,7 @@ class TestStateSnapshot:
 
         assert len(snapshot["live_orders"]) == 1
         assert snapshot["live_orders"][0]["internal_id"] == "order-1"
-        assert snapshot["live_orders"][0]["exchange_id"] == "exchange-1"
+        assert snapshot["live_orders"][0]["exchange_order_id"] == "exchange-1"
 
 
 class TestPendingSnapshots:
@@ -4436,4 +4436,98 @@ class TestTotalLossLimitAutoStop:
         # Engine should still be running
         assert engine.is_running is True
         assert engine.bar_count == 1
+
+
+class TestGetStateSnapshotLiveOrders:
+    """Tests for get_state_snapshot() live_orders field names."""
+
+    def test_snapshot_live_order_field_names(self, engine):
+        """Test that get_state_snapshot() produces correct field names for live_orders.
+
+        LiveOrderInfo schema expects: internal_id, exchange_order_id, symbol, side,
+        type, amount, filled_amount, price, avg_fill_price, status, created_at, updated_at.
+        """
+        now = datetime(2024, 1, 15, 12, 0, 0, tzinfo=UTC)
+
+        order = LiveOrder(
+            internal_id="test-internal-id",
+            exchange_order_id="exchange-order-123",
+            symbol="BTC/USDT",
+            side=OrderSide.BUY,
+            order_type="market",
+            amount=Decimal("0.5"),
+            price=None,
+            status=OrderStatus.SUBMITTED,
+        )
+        order.filled_amount = Decimal("0.25")
+        order.avg_fill_price = Decimal("42000.00")
+        order.created_at = now
+        order.updated_at = now
+
+        engine._live_orders["test-internal-id"] = order
+
+        snapshot = engine.get_state_snapshot()
+
+        assert "live_orders" in snapshot
+        assert len(snapshot["live_orders"]) == 1
+
+        lo = snapshot["live_orders"][0]
+
+        # Must have correct field names matching LiveOrderInfo schema
+        assert "exchange_order_id" in lo, "Missing 'exchange_order_id' (was 'exchange_id')"
+        assert "filled_amount" in lo, "Missing 'filled_amount' (was 'filled')"
+        assert "order_type" in lo, "Missing 'order_type'"
+        assert "avg_fill_price" in lo, "Missing 'avg_fill_price'"
+        assert "created_at" in lo, "Missing 'created_at'"
+        assert "updated_at" in lo, "Missing 'updated_at'"
+
+        # Must NOT have wrong field names
+        assert "exchange_id" not in lo, "Wrong field name 'exchange_id' should be 'exchange_order_id'"
+        assert "filled" not in lo, "Wrong field name 'filled' should be 'filled_amount'"
+
+        # Values must be correct
+        assert lo["internal_id"] == "test-internal-id"
+        assert lo["exchange_order_id"] == "exchange-order-123"
+        assert lo["symbol"] == "BTC/USDT"
+        assert lo["side"] == "buy"
+        assert lo["order_type"] == "market"
+        assert lo["amount"] == "0.5"
+        assert lo["filled_amount"] == "0.25"
+        assert lo["avg_fill_price"] == "42000.00"
+        assert lo["status"] == "submitted"
+        assert lo["created_at"] == now.isoformat()
+        assert lo["updated_at"] == now.isoformat()
+
+    def test_snapshot_live_orders_excludes_complete(self, engine):
+        """Test that get_state_snapshot() excludes completed live orders."""
+        pending_order = LiveOrder(
+            internal_id="pending-id",
+            exchange_order_id="ex-pending",
+            symbol="BTC/USDT",
+            side=OrderSide.BUY,
+            order_type="market",
+            amount=Decimal("0.1"),
+            price=None,
+            status=OrderStatus.SUBMITTED,
+        )
+
+        filled_order = LiveOrder(
+            internal_id="filled-id",
+            exchange_order_id="ex-filled",
+            symbol="BTC/USDT",
+            side=OrderSide.SELL,
+            order_type="market",
+            amount=Decimal("0.1"),
+            price=None,
+            status=OrderStatus.FILLED,
+        )
+
+        engine._live_orders["pending-id"] = pending_order
+        engine._live_orders["filled-id"] = filled_order
+
+        snapshot = engine.get_state_snapshot()
+
+        live_orders = snapshot["live_orders"]
+        assert len(live_orders) == 1
+        assert live_orders[0]["internal_id"] == "pending-id"
 

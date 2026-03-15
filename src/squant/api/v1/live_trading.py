@@ -281,7 +281,7 @@ async def get_live_trading_status(
                     exchange_order_id=order.get("exchange_order_id"),
                     symbol=order.get("symbol", ""),
                     side=order.get("side", ""),
-                    type=order.get("type", ""),
+                    type=order.get("order_type", order.get("type", "")),
                     amount=Decimal(str(order.get("amount", 0))),
                     filled_amount=Decimal(str(order.get("filled_amount", 0))),
                     price=Decimal(str(order["price"])) if order.get("price") else None,

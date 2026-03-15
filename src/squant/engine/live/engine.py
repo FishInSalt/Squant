@@ -2200,15 +2200,7 @@ class LiveTradingEngine:
 
         # API-only: live exchange orders (transient, not persisted)
         result["live_orders"] = [
-            {
-                "internal_id": lo.internal_id,
-                "exchange_id": lo.exchange_order_id,
-                "symbol": lo.symbol,
-                "side": lo.side.value,
-                "amount": str(lo.amount),
-                "filled": str(lo.filled_amount),
-                "status": lo.status.value,
-            }
+            _serialize_live_order(lo)
             for _oid, lo in self._live_orders.items()
             if not lo.is_complete
         ]
