@@ -1597,6 +1597,10 @@ class LiveTradingService:
         try:
             await asyncio.wait_for(adapter.connect(), timeout=30.0)
         except Exception as e:
+            try:
+                await adapter.close()
+            except Exception:
+                pass
             raise LiveExchangeConnectionError(f"Failed to reconnect to exchange: {e}") from e
 
         # 7. Restore risk config

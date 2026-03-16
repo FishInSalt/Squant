@@ -157,10 +157,16 @@ class LiveSessionManager:
         async def _dispatch_one(
             run_id: UUID, engine: LiveTradingEngine
         ) -> tuple[UUID, BaseException | None]:
+            """Process a candle for a single engine, returning any error.
+
+            Catches BaseException (not just Exception) so that
+            asyncio.CancelledError from one engine does not cascade-cancel
+            all sibling engines via asyncio.gather().
+            """
             try:
                 await engine.process_candle(candle)
                 return run_id, None
-            except Exception as e:
+            except BaseException as e:
                 logger.exception(f"Error dispatching candle to live engine {run_id}: {e}")
                 return run_id, e
 
