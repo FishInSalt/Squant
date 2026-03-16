@@ -64,6 +64,30 @@ _WS_STATUS_MAP: dict[str, OrderStatus] = {
 _background_tasks: set[asyncio.Task[Any]] = set()
 
 
+def _compute_incremental_fill_price(
+    new_avg: Decimal,
+    new_total: Decimal,
+    old_avg: Decimal | None,
+    old_filled: Decimal,
+    fill_delta: Decimal,
+) -> Decimal:
+    """Compute the price of an incremental fill from blended averages.
+
+    CCXT and exchange APIs report blended avg_price across all fills.
+    For partial fills, reverse-calculate the actual incremental price:
+        inc_price = (new_avg * new_total - old_avg * old_total) / fill_delta
+
+    Falls back to new_avg when old_avg is unavailable (first fill) or
+    when the calculation produces a non-positive result (data anomaly).
+    """
+    if old_avg is None or old_filled <= 0:
+        return new_avg
+    numerator = new_avg * new_total - old_avg * old_filled
+    if numerator <= 0 or fill_delta <= 0:
+        return new_avg
+    return numerator / fill_delta
+
+
 class LiveOrder:
     """Represents a live order with exchange tracking.
 
@@ -1250,6 +1274,7 @@ class LiveTradingEngine:
         # Update order state
         old_status = live_order.status
         old_filled = live_order.filled_amount  # Save before updating
+        old_avg = live_order.avg_fill_price  # Save old avg for incremental price calc
         old_fee = live_order.fee  # Save old fee for incremental calculation
         live_order.status = new_status
         # Guard against filled_amount regression from out-of-order WS messages (fix #4)
@@ -1286,9 +1311,16 @@ class LiveTradingEngine:
                     )
                     fee_delta = Decimal("0")
 
+            # Compute incremental fill price from blended averages (fix: partial fill accuracy).
+            # CCXT avg_price is the weighted average of ALL fills, not the latest fill's price.
+            # Reverse-calculate: inc_price = (new_avg * new_total - old_avg * old_total) / delta
+            fill_price = _compute_incremental_fill_price(
+                update.avg_price, update.filled_size, old_avg, old_filled, fill_delta
+            )
+
             self._record_fill(
                 live_order,
-                update.avg_price,
+                fill_price,
                 fill_delta,
                 fee_delta,
                 update.fee or Decimal("0"),
@@ -1793,6 +1825,7 @@ class LiveTradingEngine:
     def _update_order_from_response(self, live_order: LiveOrder, response: OrderResponse) -> None:
         """Update live order from exchange response."""
         old_filled = live_order.filled_amount
+        old_avg = live_order.avg_fill_price  # Save old avg for incremental price calc
         old_fee = live_order.fee  # Save old fee for incremental calculation
         live_order.status = response.status
         live_order.filled_amount = response.filled
@@ -1822,9 +1855,14 @@ class LiveTradingEngine:
             had_open_trade = self._context._open_trade is not None
             circuit_breaker_before = self._risk_manager.state.circuit_breaker_triggered
 
+            # Compute incremental fill price (fix: partial fill accuracy)
+            fill_price = _compute_incremental_fill_price(
+                response.avg_price, response.filled, old_avg, old_filled, fill_amount
+            )
+
             self._record_fill(
                 live_order,
-                response.avg_price,
+                fill_price,
                 fill_amount,
                 fee_delta,
                 response.fee or Decimal("0"),
@@ -2367,9 +2405,7 @@ class LiveTradingEngine:
             "cash": str(ctx._cash),
             "equity": str(ctx.equity),
             "unrealized_pnl": str(ctx._get_unrealized_pnl()),
-            "realized_pnl": str(
-                sum((t.pnl for t in ctx._trades if t.pnl is not None), Decimal("0"))
-            ),
+            "realized_pnl": str(ctx._cumulative_realized_pnl),
             "total_fees": str(ctx._total_fees),
             "completed_orders_count": len(ctx._completed_orders),
             "trades_count": len(ctx._trades),

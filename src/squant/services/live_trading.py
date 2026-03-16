@@ -9,6 +9,7 @@ Provides high-level operations for:
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -143,6 +144,22 @@ class LiveStrategyRunRepository(BaseRepository[StrategyRun]):
 
         stmt = stmt.order_by(StrategyRun.created_at.desc()).offset(offset).limit(limit)
 
+        result = await self.session.execute(stmt)
+        return list(result.scalars().all())
+
+    async def get_by_ids(self, ids: list[str | UUID]) -> list[StrategyRun]:
+        """Batch-fetch runs by a list of IDs.
+
+        Args:
+            ids: List of run IDs.
+
+        Returns:
+            List of StrategyRun records found.
+        """
+        if not ids:
+            return []
+        str_ids = [str(i) for i in ids]
+        stmt = select(StrategyRun).where(StrategyRun.id.in_(str_ids))
         result = await self.session.execute(stmt)
         return list(result.scalars().all())
 
@@ -373,7 +390,7 @@ class LiveTradingService:
 
         # Connect to exchange and get initial equity if not provided
         try:
-            await adapter.connect()
+            await asyncio.wait_for(adapter.connect(), timeout=30.0)
             if initial_equity is None:
                 balance = await adapter.get_balance()
                 quote_balance = balance.get_balance(quote_currency)
@@ -509,10 +526,11 @@ class LiveTradingService:
         from datetime import UTC, datetime
 
         from squant.infra.redis import get_redis_client
+        from squant.services.circuit_breaker import CIRCUIT_BREAKER_STATE_KEY
 
         try:
             redis = get_redis_client()
-            state_data = await redis.get("squant:circuit_breaker:state")
+            state_data = await redis.get(CIRCUIT_BREAKER_STATE_KEY)
             if state_data:
                 state = json.loads(state_data)
                 if state.get("is_active", False):
@@ -523,7 +541,7 @@ class LiveTradingService:
                         if expiry.tzinfo is None:
                             expiry = expiry.replace(tzinfo=UTC)
                         if datetime.now(UTC) >= expiry:
-                            await redis.delete("squant:circuit_breaker:state")
+                            await redis.delete(CIRCUIT_BREAKER_STATE_KEY)
                             logger.info("Circuit breaker cooldown expired, auto-cleared")
                             return
                     raise CircuitBreakerActiveError(state.get("trigger_reason"))
@@ -1125,6 +1143,18 @@ class LiveTradingService:
         session_manager = get_live_session_manager()
         return session_manager.list_sessions()
 
+    async def get_runs_by_ids(self, ids: list[UUID]) -> dict[str, StrategyRun]:
+        """Batch-fetch runs by IDs and return a lookup dict.
+
+        Args:
+            ids: List of run UUIDs.
+
+        Returns:
+            Dict mapping run_id (str) -> StrategyRun.
+        """
+        runs = await self.run_repo.get_by_ids(ids)
+        return {str(r.id): r for r in runs if r.mode == RunMode.LIVE}
+
     async def stop_all(self, *, for_shutdown: bool = False) -> int:
         """Stop all active live trading sessions.
 
@@ -1565,7 +1595,7 @@ class LiveTradingService:
         adapter = self._create_adapter(exchange_account)
         ws_credentials = self._build_ws_credentials(exchange_account)
         try:
-            await adapter.connect()
+            await asyncio.wait_for(adapter.connect(), timeout=30.0)
         except Exception as e:
             raise LiveExchangeConnectionError(f"Failed to reconnect to exchange: {e}") from e
 
@@ -1692,6 +1722,13 @@ class LiveTradingService:
             if engine.is_running:
                 try:
                     await engine.stop(error=f"Resume failed: {e}")
+                except Exception:
+                    pass
+            else:
+                # engine.stop() was not called (engine never started or start failed),
+                # so the adapter connection must be closed explicitly (fix: adapter leak)
+                try:
+                    await adapter.close()
                 except Exception:
                     pass
 

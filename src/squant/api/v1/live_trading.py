@@ -224,8 +224,7 @@ async def emergency_close(
                 orders_cancelled=result.get("orders_cancelled"),
                 positions_closed=result.get("positions_closed"),
                 remaining_positions=[
-                    RemainingPosition(**rp)
-                    for rp in (result.get("remaining_positions") or [])
+                    RemainingPosition(**rp) for rp in (result.get("remaining_positions") or [])
                 ]
                 or None,
                 errors=result.get("errors") or None,
@@ -364,19 +363,21 @@ async def list_active_sessions(
 
     sessions = service.list_active()
 
+    # Batch-fetch all run records in one query (fix: N+1 query)
+    run_ids = [UUID(sess["run_id"]) for sess in sessions]
+    runs_by_id = await service.get_runs_by_ids(run_ids) if run_ids else {}
+
     items = []
     for sess in sessions:
-        # Get strategy_id from database
-        try:
-            run = await service.get_run(UUID(sess["run_id"]))
-            strategy_id = UUID(run.strategy_id)
-        except SessionNotFoundError:
+        run_id_str = sess["run_id"]
+        run = runs_by_id.get(run_id_str)
+        if not run:
             continue
 
         items.append(
             LiveTradingListItem(
-                id=UUID(sess["run_id"]),
-                strategy_id=strategy_id,
+                id=UUID(run_id_str),
+                strategy_id=UUID(run.strategy_id),
                 strategy_name=run.strategy_name,
                 account_id=run.account_id,
                 symbol=sess["symbol"],
