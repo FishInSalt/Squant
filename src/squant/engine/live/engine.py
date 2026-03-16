@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from collections import deque
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -325,7 +326,10 @@ class LiveTradingEngine:
         # Buffered WebSocket order updates (ISSUE-203 fix)
         # Updates are queued here and drained synchronously within process_candle
         # to prevent concurrent state mutation between WS callbacks and polling.
-        self._pending_ws_updates: list[WSOrderUpdate] = []
+        # Uses deque(maxlen=) for O(1) append/eviction (DESIGN-1).
+        self._pending_ws_updates: deque[WSOrderUpdate] = deque(
+            maxlen=self._MAX_PENDING_WS_UPDATES
+        )
 
         # WebSocket event emission callback
         self._on_event = on_event
@@ -498,6 +502,9 @@ class LiveTradingEngine:
 
     # Maximum pending order events to prevent unbounded growth on persist failure (M-8)
     _MAX_PENDING_ORDER_EVENTS: int = 1000
+
+    # Maximum buffered WS order updates to prevent unbounded memory growth (M-1/DESIGN-1)
+    _MAX_PENDING_WS_UPDATES: int = 1000
 
     # Timeframe to seconds mapping for adaptive health check timeout
     _TIMEFRAME_SECONDS: dict[str, int] = {
@@ -753,7 +760,7 @@ class LiveTradingEngine:
                 f"Failed to refresh Dead Man's Switch: {e} "
                 f"(consecutive failures: {self._dms_consecutive_failures})"
             )
-            if self._dms_consecutive_failures >= self._dms_failure_threshold:
+            if self._dms_consecutive_failures == self._dms_failure_threshold:
                 logger.error(
                     f"DMS heartbeat lost for {self._run_id}: "
                     f"{self._dms_consecutive_failures} consecutive failures. "
@@ -1249,14 +1256,7 @@ class LiveTradingEngine:
             logger.debug(f"Ignoring order update during emergency close: {update.order_id}")
             return
 
-        # Cap buffer to prevent unbounded growth when engine is stalled (M-1)
-        _MAX_PENDING_WS_UPDATES = 1000
-        if len(self._pending_ws_updates) >= _MAX_PENDING_WS_UPDATES:
-            logger.warning(
-                f"WS update buffer full ({_MAX_PENDING_WS_UPDATES}), "
-                f"dropping oldest update for {self._run_id}"
-            )
-            self._pending_ws_updates.pop(0)
+        # deque(maxlen=) auto-evicts oldest on overflow (DESIGN-1)
         self._pending_ws_updates.append(update)
 
     def _drain_ws_updates(self) -> None:
@@ -1858,11 +1858,21 @@ class LiveTradingEngine:
     def _update_order_from_response(self, live_order: LiveOrder, response: OrderResponse) -> None:
         """Update live order from exchange response."""
         old_filled = live_order.filled_amount
+
+        # Skip stale poll responses entirely (BUG-1/BUG-2): if the response
+        # reports less filled than we already know, it's outdated — don't let
+        # it regress avg_price, fee, or status.
+        if response.filled < old_filled:
+            logger.debug(
+                f"Stale poll response for {live_order.internal_id}: "
+                f"response filled={response.filled} < current={old_filled}, skipping"
+            )
+            return
+
         old_avg = live_order.avg_fill_price  # Save old avg for incremental price calc
         old_fee = live_order.fee  # Save old fee for incremental calculation
         live_order.status = response.status
-        # Guard against filled_amount regression from stale poll responses (C-2)
-        live_order.filled_amount = max(live_order.filled_amount, response.filled)
+        live_order.filled_amount = response.filled
         live_order.avg_fill_price = response.avg_price
         live_order.fee = response.fee or Decimal("0")
         live_order.fee_currency = response.fee_currency

@@ -595,3 +595,303 @@ class TestM5ListByModeStatusFilter:
         assert "\n        if status:\n" not in source, (
             "list_by_mode should not use truthy check 'if status:'"
         )
+
+
+# ===========================================================================
+# BUG-1: Stale poll response overwrites avg_price/fee/status even when
+#         filled_amount is protected by max()
+# ===========================================================================
+
+
+class TestBug1StaleResponseSkipsEntireUpdate:
+    """BUG-1: When a poll response has filled < current filled_amount (stale),
+    the entire update should be skipped. The previous C-2 fix only protected
+    filled_amount with max(), but avg_fill_price, fee, and status were still
+    overwritten by the stale response.
+    """
+
+    def test_stale_poll_does_not_overwrite_avg_price(self):
+        """avg_fill_price should not regress from a stale poll response."""
+        engine = _make_engine(DoNothingStrategy())
+        engine._is_running = True
+        engine._current_price = Decimal("50000")
+
+        live_order = LiveOrder(
+            internal_id="order-1",
+            exchange_order_id="ex-1",
+            symbol="BTC/USDT",
+            side=OrderSide.BUY,
+            order_type="limit",
+            amount=Decimal("1.0"),
+            price=Decimal("50000"),
+            status=OrderStatus.PARTIAL,
+        )
+        live_order.filled_amount = Decimal("0.7")
+        live_order.avg_fill_price = Decimal("50100")
+        live_order.fee = Decimal("0.35")
+
+        engine._live_orders["order-1"] = live_order
+
+        stale_response = OrderResponse(
+            order_id="ex-1",
+            symbol="BTC/USDT",
+            side=OrderSide.BUY,
+            type=OrderType.LIMIT,
+            status=OrderStatus.PARTIAL,
+            price=Decimal("50000"),
+            amount=Decimal("1.0"),
+            filled=Decimal("0.5"),  # stale: less than current 0.7
+            avg_price=Decimal("49900"),  # stale avg
+            fee=Decimal("0.25"),  # stale fee
+        )
+
+        engine._update_order_from_response(live_order, stale_response)
+
+        assert live_order.avg_fill_price == Decimal("50100"), (
+            f"avg_fill_price regressed from 50100 to {live_order.avg_fill_price}"
+        )
+
+    def test_stale_poll_does_not_overwrite_fee(self):
+        """fee should not regress from a stale poll response."""
+        engine = _make_engine(DoNothingStrategy())
+        engine._is_running = True
+        engine._current_price = Decimal("50000")
+
+        live_order = LiveOrder(
+            internal_id="order-1",
+            exchange_order_id="ex-1",
+            symbol="BTC/USDT",
+            side=OrderSide.BUY,
+            order_type="limit",
+            amount=Decimal("1.0"),
+            price=Decimal("50000"),
+            status=OrderStatus.PARTIAL,
+        )
+        live_order.filled_amount = Decimal("0.7")
+        live_order.avg_fill_price = Decimal("50000")
+        live_order.fee = Decimal("0.35")
+
+        engine._live_orders["order-1"] = live_order
+
+        stale_response = OrderResponse(
+            order_id="ex-1",
+            symbol="BTC/USDT",
+            side=OrderSide.BUY,
+            type=OrderType.LIMIT,
+            status=OrderStatus.PARTIAL,
+            price=Decimal("50000"),
+            amount=Decimal("1.0"),
+            filled=Decimal("0.5"),
+            avg_price=Decimal("50000"),
+            fee=Decimal("0.25"),  # stale: less than current 0.35
+        )
+
+        engine._update_order_from_response(live_order, stale_response)
+
+        assert live_order.fee == Decimal("0.35"), (
+            f"fee regressed from 0.35 to {live_order.fee}"
+        )
+
+    def test_stale_poll_does_not_regress_status(self):
+        """status should not regress from FILLED to PARTIAL via stale poll."""
+        engine = _make_engine(DoNothingStrategy())
+        engine._is_running = True
+        engine._current_price = Decimal("50000")
+
+        live_order = LiveOrder(
+            internal_id="order-1",
+            exchange_order_id="ex-1",
+            symbol="BTC/USDT",
+            side=OrderSide.BUY,
+            order_type="limit",
+            amount=Decimal("1.0"),
+            price=Decimal("50000"),
+            status=OrderStatus.FILLED,
+        )
+        live_order.filled_amount = Decimal("1.0")
+        live_order.avg_fill_price = Decimal("50000")
+        live_order.fee = Decimal("0.50")
+
+        engine._live_orders["order-1"] = live_order
+
+        stale_response = OrderResponse(
+            order_id="ex-1",
+            symbol="BTC/USDT",
+            side=OrderSide.BUY,
+            type=OrderType.LIMIT,
+            status=OrderStatus.PARTIAL,  # stale: was already FILLED
+            price=Decimal("50000"),
+            amount=Decimal("1.0"),
+            filled=Decimal("0.5"),  # stale
+            avg_price=Decimal("50000"),
+            fee=Decimal("0.25"),
+        )
+
+        engine._update_order_from_response(live_order, stale_response)
+
+        assert live_order.status == OrderStatus.FILLED, (
+            f"status regressed from FILLED to {live_order.status.value}"
+        )
+
+    def test_fresh_poll_still_updates_normally(self):
+        """A poll response with higher filled should still update all fields."""
+        engine = _make_engine(DoNothingStrategy())
+        engine._is_running = True
+        engine._current_price = Decimal("50000")
+
+        live_order = LiveOrder(
+            internal_id="order-1",
+            exchange_order_id="ex-1",
+            symbol="BTC/USDT",
+            side=OrderSide.BUY,
+            order_type="limit",
+            amount=Decimal("1.0"),
+            price=Decimal("50000"),
+            status=OrderStatus.PARTIAL,
+        )
+        live_order.filled_amount = Decimal("0.3")
+        live_order.avg_fill_price = Decimal("50000")
+        live_order.fee = Decimal("0.15")
+
+        engine._live_orders["order-1"] = live_order
+
+        fresh_response = OrderResponse(
+            order_id="ex-1",
+            symbol="BTC/USDT",
+            side=OrderSide.BUY,
+            type=OrderType.LIMIT,
+            status=OrderStatus.PARTIAL,
+            price=Decimal("50000"),
+            amount=Decimal("1.0"),
+            filled=Decimal("0.7"),  # fresh: more than current 0.3
+            avg_price=Decimal("50050"),
+            fee=Decimal("0.35"),
+        )
+
+        engine._update_order_from_response(live_order, fresh_response)
+
+        assert live_order.filled_amount == Decimal("0.7")
+        assert live_order.avg_fill_price == Decimal("50050")
+        assert live_order.fee == Decimal("0.35")
+        assert live_order.status == OrderStatus.PARTIAL
+
+
+# ===========================================================================
+# BUG-3: DMS notification fires on every failure after threshold, not just once
+# ===========================================================================
+
+
+class TestBug3DmsNotificationOnlyOnce:
+    """BUG-3: _fire_notification should only be called once when DMS failures
+    first reach the threshold, not on every subsequent failure."""
+
+    async def test_dms_notification_fires_once_at_threshold(self):
+        """Notification should fire exactly once when threshold is first reached."""
+        adapter = _make_adapter()
+        adapter.supports_dead_man_switch = True
+        adapter.setup_dead_man_switch = AsyncMock(side_effect=Exception("network error"))
+
+        engine = _make_engine(DoNothingStrategy(), adapter=adapter)
+        engine._dms_enabled = True
+        engine._is_running = True
+
+        with patch("squant.engine.live.engine._fire_notification") as mock_notify:
+            # Fail 10 times (threshold is 3)
+            for _ in range(10):
+                await engine._refresh_dead_man_switch()
+
+            # Should fire exactly once at failure #3, not on #4..#10
+            dms_calls = [
+                c for c in mock_notify.call_args_list
+                if any(
+                    a == "dms_heartbeat_lost"
+                    for a in c.args + tuple(c.kwargs.values())
+                )
+            ]
+            assert len(dms_calls) == 1, (
+                f"DMS notification should fire once, but fired {len(dms_calls)} times"
+            )
+
+
+# ===========================================================================
+# DESIGN-1: _pending_ws_updates should use deque(maxlen=) not list.pop(0)
+# ===========================================================================
+
+
+class TestDesign1WsBufferDeque:
+    """DESIGN-1: _pending_ws_updates should be a deque with maxlen for O(1)
+    append/eviction, instead of list with O(n) pop(0)."""
+
+    def test_pending_ws_updates_is_deque(self):
+        """_pending_ws_updates should be a collections.deque."""
+        from collections import deque
+
+        engine = _make_engine(DoNothingStrategy())
+
+        assert isinstance(engine._pending_ws_updates, deque), (
+            f"_pending_ws_updates should be deque, got {type(engine._pending_ws_updates).__name__}"
+        )
+
+    def test_deque_has_maxlen(self):
+        """deque should have a maxlen set to prevent unbounded growth."""
+        engine = _make_engine(DoNothingStrategy())
+
+        assert engine._pending_ws_updates.maxlen is not None, (
+            "_pending_ws_updates deque should have maxlen set"
+        )
+        assert engine._pending_ws_updates.maxlen <= 1000
+
+
+# ===========================================================================
+# DESIGN-2: _MAX_PENDING_WS_UPDATES should be class-level constant
+# ===========================================================================
+
+
+class TestDesign2ConstantLocation:
+    """DESIGN-2: The WS update buffer cap should be a class-level constant,
+    not a local variable recreated on every call."""
+
+    def test_max_pending_ws_updates_is_class_attribute(self):
+        """_MAX_PENDING_WS_UPDATES should be accessible as a class attribute."""
+        assert hasattr(LiveTradingEngine, "_MAX_PENDING_WS_UPDATES"), (
+            "_MAX_PENDING_WS_UPDATES should be a class-level constant"
+        )
+
+
+# ===========================================================================
+# STYLE-1: exception chaining in _transform_order
+# ===========================================================================
+
+
+class TestStyle1ExceptionChaining:
+    """STYLE-1: ExchangeAPIError raised from ValueError should use `from e`
+    to preserve the exception chain."""
+
+    def test_unknown_side_preserves_exception_chain(self):
+        """ExchangeAPIError for unknown side should chain the original ValueError."""
+        from squant.infra.exchange.ccxt.rest_adapter import CCXTRestAdapter
+        from squant.infra.exchange.exceptions import ExchangeAPIError
+
+        adapter = CCXTRestAdapter.__new__(CCXTRestAdapter)
+        ccxt_order = {
+            "id": "123",
+            "clientOrderId": None,
+            "symbol": "BTC/USDT",
+            "side": "unknown_side",
+            "type": "limit",
+            "status": "open",
+            "price": 50000.0,
+            "amount": 0.1,
+            "filled": 0.0,
+            "average": None,
+            "fee": None,
+            "datetime": "2024-01-01T00:00:00.000Z",
+            "timestamp": 1704067200000,
+        }
+
+        with pytest.raises(ExchangeAPIError) as exc_info:
+            adapter._transform_order(ccxt_order)
+
+        assert exc_info.value.__cause__ is not None, (
+            "ExchangeAPIError should chain the original ValueError via 'from e'"
+        )
