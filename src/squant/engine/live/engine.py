@@ -289,7 +289,9 @@ class LiveTradingEngine:
         self._last_bar_time: datetime | None = None  # Dedup: last processed candle time (fix #5)
         self._last_active_at: datetime | None = None
         self._circuit_breaker_triggered = False  # Set when risk manager triggers circuit breaker
-        self._circuit_breaker_losses: int = 0  # Snapshot of consecutive_losses at trigger time
+        self._circuit_breaker_losses: int | None = (
+            None  # Snapshot of consecutive_losses at trigger time
+        )
         self._warming_up = False  # True during strategy warmup on resume (IMP-009)
 
         # Live order tracking
@@ -327,9 +329,7 @@ class LiveTradingEngine:
         # Updates are queued here and drained synchronously within process_candle
         # to prevent concurrent state mutation between WS callbacks and polling.
         # Uses deque(maxlen=) for O(1) append/eviction (DESIGN-1).
-        self._pending_ws_updates: deque[WSOrderUpdate] = deque(
-            maxlen=self._MAX_PENDING_WS_UPDATES
-        )
+        self._pending_ws_updates: deque[WSOrderUpdate] = deque(maxlen=self._MAX_PENDING_WS_UPDATES)
 
         # WebSocket event emission callback
         self._on_event = on_event
@@ -453,10 +453,14 @@ class LiveTradingEngine:
         from squant.engine.live.manager import get_live_session_manager
         from squant.engine.paper.manager import get_session_manager
 
-        reason = (
-            f"Auto-triggered by session {self._run_id}: "
-            f"{self._circuit_breaker_losses} consecutive losses"
+        # Use cached snapshot; fall back to config threshold if snapshot was never set
+        # (can happen if engine restarts mid-cycle and _check_trade_completion never ran)
+        losses = (
+            self._circuit_breaker_losses
+            if self._circuit_breaker_losses is not None
+            else self._risk_manager.config.circuit_breaker_loss_count
         )
+        reason = f"Auto-triggered by session {self._run_id}: {losses} consecutive losses"
 
         logger.critical(
             f"GLOBAL CIRCUIT BREAKER TRIGGERED: {reason} | Stopping all trading sessions for safety"
@@ -481,6 +485,7 @@ class LiveTradingEngine:
                 trigger_type="auto",
                 trigger_reason=reason,
                 cooldown_until=cooldown_until,
+                trigger_session_id=str(self._run_id),
             )
             await redis.set(CIRCUIT_BREAKER_STATE_KEY, json.dumps(state.to_dict()))
         except Exception:

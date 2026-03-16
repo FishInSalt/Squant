@@ -4282,6 +4282,46 @@ class TestTriggerGlobalCircuitBreaker:
         # Paper manager should still be called
         mock_paper_manager.stop_all.assert_called_once()
 
+    @pytest.mark.asyncio
+    async def test_global_cb_fallback_when_losses_not_captured(self, engine_with_cb):
+        """Test reason uses config threshold when _circuit_breaker_losses is None.
+
+        When the engine restarts mid-cycle (e.g. hot reload), _circuit_breaker_losses
+        may never have been set by _check_trade_completion. The reason message should
+        fall back to the config's circuit_breaker_loss_count instead of showing 0.
+        """
+        engine = engine_with_cb
+        # Simulate: _circuit_breaker_losses was never set (default None)
+        assert engine._circuit_breaker_losses is None
+
+        mock_redis = AsyncMock()
+        mock_redis.set = AsyncMock()
+
+        mock_live_manager = MagicMock()
+        mock_live_manager.stop_all = AsyncMock()
+        mock_paper_manager = MagicMock()
+        mock_paper_manager.stop_all = AsyncMock()
+
+        with (
+            patch("squant.infra.redis.get_redis_client", return_value=mock_redis),
+            patch(
+                "squant.engine.live.manager.get_live_session_manager",
+                return_value=mock_live_manager,
+            ),
+            patch(
+                "squant.engine.paper.manager.get_session_manager",
+                return_value=mock_paper_manager,
+            ),
+        ):
+            await engine._trigger_global_circuit_breaker()
+
+        import json
+
+        state_data = json.loads(mock_redis.set.call_args[0][1])
+        # Should use config threshold (5) instead of 0
+        assert "5 consecutive losses" in state_data["trigger_reason"]
+        assert "0 consecutive losses" not in state_data["trigger_reason"]
+
 
 class TestTotalLossLimitAutoStop:
     """Tests for process_candle total loss limit auto-stop (IMP-005)."""

@@ -1,15 +1,18 @@
-"""Unit tests for squant.main — exception handlers and app configuration.
+"""Unit tests for squant.main — exception handlers, app configuration, and startup cleanup.
 
 Tests cover:
 - Exchange exception handlers (connection, auth, rate limit, API errors)
 - Global HTTPException handler with uniform response shape
 - create_app() configuration (docs URLs, CORS, router prefix)
 - _configure_logging() is called during app creation
+- _cleanup_stale_circuit_breaker() startup cleanup
 """
 
 from __future__ import annotations
 
-from unittest.mock import patch
+import json
+from datetime import UTC, datetime, timedelta
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 import pytest_asyncio
@@ -47,19 +50,13 @@ def test_app():
         raise ExchangeAuthenticationError(message="Invalid API key", exchange="binance")
 
     async def raise_rate_limit_error():
-        raise ExchangeRateLimitError(
-            message="Too many requests", exchange="okx", retry_after=30.0
-        )
+        raise ExchangeRateLimitError(message="Too many requests", exchange="okx", retry_after=30.0)
 
     async def raise_rate_limit_error_no_retry():
-        raise ExchangeRateLimitError(
-            message="Rate limited", exchange="bybit", retry_after=None
-        )
+        raise ExchangeRateLimitError(message="Rate limited", exchange="bybit", retry_after=None)
 
     async def raise_api_error():
-        raise ExchangeAPIError(
-            message="Order rejected", exchange="okx", code="51000"
-        )
+        raise ExchangeAPIError(message="Order rejected", exchange="okx", code="51000")
 
     # -- Test routes that raise HTTPException variants --
 
@@ -110,9 +107,7 @@ def test_app():
 @pytest_asyncio.fixture
 async def client(test_app):
     """Async HTTP client bound to the test app."""
-    async with AsyncClient(
-        transport=ASGITransport(app=test_app), base_url="http://test"
-    ) as ac:
+    async with AsyncClient(transport=ASGITransport(app=test_app), base_url="http://test") as ac:
         yield ac
 
 
@@ -333,6 +328,170 @@ class TestConfigureLogging:
         with patch("squant.main._configure_logging") as mock_logging:
             create_app()
             mock_logging.assert_called_once()
+
+
+# ===========================================================================
+# Startup Cleanup Tests
+# ===========================================================================
+
+
+class TestCleanupStaleCircuitBreaker:
+    """Tests for _cleanup_stale_circuit_breaker() startup cleanup."""
+
+    def _make_state(self, **overrides):
+        """Build a circuit breaker state JSON string."""
+        state = {
+            "is_active": True,
+            "triggered_at": datetime.now(UTC).isoformat(),
+            "trigger_type": "auto",
+            "trigger_reason": "Auto-triggered by session 00000000-0000-0000-0000-000000000001: 3 consecutive losses",
+            "cooldown_until": (datetime.now(UTC) + timedelta(minutes=30)).isoformat(),
+            "trigger_session_id": "00000000-0000-0000-0000-000000000001",
+        }
+        state.update(overrides)
+        return json.dumps(state)
+
+    @pytest.mark.asyncio
+    async def test_no_state_in_redis_is_noop(self):
+        """No-op when Redis has no circuit breaker key."""
+        from squant.main import _cleanup_stale_circuit_breaker
+
+        mock_redis = AsyncMock()
+        mock_redis.get = AsyncMock(return_value=None)
+
+        with patch("squant.infra.redis.get_redis_client", return_value=mock_redis):
+            await _cleanup_stale_circuit_breaker()
+
+        mock_redis.delete.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_inactive_state_is_noop(self):
+        """No-op when state exists but is_active is False."""
+        from squant.main import _cleanup_stale_circuit_breaker
+
+        state_json = self._make_state(is_active=False)
+
+        mock_redis = AsyncMock()
+        mock_redis.get = AsyncMock(return_value=state_json)
+        mock_redis.delete = AsyncMock()
+
+        with patch("squant.infra.redis.get_redis_client", return_value=mock_redis):
+            await _cleanup_stale_circuit_breaker()
+
+        mock_redis.delete.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_clears_expired_cooldown(self):
+        """Clears state when cooldown has already expired."""
+        from squant.main import _cleanup_stale_circuit_breaker
+
+        expired_time = (datetime.now(UTC) - timedelta(minutes=5)).isoformat()
+        state_json = self._make_state(cooldown_until=expired_time)
+
+        mock_redis = AsyncMock()
+        mock_redis.get = AsyncMock(return_value=state_json)
+        mock_redis.delete = AsyncMock()
+
+        with patch("squant.infra.redis.get_redis_client", return_value=mock_redis):
+            await _cleanup_stale_circuit_breaker()
+
+        mock_redis.delete.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_clears_orphaned_auto_trigger_session(self):
+        """Clears auto-triggered state when trigger session is not in DB."""
+        from squant.main import _cleanup_stale_circuit_breaker
+
+        state_json = self._make_state()  # cooldown NOT expired, session doesn't exist
+
+        mock_redis = AsyncMock()
+        mock_redis.get = AsyncMock(return_value=state_json)
+        mock_redis.delete = AsyncMock()
+
+        # Mock DB query to return None (session not found)
+        mock_session = AsyncMock()
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = None
+        mock_session.execute = AsyncMock(return_value=mock_result)
+        mock_session.commit = AsyncMock()
+        mock_session.rollback = AsyncMock()
+
+        from contextlib import asynccontextmanager
+
+        @asynccontextmanager
+        async def mock_get_session_context():
+            yield mock_session
+
+        with (
+            patch("squant.infra.redis.get_redis_client", return_value=mock_redis),
+            patch("squant.infra.database.get_session_context", mock_get_session_context),
+        ):
+            await _cleanup_stale_circuit_breaker()
+
+        mock_redis.delete.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_keeps_valid_auto_trigger_state(self):
+        """Does NOT clear auto-triggered state when trigger session exists in DB."""
+        from squant.main import _cleanup_stale_circuit_breaker
+
+        state_json = self._make_state()
+
+        mock_redis = AsyncMock()
+        mock_redis.get = AsyncMock(return_value=state_json)
+        mock_redis.delete = AsyncMock()
+
+        # Mock DB query to return the session (exists)
+        mock_session = AsyncMock()
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = "00000000-0000-0000-0000-000000000001"
+        mock_session.execute = AsyncMock(return_value=mock_result)
+        mock_session.commit = AsyncMock()
+        mock_session.rollback = AsyncMock()
+
+        from contextlib import asynccontextmanager
+
+        @asynccontextmanager
+        async def mock_get_session_context():
+            yield mock_session
+
+        with (
+            patch("squant.infra.redis.get_redis_client", return_value=mock_redis),
+            patch("squant.infra.database.get_session_context", mock_get_session_context),
+        ):
+            await _cleanup_stale_circuit_breaker()
+
+        mock_redis.delete.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_keeps_manual_trigger_state(self):
+        """Does NOT clear manually triggered state (not auto)."""
+        from squant.main import _cleanup_stale_circuit_breaker
+
+        state_json = self._make_state(
+            trigger_type="manual", trigger_reason="Manual stop", trigger_session_id=None
+        )
+
+        mock_redis = AsyncMock()
+        mock_redis.get = AsyncMock(return_value=state_json)
+        mock_redis.delete = AsyncMock()
+
+        with patch("squant.infra.redis.get_redis_client", return_value=mock_redis):
+            await _cleanup_stale_circuit_breaker()
+
+        mock_redis.delete.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_error_is_swallowed(self):
+        """Errors during cleanup are logged but don't crash startup."""
+        from squant.main import _cleanup_stale_circuit_breaker
+
+        mock_redis = AsyncMock()
+        mock_redis.get = AsyncMock(side_effect=Exception("Redis down"))
+
+        with patch("squant.infra.redis.get_redis_client", return_value=mock_redis):
+            # Should not raise
+            await _cleanup_stale_circuit_breaker()
 
 
 # ===========================================================================
