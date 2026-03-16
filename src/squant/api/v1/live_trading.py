@@ -234,9 +234,12 @@ async def emergency_close(
         raise HTTPException(status_code=404, detail=str(e))
     except LiveTradingError as e:
         raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
+    except Exception:
         logger.exception(f"Emergency close failed for {run_id}")
-        raise HTTPException(status_code=500, detail=f"Emergency close failed: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail="Emergency close failed due to an internal error",
+        )
 
 
 @router.get("/{run_id}/status", response_model=ApiResponse[LiveTradingStatusResponse])

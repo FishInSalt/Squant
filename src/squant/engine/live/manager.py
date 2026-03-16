@@ -176,7 +176,7 @@ class LiveSessionManager:
             return_exceptions=False,
         )
 
-    def dispatch_order_update(self, update: WSOrderUpdate) -> None:
+    async def dispatch_order_update(self, update: WSOrderUpdate) -> None:
         """Dispatch an order update to relevant engines.
 
         Args:
@@ -184,8 +184,9 @@ class LiveSessionManager:
         """
         symbol = update.symbol
 
-        # Get subscribed run IDs (copy to avoid modification during iteration)
-        run_ids = self._order_subscriptions.get(symbol, set()).copy()
+        # Get subscribed run IDs (snapshot under lock for consistency with dispatch_candle)
+        async with self._lock:
+            run_ids = self._order_subscriptions.get(symbol, set()).copy()
 
         if not run_ids:
             return

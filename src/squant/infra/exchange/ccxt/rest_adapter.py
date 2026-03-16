@@ -687,15 +687,19 @@ class CCXTRestAdapter(ExchangeAdapter):
 
         try:
             side = OrderSide(order.get("side", "buy"))
-        except ValueError:
-            logger.warning(f"Unknown order side '{order.get('side')}', defaulting to BUY")
-            side = OrderSide.BUY
+        except ValueError as e:
+            raise ExchangeAPIError(
+                f"Unknown order side '{order.get('side')}' for order {order.get('id')} — "
+                f"cannot safely default in live trading"
+            ) from e
 
         try:
             order_type = OrderType(order.get("type", "market"))
-        except ValueError:
-            logger.warning(f"Unknown order type '{order.get('type')}', defaulting to MARKET")
-            order_type = OrderType.MARKET
+        except ValueError as e:
+            raise ExchangeAPIError(
+                f"Unknown order type '{order.get('type')}' for order {order.get('id')} — "
+                f"cannot safely default in live trading"
+            ) from e
 
         return OrderResponse(
             order_id=str(order.get("id", "")),

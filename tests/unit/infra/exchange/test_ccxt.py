@@ -1029,8 +1029,8 @@ class TestCCXTRestAdapterPartialStatus:
 class TestTransformOrderEnumValidation:
     """Tests for _transform_order enum validation with unexpected exchange values."""
 
-    def test_unknown_side_does_not_raise(self):
-        """_transform_order with an unrecognised side value should not raise ValueError."""
+    def test_unknown_side_raises_error(self):
+        """_transform_order with an unrecognised side value should raise ExchangeAPIError."""
         adapter = CCXTRestAdapter("okx")
         order_data = {
             "id": "abc",
@@ -1041,11 +1041,11 @@ class TestTransformOrderEnumValidation:
             "filled": 0.0,
             "status": "open",
         }
-        result = adapter._transform_order(order_data)
-        assert result.side == OrderSide.BUY  # safe default
+        with pytest.raises(ExchangeAPIError, match="Unknown order side"):
+            adapter._transform_order(order_data)
 
-    def test_unknown_type_does_not_raise(self):
-        """_transform_order with an unrecognised type value should not raise ValueError."""
+    def test_unknown_type_raises_error(self):
+        """_transform_order with an unrecognised type value should raise ExchangeAPIError."""
         adapter = CCXTRestAdapter("okx")
         order_data = {
             "id": "xyz",
@@ -1056,11 +1056,11 @@ class TestTransformOrderEnumValidation:
             "filled": 0.0,
             "status": "open",
         }
-        result = adapter._transform_order(order_data)
-        assert result.type == OrderType.MARKET  # safe default
+        with pytest.raises(ExchangeAPIError, match="Unknown order type"):
+            adapter._transform_order(order_data)
 
-    def test_unknown_side_and_type_both_default(self):
-        """_transform_order with both unknown side and type defaults both fields gracefully."""
+    def test_unknown_side_and_type_raises_on_side_first(self):
+        """_transform_order with both unknown side and type raises on side first."""
         adapter = CCXTRestAdapter("okx")
         order_data = {
             "id": "bad",
@@ -1071,9 +1071,8 @@ class TestTransformOrderEnumValidation:
             "filled": 0.0,
             "status": "open",
         }
-        result = adapter._transform_order(order_data)
-        assert result.side == OrderSide.BUY
-        assert result.type == OrderType.MARKET
+        with pytest.raises(ExchangeAPIError, match="Unknown order side"):
+            adapter._transform_order(order_data)
 
     def test_valid_side_and_type_still_work(self):
         """_transform_order with valid side/type values continues to work correctly."""

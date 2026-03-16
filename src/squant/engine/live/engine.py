@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from collections import deque
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -325,7 +326,10 @@ class LiveTradingEngine:
         # Buffered WebSocket order updates (ISSUE-203 fix)
         # Updates are queued here and drained synchronously within process_candle
         # to prevent concurrent state mutation between WS callbacks and polling.
-        self._pending_ws_updates: list[WSOrderUpdate] = []
+        # Uses deque(maxlen=) for O(1) append/eviction (DESIGN-1).
+        self._pending_ws_updates: deque[WSOrderUpdate] = deque(
+            maxlen=self._MAX_PENDING_WS_UPDATES
+        )
 
         # WebSocket event emission callback
         self._on_event = on_event
@@ -373,6 +377,8 @@ class LiveTradingEngine:
         self._dms_enabled: bool = False
         tf_seconds = self._TIMEFRAME_SECONDS.get(self._timeframe, 300)
         self._dms_timeout_ms: int = max(60_000, tf_seconds * 2 * 1000)
+        self._dms_consecutive_failures: int = 0
+        self._dms_failure_threshold: int = 3
 
     @property
     def run_id(self) -> UUID:
@@ -496,6 +502,9 @@ class LiveTradingEngine:
 
     # Maximum pending order events to prevent unbounded growth on persist failure (M-8)
     _MAX_PENDING_ORDER_EVENTS: int = 1000
+
+    # Maximum buffered WS order updates to prevent unbounded memory growth (M-1/DESIGN-1)
+    _MAX_PENDING_WS_UPDATES: int = 1000
 
     # Timeframe to seconds mapping for adaptive health check timeout
     _TIMEFRAME_SECONDS: dict[str, int] = {
@@ -744,8 +753,31 @@ class LiveTradingEngine:
 
         try:
             await self._adapter.setup_dead_man_switch(self._dms_timeout_ms)
+            self._dms_consecutive_failures = 0
         except Exception as e:
-            logger.warning(f"Failed to refresh Dead Man's Switch: {e}")
+            self._dms_consecutive_failures += 1
+            logger.warning(
+                f"Failed to refresh Dead Man's Switch: {e} "
+                f"(consecutive failures: {self._dms_consecutive_failures})"
+            )
+            if self._dms_consecutive_failures == self._dms_failure_threshold:
+                logger.error(
+                    f"DMS heartbeat lost for {self._run_id}: "
+                    f"{self._dms_consecutive_failures} consecutive failures. "
+                    f"Exchange may auto-cancel all orders."
+                )
+                _fire_notification(
+                    self._run_id,
+                    level="critical",
+                    event_type="dms_heartbeat_lost",
+                    title="DMS 心跳丢失",
+                    message=(
+                        f"实盘会话 {self._symbol} Dead Man's Switch 心跳连续"
+                        f"{self._dms_consecutive_failures}次失败，"
+                        f"交易所可能自动撤销所有订单"
+                    ),
+                    details={"symbol": self._symbol},
+                )
 
     async def _deactivate_dead_man_switch(self) -> None:
         """Deactivate Dead Man's Switch on graceful stop."""
@@ -1224,6 +1256,7 @@ class LiveTradingEngine:
             logger.debug(f"Ignoring order update during emergency close: {update.order_id}")
             return
 
+        # deque(maxlen=) auto-evicts oldest on overflow (DESIGN-1)
         self._pending_ws_updates.append(update)
 
     def _drain_ws_updates(self) -> None:
@@ -1825,6 +1858,17 @@ class LiveTradingEngine:
     def _update_order_from_response(self, live_order: LiveOrder, response: OrderResponse) -> None:
         """Update live order from exchange response."""
         old_filled = live_order.filled_amount
+
+        # Skip stale poll responses entirely (BUG-1/BUG-2): if the response
+        # reports less filled than we already know, it's outdated — don't let
+        # it regress avg_price, fee, or status.
+        if response.filled < old_filled:
+            logger.debug(
+                f"Stale poll response for {live_order.internal_id}: "
+                f"response filled={response.filled} < current={old_filled}, skipping"
+            )
+            return
+
         old_avg = live_order.avg_fill_price  # Save old avg for incremental price calc
         old_fee = live_order.fee  # Save old fee for incremental calculation
         live_order.status = response.status
@@ -1986,6 +2030,10 @@ class LiveTradingEngine:
         Gets orders from the context's pending orders and submits them
         to the exchange after risk validation.
         """
+        # Skip if engine was stopped while process_candle held the lock (R3-002/C-1)
+        if not self._is_running:
+            return
+
         # Skip all order processing if circuit breaker was triggered
         if self._circuit_breaker_triggered:
             logger.warning("Skipping order processing: circuit breaker triggered")
@@ -2168,7 +2216,7 @@ class LiveTradingEngine:
         """
         cancelled: list[str] = []
 
-        for internal_id, live_order in self._live_orders.items():
+        for internal_id, live_order in list(self._live_orders.items()):
             if not live_order.is_complete and live_order.exchange_order_id:
                 try:
                     response = await self._adapter.cancel_order(

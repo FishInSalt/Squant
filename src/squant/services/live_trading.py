@@ -139,7 +139,7 @@ class LiveStrategyRunRepository(BaseRepository[StrategyRun]):
         """List runs by mode."""
         stmt = select(StrategyRun).where(StrategyRun.mode == mode)
 
-        if status:
+        if status is not None:
             stmt = stmt.where(StrategyRun.status == status)
 
         stmt = stmt.order_by(StrategyRun.created_at.desc()).offset(offset).limit(limit)
@@ -199,7 +199,7 @@ class LiveStrategyRunRepository(BaseRepository[StrategyRun]):
     ) -> int:
         """Count runs by mode."""
         filters: dict[str, Any] = {"mode": mode}
-        if status:
+        if status is not None:
             filters["status"] = status
         return await self.count(**filters)
 

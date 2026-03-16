@@ -565,7 +565,12 @@ class RiskManager:
             RiskCheckResult for price deviation check.
         """
         if current_price <= 0:
-            return RiskCheckResult.ok()
+            return RiskCheckResult.reject(
+                rule_type=RiskRuleType.PRICE_DEVIATION_LIMIT,
+                reason="Cannot validate price deviation: current market price is zero or negative "
+                "(possible data feed failure)",
+                market_price=float(current_price),
+            )
 
         deviation = abs(order_price - current_price) / current_price
 
