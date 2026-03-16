@@ -249,28 +249,30 @@ class TestOrderUpdateDispatch:
             avg_price=Decimal("45000"),
         )
 
-    def test_dispatch_order_update(self, session_manager, mock_engine, order_update):
+    async def test_dispatch_order_update(self, session_manager, mock_engine, order_update):
         """Test dispatching order update to subscribed engine."""
         # Register synchronously (for this test)
         session_manager._sessions[mock_engine.run_id] = mock_engine
         session_manager._order_subscriptions["BTC/USDT"] = {mock_engine.run_id}
 
-        session_manager.dispatch_order_update(order_update)
+        await session_manager.dispatch_order_update(order_update)
 
         mock_engine.on_order_update.assert_called_once_with(order_update)
 
-    def test_dispatch_order_update_no_subscribers(self, session_manager, order_update):
+    async def test_dispatch_order_update_no_subscribers(self, session_manager, order_update):
         """Test dispatching order update with no subscribers."""
-        session_manager.dispatch_order_update(order_update)
+        await session_manager.dispatch_order_update(order_update)
         # Should not raise
 
-    def test_dispatch_order_update_wrong_symbol(self, session_manager, mock_engine, order_update):
+    async def test_dispatch_order_update_wrong_symbol(
+        self, session_manager, mock_engine, order_update
+    ):
         """Test dispatching order update for non-subscribed symbol."""
         session_manager._sessions[mock_engine.run_id] = mock_engine
         session_manager._order_subscriptions["BTC/USDT"] = {mock_engine.run_id}
 
         order_update.symbol = "ETH/USDT"
-        session_manager.dispatch_order_update(order_update)
+        await session_manager.dispatch_order_update(order_update)
 
         mock_engine.on_order_update.assert_not_called()
 

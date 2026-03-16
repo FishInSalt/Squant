@@ -1,4 +1,4 @@
-"""Unit tests for RiskState model — circuit breaker consecutive_losses bug."""
+"""Unit tests for RiskState model — circuit breaker consecutive_losses behavior."""
 
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
@@ -6,18 +6,16 @@ from decimal import Decimal
 from squant.engine.risk.models import RiskState
 
 
-class TestCircuitBreakerPreservesConsecutiveLosses:
-    """Test that circuit breaker cooldown expiry does NOT reset consecutive_losses.
+class TestCircuitBreakerResetsConsecutiveLosses:
+    """Test that circuit breaker cooldown expiry RESETS consecutive_losses to 0.
 
-    Bug M-2: check_circuit_breaker_expired() used to reset consecutive_losses to 0
-    when cooldown expired. This allows a systematically losing strategy to accumulate
-    N more losses before re-triggering, causing unnecessary additional losses.
-    The fix preserves consecutive_losses so a single subsequent loss immediately
-    re-triggers the circuit breaker.
+    When cooldown expires, the strategy should get a fresh start. Keeping
+    consecutive_losses at the threshold means a single subsequent loss would
+    immediately re-trigger the circuit breaker, making the cooldown ineffective.
     """
 
-    def test_consecutive_losses_preserved_after_circuit_breaker_expires(self):
-        """After circuit breaker cooldown expires, consecutive_losses must NOT be reset."""
+    def test_consecutive_losses_reset_after_circuit_breaker_expires(self):
+        """After circuit breaker cooldown expires, consecutive_losses should be 0."""
         state = RiskState()
 
         # Simulate 5 consecutive losses
@@ -37,12 +35,11 @@ class TestCircuitBreakerPreservesConsecutiveLosses:
         expired = state.check_circuit_breaker_expired()
         assert expired is True
 
-        # The bug: consecutive_losses was reset to 0 here.
-        # After fix, consecutive_losses must remain at 5.
-        assert state.consecutive_losses == 5
+        # After cooldown, consecutive_losses must be reset for a fresh start
+        assert state.consecutive_losses == 0
 
-    def test_circuit_breaker_state_cleared_but_losses_kept(self):
-        """Breaker flags are cleared on expiry but loss count remains."""
+    def test_circuit_breaker_state_fully_cleared_on_expiry(self):
+        """Breaker flags and loss count are all cleared on expiry."""
         state = RiskState()
 
         for _ in range(3):
@@ -58,11 +55,11 @@ class TestCircuitBreakerPreservesConsecutiveLosses:
         assert state.circuit_breaker_triggered is False
         assert state.circuit_breaker_until is None
 
-        # But consecutive losses must be preserved
-        assert state.consecutive_losses == 3
+        # Consecutive losses should also be reset
+        assert state.consecutive_losses == 0
 
-    def test_single_loss_after_cooldown_retriggers_if_at_threshold(self):
-        """If consecutive_losses == threshold after cooldown, one more loss re-triggers."""
+    def test_losses_after_cooldown_start_fresh(self):
+        """After cooldown expires, losses start counting from 0 again."""
         threshold = 3
         state = RiskState()
 
@@ -76,6 +73,6 @@ class TestCircuitBreakerPreservesConsecutiveLosses:
         state.circuit_breaker_until = datetime.now(UTC) - timedelta(minutes=5)
         state.check_circuit_breaker_expired()
 
-        # One more loss pushes above threshold
+        # After reset, one more loss should count as 1, not threshold+1
         state.record_trade(Decimal("-50"))
-        assert state.consecutive_losses == threshold + 1
+        assert state.consecutive_losses == 1

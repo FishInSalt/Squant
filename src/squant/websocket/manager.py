@@ -901,7 +901,7 @@ class StreamManager:
                 from squant.engine.live.manager import get_live_session_manager
 
                 live_manager = get_live_session_manager()
-                live_manager.dispatch_order_update(order)
+                await live_manager.dispatch_order_update(order)
 
             elif data_type == "account":
                 account: WSAccountUpdate = data
