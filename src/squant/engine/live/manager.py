@@ -126,7 +126,11 @@ class LiveSessionManager:
         return [engine.get_state_snapshot() for engine in self._sessions.values()]
 
     async def dispatch_candle(self, candle: WSCandle) -> None:
-        """Dispatch a candle to all subscribed engines.
+        """Dispatch a candle to all subscribed engines concurrently.
+
+        Uses asyncio.gather() so a slow engine (e.g., waiting on exchange API
+        for balance sync or order polling) does not block other engines
+        subscribed to the same symbol/timeframe.
 
         Args:
             candle: WebSocket candle data.
@@ -140,14 +144,37 @@ class LiveSessionManager:
         if not run_ids:
             return
 
-        # Dispatch to each engine
+        # Build list of (run_id, engine) pairs to dispatch to
+        targets: list[tuple[UUID, LiveTradingEngine]] = []
         for run_id in run_ids:
             engine = self._sessions.get(run_id)
             if engine and engine.is_running:
-                try:
-                    await engine.process_candle(candle)
-                except Exception as e:
-                    logger.exception(f"Error dispatching candle to live engine {run_id}: {e}")
+                targets.append((run_id, engine))
+
+        if not targets:
+            return
+
+        async def _dispatch_one(
+            run_id: UUID, engine: LiveTradingEngine
+        ) -> tuple[UUID, BaseException | None]:
+            """Process a candle for a single engine, returning any error.
+
+            Catches BaseException (not just Exception) so that
+            asyncio.CancelledError from one engine does not cascade-cancel
+            all sibling engines via asyncio.gather().
+            """
+            try:
+                await engine.process_candle(candle)
+                return run_id, None
+            except BaseException as e:
+                logger.exception(f"Error dispatching candle to live engine {run_id}: {e}")
+                return run_id, e
+
+        # Dispatch concurrently
+        await asyncio.gather(
+            *(_dispatch_one(rid, eng) for rid, eng in targets),
+            return_exceptions=False,
+        )
 
     def dispatch_order_update(self, update: WSOrderUpdate) -> None:
         """Dispatch an order update to relevant engines.

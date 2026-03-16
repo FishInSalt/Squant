@@ -118,6 +118,11 @@ class BacktestContext:
         # Total fees paid
         self._total_fees = Decimal("0")
 
+        # Cumulative realized PnL (survives deque eviction).
+        # _trades deque has a maxlen, so sum(t.pnl for t in _trades) becomes
+        # incorrect once old trades are evicted. This counter tracks the true total.
+        self._cumulative_realized_pnl = Decimal("0")
+
         # Price cache for multi-symbol equity calculation
         self._last_prices: dict[str, Decimal] = {}
 
@@ -213,8 +218,12 @@ class BacktestContext:
 
     @property
     def realized_pnl(self) -> Decimal:
-        """Get total realized PnL from closed trades."""
-        return sum((t.pnl for t in self._trades), Decimal("0"))
+        """Get total realized PnL from closed trades.
+
+        Uses cumulative counter that survives deque eviction, rather than
+        summing the bounded _trades deque which loses old entries.
+        """
+        return self._cumulative_realized_pnl
 
     @property
     def return_pct(self) -> Decimal:
@@ -277,9 +286,12 @@ class BacktestContext:
 
         # Minimum order value check — silently reject dust orders
         ref_price = (
-            Decimal(str(price)) if price is not None
-            else Decimal(str(stop_price)) if stop_price is not None
-            else self._current_bar.close if self._current_bar
+            Decimal(str(price))
+            if price is not None
+            else Decimal(str(stop_price))
+            if stop_price is not None
+            else self._current_bar.close
+            if self._current_bar
             else None
         )
         if ref_price is not None and amount * ref_price < self._min_order_value:
@@ -341,11 +353,7 @@ class BacktestContext:
                     pending_ref = self._current_bar.close * (1 + self._slippage)
                     if self._ref_ask is not None:
                         pending_ref = max(pending_ref, self._ref_ask)
-                    pending_buy_cost += (
-                        pending_ref
-                        * order.remaining
-                        * (1 + self._commission_rate)
-                    )
+                    pending_buy_cost += pending_ref * order.remaining * (1 + self._commission_rate)
 
         available_cash = self._cash - pending_buy_cost
         if estimated_cost > 0 and available_cash < estimated_cost:
@@ -413,9 +421,12 @@ class BacktestContext:
 
         # Minimum order value check — silently reject dust orders
         ref_price = (
-            Decimal(str(price)) if price is not None
-            else Decimal(str(stop_price)) if stop_price is not None
-            else self._current_bar.close if self._current_bar
+            Decimal(str(price))
+            if price is not None
+            else Decimal(str(stop_price))
+            if stop_price is not None
+            else self._current_bar.close
+            if self._current_bar
             else None
         )
         if ref_price is not None and amount * ref_price < self._min_order_value:
@@ -892,9 +903,7 @@ class BacktestContext:
                 self._open_trade.exit_time = fill.timestamp
                 # Weighted average exit price across all partial exits
                 if self._exit_fill_amount > 0:
-                    self._open_trade.exit_price = (
-                        self._exit_fill_notional / self._exit_fill_amount
-                    )
+                    self._open_trade.exit_price = self._exit_fill_notional / self._exit_fill_amount
                 else:
                     self._open_trade.exit_price = fill.price
 
@@ -917,6 +926,7 @@ class BacktestContext:
 
                 self._trades.append(self._open_trade)
                 self._total_trades_added += 1
+                self._cumulative_realized_pnl += pnl
                 self._open_trade = None
             else:
                 self.log(
@@ -1066,7 +1076,7 @@ class BacktestContext:
             if pos_data.get("unrealized_pnl") is not None:
                 unrealized_pnl_total += Decimal(pos_data["unrealized_pnl"])
 
-        realized_pnl = sum((t.pnl for t in self._trades), Decimal("0"))
+        realized_pnl = self._cumulative_realized_pnl
 
         open_trade = None
         if self._open_trade:
@@ -1134,6 +1144,10 @@ class BacktestContext:
         # Restore total fees
         if "total_fees" in state:
             self._total_fees = Decimal(str(state["total_fees"]))
+
+        # Restore cumulative realized PnL (survives deque eviction)
+        if "realized_pnl" in state:
+            self._cumulative_realized_pnl = Decimal(str(state["realized_pnl"]))
 
         # Restore positions
         if state.get("positions") is not None:

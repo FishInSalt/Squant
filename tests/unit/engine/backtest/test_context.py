@@ -1545,6 +1545,8 @@ class TestBuildResultSnapshot:
                 fees=Decimal("8"),
             )
         )
+        # Set cumulative counter (realized_pnl now uses cumulative tracking)
+        context._cumulative_realized_pnl = Decimal("100")
 
         result = context.build_result_snapshot()
 
@@ -1596,6 +1598,8 @@ class TestBuildResultSnapshot:
         )
         context.log("Test trade executed")
         context.log("Position opened")
+        # Set cumulative counter (realized_pnl now uses cumulative tracking)
+        context._cumulative_realized_pnl = Decimal("100")
 
         # Snapshot → restore into a fresh context
         snapshot = context.build_result_snapshot()

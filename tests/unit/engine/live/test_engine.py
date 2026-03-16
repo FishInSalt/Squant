@@ -3886,11 +3886,13 @@ class TestRealizedPnlNoneProtection:
         engine._context._trades.clear()
         engine._context._trades.append(trade_ok)
         engine._context._trades.append(trade_none)
+        # Set cumulative counter to match (realized_pnl now uses cumulative tracking)
+        engine._context._cumulative_realized_pnl = Decimal("100")
 
         # This should NOT raise TypeError
         event = engine._build_bar_update_event()
 
-        # realized_pnl should sum only non-None pnl values
+        # realized_pnl should reflect cumulative counter
         assert Decimal(event["realized_pnl"]) == Decimal("100")
 
 

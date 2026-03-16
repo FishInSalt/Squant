@@ -512,8 +512,10 @@ class PaperTradingService:
         import json
         from datetime import UTC, datetime
 
+        from squant.services.circuit_breaker import CIRCUIT_BREAKER_STATE_KEY
+
         try:
-            state_data = await redis.get("squant:circuit_breaker:state")
+            state_data = await redis.get(CIRCUIT_BREAKER_STATE_KEY)
             if state_data:
                 state = json.loads(state_data)
                 if state.get("is_active", False):
@@ -525,7 +527,7 @@ class PaperTradingService:
                             expiry = expiry.replace(tzinfo=UTC)
                         if datetime.now(UTC) >= expiry:
                             # Cooldown expired — auto-clear state
-                            await redis.delete("squant:circuit_breaker:state")
+                            await redis.delete(CIRCUIT_BREAKER_STATE_KEY)
                             logger.info("Circuit breaker cooldown expired, auto-cleared")
                             return
                     raise CircuitBreakerActiveError(state.get("trigger_reason"))
