@@ -55,7 +55,7 @@ async def client(mock_session, mock_service) -> AsyncGenerator[AsyncClient, None
         yield mock_session
 
     async def override_get_order_service():
-        return mock_service
+        yield mock_service
 
     app.dependency_overrides[get_session] = override_get_session
     app.dependency_overrides[get_order_service] = override_get_order_service

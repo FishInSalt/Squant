@@ -11,6 +11,7 @@ the /api/v1/exchange-accounts endpoint with properly encrypted credentials.
 """
 
 import logging
+from collections.abc import AsyncGenerator
 from decimal import Decimal
 from typing import Annotated
 from uuid import UUID
@@ -104,7 +105,7 @@ async def _get_active_account(
 
 async def get_order_service(
     session: DbSession,
-) -> OrderService:
+) -> AsyncGenerator[OrderService, None]:
     """Get OrderService instance.
 
     This dependency provides an OrderService configured with:
@@ -112,10 +113,12 @@ async def get_order_service(
     - Exchange adapter created from the active account's credentials
     - Active account with encrypted credentials
 
+    The adapter is properly closed after the request completes.
+
     Args:
         session: Database session.
 
-    Returns:
+    Yields:
         Configured OrderService.
 
     Raises:
@@ -133,9 +136,8 @@ async def get_order_service(
         ) from e
 
     # Decrypt credentials and create an authenticated adapter
-    service = ExchangeAccountService.__new__(ExchangeAccountService)
     try:
-        credentials = service.get_decrypted_credentials(account)
+        credentials = ExchangeAccountService.get_decrypted_credentials(account)
     except Exception as e:
         logger.error(f"Failed to decrypt credentials for account {account.id}: {e}")
         raise HTTPException(
@@ -152,8 +154,10 @@ async def get_order_service(
     )
     adapter = CCXTRestAdapter(exchange_id, ccxt_credentials)
     await adapter.connect()
-
-    return OrderService(session, adapter, account)
+    try:
+        yield OrderService(session, adapter, account)
+    finally:
+        await adapter.close()
 
 
 OrderServiceDep = Annotated[OrderService, Depends(get_order_service)]
