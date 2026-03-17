@@ -10,7 +10,6 @@ from sqlalchemy import and_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from squant.infra.exchange import BinanceAdapter, OKXAdapter
 from squant.infra.exchange.ccxt import CCXTRestAdapter, ExchangeCredentials
 from squant.infra.exchange.exceptions import (
     ExchangeAPIError,
@@ -453,37 +452,14 @@ class ExchangeAccountService:
 
         # Create adapter and test connection
         try:
-            if account.exchange == "okx":
-                passphrase = credentials.get("passphrase")
-                if not passphrase:
-                    return {
-                        "success": False,
-                        "message": "OKX account missing passphrase",
-                        "balance_count": None,
-                    }
-                adapter = OKXAdapter(
-                    api_key=credentials["api_key"],
-                    api_secret=credentials["api_secret"],
-                    passphrase=passphrase,
-                    testnet=account.testnet,
-                )
-            elif account.exchange == "binance":
-                adapter = BinanceAdapter(
-                    api_key=credentials["api_key"],
-                    api_secret=credentials["api_secret"],
-                    testnet=account.testnet,
-                )
-            elif account.exchange == "bybit":
-                # Use CCXT adapter for Bybit (no native adapter available)
-                ccxt_credentials = ExchangeCredentials(
-                    api_key=credentials["api_key"],
-                    api_secret=credentials["api_secret"],
-                    passphrase=credentials.get("passphrase"),
-                    sandbox=account.testnet,
-                )
-                adapter = CCXTRestAdapter("bybit", ccxt_credentials)
-            else:
-                raise ConnectionTestError(f"Unknown exchange: {account.exchange}")
+            exchange_id = account.exchange.lower()
+            ccxt_credentials = ExchangeCredentials(
+                api_key=credentials["api_key"],
+                api_secret=credentials["api_secret"],
+                passphrase=credentials.get("passphrase"),
+                sandbox=account.testnet,
+            )
+            adapter = CCXTRestAdapter(exchange_id, ccxt_credentials)
 
             async with adapter:
                 balance = await adapter.get_balance()

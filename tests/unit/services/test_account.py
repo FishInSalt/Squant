@@ -550,7 +550,7 @@ class TestConnectionTest:
                     "passphrase": "test_pass",
                 }
 
-                with patch("squant.services.account.OKXAdapter") as MockAdapter:
+                with patch("squant.services.account.CCXTRestAdapter") as MockAdapter:
                     mock_balance = MagicMock()
                     mock_balance.balances = [MagicMock(), MagicMock(), MagicMock()]
 
@@ -581,7 +581,7 @@ class TestConnectionTest:
                     "api_secret": "test_secret",
                 }
 
-                with patch("squant.services.account.BinanceAdapter") as MockAdapter:
+                with patch("squant.services.account.CCXTRestAdapter") as MockAdapter:
                     mock_balance = MagicMock()
                     mock_balance.balances = [MagicMock()]
 
@@ -600,7 +600,13 @@ class TestConnectionTest:
     async def test_connection_okx_missing_passphrase(
         self, service: ExchangeAccountService, sample_okx_account
     ) -> None:
-        """Test OKX connection fails when passphrase is missing."""
+        """Test OKX connection fails when passphrase is missing.
+
+        With unified CCXTRestAdapter, the adapter is created with passphrase=None
+        and the exchange returns an authentication error.
+        """
+        from squant.infra.exchange.exceptions import ExchangeAuthenticationError
+
         with patch.object(service.repository, "get", new_callable=AsyncMock) as mock_get:
             mock_get.return_value = sample_okx_account
 
@@ -611,10 +617,23 @@ class TestConnectionTest:
                     "api_secret": "test_secret",
                 }
 
-                result = await service.test_connection(sample_okx_account.id)
+                with patch("squant.services.account.CCXTRestAdapter") as MockAdapter:
+                    mock_adapter_instance = MagicMock()
+                    mock_adapter_instance.get_balance = AsyncMock(
+                        side_effect=ExchangeAuthenticationError(
+                            "Missing passphrase for OKX"
+                        )
+                    )
+                    mock_adapter_instance.__aenter__ = AsyncMock(
+                        return_value=mock_adapter_instance
+                    )
+                    mock_adapter_instance.__aexit__ = AsyncMock(return_value=None)
+                    MockAdapter.return_value = mock_adapter_instance
+
+                    result = await service.test_connection(sample_okx_account.id)
 
         assert result["success"] is False
-        assert "passphrase" in result["message"].lower()
+        assert "Authentication failed" in result["message"]
         assert result["balance_count"] is None
 
     @pytest.mark.asyncio
@@ -634,7 +653,7 @@ class TestConnectionTest:
                     "passphrase": "invalid_pass",
                 }
 
-                with patch("squant.services.account.OKXAdapter") as MockAdapter:
+                with patch("squant.services.account.CCXTRestAdapter") as MockAdapter:
                     mock_adapter_instance = MagicMock()
                     mock_adapter_instance.get_balance = AsyncMock(
                         side_effect=ExchangeAuthenticationError("Invalid API key")
@@ -666,7 +685,7 @@ class TestConnectionTest:
                     "passphrase": "pass",
                 }
 
-                with patch("squant.services.account.OKXAdapter") as MockAdapter:
+                with patch("squant.services.account.CCXTRestAdapter") as MockAdapter:
                     mock_adapter_instance = MagicMock()
                     mock_adapter_instance.get_balance = AsyncMock(
                         side_effect=ExchangeConnectionError("Connection timed out")
@@ -698,7 +717,7 @@ class TestConnectionTest:
                     "passphrase": "pass",
                 }
 
-                with patch("squant.services.account.OKXAdapter") as MockAdapter:
+                with patch("squant.services.account.CCXTRestAdapter") as MockAdapter:
                     mock_adapter_instance = MagicMock()
                     mock_adapter_instance.get_balance = AsyncMock(
                         side_effect=ExchangeAPIError("Rate limit exceeded")
@@ -716,8 +735,8 @@ class TestConnectionTest:
     async def test_connection_unknown_exchange(self, service: ExchangeAccountService) -> None:
         """Test unknown exchange returns proper error.
 
-        Note: ConnectionTestError is caught by the generic Exception handler
-        in test_connection, so it returns an error result rather than raising.
+        With unified CCXTRestAdapter, an unsupported exchange ID causes the
+        adapter to raise an error, which is caught by the generic Exception handler.
         """
         unknown_account = MagicMock(spec=ExchangeAccount)
         unknown_account.id = uuid4()
@@ -726,6 +745,7 @@ class TestConnectionTest:
         unknown_account.api_secret_enc = b"secret"
         unknown_account.passphrase_enc = None
         unknown_account.nonce = b"test_nonce_12"
+        unknown_account.testnet = False
 
         with patch.object(service.repository, "get", new_callable=AsyncMock) as mock_get:
             mock_get.return_value = unknown_account
@@ -736,9 +756,14 @@ class TestConnectionTest:
                     "api_secret": "secret",
                 }
 
-                result = await service.test_connection(unknown_account.id)
+                with patch("squant.services.account.CCXTRestAdapter") as MockAdapter:
+                    MockAdapter.side_effect = Exception(
+                        "Exchange 'unknown_exchange' is not supported"
+                    )
 
-        # The ConnectionTestError is caught by generic Exception handler
+                    result = await service.test_connection(unknown_account.id)
+
+        # The error is caught by generic Exception handler
         assert result["success"] is False
         assert "unknown_exchange" in result["message"].lower()
 
@@ -791,7 +816,7 @@ class TestConnectionTest:
                     "passphrase": "pass",
                 }
 
-                with patch("squant.services.account.OKXAdapter") as MockAdapter:
+                with patch("squant.services.account.CCXTRestAdapter") as MockAdapter:
                     mock_adapter_instance = MagicMock()
                     mock_adapter_instance.get_balance = AsyncMock(
                         side_effect=RuntimeError("Unexpected internal error")
