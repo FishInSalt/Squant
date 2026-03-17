@@ -71,9 +71,8 @@ async def _create_adapter_from_account(account: ExchangeAccount) -> CCXTRestAdap
     Raises:
         HTTPException: If credentials cannot be decrypted.
     """
-    service = ExchangeAccountService.__new__(ExchangeAccountService)
     try:
-        credentials = service.get_decrypted_credentials(account)
+        credentials = ExchangeAccountService.get_decrypted_credentials(account)
     except Exception as e:
         logger.error(f"Failed to decrypt credentials for account {account.id}: {e}")
         raise HTTPException(

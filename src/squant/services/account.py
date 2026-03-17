@@ -504,7 +504,8 @@ class ExchangeAccountService:
                 "balance_count": None,
             }
 
-    def get_decrypted_credentials(self, account: ExchangeAccount) -> dict[str, str]:
+    @staticmethod
+    def get_decrypted_credentials(account: ExchangeAccount) -> dict[str, str]:
         """Decrypt and return account credentials.
 
         Uses derived nonces for each field:
@@ -529,7 +530,7 @@ class ExchangeAccountService:
         crypto = get_crypto_manager()
 
         try:
-            return self._decrypt_with_manager(crypto, account)
+            return ExchangeAccountService._decrypt_with_manager(crypto, account)
         except DecryptionError:
             old_crypto = get_old_crypto_manager()
             if old_crypto is None:
@@ -537,7 +538,7 @@ class ExchangeAccountService:
             logger.info(
                 f"Retrying decryption for account {account.id} with old encryption key"
             )
-            return self._decrypt_with_manager(old_crypto, account)
+            return ExchangeAccountService._decrypt_with_manager(old_crypto, account)
 
     @staticmethod
     def _decrypt_with_manager(
