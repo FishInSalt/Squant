@@ -682,8 +682,8 @@ class CCXTRestAdapter(ExchangeAdapter):
     def _transform_order(self, order: dict[str, Any]) -> OrderResponse:
         """Transform CCXT order to internal OrderResponse type."""
         fee_info = order.get("fee") or {}
-        amount = Decimal(str(order.get("amount", 0)))
-        filled = Decimal(str(order.get("filled", 0)))
+        amount = Decimal(str(order.get("amount") or 0))
+        filled = Decimal(str(order.get("filled") or 0))
 
         try:
             side = OrderSide(order.get("side", "buy"))
@@ -707,7 +707,7 @@ class CCXTRestAdapter(ExchangeAdapter):
             symbol=order.get("symbol", ""),
             side=side,
             type=order_type,
-            status=self._map_order_status(order.get("status", ""), filled, amount),
+            status=self._map_order_status(order.get("status") or "", filled, amount),
             price=Decimal(str(order["price"])) if order.get("price") is not None else None,
             amount=amount,
             filled=filled,

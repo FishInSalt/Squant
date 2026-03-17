@@ -1,9 +1,10 @@
 """Minimal test strategy: buys once on the first bar, then idles.
 Used for Layer 3 engine integration testing."""
 from decimal import Decimal
+from squant.engine.backtest.strategy_base import Strategy
 
 
-class FirstBarBuyStrategy:
+class FirstBarBuyStrategy(Strategy):
     def on_init(self):
         self.bought = False
 
