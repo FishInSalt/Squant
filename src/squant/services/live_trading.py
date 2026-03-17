@@ -25,9 +25,7 @@ from squant.engine.live.engine import LiveTradingEngine
 from squant.engine.live.manager import get_live_session_manager
 from squant.engine.risk import RiskConfig
 from squant.engine.sandbox import compile_strategy
-from squant.infra.exchange.binance.adapter import BinanceAdapter
 from squant.infra.exchange.ccxt import CCXTRestAdapter, ExchangeCredentials
-from squant.infra.exchange.okx.adapter import OKXAdapter
 from squant.infra.repository import BaseRepository
 from squant.models.enums import OrderSide, OrderStatus, OrderType, RunMode, RunStatus
 from squant.models.exchange import ExchangeAccount
@@ -593,29 +591,13 @@ class LiveTradingService:
 
         exchange = account.exchange.lower()
 
-        if exchange == "okx":
-            return OKXAdapter(
-                api_key=credentials["api_key"],
-                api_secret=credentials["api_secret"],
-                passphrase=credentials.get("passphrase", ""),
-                testnet=account.testnet,
-            )
-        elif exchange == "binance":
-            return BinanceAdapter(
-                api_key=credentials["api_key"],
-                api_secret=credentials["api_secret"],
-                testnet=account.testnet,
-            )
-        elif exchange == "bybit":
-            # Use CCXT adapter for Bybit (no native adapter available)
-            ccxt_credentials = ExchangeCredentials(
-                api_key=credentials["api_key"],
-                api_secret=credentials["api_secret"],
-                passphrase=credentials.get("passphrase"),
-                sandbox=account.testnet,
-            )
-            return CCXTRestAdapter("bybit", ccxt_credentials)
-        raise ValueError(f"Unsupported exchange: {exchange}")
+        ccxt_credentials = ExchangeCredentials(
+            api_key=credentials["api_key"],
+            api_secret=credentials["api_secret"],
+            passphrase=credentials.get("passphrase"),
+            sandbox=account.testnet,
+        )
+        return CCXTRestAdapter(exchange, ccxt_credentials)
 
     def _build_ws_credentials(self, account: ExchangeAccount) -> ExchangeCredentials | None:
         """Build ExchangeCredentials for private WS order push (LIVE-CN-001).
