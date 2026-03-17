@@ -104,6 +104,8 @@ def _get_exchange_credentials(exchange_id: str) -> ExchangeCredentials | None:
     """
     settings = get_settings()
 
+    # TODO: sandbox flag should come from the trading session's exchange account,
+    # not from global config. Defaulting to False (production) for now.
     if exchange_id == "okx":
         if settings.okx_api_key and settings.okx_api_secret:
             return ExchangeCredentials(
@@ -112,20 +114,20 @@ def _get_exchange_credentials(exchange_id: str) -> ExchangeCredentials | None:
                 passphrase=settings.okx_passphrase.get_secret_value()
                 if settings.okx_passphrase
                 else None,
-                sandbox=settings.okx_testnet,
+                sandbox=False,
             )
     elif exchange_id == "binance":
         if settings.binance_api_key and settings.binance_api_secret:
             return ExchangeCredentials(
                 api_key=settings.binance_api_key.get_secret_value(),
                 api_secret=settings.binance_api_secret.get_secret_value(),
-                sandbox=settings.binance_testnet,
+                sandbox=False,
             )
     elif exchange_id == "bybit" and settings.bybit_api_key and settings.bybit_api_secret:
         return ExchangeCredentials(
             api_key=settings.bybit_api_key.get_secret_value(),
             api_secret=settings.bybit_api_secret.get_secret_value(),
-            sandbox=settings.bybit_testnet,
+            sandbox=False,
         )
     return None
 

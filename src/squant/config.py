@@ -134,7 +134,6 @@ class OKXSettings(BaseSettings):
     api_key: SecretStr | None = Field(default=None, description="OKX API key")
     api_secret: SecretStr | None = Field(default=None, description="OKX API secret")
     passphrase: SecretStr | None = Field(default=None, description="OKX API passphrase")
-    testnet: bool = Field(default=False, description="Use OKX testnet/sandbox")
 
 
 class BinanceSettings(BaseSettings):
@@ -148,7 +147,6 @@ class BinanceSettings(BaseSettings):
 
     api_key: SecretStr | None = Field(default=None, description="Binance API key")
     api_secret: SecretStr | None = Field(default=None, description="Binance API secret")
-    testnet: bool = Field(default=False, description="Use Binance testnet")
 
 
 class BybitSettings(BaseSettings):
@@ -162,7 +160,6 @@ class BybitSettings(BaseSettings):
 
     api_key: SecretStr | None = Field(default=None, description="Bybit API key")
     api_secret: SecretStr | None = Field(default=None, description="Bybit API secret")
-    testnet: bool = Field(default=False, description="Use Bybit testnet")
 
 
 class ExchangeStreamSettings(BaseSettings):
@@ -176,9 +173,6 @@ class ExchangeStreamSettings(BaseSettings):
 
     default_exchange: str = Field(
         default="okx", description="Default exchange: okx, binance, bybit"
-    )
-    use_ccxt_provider: bool = Field(
-        default=True, description="Use CCXT for WebSocket (False = native OKX)"
     )
 
     @field_validator("default_exchange")
@@ -517,11 +511,6 @@ class Settings(BaseSettings):
         """Alias for exchange.default_exchange (backward compatibility)."""
         return self.exchange.default_exchange
 
-    @property
-    def use_ccxt_provider(self) -> bool:
-        """Alias for exchange.use_ccxt_provider (backward compatibility)."""
-        return self.exchange.use_ccxt_provider
-
     # OKX aliases
     @property
     def okx_api_key(self) -> SecretStr | None:
@@ -538,11 +527,6 @@ class Settings(BaseSettings):
         """Alias for okx.passphrase (backward compatibility)."""
         return self.okx.passphrase
 
-    @property
-    def okx_testnet(self) -> bool:
-        """Alias for okx.testnet (backward compatibility)."""
-        return self.okx.testnet
-
     # Binance aliases
     @property
     def binance_api_key(self) -> SecretStr | None:
@@ -554,11 +538,6 @@ class Settings(BaseSettings):
         """Alias for binance.api_secret (backward compatibility)."""
         return self.binance.api_secret
 
-    @property
-    def binance_testnet(self) -> bool:
-        """Alias for binance.testnet (backward compatibility)."""
-        return self.binance.testnet
-
     # Bybit aliases
     @property
     def bybit_api_key(self) -> SecretStr | None:
@@ -569,11 +548,6 @@ class Settings(BaseSettings):
     def bybit_api_secret(self) -> SecretStr | None:
         """Alias for bybit.api_secret (backward compatibility)."""
         return self.bybit.api_secret
-
-    @property
-    def bybit_testnet(self) -> bool:
-        """Alias for bybit.testnet (backward compatibility)."""
-        return self.bybit.testnet
 
     # Strategy aliases
     @property

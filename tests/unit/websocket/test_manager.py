@@ -20,13 +20,10 @@ def mock_settings():
     settings.okx_api_secret.get_secret_value.return_value = "test-secret"
     settings.okx_passphrase = MagicMock()
     settings.okx_passphrase.get_secret_value.return_value = "test-passphrase"
-    settings.okx_testnet = True
     settings.binance_api_key = None
     settings.binance_api_secret = None
-    settings.binance_testnet = False
     settings.bybit_api_key = None
     settings.bybit_api_secret = None
-    settings.bybit_testnet = False
     return settings
 
 
@@ -587,7 +584,7 @@ class TestStreamManagerCredentials:
             assert creds.api_key == "test-key"
             assert creds.api_secret == "test-secret"
             assert creds.passphrase == "test-passphrase"
-            assert creds.sandbox is True
+            assert creds.sandbox is False
 
     def test_get_exchange_credentials_binance_no_key(self, mock_settings):
         """Test getting Binance credentials when not configured."""

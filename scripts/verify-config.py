@@ -86,15 +86,6 @@ def main() -> int:
         )
     )
 
-    # Testnet mode (informational, not a pass/fail)
-    results.append(
-        (
-            "OKX_TESTNET mode",
-            True,  # always passes — informational
-            f"testnet={'enabled' if settings.okx.testnet else 'disabled'}",
-        )
-    )
-
     # -------------------------------------------------------------------------
     # 3. SECRET_KEY (min 32 chars)
     # -------------------------------------------------------------------------

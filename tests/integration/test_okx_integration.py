@@ -72,12 +72,12 @@ async def okx_adapter():
         # Use dummy credentials for public endpoint tests
         api_key, api_secret, passphrase = "dummy", "dummy", "dummy"
 
-    # Use testnet setting from config (OKX_TESTNET in .env)
+    # Integration tests always use production (sandbox flag is per-account in live trading)
     adapter = OKXAdapter(
         api_key=api_key,
         api_secret=api_secret,
         passphrase=passphrase,
-        testnet=settings.okx_testnet,
+        testnet=False,
     )
     await adapter.connect()
     yield adapter
