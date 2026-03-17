@@ -15,6 +15,8 @@ from squant.infra.exchange.okx.ws_client import OKXWebSocketClient
 from squant.infra.exchange.okx.ws_types import (
     CANDLE_CHANNELS,
     OKXChannel,
+)
+from squant.infra.exchange.ws_types import (
     WSAccountUpdate,
     WSCandle,
     WSMessage,
@@ -300,7 +302,7 @@ class TestWSMessageTypes:
 
     def test_ws_account_update_model(self) -> None:
         """Test WSAccountUpdate model creation."""
-        from squant.infra.exchange.okx.ws_types import WSBalanceUpdate
+        from squant.infra.exchange.ws_types import WSBalanceUpdate
 
         account = WSAccountUpdate(
             balances=[

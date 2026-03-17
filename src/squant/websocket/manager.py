@@ -16,6 +16,8 @@ from squant.infra.exchange.okx.ws_client import OKXWebSocketClient
 from squant.infra.exchange.okx.ws_types import (
     CANDLE_CHANNELS,
     OKXChannel,
+)
+from squant.infra.exchange.ws_types import (
     WSAccountUpdate,
     WSBalanceUpdate,
     WSCandle,

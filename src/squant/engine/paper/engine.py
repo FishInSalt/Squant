@@ -20,7 +20,7 @@ from squant.engine.paper.matching import PaperMatchingEngine
 from squant.engine.resource_limits import ResourceLimitExceededError, resource_limiter
 from squant.engine.risk.manager import RiskManager
 from squant.engine.risk.models import RiskConfig
-from squant.infra.exchange.okx.ws_types import WSCandle, WSTicker
+from squant.infra.exchange.ws_types import WSCandle, WSTicker
 from squant.infra.exchange.types import OrderRequest
 from squant.models.enums import OrderSide as ExchangeOrderSide
 from squant.models.enums import OrderType as ExchangeOrderType

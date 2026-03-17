@@ -12,7 +12,7 @@ import pytest
 
 from squant.engine.paper.engine import PaperTradingEngine
 from squant.engine.paper.manager import SessionManager
-from squant.infra.exchange.okx.ws_types import WSCandle
+from squant.infra.exchange.ws_types import WSCandle
 
 # Test strategy code for integration tests
 TEST_STRATEGY_CODE = '''

@@ -35,7 +35,7 @@ from squant.models.enums import OrderSide, OrderStatus
 if TYPE_CHECKING:
     from squant.infra.exchange.base import ExchangeAdapter
     from squant.infra.exchange.ccxt.types import ExchangeCredentials
-    from squant.infra.exchange.okx.ws_types import WSCandle, WSOrderUpdate
+    from squant.infra.exchange.ws_types import WSCandle, WSOrderUpdate
 
 # Callback type for synchronous snapshot persistence
 SnapshotPersistCallback = Callable[[str, EquitySnapshot], Awaitable[None]]

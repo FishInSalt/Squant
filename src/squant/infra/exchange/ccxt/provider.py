@@ -21,7 +21,7 @@ from squant.infra.exchange.exceptions import (
     ExchangeAuthenticationError,
     ExchangeConnectionError,
 )
-from squant.infra.exchange.okx.ws_types import (
+from squant.infra.exchange.ws_types import (
     WSAccountUpdate,
     WSCandle,
     WSOrderBook,

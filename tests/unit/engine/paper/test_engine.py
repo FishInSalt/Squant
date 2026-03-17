@@ -10,7 +10,7 @@ import pytest
 from squant.engine.backtest.strategy_base import Strategy
 from squant.engine.backtest.types import Bar
 from squant.engine.paper.engine import PaperTradingEngine
-from squant.infra.exchange.okx.ws_types import WSCandle
+from squant.infra.exchange.ws_types import WSCandle
 
 
 class SimpleStrategy(Strategy):
@@ -763,7 +763,7 @@ class TestAskPriceCostEstimation:
         The fix makes buy() use max(close*(1+slippage), ask) for estimation,
         so the cash check at order creation time is consistent with the fill.
         """
-        from squant.infra.exchange.okx.ws_types import WSTicker
+        from squant.infra.exchange.ws_types import WSTicker
 
         class AllInBuyStrategy(Strategy):
             """Strategy that uses most cash on a single buy."""

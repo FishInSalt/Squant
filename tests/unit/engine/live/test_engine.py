@@ -11,7 +11,7 @@ from squant.engine.backtest.strategy_base import Strategy
 from squant.engine.backtest.types import Bar, SimulatedOrder
 from squant.engine.live.engine import LiveOrder, LiveTradingEngine
 from squant.engine.risk import RiskConfig
-from squant.infra.exchange.okx.ws_types import WSCandle, WSOrderUpdate
+from squant.infra.exchange.ws_types import WSCandle, WSOrderUpdate
 from squant.infra.exchange.types import (
     AccountBalance,
     Balance,

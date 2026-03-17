@@ -9,7 +9,7 @@ from uuid import uuid4
 import pytest
 
 from squant.engine.paper.manager import SessionManager, get_session_manager
-from squant.infra.exchange.okx.ws_types import WSCandle
+from squant.infra.exchange.ws_types import WSCandle
 
 
 @pytest.fixture

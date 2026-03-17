@@ -4,7 +4,7 @@ from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
 
-from squant.infra.exchange.okx.ws_types import (
+from squant.infra.exchange.ws_types import (
     WSAccountUpdate,
     WSBalanceUpdate,
     WSCandle,
