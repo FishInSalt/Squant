@@ -484,7 +484,6 @@ def mock_ws_settings():
     settings = MagicMock()
 
     # Provider settings
-    settings.use_ccxt_provider = True
     settings.default_exchange = "okx"
 
     # OKX credentials

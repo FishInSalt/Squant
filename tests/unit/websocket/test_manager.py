@@ -13,7 +13,6 @@ from squant.websocket.manager import StreamManager
 def mock_settings():
     """Create mock settings."""
     settings = MagicMock()
-    settings.use_ccxt_provider = True
     settings.default_exchange = "okx"
     settings.okx_api_key = MagicMock()
     settings.okx_api_key.get_secret_value.return_value = "test-key"
@@ -69,13 +68,11 @@ class TestStreamManagerInit:
         """Test default initialization values."""
         with patch("squant.websocket.manager.get_settings") as mock_get_settings:
             mock_get_settings.return_value = MagicMock(
-                use_ccxt_provider=True,
                 default_exchange="okx",
             )
             manager = StreamManager()
 
             assert manager._running is False
-            assert manager._public_client is None
             assert manager._ccxt_provider is None
             assert len(manager._ticker_subscriptions) == 0
             assert len(manager._candle_subscriptions) == 0
@@ -85,7 +82,7 @@ class TestStreamManagerInit:
     def test_is_running_property(self):
         """Test is_running property."""
         with patch("squant.websocket.manager.get_settings") as mock_get_settings:
-            mock_get_settings.return_value = MagicMock(use_ccxt_provider=True)
+            mock_get_settings.return_value = MagicMock(default_exchange="okx")
             manager = StreamManager()
 
             assert manager.is_running is False
@@ -115,27 +112,6 @@ class TestStreamManagerHealth:
             mock_ccxt_provider.is_healthy.return_value = False
             assert manager.is_healthy is False
 
-    def test_is_healthy_with_native_clients(self, mock_settings):
-        """Test is_healthy with native OKX clients."""
-        mock_settings.use_ccxt_provider = False
-
-        with patch("squant.websocket.manager.get_settings", return_value=mock_settings):
-            manager = StreamManager()
-            manager._running = True
-
-            # No clients - unhealthy
-            assert manager.is_healthy is False
-
-            # With connected clients - healthy
-            public_client = MagicMock()
-            public_client.is_connected = True
-            business_client = MagicMock()
-            business_client.is_connected = True
-
-            manager._public_client = public_client
-            manager._business_client = business_client
-
-            assert manager.is_healthy is True
 
 
 class TestStreamManagerStart:
@@ -711,38 +687,6 @@ class TestHealthCheckRecovery:
 
             assert result is False
 
-    @pytest.mark.asyncio
-    async def test_attempt_recovery_native_okx_success(self, mock_settings):
-        """Test successful native OKX recovery returns True."""
-        mock_settings.use_ccxt_provider = False
-        with patch("squant.websocket.manager.get_settings", return_value=mock_settings):
-            manager = StreamManager()
-            manager._public_client = MagicMock()
-            manager._public_client.is_connected = False
-            manager._public_client.connect = AsyncMock()
-            manager._business_client = None
-
-            result = await manager._attempt_recovery()
-
-            assert result is True
-            manager._public_client.connect.assert_awaited_once()
-
-    @pytest.mark.asyncio
-    async def test_attempt_recovery_native_okx_failure(self, mock_settings):
-        """Test failed native OKX recovery returns False."""
-        mock_settings.use_ccxt_provider = False
-        with patch("squant.websocket.manager.get_settings", return_value=mock_settings):
-            manager = StreamManager()
-            manager._public_client = MagicMock()
-            manager._public_client.is_connected = False
-            manager._public_client.connect = AsyncMock(
-                side_effect=Exception("Connection refused")
-            )
-            manager._business_client = None
-
-            result = await manager._attempt_recovery()
-
-            assert result is False
 
 
 class TestExchangeSwitchSubscriptionRecovery:
