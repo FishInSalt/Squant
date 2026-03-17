@@ -320,33 +320,9 @@ class StreamManager:
         Returns:
             ExchangeCredentials or None if not configured.
         """
-        # TODO: sandbox flag should come from the trading session's exchange account,
-        # not from global config. Defaulting to False (production) for now.
-        if exchange_id == "okx":
-            if self._settings.okx_api_key and self._settings.okx_api_secret:
-                return ExchangeCredentials(
-                    api_key=self._settings.okx_api_key.get_secret_value(),
-                    api_secret=self._settings.okx_api_secret.get_secret_value(),
-                    passphrase=self._settings.okx_passphrase.get_secret_value()
-                    if self._settings.okx_passphrase
-                    else None,
-                    sandbox=False,
-                )
-        elif exchange_id == "binance":
-            if self._settings.binance_api_key and self._settings.binance_api_secret:
-                return ExchangeCredentials(
-                    api_key=self._settings.binance_api_key.get_secret_value(),
-                    api_secret=self._settings.binance_api_secret.get_secret_value(),
-                    sandbox=False,
-                )
-        elif exchange_id == "bybit":
-            if self._settings.bybit_api_key and self._settings.bybit_api_secret:
-                return ExchangeCredentials(
-                    api_key=self._settings.bybit_api_key.get_secret_value(),
-                    api_secret=self._settings.bybit_api_secret.get_secret_value(),
-                    sandbox=False,
-                )
-        return None
+        from squant.infra.exchange.credentials import build_exchange_credentials
+
+        return build_exchange_credentials(exchange_id, self._settings)
 
     async def stop(self) -> None:
         """Stop all WebSocket connections."""
