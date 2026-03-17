@@ -31,9 +31,8 @@ services:
       - LOG_LEVEL=DEBUG
       - SECRET_KEY=dev-secret-key-minimum-32-characters-long
       - ENCRYPTION_KEY=dev-encrypt-key-32chars-ok123456
-      # Exchange settings (use testnet by default)
+      # Exchange settings
       - DEFAULT_EXCHANGE=okx
-      - USE_CCXT_PROVIDER=true
       # Bash history
       - HISTFILE=/commandhistory/.bash_history
     ports:
