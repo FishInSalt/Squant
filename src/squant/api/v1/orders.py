@@ -17,7 +17,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query
 
-from squant.api.deps import DbSession, OKXExchange
+from squant.api.deps import DbSession
 from squant.api.utils import ApiResponse, handle_exchange_error, paginate_params
 from squant.models.enums import OrderSide, OrderStatus
 from squant.models.exchange import ExchangeAccount
@@ -104,18 +104,16 @@ async def _get_active_account(
 
 async def get_order_service(
     session: DbSession,
-    exchange: OKXExchange,
 ) -> OrderService:
     """Get OrderService instance.
 
     This dependency provides an OrderService configured with:
     - Database session for persistence
-    - Exchange adapter for trading operations
+    - Exchange adapter created from the active account's credentials
     - Active account with encrypted credentials
 
     Args:
         session: Database session.
-        exchange: Exchange adapter.
 
     Returns:
         Configured OrderService.
@@ -123,14 +121,39 @@ async def get_order_service(
     Raises:
         HTTPException: If no active exchange account is available.
     """
+    from squant.infra.exchange.ccxt import CCXTRestAdapter, ExchangeCredentials
+    from squant.services.account import ExchangeAccountService
+
     try:
         account = await _get_active_account(session)
-        return OrderService(session, exchange, account)
     except NoActiveAccountError as e:
         raise HTTPException(
             status_code=400,
             detail=str(e),
         ) from e
+
+    # Decrypt credentials and create an authenticated adapter
+    service = ExchangeAccountService.__new__(ExchangeAccountService)
+    try:
+        credentials = service.get_decrypted_credentials(account)
+    except Exception as e:
+        logger.error(f"Failed to decrypt credentials for account {account.id}: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail="Unable to access account credentials.",
+        ) from e
+
+    exchange_id = account.exchange.lower()
+    ccxt_credentials = ExchangeCredentials(
+        api_key=credentials["api_key"],
+        api_secret=credentials["api_secret"],
+        passphrase=credentials.get("passphrase"),
+        sandbox=account.testnet,
+    )
+    adapter = CCXTRestAdapter(exchange_id, ccxt_credentials)
+    await adapter.connect()
+
+    return OrderService(session, adapter, account)
 
 
 OrderServiceDep = Annotated[OrderService, Depends(get_order_service)]

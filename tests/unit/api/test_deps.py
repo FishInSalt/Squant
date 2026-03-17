@@ -13,7 +13,6 @@ from squant.api.deps import (
     _get_or_create_exchange_adapter,
     clear_exchange_cache,
     get_exchange,
-    get_okx_exchange,
 )
 
 
@@ -356,76 +355,3 @@ class TestGetExchange:
         mock_get_adapter.assert_called_once_with("binance")
 
 
-class TestGetOkxExchange:
-    """Tests for get_okx_exchange generator function."""
-
-    @pytest.mark.asyncio
-    @patch("squant.api.deps.get_settings")
-    async def test_raises_when_no_credentials(self, mock_get_settings):
-        """Test raises ValueError when credentials not configured."""
-        mock_settings = MagicMock()
-        mock_settings.okx_api_key = None
-        mock_settings.okx_api_secret = None
-        mock_settings.okx_passphrase = None
-        mock_get_settings.return_value = mock_settings
-
-        with pytest.raises(ValueError, match="OKX API credentials not configured"):
-            async for _ in get_okx_exchange():
-                pass
-
-    @pytest.mark.asyncio
-    @patch("squant.api.deps.OKXAdapter")
-    @patch("squant.api.deps.get_settings")
-    async def test_creates_adapter_with_credentials(self, mock_get_settings, mock_okx_adapter):
-        """Test creates OKX adapter with credentials."""
-        mock_settings = MagicMock()
-        mock_settings.okx_api_key = MagicMock()
-        mock_settings.okx_api_key.get_secret_value.return_value = "test-key"
-        mock_settings.okx_api_secret = MagicMock()
-        mock_settings.okx_api_secret.get_secret_value.return_value = "test-secret"
-        mock_settings.okx_passphrase = MagicMock()
-        mock_settings.okx_passphrase.get_secret_value.return_value = "test-passphrase"
-        mock_settings.okx_testnet = False
-        mock_get_settings.return_value = mock_settings
-
-        mock_adapter_instance = MagicMock()
-        mock_adapter_instance.__aenter__ = AsyncMock(return_value=mock_adapter_instance)
-        mock_adapter_instance.__aexit__ = AsyncMock(return_value=None)
-        mock_okx_adapter.return_value = mock_adapter_instance
-
-        async for adapter in get_okx_exchange():
-            assert adapter == mock_adapter_instance
-
-        mock_okx_adapter.assert_called_once_with(
-            api_key="test-key",
-            api_secret="test-secret",
-            passphrase="test-passphrase",
-            testnet=False,
-        )
-
-    @pytest.mark.asyncio
-    @patch("squant.api.deps.OKXAdapter")
-    @patch("squant.api.deps.get_settings")
-    async def test_uses_testnet_setting(self, mock_get_settings, mock_okx_adapter):
-        """Test uses testnet setting from config."""
-        mock_settings = MagicMock()
-        mock_settings.okx_api_key = MagicMock()
-        mock_settings.okx_api_key.get_secret_value.return_value = "key"
-        mock_settings.okx_api_secret = MagicMock()
-        mock_settings.okx_api_secret.get_secret_value.return_value = "secret"
-        mock_settings.okx_passphrase = MagicMock()
-        mock_settings.okx_passphrase.get_secret_value.return_value = "pass"
-        mock_settings.okx_testnet = True
-        mock_get_settings.return_value = mock_settings
-
-        mock_adapter_instance = MagicMock()
-        mock_adapter_instance.__aenter__ = AsyncMock(return_value=mock_adapter_instance)
-        mock_adapter_instance.__aexit__ = AsyncMock(return_value=None)
-        mock_okx_adapter.return_value = mock_adapter_instance
-
-        async for _ in get_okx_exchange():
-            pass
-
-        mock_okx_adapter.assert_called_once()
-        call_kwargs = mock_okx_adapter.call_args[1]
-        assert call_kwargs["testnet"] is True
