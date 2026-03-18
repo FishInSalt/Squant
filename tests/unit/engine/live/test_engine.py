@@ -2904,7 +2904,7 @@ class TestTimedOutOrderReconciliation:
         mock_adapter.get_open_orders.return_value = [
             OrderResponse(
                 order_id="exchange-recovered-1",
-                client_order_id=order.id,
+                client_order_id=order.id.replace("-", ""),
                 symbol="BTC/USDT",
                 side=OrderSide.BUY,
                 type=OrderType.MARKET,
@@ -2955,7 +2955,7 @@ class TestTimedOutOrderReconciliation:
         mock_adapter.get_open_orders.return_value = [
             OrderResponse(
                 order_id="exchange-recovered-2",
-                client_order_id=order.id,
+                client_order_id=order.id.replace("-", ""),
                 symbol="BTC/USDT",
                 side=OrderSide.BUY,
                 type=OrderType.MARKET,
@@ -3594,7 +3594,7 @@ class TestReconcileTimedOutOrdersFilledCheck:
         mock_adapter.get_order = AsyncMock(
             return_value=OrderResponse(
                 order_id="exchange-filled-123",
-                client_order_id=order.id,
+                client_order_id=order.id.replace("-", ""),
                 symbol="BTC/USDT",
                 side=OrderSide.BUY,
                 type=OrderType.MARKET,
@@ -3637,7 +3637,7 @@ class TestReconcileTimedOutOrdersFilledCheck:
         mock_adapter.get_order = AsyncMock(
             return_value=OrderResponse(
                 order_id="exchange-cancelled-123",
-                client_order_id=order.id,
+                client_order_id=order.id.replace("-", ""),
                 symbol="BTC/USDT",
                 side=OrderSide.BUY,
                 type=OrderType.MARKET,

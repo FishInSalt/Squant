@@ -1515,7 +1515,9 @@ class LiveTradingEngine:
 
         reconciled: list[str] = []
         for client_id, order in list(self._timed_out_orders.items()):
-            exchange_resp = exchange_by_client_id.get(client_id)
+            # client_order_id sent to exchange has hyphens stripped
+            exchange_client_id = client_id.replace("-", "")
+            exchange_resp = exchange_by_client_id.get(exchange_client_id)
             if exchange_resp:
                 # Order exists on exchange — create LiveOrder and track it
                 live_order = LiveOrder(
@@ -2141,7 +2143,7 @@ class LiveTradingEngine:
                 amount=order.amount,
                 price=order.price,
                 stop_price=order.stop_price,
-                client_order_id=order.id,
+                client_order_id=order.id.replace("-", ""),
             )
 
             # F-4: explicit timeout to prevent blocking process_candle indefinitely.
