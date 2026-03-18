@@ -29,7 +29,7 @@ export interface Order {
 }
 
 export interface OrderFilter {
-  exchange?: string
+  account_id?: string
   symbol?: string
   side?: OrderSide
   status?: OrderStatus | OrderStatus[]

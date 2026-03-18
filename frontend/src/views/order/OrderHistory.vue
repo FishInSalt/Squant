@@ -9,13 +9,13 @@
 
     <div class="filter-bar card">
       <el-form :inline="true" :model="filter">
-        <el-form-item label="交易所">
-          <el-select v-model="filter.exchange" placeholder="全部" clearable style="width: 140px">
+        <el-form-item label="账户">
+          <el-select v-model="filter.account_id" placeholder="全部" clearable style="width: 200px">
             <el-option
-              v-for="e in exchanges"
-              :key="e"
-              :label="formatExchangeName(e)"
-              :value="e"
+              v-for="acc in accounts"
+              :key="acc.id"
+              :label="acc.name"
+              :value="acc.id"
             />
           </el-select>
         </el-form-item>
@@ -180,9 +180,8 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed, onMounted } from 'vue'
+import { ref, reactive, onMounted } from 'vue'
 import { Download } from '@element-plus/icons-vue'
-import { useMarketStore } from '@/stores/market'
 import StatusBadge from '@/components/common/StatusBadge.vue'
 import {
   formatExchangeName,
@@ -195,14 +194,15 @@ import {
 } from '@/utils/format'
 import { ORDER_STATUS_OPTIONS } from '@/utils/constants'
 import { getOrderHistory } from '@/api/order'
+import { getAccounts } from '@/api/account'
 import { useNotification } from '@/composables/useNotification'
-import type { Order } from '@/types'
+import type { Order, ExchangeAccount } from '@/types'
 
-const marketStore = useMarketStore()
 const { toastError } = useNotification()
 
 const loading = ref(false)
 const orders = ref<Order[]>([])
+const accounts = ref<ExchangeAccount[]>([])
 const pagination = reactive({
   page: 1,
   pageSize: 20,
@@ -210,14 +210,13 @@ const pagination = reactive({
 })
 
 const filter = reactive({
-  exchange: '',
+  account_id: '',
   symbol: '',
   side: '',
   status: '',
   dateRange: [] as string[],
 })
 
-const exchanges = computed(() => marketStore.exchanges)
 const statusOptions = ORDER_STATUS_OPTIONS
 
 async function loadOrders() {
@@ -227,7 +226,7 @@ async function loadOrders() {
       page: pagination.page,
       page_size: pagination.pageSize,
     }
-    if (filter.exchange) params.exchange = filter.exchange
+    if (filter.account_id) params.account_id = filter.account_id
     if (filter.symbol) params.symbol = filter.symbol
     if (filter.side) params.side = filter.side
     if (filter.status) params.status = filter.status
@@ -288,8 +287,17 @@ function exportCSV() {
   URL.revokeObjectURL(url)
 }
 
+async function loadAccounts() {
+  try {
+    const response = await getAccounts()
+    accounts.value = response.data
+  } catch (error) {
+    console.error('Failed to load accounts:', error)
+  }
+}
+
 onMounted(() => {
-  marketStore.loadExchanges()
+  loadAccounts()
   loadOrders()
 })
 </script>
