@@ -33,6 +33,7 @@ from squant.schemas.order import (
 )
 from squant.services.order import (
     OrderNotFoundError,
+    OrderRepository,
     OrderService,
     OrderValidationError,
 )
@@ -296,7 +297,7 @@ async def create_order(
 
 @router.get("", response_model=ApiResponse[OrderListData])
 async def list_orders(
-    service: OrderServiceDep,
+    session: DbSession,
     status: Annotated[list[OrderStatus] | None, Query(description="Filter by status")] = None,
     symbol: Annotated[str | None, Query(description="Filter by trading pair")] = None,
     side: Annotated[OrderSide | None, Query(description="Filter by side")] = None,
@@ -305,66 +306,59 @@ async def list_orders(
 ) -> ApiResponse[OrderListData]:
     """List orders with optional filters.
 
-    Returns paginated list of orders matching the specified criteria.
+    Returns paginated list of orders across all accounts matching the specified criteria.
     """
-    try:
-        offset, limit = paginate_params(page, page_size)
-        orders = await service.list_orders(
-            status=status,
-            symbol=symbol,
-            side=side,
-            offset=offset,
-            limit=limit,
-        )
-        total = await service.count_orders(status=status, symbol=symbol, side=side)
-        data = OrderListData(
-            items=[_to_order_detail(o) for o in orders],
-            total=total,
-            page=page,
-            page_size=page_size,
-        )
-        return ApiResponse(data=data)
-    except Exception as e:
-        _handle_order_error(e)
+    offset, limit = paginate_params(page, page_size)
+    repo = OrderRepository(session)
+    orders = await repo.list_all(
+        status=status,
+        symbol=symbol,
+        side=side,
+        offset=offset,
+        limit=limit,
+    )
+    total = await repo.count_all(status=status, symbol=symbol, side=side)
+    data = OrderListData(
+        items=[_to_order_detail(o) for o in orders],
+        total=total,
+        page=page,
+        page_size=page_size,
+    )
+    return ApiResponse(data=data)
 
 
 @router.get("/open", response_model=ApiResponse[list[OrderDetail]])
 async def get_open_orders(
-    service: OrderServiceDep,
+    session: DbSession,
     symbol: Annotated[str | None, Query(description="Filter by trading pair")] = None,
 ) -> ApiResponse[list[OrderDetail]]:
     """Get all open (non-terminal) orders.
 
-    Returns orders with status PENDING, SUBMITTED, or PARTIAL.
+    Returns orders with status PENDING, SUBMITTED, or PARTIAL across all accounts.
     """
-    try:
-        orders = await service.get_open_orders(symbol=symbol)
-        return ApiResponse(data=[_to_order_detail(o) for o in orders])
-    except Exception as e:
-        _handle_order_error(e)
+    repo = OrderRepository(session)
+    orders = await repo.list_all_open(symbol=symbol)
+    return ApiResponse(data=[_to_order_detail(o) for o in orders])
 
 
 @router.get("/stats", response_model=ApiResponse[OrderStatsResponse])
 async def get_order_stats(
-    service: OrderServiceDep,
+    session: DbSession,
 ) -> ApiResponse[OrderStatsResponse]:
-    """Get order statistics by status."""
-    try:
-        # Use single aggregated query instead of N+1 queries
-        stats = await service.get_order_stats()
-        data = OrderStatsResponse(
-            total=stats["total"],
-            open=stats["pending"] + stats["submitted"],
-            pending=stats["pending"],
-            submitted=stats["submitted"],
-            partial=stats["partial"],
-            filled=stats["filled"],
-            cancelled=stats["cancelled"],
-            rejected=stats["rejected"],
-        )
-        return ApiResponse(data=data)
-    except Exception as e:
-        _handle_order_error(e)
+    """Get order statistics by status across all accounts."""
+    repo = OrderRepository(session)
+    stats = await repo.get_all_stats_by_status()
+    data = OrderStatsResponse(
+        total=sum(stats.values()),
+        open=stats.get(OrderStatus.PENDING, 0) + stats.get(OrderStatus.SUBMITTED, 0),
+        pending=stats.get(OrderStatus.PENDING, 0),
+        submitted=stats.get(OrderStatus.SUBMITTED, 0),
+        partial=stats.get(OrderStatus.PARTIAL, 0),
+        filled=stats.get(OrderStatus.FILLED, 0),
+        cancelled=stats.get(OrderStatus.CANCELLED, 0),
+        rejected=stats.get(OrderStatus.REJECTED, 0),
+    )
+    return ApiResponse(data=data)
 
 
 @router.get("/{order_id}", response_model=ApiResponse[OrderWithTrades])

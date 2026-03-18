@@ -6,7 +6,7 @@ from collections.abc import AsyncGenerator
 from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import pytest
@@ -102,6 +102,17 @@ def mock_trade():
     trade.fee_currency = "USDT"
     trade.timestamp = datetime.now(UTC)
     return trade
+
+
+@pytest.fixture
+def mock_order_repo():
+    """Create a mock OrderRepository for read-only endpoint tests."""
+    repo = MagicMock()
+    repo.list_all = AsyncMock()
+    repo.count_all = AsyncMock()
+    repo.list_all_open = AsyncMock()
+    repo.get_all_stats_by_status = AsyncMock()
+    return repo
 
 
 @pytest.fixture
@@ -206,24 +217,26 @@ class TestListOrders:
 
     @pytest.mark.asyncio
     async def test_list_orders_success(
-        self, client: AsyncClient, mock_service, mock_order
+        self, client: AsyncClient, mock_order_repo, mock_order
     ) -> None:
         """Test listing orders."""
-        mock_service.list_orders.return_value = [mock_order]
-        mock_service.count_orders.return_value = 1
+        mock_order_repo.list_all.return_value = [mock_order]
+        mock_order_repo.count_all.return_value = 1
 
-        response = await client.get("/api/v1/orders")
+        with patch("squant.api.v1.orders.OrderRepository", return_value=mock_order_repo):
+            response = await client.get("/api/v1/orders")
         assert response.status_code == 200
 
     @pytest.mark.asyncio
     async def test_list_orders_with_pagination(
-        self, client: AsyncClient, mock_service, mock_order
+        self, client: AsyncClient, mock_order_repo, mock_order
     ) -> None:
         """Test listing orders with pagination."""
-        mock_service.list_orders.return_value = [mock_order]
-        mock_service.count_orders.return_value = 50
+        mock_order_repo.list_all.return_value = [mock_order]
+        mock_order_repo.count_all.return_value = 50
 
-        response = await client.get("/api/v1/orders?page=2&page_size=10")
+        with patch("squant.api.v1.orders.OrderRepository", return_value=mock_order_repo):
+            response = await client.get("/api/v1/orders?page=2&page_size=10")
         assert response.status_code == 200
 
 
@@ -232,24 +245,26 @@ class TestGetOpenOrders:
 
     @pytest.mark.asyncio
     async def test_get_open_orders_success(
-        self, client: AsyncClient, mock_service, mock_order
+        self, client: AsyncClient, mock_order_repo, mock_order
     ) -> None:
         """Test getting open orders."""
         mock_order.status = OrderStatus.SUBMITTED
-        mock_service.get_open_orders.return_value = [mock_order]
+        mock_order_repo.list_all_open.return_value = [mock_order]
 
-        response = await client.get("/api/v1/orders/open")
+        with patch("squant.api.v1.orders.OrderRepository", return_value=mock_order_repo):
+            response = await client.get("/api/v1/orders/open")
         assert response.status_code == 200
 
     @pytest.mark.asyncio
     async def test_get_open_orders_with_symbol(
-        self, client: AsyncClient, mock_service, mock_order
+        self, client: AsyncClient, mock_order_repo, mock_order
     ) -> None:
         """Test getting open orders for specific symbol."""
         mock_order.status = OrderStatus.SUBMITTED
-        mock_service.get_open_orders.return_value = [mock_order]
+        mock_order_repo.list_all_open.return_value = [mock_order]
 
-        response = await client.get("/api/v1/orders/open?symbol=BTC/USDT")
+        with patch("squant.api.v1.orders.OrderRepository", return_value=mock_order_repo):
+            response = await client.get("/api/v1/orders/open?symbol=BTC/USDT")
         assert response.status_code == 200
 
 
@@ -257,20 +272,21 @@ class TestGetOrderStats:
     """Tests for GET /api/v1/orders/stats endpoint."""
 
     @pytest.mark.asyncio
-    async def test_get_order_stats_success(self, client: AsyncClient, mock_service) -> None:
+    async def test_get_order_stats_success(
+        self, client: AsyncClient, mock_order_repo
+    ) -> None:
         """Test getting order statistics."""
-        mock_stats = {
-            "total": 100,
-            "pending": 5,
-            "submitted": 10,
-            "partial": 3,
-            "filled": 70,
-            "cancelled": 10,
-            "rejected": 2,
+        mock_order_repo.get_all_stats_by_status.return_value = {
+            OrderStatus.PENDING: 5,
+            OrderStatus.SUBMITTED: 10,
+            OrderStatus.PARTIAL: 3,
+            OrderStatus.FILLED: 70,
+            OrderStatus.CANCELLED: 10,
+            OrderStatus.REJECTED: 2,
         }
-        mock_service.get_order_stats.return_value = mock_stats
 
-        response = await client.get("/api/v1/orders/stats")
+        with patch("squant.api.v1.orders.OrderRepository", return_value=mock_order_repo):
+            response = await client.get("/api/v1/orders/stats")
         assert response.status_code == 200
 
 
