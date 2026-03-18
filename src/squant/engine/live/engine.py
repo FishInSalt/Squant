@@ -1820,15 +1820,14 @@ class LiveTradingEngine:
                 del self._exchange_order_map[order.exchange_order_id]
 
             # Move corresponding SimulatedOrder to completed_orders so strategy
-            # receives on_order_done notification (m-4 fix)
-            if order.status == OrderStatus.REJECTED:
-                for pending in list(self._context._pending_orders):
-                    if pending.id == internal_id:
-                        pending.status = OrderStatus.REJECTED
-                        self._context._completed_orders.append(pending)
-                        self._context._total_completed_added += 1
-                        self._context._pending_orders.remove(pending)
-                        break
+            # context stays in sync and orders are not re-submitted.
+            for pending in list(self._context._pending_orders):
+                if pending.id == internal_id:
+                    pending.status = order.status
+                    self._context._completed_orders.append(pending)
+                    self._context._total_completed_added += 1
+                    self._context._pending_orders.remove(pending)
+                    break
 
     async def _expire_ttl_orders(self) -> None:
         """Cancel live orders whose bars_remaining TTL has expired.
