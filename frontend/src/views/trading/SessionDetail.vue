@@ -864,7 +864,7 @@ function handleAuditPageChange(page: number) {
 async function loadAllLiveOrders() {
   if (!isLive.value) return
   try {
-    const resp = await getLiveSessionOrders(props.id, { page: 1, page_size: 500 })
+    const resp = await getLiveSessionOrders(props.id, { page: 1, page_size: 100 })
     liveAllOrders.value = resp.data.items
   } catch {
     // non-critical
