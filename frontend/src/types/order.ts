@@ -36,8 +36,8 @@ export interface OrderFilter {
   status?: OrderStatus | OrderStatus[]
   strategy_id?: string
   run_id?: string
-  start_date?: string
-  end_date?: string
+  start_time?: string
+  end_time?: string
 }
 
 // 订单统计

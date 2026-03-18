@@ -1643,7 +1643,8 @@ class LiveTradingEngine:
             (eid for eid, iid in self._exchange_order_map.items() if iid == client_id),
             None,
         )
-        query_id = exchange_oid or client_id
+        # client_order_id sent to exchange has hyphens stripped
+        query_id = exchange_oid or client_id.replace("-", "")
         try:
             response = await self._adapter.get_order(order.symbol, query_id)
         except Exception as e:
@@ -1855,8 +1856,8 @@ class LiveTradingEngine:
                     "type": "status_change",
                     "internal_id": internal_id,
                     "exchange_order_id": order.exchange_order_id,
-                    "old_status": "cleanup",
-                    "new_status": order.status.value,
+                    "old_status": order.status.value,  # already terminal at cleanup time
+                    "new_status": order.status.value,  # same — ensures DB catches up
                     "filled_amount": str(order.filled_amount),
                     "avg_fill_price": str(order.avg_fill_price)
                     if order.avg_fill_price

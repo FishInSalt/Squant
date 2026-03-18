@@ -300,6 +300,8 @@ async def create_order(
         _handle_order_error(e)
 
 
+# NOTE: Read-only order endpoints query across all accounts (single-user system).
+# If multi-user support is added, these must be scoped to the authenticated user's accounts.
 @router.get("", response_model=ApiResponse[OrderListData])
 async def list_orders(
     session: DbSession,

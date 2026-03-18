@@ -188,6 +188,7 @@ class OrderRepository(BaseRepository[Order]):
 
     async def count_all(
         self,
+        *,
         account_id: str | UUID | None = None,
         status: OrderStatus | list[OrderStatus] | None = None,
         symbol: str | None = None,
