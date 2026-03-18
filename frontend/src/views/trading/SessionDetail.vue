@@ -1203,6 +1203,7 @@ async function handleEmergencyClose() {
     showEmergencyCloseResult(resp.data)
     stopPolling()
     await loadSession()
+    await loadStatus()
   } catch (error) {
     toastError('执行失败')
   }
