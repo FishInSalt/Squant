@@ -3877,7 +3877,7 @@ class TestResumeSuccessPath:
             "discrepancies": [],
         }
         p["mock_reconcile_positions"].return_value = {
-            "cash_adjusted": True,
+            "cash_adjusted": False,
             "position_discrepancy": False,
             "discrepancies": [{"type": "cash_mismatch", "local": "10000", "exchange": "9500"}],
         }
@@ -3890,7 +3890,7 @@ class TestResumeSuccessPath:
 
         assert report["orders_reconciled"] == 2
         assert report["fills_processed"] == 1
-        assert report["position_reconciliation"]["cash_adjusted"] is True
+        assert report["position_reconciliation"]["cash_adjusted"] is False
         assert len(report["position_reconciliation"]["discrepancies"]) == 1
 
 

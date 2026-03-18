@@ -1342,11 +1342,12 @@ class LiveTradingService:
     ) -> dict[str, Any]:
         """Reconcile local positions with exchange balance during resume.
 
-        Exchange balance is source of truth for cash. Position discrepancies
-        are logged but not auto-adjusted (preserves avg_entry_price).
-
-        Tech debt (M-10): Directly accesses engine.context._cash. See
-        _reconcile_orders docstring for rationale on deferring this refactor.
+        Local cash from restore_state() is the source of truth for the session,
+        since the exchange balance reflects the entire account (which may include
+        funds from other sessions or manual trades). Cash discrepancies are
+        logged as warnings but NOT auto-adjusted — consistent with _sync_balance()
+        in the engine (LIVE-012). Position discrepancies are also logged but not
+        auto-adjusted (preserves avg_entry_price).
 
         Args:
             engine: Live trading engine with restored context.
@@ -1379,7 +1380,11 @@ class LiveTradingService:
             threshold = max(local_cash * Decimal("0.01"), Decimal("1"))
 
             if diff > threshold:
-                logger.warning(f"Cash discrepancy: local={local_cash}, exchange={exchange_cash}")
+                logger.warning(
+                    f"Cash discrepancy (warning only, not adjusting): "
+                    f"local={local_cash}, exchange={exchange_cash}. "
+                    f"Local cash from restored session state is source of truth."
+                )
                 report["discrepancies"].append(
                     {
                         "type": "cash_mismatch",
@@ -1387,8 +1392,6 @@ class LiveTradingService:
                         "exchange": str(exchange_cash),
                     }
                 )
-                engine.context._cash = exchange_cash
-                report["cash_adjusted"] = True
 
         # Reconcile base currency (position)
         base_currency = symbol.split("/")[0]
