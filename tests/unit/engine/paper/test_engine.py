@@ -651,19 +651,25 @@ class TestHealthCheck:
     """Tests for health check functionality."""
 
     @pytest.mark.asyncio
-    async def test_last_active_at_set_on_start(self, engine):
-        """Test that last_active_at is set when engine starts."""
+    async def test_last_active_at_none_on_start(self, engine):
+        """Test that last_active_at stays None after start (no premature health check timeout).
+
+        The engine should not set _last_active_at in start() because that would
+        start the health check countdown before any candle data arrives. If the
+        first candle takes longer than the timeout, the session would be incorrectly
+        marked INTERRUPTED. is_healthy() handles None correctly (returns True).
+        """
         assert engine.last_active_at is None
 
         await engine.start()
 
-        assert engine.last_active_at is not None
+        assert engine.last_active_at is None
 
     @pytest.mark.asyncio
     async def test_last_active_at_updated_on_candle(self, engine):
         """Test that last_active_at is updated when processing candles."""
         await engine.start()
-        initial_time = engine.last_active_at
+        assert engine.last_active_at is None  # Not set until first candle
 
         candle = WSCandle(
             symbol="BTC/USDT",
@@ -678,7 +684,7 @@ class TestHealthCheck:
         )
         await engine.process_candle(candle)
 
-        assert engine.last_active_at >= initial_time
+        assert engine.last_active_at is not None
 
     @pytest.mark.asyncio
     async def test_is_healthy_returns_true_when_active(self, engine):

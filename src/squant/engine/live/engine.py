@@ -572,7 +572,9 @@ class LiveTradingEngine:
 
             self._is_running = True
             self._started_at = datetime.now(UTC)
-            self._last_active_at = datetime.now(UTC)
+            # NOTE: Do NOT set _last_active_at here. It stays None until the first
+            # candle arrives, so is_healthy() returns True for a just-started engine
+            # that hasn't received data yet (prevents premature health-check timeout).
 
             # Start private WS for real-time order updates (LIVE-CN-001)
             await self._start_private_ws()

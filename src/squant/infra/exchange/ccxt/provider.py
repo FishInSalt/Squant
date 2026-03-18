@@ -100,6 +100,13 @@ class CCXTStreamProvider:
         self._reconnect_max_delay = 60.0  # Maximum delay in seconds
         self._reconnect_attempt: int = 0  # Current reconnect attempt counter
 
+        # Fast retry: use short fixed delay for the first N reconnect attempts
+        # per subscription to give WebSocket connections a chance to establish
+        # without long exponential backoff delays on startup.
+        self._fast_retry_max_attempts = 3  # Number of reconnects that use fast retry
+        self._fast_retry_delay = 2.0  # Fixed delay in seconds for fast retries
+        self._subscription_reconnect_count: dict[str, int] = {}  # per-subscription counter
+
         # Candle close detection: track last timestamp to detect when a new candle starts
         # (meaning the previous one closed). CCXT doesn't provide is_closed natively.
         self._last_candle_ts: dict[str, int] = {}  # "symbol:timeframe" -> timestamp_ms
@@ -349,7 +356,10 @@ class CCXTStreamProvider:
         """Handle an error in a watch loop with exponential backoff.
 
         Tracks consecutive errors and triggers reconnection with exponential
-        backoff delays when threshold is reached.
+        backoff delays when threshold is reached. For the first few reconnect
+        attempts per subscription, uses a short fixed delay ("fast retry") to
+        give the WebSocket connection a chance to establish without long delays
+        on startup.
 
         Args:
             key: Subscription key (e.g., "ticker:BTC/USDT").
@@ -367,14 +377,28 @@ class CCXTStreamProvider:
 
         if error_count >= self._max_consecutive_errors:
             self._reconnect_attempt += 1
-            delay = self._get_reconnect_delay(self._reconnect_attempt)
 
-            logger.warning(
-                f"Too many consecutive errors for {key}, "
-                f"reconnecting in {delay:.1f}s (attempt {self._reconnect_attempt})"
-            )
+            # Track per-subscription reconnect count for fast retry logic
+            sub_reconnects = self._subscription_reconnect_count.get(key, 0) + 1
+            self._subscription_reconnect_count[key] = sub_reconnects
 
-            # Wait with exponential backoff before reconnecting
+            # Use fast retry (short fixed delay) for the first N reconnect
+            # attempts per subscription — gives WebSocket connections a chance
+            # to establish without long exponential backoff delays on startup.
+            if sub_reconnects <= self._fast_retry_max_attempts:
+                delay = self._fast_retry_delay
+                logger.info(
+                    f"Fast retry {sub_reconnects}/{self._fast_retry_max_attempts} for {key}, "
+                    f"reconnecting in {delay:.1f}s"
+                )
+            else:
+                delay = self._get_reconnect_delay(self._reconnect_attempt)
+                logger.warning(
+                    f"Too many consecutive errors for {key}, "
+                    f"reconnecting in {delay:.1f}s (attempt {self._reconnect_attempt})"
+                )
+
+            # Wait before reconnecting
             await asyncio.sleep(delay)
 
             # Try to reconnect
@@ -420,6 +444,9 @@ class CCXTStreamProvider:
         """
         self._last_successful_message = time.time()
         self._consecutive_errors[key] = 0
+        # Reset per-subscription reconnect counter on success so that
+        # future disconnections get fast retry again.
+        self._subscription_reconnect_count.pop(key, None)
 
     async def close(self) -> None:
         """Close connection and cleanup resources."""

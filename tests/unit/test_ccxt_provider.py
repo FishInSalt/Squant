@@ -447,7 +447,7 @@ class TestCCXTStreamProviderReconnectBackoff:
 
     @pytest.mark.asyncio
     async def test_handle_loop_error_uses_backoff(self) -> None:
-        """Test that _handle_loop_error applies exponential backoff."""
+        """Test that _handle_loop_error applies fast retry then exponential backoff."""
         provider = CCXTStreamProvider("okx")
 
         with patch("squant.infra.exchange.ccxt.provider.ccxtpro") as mock_ccxt:
@@ -459,7 +459,7 @@ class TestCCXTStreamProviderReconnectBackoff:
             await provider.connect()
 
             # Track sleep calls
-            sleep_calls = []
+            sleep_calls: list[float] = []
 
             async def mock_sleep(delay: float) -> None:
                 sleep_calls.append(delay)
@@ -473,10 +473,10 @@ class TestCCXTStreamProviderReconnectBackoff:
                 for i in range(provider._max_consecutive_errors):
                     await provider._handle_loop_error("test:key", Exception("Test error"))
 
-            # Verify that sleep was called with backoff delay before reconnect
+            # Verify that sleep was called with fast retry delay (first attempt)
             assert len(sleep_calls) >= 1
-            # First backoff delay should be approximately 1 second
-            assert 0.9 <= sleep_calls[0] <= 1.1
+            # First reconnect uses fast retry delay (2s), not exponential backoff
+            assert sleep_calls[0] == provider._fast_retry_delay
 
             await provider.close()
 
@@ -510,6 +510,109 @@ class TestCCXTStreamProviderReconnectBackoff:
             assert provider._reconnect_attempt == 0
 
             await provider.close()
+
+
+class TestFastRetry:
+    """Tests for fast retry logic on initial subscription connection failures."""
+
+    @pytest.mark.asyncio
+    async def test_fast_retry_uses_fixed_delay(self) -> None:
+        """Test that first N reconnect attempts use fast retry (short fixed delay)."""
+        provider = CCXTStreamProvider("okx")
+
+        with patch("squant.infra.exchange.ccxt.provider.ccxtpro") as mock_ccxt:
+            mock_exchange = MagicMock()
+            mock_exchange.load_markets = AsyncMock()
+            mock_exchange.close = AsyncMock()
+            mock_ccxt.okx.return_value = mock_exchange
+
+            await provider.connect()
+
+            sleep_calls: list[float] = []
+
+            async def mock_sleep(delay: float) -> None:
+                sleep_calls.append(delay)
+
+            with (
+                patch("asyncio.sleep", mock_sleep),
+                patch.object(provider, "reconnect", AsyncMock(return_value=True)),
+            ):
+                # Trigger enough errors to hit reconnect threshold
+                for _i in range(provider._max_consecutive_errors):
+                    await provider._handle_loop_error("test:key", Exception("Test"))
+
+            # First reconnect should use fast retry delay (2s), not exponential (1s)
+            assert len(sleep_calls) == 1
+            assert sleep_calls[0] == provider._fast_retry_delay
+
+            await provider.close()
+
+    @pytest.mark.asyncio
+    async def test_fast_retry_transitions_to_exponential_backoff(self) -> None:
+        """Test that after fast retry attempts are exhausted, exponential backoff is used."""
+        provider = CCXTStreamProvider("okx")
+
+        with patch("squant.infra.exchange.ccxt.provider.ccxtpro") as mock_ccxt:
+            mock_exchange = MagicMock()
+            mock_exchange.load_markets = AsyncMock()
+            mock_exchange.close = AsyncMock()
+            mock_ccxt.okx.return_value = mock_exchange
+
+            await provider.connect()
+
+            sleep_calls: list[float] = []
+
+            async def mock_sleep(delay: float) -> None:
+                sleep_calls.append(delay)
+
+            # reconnect returns False to keep _subscription_reconnect_count incrementing
+            # (on success it resets), but _consecutive_errors resets to 0 only on
+            # reconnect success, so we need reconnect to fail to accumulate
+            reconnect_call_count = 0
+
+            async def mock_reconnect() -> bool:
+                nonlocal reconnect_call_count
+                reconnect_call_count += 1
+                # Fail the reconnect so the subscription reconnect counter keeps growing
+                return False
+
+            with (
+                patch("asyncio.sleep", mock_sleep),
+                patch.object(provider, "reconnect", mock_reconnect),
+            ):
+                # Trigger fast_retry_max_attempts + 1 reconnect cycles
+                for cycle in range(provider._fast_retry_max_attempts + 1):
+                    # Reset consecutive errors to simulate a fresh error cycle
+                    provider._consecutive_errors["test:key"] = (
+                        provider._max_consecutive_errors - 1
+                    )
+                    await provider._handle_loop_error("test:key", Exception("Test"))
+
+            # First N should be fast retry delay
+            for i in range(provider._fast_retry_max_attempts):
+                assert sleep_calls[i] == provider._fast_retry_delay, (
+                    f"Call {i} should be fast retry delay"
+                )
+            # The one after should be exponential backoff (not fast retry delay)
+            last_delay = sleep_calls[provider._fast_retry_max_attempts]
+            assert last_delay != provider._fast_retry_delay, (
+                "After fast retries exhausted, should use exponential backoff"
+            )
+
+            await provider.close()
+
+    @pytest.mark.asyncio
+    async def test_fast_retry_counter_resets_on_success(self) -> None:
+        """Test that per-subscription reconnect counter resets on successful data receipt."""
+        provider = CCXTStreamProvider("okx")
+
+        key = "ohlcv:BTC/USDT:1m"
+        provider._subscription_reconnect_count[key] = 5
+
+        # Simulate successful message
+        provider._mark_success(key)
+
+        assert key not in provider._subscription_reconnect_count
 
 
 class TestCandleCloseDetection:
