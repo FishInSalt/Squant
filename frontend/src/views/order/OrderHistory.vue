@@ -232,8 +232,8 @@ async function loadOrders() {
     if (filter.side) params.side = filter.side
     if (filter.status) params.status = filter.status
     if (filter.dateRange.length === 2) {
-      params.start_date = filter.dateRange[0]
-      params.end_date = filter.dateRange[1]
+      params.start_time = filter.dateRange[0]
+      params.end_time = filter.dateRange[1]
     }
 
     const response = await getOrderHistory(params as any)

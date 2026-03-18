@@ -147,6 +147,7 @@ class OrderRepository(BaseRepository[Order]):
     async def list_all(
         self,
         *,
+        account_id: str | UUID | None = None,
         status: OrderStatus | list[OrderStatus] | None = None,
         symbol: str | None = None,
         side: OrderSide | None = None,
@@ -157,6 +158,9 @@ class OrderRepository(BaseRepository[Order]):
     ) -> list[Order]:
         """List orders across all accounts with filters."""
         stmt = select(Order)
+
+        if account_id is not None:
+            stmt = stmt.where(Order.account_id == str(account_id))
 
         if status is not None:
             if isinstance(status, list):
@@ -184,14 +188,20 @@ class OrderRepository(BaseRepository[Order]):
 
     async def count_all(
         self,
+        account_id: str | UUID | None = None,
         status: OrderStatus | list[OrderStatus] | None = None,
         symbol: str | None = None,
         side: OrderSide | None = None,
+        start_time: datetime | None = None,
+        end_time: datetime | None = None,
     ) -> int:
         """Count orders across all accounts."""
         from sqlalchemy import func
 
         stmt = select(func.count()).select_from(Order)
+
+        if account_id is not None:
+            stmt = stmt.where(Order.account_id == str(account_id))
 
         if status is not None:
             if isinstance(status, list):
@@ -204,6 +214,12 @@ class OrderRepository(BaseRepository[Order]):
 
         if side is not None:
             stmt = stmt.where(Order.side == side)
+
+        if start_time is not None:
+            stmt = stmt.where(Order.created_at >= start_time)
+
+        if end_time is not None:
+            stmt = stmt.where(Order.created_at <= end_time)
 
         result = await self.session.execute(stmt)
         return result.scalar_one()

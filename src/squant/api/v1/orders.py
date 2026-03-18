@@ -12,6 +12,7 @@ the /api/v1/exchange-accounts endpoint with properly encrypted credentials.
 
 import logging
 from collections.abc import AsyncGenerator
+from datetime import datetime
 from decimal import Decimal
 from typing import Annotated
 from uuid import UUID
@@ -298,9 +299,18 @@ async def create_order(
 @router.get("", response_model=ApiResponse[OrderListData])
 async def list_orders(
     session: DbSession,
+    account_id: Annotated[
+        UUID | None, Query(description="Filter by exchange account ID")
+    ] = None,
     status: Annotated[list[OrderStatus] | None, Query(description="Filter by status")] = None,
     symbol: Annotated[str | None, Query(description="Filter by trading pair")] = None,
     side: Annotated[OrderSide | None, Query(description="Filter by side")] = None,
+    start_time: Annotated[
+        datetime | None, Query(description="Filter orders created after this time")
+    ] = None,
+    end_time: Annotated[
+        datetime | None, Query(description="Filter orders created before this time")
+    ] = None,
     page: Annotated[int, Query(ge=1, description="Page number (starts from 1)")] = 1,
     page_size: Annotated[int, Query(ge=1, le=100, description="Items per page")] = 20,
 ) -> ApiResponse[OrderListData]:
@@ -311,13 +321,23 @@ async def list_orders(
     offset, limit = paginate_params(page, page_size)
     repo = OrderRepository(session)
     orders = await repo.list_all(
+        account_id=str(account_id) if account_id else None,
         status=status,
         symbol=symbol,
         side=side,
+        start_time=start_time,
+        end_time=end_time,
         offset=offset,
         limit=limit,
     )
-    total = await repo.count_all(status=status, symbol=symbol, side=side)
+    total = await repo.count_all(
+        account_id=str(account_id) if account_id else None,
+        status=status,
+        symbol=symbol,
+        side=side,
+        start_time=start_time,
+        end_time=end_time,
+    )
     data = OrderListData(
         items=[_to_order_detail(o) for o in orders],
         total=total,

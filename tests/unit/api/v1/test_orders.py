@@ -239,6 +239,65 @@ class TestListOrders:
             response = await client.get("/api/v1/orders?page=2&page_size=10")
         assert response.status_code == 200
 
+    @pytest.mark.asyncio
+    async def test_list_orders_with_account_id(
+        self, client: AsyncClient, mock_order_repo, mock_order
+    ) -> None:
+        """Test listing orders filtered by account_id."""
+        account_id = str(uuid4())
+        mock_order_repo.list_all.return_value = [mock_order]
+        mock_order_repo.count_all.return_value = 1
+
+        with patch("squant.api.v1.orders.OrderRepository", return_value=mock_order_repo):
+            response = await client.get(f"/api/v1/orders?account_id={account_id}")
+        assert response.status_code == 200
+        mock_order_repo.list_all.assert_called_once()
+        call_kwargs = mock_order_repo.list_all.call_args[1]
+        assert call_kwargs["account_id"] == account_id
+
+    @pytest.mark.asyncio
+    async def test_list_orders_with_date_range(
+        self, client: AsyncClient, mock_order_repo, mock_order
+    ) -> None:
+        """Test listing orders filtered by start_time and end_time."""
+        mock_order_repo.list_all.return_value = [mock_order]
+        mock_order_repo.count_all.return_value = 1
+
+        with patch("squant.api.v1.orders.OrderRepository", return_value=mock_order_repo):
+            response = await client.get(
+                "/api/v1/orders?start_time=2025-01-01T00:00:00&end_time=2025-12-31T23:59:59"
+            )
+        assert response.status_code == 200
+        list_kwargs = mock_order_repo.list_all.call_args[1]
+        assert list_kwargs["start_time"] is not None
+        assert list_kwargs["end_time"] is not None
+        count_kwargs = mock_order_repo.count_all.call_args[1]
+        assert count_kwargs["start_time"] is not None
+        assert count_kwargs["end_time"] is not None
+
+    @pytest.mark.asyncio
+    async def test_list_orders_with_all_filters(
+        self, client: AsyncClient, mock_order_repo, mock_order
+    ) -> None:
+        """Test listing orders with all filters combined."""
+        account_id = str(uuid4())
+        mock_order_repo.list_all.return_value = [mock_order]
+        mock_order_repo.count_all.return_value = 1
+
+        with patch("squant.api.v1.orders.OrderRepository", return_value=mock_order_repo):
+            response = await client.get(
+                f"/api/v1/orders?account_id={account_id}"
+                "&status=filled&symbol=BTC/USDT&side=buy"
+                "&start_time=2025-01-01T00:00:00&end_time=2025-12-31T23:59:59"
+                "&page=1&page_size=50"
+            )
+        assert response.status_code == 200
+        list_kwargs = mock_order_repo.list_all.call_args[1]
+        assert list_kwargs["account_id"] == account_id
+        assert list_kwargs["symbol"] == "BTC/USDT"
+        assert list_kwargs["start_time"] is not None
+        assert list_kwargs["end_time"] is not None
+
 
 class TestGetOpenOrders:
     """Tests for GET /api/v1/orders/open endpoint."""
