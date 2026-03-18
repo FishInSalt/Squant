@@ -721,10 +721,12 @@ class TestRecoverOrphanedSessions:
 class TestLiveTradingSettings:
     """Tests for LiveTradingSettings."""
 
-    def test_defaults(self):
+    def test_defaults(self, monkeypatch):
         from squant.config import LiveTradingSettings
 
-        settings = LiveTradingSettings()
+        # Isolate from .env to test true code defaults
+        monkeypatch.delenv("LIVE_AUTO_RECOVERY", raising=False)
+        settings = LiveTradingSettings(_env_file=None)
         assert settings.max_sessions == 10
         assert settings.warmup_bars == 200
         assert settings.auto_recovery is False  # Safety default
