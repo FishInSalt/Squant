@@ -214,7 +214,8 @@ export interface paths {
          * Get Balance
          * @description Get account balance for all currencies.
          *
-         *     Returns the available and frozen balance for each currency in the account.
+         *     Returns the available and frozen balance for each currency
+         *     using the first active exchange account.
          */
         get: operations["get_balance_api_v1_account_balance_get"];
         put?: never;
