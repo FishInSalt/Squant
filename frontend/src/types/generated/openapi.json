@@ -798,9 +798,28 @@
           "Orders"
         ],
         "summary": "List Orders",
-        "description": "List orders with optional filters.\n\nReturns paginated list of orders matching the specified criteria.",
+        "description": "List orders with optional filters.\n\nReturns paginated list of orders across all accounts matching the specified criteria.",
         "operationId": "list_orders_api_v1_orders_get",
         "parameters": [
+          {
+            "name": "account_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by exchange account ID",
+              "title": "Account Id"
+            },
+            "description": "Filter by exchange account ID"
+          },
           {
             "name": "status",
             "in": "query",
@@ -857,6 +876,44 @@
               "title": "Side"
             },
             "description": "Filter by side"
+          },
+          {
+            "name": "start_time",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter orders created after this time",
+              "title": "Start Time"
+            },
+            "description": "Filter orders created after this time"
+          },
+          {
+            "name": "end_time",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter orders created before this time",
+              "title": "End Time"
+            },
+            "description": "Filter orders created before this time"
           },
           {
             "name": "page",
@@ -916,7 +973,7 @@
           "Orders"
         ],
         "summary": "Get Open Orders",
-        "description": "Get all open (non-terminal) orders.\n\nReturns orders with status PENDING, SUBMITTED, or PARTIAL.",
+        "description": "Get all open (non-terminal) orders.\n\nReturns orders with status PENDING, SUBMITTED, or PARTIAL across all accounts.",
         "operationId": "get_open_orders_api_v1_orders_open_get",
         "parameters": [
           {
@@ -968,7 +1025,7 @@
           "Orders"
         ],
         "summary": "Get Order Stats",
-        "description": "Get order statistics by status.",
+        "description": "Get order statistics by status across all accounts.",
         "operationId": "get_order_stats_api_v1_orders_stats_get",
         "responses": {
           "200": {
@@ -8708,6 +8765,18 @@
             "title": "Account Id",
             "description": "Account ID"
           },
+          "account_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Account Name",
+            "description": "Exchange account name"
+          },
           "run_id": {
             "anyOf": [
               {
@@ -9024,6 +9093,18 @@
             "format": "uuid",
             "title": "Account Id",
             "description": "Account ID"
+          },
+          "account_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Account Name",
+            "description": "Exchange account name"
           },
           "run_id": {
             "anyOf": [

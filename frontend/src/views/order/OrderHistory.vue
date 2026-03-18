@@ -116,6 +116,12 @@
           </template>
         </el-table-column>
 
+        <el-table-column prop="account_name" label="账户" width="120">
+          <template #default="{ row }">
+            {{ row.account_name || '-' }}
+          </template>
+        </el-table-column>
+
         <el-table-column prop="strategy_name" label="策略" width="120">
           <template #default="{ row }">
             {{ row.strategy_name || '-' }}
@@ -151,6 +157,7 @@
     <el-dialog v-model="detailVisible" title="订单详情" width="560px">
       <el-descriptions v-if="selectedOrder" :column="2" border>
         <el-descriptions-item label="交易对">{{ selectedOrder.symbol }}</el-descriptions-item>
+        <el-descriptions-item label="账户">{{ selectedOrder.account_name || '-' }}</el-descriptions-item>
         <el-descriptions-item label="交易所">{{ formatExchangeName(selectedOrder.exchange) }}</el-descriptions-item>
         <el-descriptions-item label="方向">
           <el-tag :type="selectedOrder.side === 'buy' ? 'success' : 'danger'" size="small">

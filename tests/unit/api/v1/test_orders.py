@@ -72,6 +72,9 @@ def mock_order():
     order.account_id = str(uuid4())
     order.run_id = None
     order.run = None
+    mock_account = MagicMock()
+    mock_account.configure_mock(name="Test Account")
+    order.account = mock_account
     order.exchange = "okx"
     order.exchange_oid = "EXC123456"
     order.symbol = "BTC/USDT"

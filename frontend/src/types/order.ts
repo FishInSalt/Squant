@@ -7,6 +7,7 @@ export type OrderStatus = 'pending' | 'submitted' | 'partial' | 'filled' | 'canc
 export interface Order {
   id: string
   account_id: string
+  account_name?: string
   run_id?: string
   exchange: string
   exchange_oid?: string

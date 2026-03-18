@@ -193,9 +193,11 @@ def _to_order_detail(order) -> OrderDetail:
     strategy_name = None
     if order.run and order.run.strategy:
         strategy_name = order.run.strategy.name
+    account_name = order.account.name if order.account else None
     return OrderDetail(
         id=UUID(order.id),
         account_id=UUID(order.account_id),
+        account_name=account_name,
         run_id=UUID(order.run_id) if order.run_id else None,
         exchange=order.exchange,
         exchange_oid=order.exchange_oid,
@@ -240,9 +242,11 @@ def _to_order_with_trades(order) -> OrderWithTrades:
     strategy_name = None
     if order.run and order.run.strategy:
         strategy_name = order.run.strategy.name
+    account_name = order.account.name if order.account else None
     return OrderWithTrades(
         id=UUID(order.id),
         account_id=UUID(order.account_id),
+        account_name=account_name,
         run_id=UUID(order.run_id) if order.run_id else None,
         exchange=order.exchange,
         exchange_oid=order.exchange_oid,

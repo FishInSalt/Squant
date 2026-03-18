@@ -53,6 +53,7 @@ class OrderDetail(BaseModel):
 
     id: UUID = Field(..., description="Database order ID")
     account_id: UUID = Field(..., description="Account ID")
+    account_name: str | None = Field(None, description="Exchange account name")
     run_id: UUID | None = Field(None, description="Strategy run ID")
     exchange: str = Field(..., description="Exchange name")
     exchange_oid: str | None = Field(None, description="Exchange order ID")
