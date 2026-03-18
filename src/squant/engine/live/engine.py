@@ -546,7 +546,12 @@ class LiveTradingEngine:
         if not self._is_running:
             return False
         if self._last_active_at is None:
-            return True
+            # No candles processed yet — healthy if started recently,
+            # stale if no candle ever arrived within timeout period.
+            if self._started_at is None:
+                return True
+            startup_elapsed = (datetime.now(UTC) - self._started_at).total_seconds()
+            return startup_elapsed < timeout_seconds
         tf_seconds = self._TIMEFRAME_SECONDS.get(self._timeframe, 300)
         effective_timeout = max(timeout_seconds, tf_seconds * 2)
         elapsed = (datetime.now(UTC) - self._last_active_at).total_seconds()

@@ -687,6 +687,16 @@ class TestHealthCheck:
         assert engine.last_active_at is not None
 
     @pytest.mark.asyncio
+    async def test_is_healthy_startup_grace_period(self, engine):
+        """Test that is_healthy returns False after timeout_seconds with no candles."""
+        await engine.start()
+        assert engine.is_healthy(timeout_seconds=300) is True  # Within grace period
+
+        # Simulate time elapsed beyond timeout_seconds (default 300s)
+        engine._started_at = datetime.now(UTC) - timedelta(seconds=301)
+        assert engine.is_healthy(timeout_seconds=300) is False  # Timeout expired, no candle arrived
+
+    @pytest.mark.asyncio
     async def test_is_healthy_returns_true_when_active(self, engine):
         """Test is_healthy returns True when recently active."""
         await engine.start()
@@ -738,10 +748,27 @@ class TestProcessingLock:
         """Test is_healthy uses adaptive timeout based on timeframe.
 
         For 1m timeframe, effective timeout = max(timeout_seconds, 60*3=180).
-        So even with timeout_seconds=0, a just-started engine is healthy.
+        Adaptive timeout applies after first candle arrives.
+        Before first candle, startup grace uses timeout_seconds directly.
         """
         await engine.start()
-        # Effective timeout = max(0, 180) = 180s, just started so healthy
+        # Before first candle: startup grace uses timeout_seconds=300 (default)
+        assert engine.is_healthy(timeout_seconds=300) is True
+
+        # After receiving a candle, adaptive timeout kicks in
+        candle = WSCandle(
+            symbol="BTC/USDT",
+            timeframe="1m",
+            timestamp=datetime.now(UTC),
+            open=Decimal("45000"),
+            high=Decimal("46000"),
+            low=Decimal("44000"),
+            close=Decimal("45500"),
+            volume=Decimal("100"),
+            is_closed=True,
+        )
+        await engine.process_candle(candle)
+        # Now adaptive: max(0, 180) = 180s, just received candle so healthy
         assert engine.is_healthy(timeout_seconds=0) is True
 
     @pytest.mark.asyncio

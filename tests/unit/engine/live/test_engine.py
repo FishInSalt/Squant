@@ -1281,12 +1281,12 @@ class TestHealthCheck:
     async def test_is_healthy_adapts_to_timeframe(self, engine):
         """Test is_healthy uses adaptive timeout based on timeframe.
 
-        For 1m timeframe, effective timeout = max(timeout_seconds, 60*3=180).
-        So even with timeout_seconds=0, a just-started engine is healthy.
+        Adaptive timeout (max(timeout_seconds, tf_seconds * 2)) applies after
+        first candle arrives. Before that, startup grace uses timeout_seconds.
         """
         await engine.start()
-        # Effective timeout = max(0, 180) = 180s, just started so healthy
-        assert engine.is_healthy(timeout_seconds=0) is True
+        # Before first candle: startup grace uses timeout_seconds directly
+        assert engine.is_healthy(timeout_seconds=300) is True
 
     @pytest.mark.asyncio
     async def test_is_healthy_returns_false_when_expired(self, engine):
