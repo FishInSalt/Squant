@@ -860,7 +860,7 @@ function handleAuditPageChange(page: number) {
   loadLiveAuditOrders()
 }
 
-// Load all audit orders (unpaginated) for chart fill markers
+// Load recent audit orders for chart fill markers (max 100 per API limit)
 async function loadAllLiveOrders() {
   if (!isLive.value) return
   try {
@@ -966,6 +966,10 @@ function handleTradingEvent(data: Record<string, unknown>) {
       const newFills = data.new_fills as Fill[] | undefined
       if (Array.isArray(newFills) && newFills.length) {
         liveWsFills.value.push(...newFills)
+        // Cap to prevent unbounded growth in long-running sessions
+        if (liveWsFills.value.length > 500) {
+          liveWsFills.value = liveWsFills.value.slice(-500)
+        }
       }
     }
 

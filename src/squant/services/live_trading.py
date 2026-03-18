@@ -805,6 +805,23 @@ class LiveTradingService:
                                 update_kwargs["avg_price"] = Decimal(event["avg_fill_price"])
                             await order_repo.update(db_order_id, **update_kwargs)
 
+                        elif event["type"] == "status_change":
+                            db_order_id = order_id_map.get(event["internal_id"])
+                            if not db_order_id:
+                                logger.warning(
+                                    f"No DB order for internal_id={event['internal_id']}, "
+                                    f"skipping status_change"
+                                )
+                                continue
+                            update_kwargs: dict[str, Any] = {
+                                "status": OrderStatus(event["new_status"]),
+                            }
+                            if event.get("filled_amount"):
+                                update_kwargs["filled"] = Decimal(event["filled_amount"])
+                            if event.get("avg_fill_price"):
+                                update_kwargs["avg_price"] = Decimal(event["avg_fill_price"])
+                            await order_repo.update(db_order_id, **update_kwargs)
+
                     except Exception as e:
                         logger.warning(f"Failed to persist order event {event.get('type')}: {e}")
 
