@@ -4,7 +4,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import TYPE_CHECKING
 
-from sqlalchemy import DateTime, ForeignKey, Index, Numeric, String, Text
+from sqlalchemy import JSON, DateTime, ForeignKey, Index, Numeric, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .base import Base, TimestampMixin, UUIDMixin
@@ -41,6 +41,7 @@ class Order(Base, UUIDMixin, TimestampMixin):
         String(16), default=OrderStatus.PENDING, nullable=False
     )
     reject_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    corrections: Mapped[dict | None] = mapped_column(JSON, nullable=True, default=None)
 
     # Relationships
     run: Mapped["StrategyRun | None"] = relationship(back_populates="orders", lazy="selectin")
@@ -88,7 +89,8 @@ class Trade(Base, UUIDMixin, TimestampMixin):
     timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
     # Fill source: "ws" (WebSocket push) or "poll" (REST polling) — LIVE-EX-003
-    fill_source: Mapped[str | None] = mapped_column(String(8), nullable=True)
+    fill_source: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    taker_or_maker: Mapped[str | None] = mapped_column(String(8), nullable=True)
 
     # Relationships
     order: Mapped["Order"] = relationship(back_populates="trades")

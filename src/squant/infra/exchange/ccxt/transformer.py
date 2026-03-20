@@ -13,6 +13,7 @@ from squant.infra.exchange.ws_types import (
     WSOrderUpdate,
     WSTicker,
     WSTrade,
+    WSTradeExecution,
 )
 
 
@@ -295,6 +296,35 @@ class CCXTDataTransformer:
         return WSAccountUpdate(
             balances=balances,
             timestamp=CCXTDataTransformer._parse_timestamp(balance.get("timestamp")),
+        )
+
+    @staticmethod
+    def trade_to_ws_trade_execution(trade: dict[str, Any]) -> WSTradeExecution:
+        """Convert a CCXT trade dict (from watchMyTrades) to WSTradeExecution.
+
+        Args:
+            trade: CCXT unified trade structure.
+
+        Returns:
+            WSTradeExecution with per-fill data.
+        """
+        fee_info = trade.get("fee") or {}
+        ts = trade.get("timestamp")
+        timestamp = (
+            datetime.fromtimestamp(ts / 1000, tz=UTC) if ts is not None else datetime.now(UTC)
+        )
+        return WSTradeExecution(
+            trade_id=str(trade.get("id", "")),
+            order_id=str(trade.get("order", "")),
+            client_order_id=trade.get("clientOrderId"),
+            symbol=trade.get("symbol", ""),
+            side=trade.get("side", ""),
+            price=Decimal(str(trade.get("price") or 0)),
+            amount=Decimal(str(trade.get("amount") or 0)),
+            fee=Decimal(str(fee_info.get("cost") or 0)),
+            fee_currency=fee_info.get("currency") or "",
+            taker_or_maker=trade.get("takerOrMaker"),
+            timestamp=timestamp,
         )
 
     @staticmethod

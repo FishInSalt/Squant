@@ -1500,10 +1500,14 @@ class TestCircuitBreakerIntegration:
         assert engine.circuit_breaker_triggered is True
 
     @pytest.mark.asyncio
-    async def test_on_order_update_records_trade_pnl(
+    async def test_on_order_update_no_longer_processes_fills(
         self, engine_with_circuit_breaker, mock_adapter
     ):
-        """Test that on_order_update records trade PnL for risk management."""
+        """Test that on_order_update (watchOrders) no longer processes fills.
+
+        Fill processing has been moved to _process_trade_execution (watchMyTrades).
+        watchOrders only syncs order status/metadata now.
+        """
         engine = engine_with_circuit_breaker
         await engine.start()
 
@@ -1522,14 +1526,6 @@ class TestCircuitBreakerIntegration:
         )
         engine._exchange_order_map[exchange_id] = internal_id
 
-        # Simulate a trade completion: _open_trade goes from non-None to None
-        mock_trade = MagicMock()
-        mock_trade.pnl = Decimal("-100")  # Loss
-
-        engine._context._trades = []  # Before: 0 trades
-        # Set _open_trade to simulate an open position (will be cleared by fill)
-        engine._context._open_trade = MagicMock()
-
         # Create order update
         update = WSOrderUpdate(
             order_id=exchange_id,
@@ -1547,21 +1543,17 @@ class TestCircuitBreakerIntegration:
             timestamp=datetime.now(UTC),
         )
 
-        # Mock _process_fill to close the trade (_open_trade → None, trade added)
-        def mock_process_fill(*args, **kwargs):
-            engine._context._trades = [mock_trade]
-            engine._context._open_trade = None
-
-        with (
-            patch.object(engine._context, "_process_fill", side_effect=mock_process_fill),
-            patch.object(engine._context, "_move_completed_orders"),
-        ):
-            # Buffer the update, then drain to process (ISSUE-203 fix)
+        with patch.object(engine._context, "_process_fill") as mock_fill:
             engine.on_order_update(update)
             engine._drain_ws_updates()
 
-        # Check that consecutive_losses increased
-        assert engine._risk_manager.state.consecutive_losses == 1
+            # _process_fill should NOT be called — fills come from watchMyTrades
+            mock_fill.assert_not_called()
+
+        # Status and metadata should be updated though
+        live_order = engine._live_orders[internal_id]
+        assert live_order.status == OrderStatus.FILLED
+        assert live_order.filled_amount == Decimal("0.1")
 
     @pytest.mark.asyncio
     async def test_circuit_breaker_triggered_after_consecutive_losses(
@@ -2072,10 +2064,14 @@ class TestFillProcessing:
             assert fill_arg.fee == Decimal("0.45")
 
     @pytest.mark.asyncio
-    async def test_update_order_from_response_detects_fill(
+    async def test_update_order_from_response_no_fill_processing(
         self, engine_with_buy_order, mock_adapter
     ):
-        """Test _update_order_from_response correctly detects new fills."""
+        """Test _update_order_from_response no longer processes fills.
+
+        Fill processing has been moved to _process_trade_execution (watchMyTrades).
+        REST polling only syncs status/metadata now.
+        """
         engine = engine_with_buy_order
         await engine.start()
 
@@ -2097,18 +2093,15 @@ class TestFillProcessing:
             fee_currency="USDT",
         )
 
-        with (
-            patch.object(engine._context, "_process_fill") as mock_fill,
-            patch.object(engine._context, "_move_completed_orders"),
-        ):
+        with patch.object(engine._context, "_process_fill") as mock_fill:
             engine._update_order_from_response(live_order, response)
 
-            mock_fill.assert_called_once()
-            fill_arg = mock_fill.call_args[0][0]
-            # Should get incremental fill: 0.7 - 0.3 = 0.4
-            assert fill_arg.amount == Decimal("0.4")
-            # Should get incremental fee: 0.315 - 0.135 = 0.18
-            assert fill_arg.fee == Decimal("0.18")
+            # No fill processing — only status/metadata sync
+            mock_fill.assert_not_called()
+
+        # Metadata should be updated
+        assert live_order.filled_amount == Decimal("0.7")
+        assert live_order.fee == Decimal("0.315")
 
     @pytest.mark.asyncio
     async def test_update_order_from_response_no_new_fills(
@@ -2142,8 +2135,11 @@ class TestFillProcessing:
             mock_fill.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_polling_path_records_trade_pnl(self, engine_with_buy_order, mock_adapter):
-        """Test that _update_order_from_response records trade PnL for risk management."""
+    async def test_polling_path_no_fill_processing(self, engine_with_buy_order, mock_adapter):
+        """Test that _update_order_from_response no longer processes fills for risk mgmt.
+
+        Fills and trade PnL recording now come exclusively from _process_trade_execution.
+        """
         engine = engine_with_buy_order
         await engine.start()
 
@@ -2162,38 +2158,30 @@ class TestFillProcessing:
             fee_currency="USDT",
         )
 
-        # Mock a completed trade with a loss
-        mock_trade = MagicMock()
-        mock_trade.pnl = Decimal("-100")
-
-        engine._context._trades = []  # Before: 0 trades
-        engine._context._open_trade = MagicMock()  # Simulate open position
-
-        def mock_process_fill(*args, **kwargs):
-            engine._context._trades = [mock_trade]
-            engine._context._open_trade = None  # Trade closed
-
-        with (
-            patch.object(engine._context, "_process_fill", side_effect=mock_process_fill),
-            patch.object(engine._context, "_move_completed_orders"),
-        ):
+        with patch.object(engine._context, "_process_fill") as mock_fill:
             engine._update_order_from_response(live_order, response)
+            mock_fill.assert_not_called()
 
-        # Check that consecutive_losses increased
-        assert engine._risk_manager.state.consecutive_losses == 1
+        # No fill processing, so risk state unchanged
+        assert engine._risk_manager.state.consecutive_losses == 0
+        # Status synced
+        assert live_order.status == OrderStatus.FILLED
 
     @pytest.mark.asyncio
-    async def test_polling_path_triggers_circuit_breaker(self, engine_with_buy_order, mock_adapter):
-        """Test that polling path triggers circuit breaker after consecutive losses."""
+    async def test_polling_path_does_not_trigger_circuit_breaker(
+        self, engine_with_buy_order, mock_adapter
+    ):
+        """Test that polling path no longer triggers circuit breaker directly.
+
+        Circuit breaker now triggers via _process_trade_execution (watchMyTrades).
+        """
         engine = engine_with_buy_order
         await engine.start()
 
-        # Pre-load consecutive losses (threshold=3 by default, but engine fixture uses
-        # default config; manually set to near threshold)
         engine._risk_manager.config.circuit_breaker_enabled = True
         engine._risk_manager.config.circuit_breaker_loss_count = 2
 
-        # Record one prior loss so next loss triggers breaker
+        # Record one prior loss
         engine._risk_manager.record_trade_result(Decimal("-100"))
         assert engine._circuit_breaker_triggered is False
 
@@ -2212,26 +2200,13 @@ class TestFillProcessing:
             fee_currency="USDT",
         )
 
-        mock_trade = MagicMock()
-        mock_trade.pnl = Decimal("-200")
-
-        engine._context._trades = []
-        engine._context._open_trade = MagicMock()  # Simulate open position
-
-        def mock_process_fill(*args, **kwargs):
-            engine._context._trades = [mock_trade]
-            engine._context._open_trade = None  # Trade closed
-
-        with (
-            patch.object(engine._context, "_process_fill", side_effect=mock_process_fill),
-            patch.object(engine._context, "_move_completed_orders"),
-        ):
+        with patch.object(engine._context, "_process_fill") as mock_fill:
             engine._update_order_from_response(live_order, response)
+            mock_fill.assert_not_called()
 
-        # Circuit breaker should now be triggered
-        assert engine._risk_manager.state.consecutive_losses == 2
-        assert engine._risk_manager.state.circuit_breaker_triggered is True
-        assert engine._circuit_breaker_triggered is True
+        # No fill processing, so circuit breaker not affected by polling
+        assert engine._risk_manager.state.consecutive_losses == 1  # Only the prior one
+        assert engine._circuit_breaker_triggered is False
 
     @pytest.mark.asyncio
     async def test_polling_path_no_risk_update_when_no_trade_completed(
@@ -2726,30 +2701,29 @@ class TestForceFillOnValueError:
 
         In live trading, fills are already executed on exchange. The engine
         must record them locally regardless of cash discrepancy (ISSUE-201).
+        Now fills come via _process_trade_execution (watchMyTrades), not watchOrders.
         """
+        from squant.infra.exchange.ws_types import WSTradeExecution
+
         engine = engine_with_buy_order
         await engine.start()
 
         # Artificially deplete local cash to create discrepancy
         engine._context._cash = Decimal("100")  # Much less than fill cost
 
-        update = WSOrderUpdate(
+        exec_data = WSTradeExecution(
+            trade_id="t001",
             order_id="exchange-1",
-            client_order_id="order-1",
             symbol="BTC/USDT",
             side="buy",
-            order_type="market",
-            status="filled",
-            size=Decimal("1.0"),
-            filled_size=Decimal("1.0"),
-            avg_price=Decimal("45000"),
+            price=Decimal("45000"),
+            amount=Decimal("1.0"),
             fee=Decimal("0.45"),
             fee_currency="USDT",
+            timestamp=datetime.now(UTC),
         )
 
-        # Buffer and drain — should NOT raise ValueError
-        engine.on_order_update(update)
-        engine._drain_ws_updates()
+        engine._process_trade_execution(exec_data)
 
         # Fill should be recorded (cash goes negative, which is OK in live)
         assert len(engine._context.fills) == 1
@@ -2757,14 +2731,15 @@ class TestForceFillOnValueError:
         assert engine._context._cash < Decimal("0")  # Negative cash from discrepancy
 
     @pytest.mark.asyncio
-    async def test_polling_fill_recorded_despite_insufficient_cash(
-        self, engine_with_buy_order, mock_adapter
-    ):
-        """Test polling-path fill is recorded even when local cash is insufficient."""
+    async def test_polling_no_longer_records_fills(self, engine_with_buy_order, mock_adapter):
+        """Test polling path no longer records fills directly.
+
+        Fills now come exclusively from _process_trade_execution.
+        REST polling only syncs order status and metadata.
+        """
         engine = engine_with_buy_order
         await engine.start()
 
-        # Artificially deplete local cash
         engine._context._cash = Decimal("50")
 
         live_order = engine._live_orders["order-1"]
@@ -2782,12 +2757,12 @@ class TestForceFillOnValueError:
             fee_currency="USDT",
         )
 
-        # Should NOT raise ValueError
         engine._update_order_from_response(live_order, response)
 
-        # Fill should be recorded
-        assert len(engine._context.fills) == 1
-        assert engine._context._cash < Decimal("0")
+        # No fills recorded from polling — fills come from watchMyTrades only
+        assert len(engine._context.fills) == 0
+        # Status should be synced
+        assert live_order.status == OrderStatus.FILLED
 
 
 class TestWsUpdateBuffering:
@@ -3941,7 +3916,9 @@ class TestPrivateWebSocket:
         mock_provider = AsyncMock()
         mock_provider.connect = AsyncMock()
         mock_provider.watch_orders = AsyncMock()
+        mock_provider.watch_my_trades = AsyncMock()
         mock_provider.add_handler = MagicMock()
+        mock_provider.add_reconnect_handler = MagicMock()
 
         with patch(
             "squant.infra.exchange.ccxt.CCXTStreamProvider",
@@ -3953,6 +3930,8 @@ class TestPrivateWebSocket:
         mock_provider.add_handler.assert_called_once()
         mock_provider.connect.assert_called_once()
         mock_provider.watch_orders.assert_called_once_with("BTC/USDT")
+        mock_provider.watch_my_trades.assert_called_once_with("BTC/USDT")
+        mock_provider.add_reconnect_handler.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_start_private_ws_no_credentials_skips(self, engine):
@@ -4590,8 +4569,8 @@ class TestNegativeFeeDeltaLogsWarning:
         order.fee = Decimal("0.5")
         return order
 
-    def test_negative_fee_delta_ws_logs_warning(self, engine, caplog):
-        """Negative fee delta via WS update should produce a warning log."""
+    def test_ws_no_longer_computes_fee_delta(self, engine, caplog):
+        """WS order updates no longer compute fee deltas (fills moved to watchMyTrades)."""
         import logging
 
         internal_id = "order-ws-1"
@@ -4602,7 +4581,7 @@ class TestNegativeFeeDeltaLogsWarning:
         engine._live_orders[internal_id] = live_order
         engine._exchange_order_map[exchange_id] = internal_id
 
-        # WS update with fee=0.3 < old fee=0.5 -> negative delta
+        # WS update with fee=0.3 < old fee=0.5 -> would have been negative delta
         update = WSOrderUpdate(
             order_id=exchange_id,
             symbol="BTC/USDT",
@@ -4618,13 +4597,15 @@ class TestNegativeFeeDeltaLogsWarning:
         with caplog.at_level(logging.WARNING, logger="squant.engine.live.engine"):
             engine._process_single_ws_update(update)
 
+        # No negative fee delta warning — fee delta computation removed from WS path
         warning_messages = [r.message for r in caplog.records if r.levelno == logging.WARNING]
-        assert any("Negative fee delta" in m or "fee rebate" in m for m in warning_messages), (
-            f"Expected warning about negative fee delta, got: {warning_messages}"
-        )
+        assert not any("Negative fee delta" in m for m in warning_messages)
 
-    def test_negative_fee_delta_poll_logs_warning(self, engine, caplog):
-        """Negative fee delta via polling should produce a warning log."""
+        # Fee synced from WS aggregate
+        assert live_order.fee == Decimal("0.3")
+
+    def test_poll_no_longer_computes_fee_delta(self, engine, caplog):
+        """Polling path no longer computes fee deltas (fills moved to watchMyTrades)."""
         import logging
 
         internal_id = "order-poll-1"
@@ -4636,7 +4617,7 @@ class TestNegativeFeeDeltaLogsWarning:
         engine._live_orders[internal_id] = live_order
         engine._exchange_order_map[exchange_id] = internal_id
 
-        # Polling response with fee=0.3 < old fee=0.5 -> negative delta
+        # Polling response with fee=0.3 < old fee=0.5 -> would have been negative delta
         response = OrderResponse(
             order_id=exchange_id,
             symbol="BTC/USDT",
@@ -4653,10 +4634,12 @@ class TestNegativeFeeDeltaLogsWarning:
         with caplog.at_level(logging.WARNING, logger="squant.engine.live.engine"):
             engine._update_order_from_response(live_order, response)
 
+        # No negative fee delta warning — fee delta computation removed from polling path
         warning_messages = [r.message for r in caplog.records if r.levelno == logging.WARNING]
-        assert any("Negative fee delta" in m or "fee rebate" in m for m in warning_messages), (
-            f"Expected warning about negative fee delta, got: {warning_messages}"
-        )
+        assert not any("Negative fee delta" in m for m in warning_messages)
+
+        # Fee synced from polling response
+        assert live_order.fee == Decimal("0.3")
 
 
 class TestGetPendingOrderEvents:

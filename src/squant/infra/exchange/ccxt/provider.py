@@ -28,6 +28,7 @@ from squant.infra.exchange.ws_types import (
     WSOrderUpdate,
     WSTicker,
     WSTrade,
+    WSTradeExecution,
 )
 
 logger = logging.getLogger(__name__)
@@ -85,6 +86,9 @@ class CCXTStreamProvider:
 
         # Active subscription tasks
         self._subscription_tasks: dict[str, asyncio.Task[None]] = {}
+
+        # Reconnect handlers — invoked after successful WebSocket reconnection
+        self._reconnect_handlers: list[Callable[..., Any]] = []
 
         # Transformer for data conversion
         self._transformer = CCXTDataTransformer()
@@ -341,6 +345,14 @@ class CCXTStreamProvider:
                     logger.info("Restarted batch tickers loop after reconnect")
 
                 logger.info(f"Successfully reconnected to {self._exchange_id}")
+
+                # Notify reconnect handlers
+                for handler in self._reconnect_handlers:
+                    try:
+                        await handler()
+                    except Exception as e:
+                        logger.error(f"Reconnect handler error: {e}")
+
                 return True
 
             except ExchangeConnectionError as e:
@@ -500,6 +512,16 @@ class CCXTStreamProvider:
         if handler in self._handlers:
             self._handlers.remove(handler)
 
+    def add_reconnect_handler(self, handler: Callable[..., Any]) -> None:
+        """Register a callback invoked after successful WS reconnection."""
+        if handler not in self._reconnect_handlers:
+            self._reconnect_handlers.append(handler)
+
+    def remove_reconnect_handler(self, handler: Callable[..., Any]) -> None:
+        """Remove a reconnect callback."""
+        if handler in self._reconnect_handlers:
+            self._reconnect_handlers.remove(handler)
+
     # ==================== Public Channel Subscriptions ====================
 
     async def watch_ticker(self, symbol: str) -> None:
@@ -642,6 +664,29 @@ class CCXTStreamProvider:
         task = asyncio.create_task(self._balance_loop())
         self._subscription_tasks[key] = task
         logger.info("Started watching balance")
+
+    async def watch_my_trades(self, symbol: str) -> None:
+        """Subscribe to user trade execution feed (private channel).
+
+        Args:
+            symbol: Trading symbol (required -- Binance/Bybit require it;
+                    OKX supports None but we use symbol for consistency).
+        """
+        if not self._credentials:
+            raise ExchangeAuthenticationError(
+                message="Credentials required for private channels",
+                exchange=self._exchange_id,
+            )
+        key = f"my_trades:{symbol}"
+        if key in self._subscription_tasks:
+            if not self._subscription_tasks[key].done():
+                logger.debug(f"Already watching my trades: {symbol}")
+                return
+            logger.warning(f"Restarting dead my_trades task for {symbol}")
+            del self._subscription_tasks[key]
+        task = asyncio.create_task(self._my_trades_loop(symbol))
+        self._subscription_tasks[key] = task
+        logger.info(f"Started watching my trades: {symbol}")
 
     # ==================== Unsubscribe ====================
 
@@ -985,12 +1030,44 @@ class CCXTStreamProvider:
             self._subscription_tasks.pop(key, None)
             logger.info("Balance loop exited")
 
+    async def _my_trades_loop(self, symbol: str) -> None:
+        """Background loop for user trade execution updates."""
+        key = f"my_trades:{symbol}"
+        try:
+            if not await self._wait_until_ready(key):
+                return
+            while self._running:
+                try:
+                    if not self._exchange:
+                        await asyncio.sleep(1)
+                        continue
+                    trades = await self._exchange.watch_my_trades(symbol)
+                    self._mark_success(key)
+                    for trade in trades:
+                        ws_trade = self._transformer.trade_to_ws_trade_execution(trade)
+                        await self._dispatch("trade_execution", ws_trade)
+                except asyncio.CancelledError:
+                    break
+                except Exception as e:
+                    if not await self._handle_loop_error(key, e):
+                        break
+                    await asyncio.sleep(1)
+        finally:
+            self._subscription_tasks.pop(key, None)
+            logger.info(f"My trades loop exited for {symbol}")
+
     # ==================== Dispatch ====================
 
     async def _dispatch(
         self,
         data_type: str,
-        data: WSTicker | WSCandle | WSTrade | WSOrderBook | WSOrderUpdate | WSAccountUpdate,
+        data: WSTicker
+        | WSCandle
+        | WSTrade
+        | WSOrderBook
+        | WSOrderUpdate
+        | WSAccountUpdate
+        | WSTradeExecution,
     ) -> None:
         """Dispatch data to all registered handlers.
 

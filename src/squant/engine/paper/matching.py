@@ -99,7 +99,10 @@ class PaperMatchingEngine:
             return None
 
         fill_price, price_source = self._compute_market_fill_price(
-            order.side, current_price, bid=bid, ask=ask,
+            order.side,
+            current_price,
+            bid=bid,
+            ask=ask,
         )
 
         # Clamp to bar range (consistent with backtest matching engine)
@@ -365,7 +368,10 @@ class PaperMatchingEngine:
 
         # Triggered — fill as market order using spread or slippage
         fill_price, price_source = self._compute_market_fill_price(
-            order.side, current_price, bid=bid, ask=ask,
+            order.side,
+            current_price,
+            bid=bid,
+            ask=ask,
         )
 
         # Clamp to bar range
@@ -521,8 +527,12 @@ class PaperMatchingEngine:
 
             # Attempt limit fill
             fill = self._try_fill_as_limit(
-                order, current_price, timestamp,
-                high=high, low=low, open_price=open_price,
+                order,
+                current_price,
+                timestamp,
+                high=high,
+                low=low,
+                open_price=open_price,
                 volume_budget=remaining_budget,
             )
             if fill:

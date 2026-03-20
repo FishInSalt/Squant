@@ -509,21 +509,29 @@ class TestGetCandlesEndTime:
         end_time = 1700000000000
         candles_from_exchange = [
             Candlestick(
-                timestamp=datetime.fromtimestamp(
-                    (end_time - 7_200_000) / 1000, tz=UTC
-                ),
-                open=42000.0, high=42100.0, low=41900.0, close=42050.0, volume=100.0,
+                timestamp=datetime.fromtimestamp((end_time - 7_200_000) / 1000, tz=UTC),
+                open=42000.0,
+                high=42100.0,
+                low=41900.0,
+                close=42050.0,
+                volume=100.0,
             ),
             Candlestick(
-                timestamp=datetime.fromtimestamp(
-                    (end_time - 3_600_000) / 1000, tz=UTC
-                ),
-                open=42050.0, high=42150.0, low=42000.0, close=42100.0, volume=150.0,
+                timestamp=datetime.fromtimestamp((end_time - 3_600_000) / 1000, tz=UTC),
+                open=42050.0,
+                high=42150.0,
+                low=42000.0,
+                close=42100.0,
+                volume=150.0,
             ),
             # This candle is at end_time — should be filtered out
             Candlestick(
                 timestamp=datetime.fromtimestamp(end_time / 1000, tz=UTC),
-                open=42100.0, high=42200.0, low=42050.0, close=42150.0, volume=200.0,
+                open=42100.0,
+                high=42200.0,
+                low=42050.0,
+                close=42150.0,
+                volume=200.0,
             ),
         ]
         mock_exchange.get_candlesticks = AsyncMock(return_value=candles_from_exchange)

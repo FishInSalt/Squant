@@ -584,9 +584,7 @@ class TestListActiveSessions:
         with patch("squant.api.v1.live_trading.LiveTradingService") as mock_service_class:
             mock_service = MagicMock()
             mock_service.list_active = MagicMock(return_value=mock_sessions)
-            mock_service.get_runs_by_ids = AsyncMock(
-                return_value={str(mock_run.id): mock_run}
-            )
+            mock_service.get_runs_by_ids = AsyncMock(return_value={str(mock_run.id): mock_run})
             mock_service_class.return_value = mock_service
 
             response = await client.get("/api/v1/live")

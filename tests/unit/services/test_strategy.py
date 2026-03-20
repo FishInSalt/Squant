@@ -386,9 +386,7 @@ class TestStrategyService:
         assert call_args[1]["status"] == StrategyStatus.ARCHIVED
 
     @pytest.mark.asyncio
-    async def test_update_name_integrity_error_raises_name_exists(
-        self, service, sample_strategy
-    ):
+    async def test_update_name_integrity_error_raises_name_exists(self, service, sample_strategy):
         """Test that IntegrityError on commit (race condition) raises StrategyNameExistsError.
 
         repository.update() returns an object with the NEW name already set,
@@ -401,9 +399,7 @@ class TestStrategyService:
         service.repository.get = AsyncMock(return_value=sample_strategy)
         service.repository.get_by_name = AsyncMock(return_value=None)  # passes TOCTOU check
         service.repository.update = AsyncMock(return_value=updated_strategy)
-        service.session.commit = AsyncMock(
-            side_effect=IntegrityError("duplicate", {}, None)
-        )
+        service.session.commit = AsyncMock(side_effect=IntegrityError("duplicate", {}, None))
         service.session.rollback = AsyncMock()
 
         request = UpdateStrategyRequest(name="Conflicting Name")
@@ -463,7 +459,9 @@ class TestStrategyService:
         assert str(sample_strategy.id) in str(exc_info.value)
 
     @pytest.mark.asyncio
-    async def test_delete_multiple_running_sessions_fails(self, service, mock_session, sample_strategy):
+    async def test_delete_multiple_running_sessions_fails(
+        self, service, mock_session, sample_strategy
+    ):
         """Test delete fails with correct count when multiple sessions running."""
         service.repository.get = AsyncMock(return_value=sample_strategy)
 
@@ -485,7 +483,9 @@ class TestStrategyService:
         assert exc_info.value.running_count == 3
 
     @pytest.mark.asyncio
-    async def test_delete_with_completed_runs_archives(self, service, mock_session, sample_strategy):
+    async def test_delete_with_completed_runs_archives(
+        self, service, mock_session, sample_strategy
+    ):
         """Test delete archives strategy even when it has completed runs.
 
         Soft delete preserves strategy_runs history (backtest results, etc.)
@@ -511,7 +511,9 @@ class TestStrategyService:
 
     @pytest.mark.asyncio
     @patch("squant.services.strategy.validate_strategy_code")
-    async def test_archive_frees_name_for_reuse(self, mock_validate, service, mock_session, sample_strategy):
+    async def test_archive_frees_name_for_reuse(
+        self, mock_validate, service, mock_session, sample_strategy
+    ):
         """Test that archiving a strategy frees up its name for a new strategy."""
         # Step 1: Archive the strategy
         service.repository.get = AsyncMock(return_value=sample_strategy)

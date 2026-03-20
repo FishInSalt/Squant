@@ -795,6 +795,8 @@ class LiveTradingService:
                                 fee_currency=event.get("fee_currency"),
                                 timestamp=datetime.fromisoformat(event["timestamp"]),
                                 fill_source=event.get("fill_source"),
+                                exchange_tid=event.get("exchange_tid"),
+                                taker_or_maker=event.get("taker_or_maker"),
                             )
                             # Update order with cumulative fill info
                             update_kwargs: dict[str, Any] = {
@@ -821,6 +823,47 @@ class LiveTradingService:
                             if event.get("avg_fill_price"):
                                 update_kwargs["avg_price"] = Decimal(event["avg_fill_price"])
                             await order_repo.update(db_order_id, **update_kwargs)
+
+                        elif event["type"] == "correction":
+                            internal_id = event["internal_id"]
+                            db_order_id = order_id_map.get(internal_id)
+                            if db_order_id:
+                                # Update order fields based on corrections
+                                update_data: dict[str, Any] = {}
+                                for c in event.get("corrections", []):
+                                    field = c["field"]
+                                    if field == "filled_amount":
+                                        update_data["filled"] = Decimal(c["after"])
+                                    elif field == "avg_fill_price":
+                                        update_data["avg_price"] = Decimal(c["after"])
+                                    elif field == "status":
+                                        status_map = {
+                                            "submitted": OrderStatus.SUBMITTED,
+                                            "partial": OrderStatus.PARTIAL,
+                                            "filled": OrderStatus.FILLED,
+                                            "cancelled": OrderStatus.CANCELLED,
+                                            "rejected": OrderStatus.REJECTED,
+                                        }
+                                        mapped = status_map.get(c["after"])
+                                        if mapped:
+                                            update_data["status"] = mapped
+
+                                if update_data:
+                                    await order_repo.update(db_order_id, **update_data)
+
+                                # Append correction record to JSONB field
+                                order = await order_repo.get(db_order_id)
+                                if order:
+                                    existing = order.corrections or []
+                                    existing.append(
+                                        {
+                                            "timestamp": event["timestamp"],
+                                            "reason": event["reason"],
+                                            "changes": event.get("corrections", []),
+                                            "missing_trade_ids": event.get("missing_trade_ids", []),
+                                        }
+                                    )
+                                    await order_repo.update(db_order_id, corrections=existing)
 
                     except Exception as e:
                         logger.warning(f"Failed to persist order event {event.get('type')}: {e}")

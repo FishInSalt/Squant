@@ -461,7 +461,6 @@ class TestPaperTradingStatusResponse:
         assert data["unrealized_pnl"] == 123.45
         assert data["realized_pnl"] == 456.78
 
-
     def test_status_response_with_trades_and_logs(self):
         """Test status response with trades and logs fields."""
         from squant.schemas.backtest import TradeRecordResponse

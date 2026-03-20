@@ -63,7 +63,9 @@ class TestRunStatus:
 
     def test_count(self):
         """Test total number of statuses."""
-        assert len(RunStatus) == 7  # PENDING, RUNNING, COMPLETED, ERROR, INTERRUPTED, STOPPED, CANCELLED
+        assert (
+            len(RunStatus) == 7
+        )  # PENDING, RUNNING, COMPLETED, ERROR, INTERRUPTED, STOPPED, CANCELLED
 
     def test_can_create_from_value(self):
         """Test creating enum from value."""

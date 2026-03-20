@@ -67,10 +67,12 @@ class TestCreate:
 
     async def test_create_with_optional_fields(self, db_session):
         repo = _StrategyRepo(db_session)
-        s = await repo.create(**_make_strategy(
-            name="with-desc",
-            description="A detailed description",
-        ))
+        s = await repo.create(
+            **_make_strategy(
+                name="with-desc",
+                description="A detailed description",
+            )
+        )
         assert s.description == "A detailed description"
 
     async def test_create_without_optional_fields(self, db_session):
@@ -102,6 +104,7 @@ class TestGet:
         s = await repo.create(**_make_strategy(name="get-uuid"))
         # Pass UUID object instead of string
         from uuid import UUID
+
         result = await repo.get(UUID(s.id))
         assert result is not None
         assert result.id == s.id
@@ -124,9 +127,13 @@ class TestGetBy:
     async def test_get_by_multiple_fields(self, db_session):
         repo = _StrategyRepo(db_session)
         name = f"getby-multi-{uuid4().hex[:8]}"
-        await repo.create(**_make_strategy(
-            name=name, version="2.0.0", status=StrategyStatus.ARCHIVED,
-        ))
+        await repo.create(
+            **_make_strategy(
+                name=name,
+                version="2.0.0",
+                status=StrategyStatus.ARCHIVED,
+            )
+        )
         result = await repo.get_by(name=name, version="2.0.0")
         assert result is not None
         assert result.name == name
@@ -159,10 +166,12 @@ class TestList:
         prefix = uuid4().hex[:6]
         items = []
         for i in range(n):
-            s = await repo.create(**_make_strategy(
-                name=f"{prefix}-{i:03d}",
-                status=StrategyStatus.ACTIVE if i % 2 == 0 else StrategyStatus.ARCHIVED,
-            ))
+            s = await repo.create(
+                **_make_strategy(
+                    name=f"{prefix}-{i:03d}",
+                    status=StrategyStatus.ACTIVE if i % 2 == 0 else StrategyStatus.ARCHIVED,
+                )
+            )
             items.append(s)
         return items
 
@@ -309,10 +318,12 @@ class TestUpdate:
     async def test_update_set_field_to_null(self, db_session):
         """update() should allow setting a nullable field to NULL."""
         repo = _StrategyRepo(db_session)
-        s = await repo.create(**_make_strategy(
-            name="update-null",
-            description="has a description",
-        ))
+        s = await repo.create(
+            **_make_strategy(
+                name="update-null",
+                description="has a description",
+            )
+        )
         assert s.description == "has a description"
         updated = await repo.update(s.id, description=None)
         assert updated is not None
@@ -396,10 +407,7 @@ class TestBulkCreate:
     async def test_bulk_create_multiple(self, db_session):
         repo = _StrategyRepo(db_session)
         prefix = uuid4().hex[:6]
-        items = [
-            _make_strategy(name=f"{prefix}-bulk-{i}")
-            for i in range(5)
-        ]
+        items = [_make_strategy(name=f"{prefix}-bulk-{i}") for i in range(5)]
         created = await repo.bulk_create(items)
         assert len(created) == 5
         for s in created:
@@ -454,10 +462,12 @@ class TestCrossMethodScenarios:
         repo = _StrategyRepo(db_session)
         prefix = uuid4().hex[:6]
         for i in range(4):
-            await repo.create(**_make_strategy(
-                name=f"{prefix}-match-{i}",
-                status=StrategyStatus.ARCHIVED,
-            ))
+            await repo.create(
+                **_make_strategy(
+                    name=f"{prefix}-match-{i}",
+                    status=StrategyStatus.ARCHIVED,
+                )
+            )
         count = await repo.count(status=StrategyStatus.ARCHIVED)
         items = await repo.list(status=StrategyStatus.ARCHIVED, limit=1000)
         assert count == len(items)

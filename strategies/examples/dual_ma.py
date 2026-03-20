@@ -69,6 +69,5 @@ class DualMAStrategy(Strategy):  # noqa: F821
 
     def on_stop(self):
         self.ctx.log(
-            f"策略停止 | 收益率: {self.ctx.return_pct:.2%} | "
-            f"最大回撤: {self.ctx.max_drawdown:.2%}"
+            f"策略停止 | 收益率: {self.ctx.return_pct:.2%} | 最大回撤: {self.ctx.max_drawdown:.2%}"
         )

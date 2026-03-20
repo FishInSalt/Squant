@@ -34,6 +34,7 @@ class WSMessageType(str, Enum):
     TRADE = "trade"
     ORDERBOOK = "orderbook"
     ORDER_UPDATE = "order_update"
+    TRADE_EXECUTION = "trade_execution"
     ACCOUNT_UPDATE = "account_update"
     EXCHANGE_SWITCHING = "exchange_switching"  # Notify clients of exchange switch
     SERVICE_READY = "service_ready"  # Notify clients that stream manager is ready
@@ -143,6 +144,21 @@ class OrderResponse(BaseModel):
     fee_currency: str | None = Field(default=None, description="Fee currency")
     created_at: datetime | None = Field(default=None, description="Order creation time")
     updated_at: datetime | None = Field(default=None, description="Order update time")
+
+
+class TradeInfo(BaseModel):
+    """Individual fill record from exchange (REST fetchOrderTrades)."""
+
+    trade_id: str
+    order_id: str
+    symbol: str
+    side: str
+    price: Decimal
+    amount: Decimal
+    fee: Decimal = Decimal("0")
+    fee_currency: str = ""
+    taker_or_maker: str | None = None
+    timestamp: datetime
 
 
 class CancelOrderRequest(BaseModel):

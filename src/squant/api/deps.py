@@ -126,4 +126,3 @@ async def get_exchange() -> AsyncGenerator[CCXTRestAdapter, None]:
 
 # Dynamic exchange adapter (uses current configured exchange)
 Exchange = Annotated[CCXTRestAdapter, Depends(get_exchange)]
-

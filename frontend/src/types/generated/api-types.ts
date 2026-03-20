@@ -4596,6 +4596,11 @@ export interface components {
              */
             strategy_name?: string | null;
             /**
+             * Corrections
+             * @description Data correction audit log
+             */
+            corrections?: unknown[] | null;
+            /**
              * Created At
              * Format: date-time
              * @description Creation time
@@ -4805,6 +4810,11 @@ export interface components {
              * @description Strategy name (from run.strategy)
              */
             strategy_name?: string | null;
+            /**
+             * Corrections
+             * @description Data correction audit log
+             */
+            corrections?: unknown[] | null;
             /**
              * Created At
              * Format: date-time
@@ -5775,6 +5785,16 @@ export interface components {
              * @description Execution time
              */
             timestamp: string;
+            /**
+             * Fill Source
+             * @description Fill source: ws, poll, or reconcile
+             */
+            fill_source?: string | null;
+            /**
+             * Taker Or Maker
+             * @description Maker or taker fill
+             */
+            taker_or_maker?: string | null;
         };
         /**
          * TradeRecordResponse

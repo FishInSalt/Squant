@@ -56,7 +56,7 @@
     </div>
 
     <div class="orders-table card">
-      <el-table :data="orders" v-loading="loading" stripe @row-click="handleRowClick">
+      <el-table :data="orders" v-loading="loading" stripe style="cursor: pointer;" @row-click="handleRowClick">
         <el-table-column prop="symbol" label="交易对" width="130">
           <template #default="{ row }">
             <div class="symbol-cell">
@@ -154,34 +154,77 @@
       </div>
     </div>
 
-    <el-dialog v-model="detailVisible" title="订单详情" width="560px">
-      <el-descriptions v-if="selectedOrder" :column="2" border>
-        <el-descriptions-item label="交易对">{{ selectedOrder.symbol }}</el-descriptions-item>
-        <el-descriptions-item label="账户">{{ selectedOrder.account_name || '-' }}</el-descriptions-item>
-        <el-descriptions-item label="交易所">{{ formatExchangeName(selectedOrder.exchange) }}</el-descriptions-item>
-        <el-descriptions-item label="方向">
-          <el-tag :type="selectedOrder.side === 'buy' ? 'success' : 'danger'" size="small">
-            {{ formatOrderSide(selectedOrder.side) }}
-          </el-tag>
-        </el-descriptions-item>
-        <el-descriptions-item label="类型">{{ formatOrderType(selectedOrder.type) }}</el-descriptions-item>
-        <el-descriptions-item label="委托价">{{ selectedOrder.price ? formatPrice(selectedOrder.price) : '市价' }}</el-descriptions-item>
-        <el-descriptions-item label="成交均价">{{ selectedOrder.avg_price ? formatPrice(selectedOrder.avg_price) : '-' }}</el-descriptions-item>
-        <el-descriptions-item label="委托数量">{{ formatNumber(selectedOrder.amount, 4) }}</el-descriptions-item>
-        <el-descriptions-item label="成交数量">{{ formatNumber(selectedOrder.filled, 4) }}</el-descriptions-item>
-        <el-descriptions-item label="剩余数量">{{ formatNumber(selectedOrder.remaining_amount, 4) }}</el-descriptions-item>
-        <el-descriptions-item label="手续费">
-          {{ selectedOrder.commission ? `${formatNumber(selectedOrder.commission, 6)} ${selectedOrder.commission_asset || ''}` : '-' }}
-        </el-descriptions-item>
-        <el-descriptions-item label="状态">
-          <StatusBadge :status="selectedOrder.status" context="order" />
-        </el-descriptions-item>
-        <el-descriptions-item label="策略">{{ selectedOrder.strategy_name || '-' }}</el-descriptions-item>
-        <el-descriptions-item label="创建时间" :span="2">{{ formatDateTime(selectedOrder.created_at) }}</el-descriptions-item>
-        <el-descriptions-item label="更新时间" :span="2">{{ formatDateTime(selectedOrder.updated_at) }}</el-descriptions-item>
-        <el-descriptions-item v-if="selectedOrder.reject_reason" label="拒绝原因" :span="2">{{ selectedOrder.reject_reason }}</el-descriptions-item>
-        <el-descriptions-item v-if="selectedOrder.exchange_oid" label="交易所订单ID" :span="2">{{ selectedOrder.exchange_oid }}</el-descriptions-item>
-      </el-descriptions>
+    <el-dialog v-model="detailVisible" title="订单详情" width="750px" destroy-on-close>
+      <template v-if="selectedOrder">
+        <el-descriptions :column="2" border size="small">
+          <el-descriptions-item label="交易对">{{ selectedOrder.symbol }}</el-descriptions-item>
+          <el-descriptions-item label="账户">{{ selectedOrder.account_name || '-' }}</el-descriptions-item>
+          <el-descriptions-item label="交易所">{{ formatExchangeName(selectedOrder.exchange) }}</el-descriptions-item>
+          <el-descriptions-item label="方向">
+            <el-tag :type="selectedOrder.side === 'buy' ? 'success' : 'danger'" size="small">
+              {{ formatOrderSide(selectedOrder.side) }}
+            </el-tag>
+          </el-descriptions-item>
+          <el-descriptions-item label="类型">{{ formatOrderType(selectedOrder.type) }}</el-descriptions-item>
+          <el-descriptions-item label="委托价">{{ selectedOrder.price ? formatPrice(selectedOrder.price) : '市价' }}</el-descriptions-item>
+          <el-descriptions-item label="成交均价">{{ selectedOrder.avg_price ? formatPrice(selectedOrder.avg_price) : '-' }}</el-descriptions-item>
+          <el-descriptions-item label="委托数量">{{ formatNumber(selectedOrder.amount, 4) }}</el-descriptions-item>
+          <el-descriptions-item label="成交数量">{{ formatNumber(selectedOrder.filled, 4) }}</el-descriptions-item>
+          <el-descriptions-item label="剩余数量">{{ formatNumber(selectedOrder.remaining_amount, 4) }}</el-descriptions-item>
+          <el-descriptions-item label="手续费">
+            {{ selectedOrder.commission ? `${formatNumber(selectedOrder.commission, 6)} ${selectedOrder.commission_asset || ''}` : '-' }}
+          </el-descriptions-item>
+          <el-descriptions-item label="状态">
+            <StatusBadge :status="selectedOrder.status" context="order" />
+          </el-descriptions-item>
+          <el-descriptions-item label="策略">{{ selectedOrder.strategy_name || '-' }}</el-descriptions-item>
+          <el-descriptions-item label="创建时间" :span="2">{{ formatDateTime(selectedOrder.created_at) }}</el-descriptions-item>
+          <el-descriptions-item label="更新时间" :span="2">{{ formatDateTime(selectedOrder.updated_at) }}</el-descriptions-item>
+          <el-descriptions-item v-if="selectedOrder.reject_reason" label="拒绝原因" :span="2">{{ selectedOrder.reject_reason }}</el-descriptions-item>
+          <el-descriptions-item v-if="selectedOrder.exchange_oid" label="交易所订单ID" :span="2">{{ selectedOrder.exchange_oid }}</el-descriptions-item>
+        </el-descriptions>
+
+        <template v-if="selectedOrder.trades && selectedOrder.trades.length > 0">
+          <h4 style="margin: 16px 0 8px;">逐笔成交</h4>
+          <el-table :data="selectedOrder.trades" size="small" border>
+            <el-table-column label="成交ID" width="130">
+              <template #default="{ row }">
+                {{ row.exchange_tid ? row.exchange_tid.substring(0, 12) + '...' : '-' }}
+              </template>
+            </el-table-column>
+            <el-table-column prop="price" label="价格" width="120" />
+            <el-table-column prop="amount" label="数量" width="100" />
+            <el-table-column label="手续费" width="120">
+              <template #default="{ row }">
+                {{ row.fee }} {{ row.fee_currency || '' }}
+              </template>
+            </el-table-column>
+            <el-table-column prop="taker_or_maker" label="类型" width="80" />
+            <el-table-column label="时间" min-width="170">
+              <template #default="{ row }">
+                {{ new Date(row.timestamp).toLocaleString() }}
+              </template>
+            </el-table-column>
+          </el-table>
+        </template>
+
+        <template v-if="selectedOrder.corrections && selectedOrder.corrections.length > 0">
+          <h4 style="margin: 16px 0 8px;">修正记录</h4>
+          <el-timeline>
+            <el-timeline-item
+              v-for="(c, i) in selectedOrder.corrections"
+              :key="i"
+              :timestamp="new Date(c.timestamp).toLocaleString()"
+              placement="top"
+            >
+              <p style="margin: 0;">{{ c.reason }}</p>
+              <p v-for="(ch, j) in c.changes" :key="j" style="margin: 2px 0; color: #666; font-size: 12px;">
+                {{ ch.field }}: {{ ch.before }} → {{ ch.after }}
+              </p>
+            </el-timeline-item>
+          </el-timeline>
+        </template>
+      </template>
     </el-dialog>
   </div>
 </template>
