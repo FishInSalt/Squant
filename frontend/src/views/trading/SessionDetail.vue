@@ -474,10 +474,13 @@
               <el-table-column type="expand">
                 <template #default="{ row }">
                   <div v-if="row.trades && row.trades.length" class="expand-trades">
-                    <el-table :data="row.trades" size="small" :show-header="true">
-                      <el-table-column label="时间" min-width="140">
+                    <el-table :data="row.trades" size="small" :show-header="true" border>
+                      <el-table-column label="成交ID" min-width="130">
                         <template #default="{ row: trade }">
-                          {{ formatTradeTime(trade.timestamp) }}
+                          <span v-if="trade.exchange_tid" :title="trade.exchange_tid">
+                            {{ trade.exchange_tid.length > 12 ? trade.exchange_tid.substring(0, 12) + '...' : trade.exchange_tid }}
+                          </span>
+                          <span v-else>-</span>
                         </template>
                       </el-table-column>
                       <el-table-column label="价格" min-width="110" align="right">
@@ -495,15 +498,52 @@
                           {{ formatNumber(trade.price * trade.amount, 2) }}
                         </template>
                       </el-table-column>
-                      <el-table-column label="手续费" min-width="90" align="right">
+                      <el-table-column label="手续费" min-width="120" align="right">
                         <template #default="{ row: trade }">
                           {{ formatNumber(trade.fee, 4) }}
                           <span v-if="trade.fee_currency" class="fee-currency">{{ trade.fee_currency }}</span>
                         </template>
                       </el-table-column>
+                      <el-table-column label="类型" min-width="80" align="center">
+                        <template #default="{ row: trade }">
+                          {{ trade.taker_or_maker || '-' }}
+                        </template>
+                      </el-table-column>
+                      <el-table-column label="来源" min-width="80" align="center">
+                        <template #default="{ row: trade }">
+                          {{ trade.fill_source || '-' }}
+                        </template>
+                      </el-table-column>
+                      <el-table-column label="成交时间" min-width="140">
+                        <template #default="{ row: trade }">
+                          {{ formatTradeTime(trade.timestamp) }}
+                        </template>
+                      </el-table-column>
                     </el-table>
                   </div>
-                  <div v-else class="expand-empty">暂无成交明细</div>
+                  <div v-if="row.corrections && row.corrections.length" style="padding: 8px 16px;">
+                    <el-alert type="warning" :closable="false">
+                      <template #title>数据修正记录</template>
+                      <div
+                        v-for="(c, i) in row.corrections"
+                        :key="i"
+                        style="margin-top: 4px; font-size: 12px;"
+                      >
+                        <span>[{{ formatTradeTime(c.timestamp) }}] {{ c.reason }}</span>
+                        <ul style="margin: 4px 0; padding-left: 20px;">
+                          <li v-for="(change, j) in c.changes" :key="j">
+                            {{ change.field }}: {{ change.before }} → {{ change.after }}
+                          </li>
+                        </ul>
+                      </div>
+                    </el-alert>
+                  </div>
+                  <div
+                    v-if="(!row.trades || !row.trades.length) && (!row.corrections || !row.corrections.length)"
+                    class="expand-empty"
+                  >
+                    暂无成交明细
+                  </div>
                 </template>
               </el-table-column>
               <el-table-column prop="side" label="方向" min-width="80">
