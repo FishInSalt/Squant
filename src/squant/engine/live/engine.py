@@ -1104,6 +1104,9 @@ class LiveTradingEngine:
                 # consistent state (ISSUE-203 fix: no concurrent mutation)
                 self._drain_ws_updates()
 
+                # Reconcile any orders needing fill recovery (WS reconnect, fill mismatch)
+                await self._reconcile_pending_orders()
+
                 # Validate exchange balance (monitoring only, no cash overwrite).
                 # Cash tracked incrementally via fill processing (LIVE-012).
                 await self._sync_balance()
@@ -1392,10 +1395,7 @@ class LiveTradingEngine:
 
         # If watchOrders reports FILLED but fills haven't all arrived via watchMyTrades yet,
         # queue for REST reconciliation to recover missing fills
-        if (
-            new_status == OrderStatus.FILLED
-            and live_order.filled_amount < live_order.amount
-        ):
+        if new_status == OrderStatus.FILLED and live_order.filled_amount < live_order.amount:
             self._orders_needing_reconciliation.add(internal_id)
             logger.info(
                 f"Order {internal_id} reported FILLED but fills incomplete "
@@ -1476,6 +1476,128 @@ class LiveTradingEngine:
                 self._processed_trade_ids.popitem(last=False)
 
         self._has_recent_fill = True
+
+    async def _reconcile_order_fills(self, live_order: LiveOrder) -> None:
+        """Reconcile fills for a single order against exchange records.
+
+        Fetches all fills from exchange via REST, compares with locally
+        processed trade_ids, and records any missing fills.
+        """
+        if not live_order.exchange_order_id:
+            return
+
+        try:
+            trades = await self._adapter.get_order_trades(
+                live_order.symbol, live_order.exchange_order_id
+            )
+        except Exception as e:
+            logger.error(f"Failed to fetch order trades for {live_order.exchange_order_id}: {e}")
+            return
+
+        missing_trade_ids: list[str] = []
+        for trade in trades:
+            if trade.trade_id in self._processed_trade_ids:
+                continue
+
+            # Capture pre-fill state
+            had_open_trade = self._context._open_trade is not None
+            circuit_breaker_before = self._risk_manager.state.circuit_breaker_triggered
+
+            # Update LiveOrder tracking fields
+            old_filled = live_order.filled_amount
+            live_order.filled_amount += trade.amount
+            if old_filled > 0 and live_order.avg_fill_price:
+                live_order.avg_fill_price = (
+                    live_order.avg_fill_price * old_filled + trade.price * trade.amount
+                ) / live_order.filled_amount
+            else:
+                live_order.avg_fill_price = trade.price
+            live_order.fee += trade.fee
+
+            # Status transition
+            if live_order.filled_amount >= live_order.amount:
+                live_order.status = OrderStatus.FILLED
+            elif live_order.filled_amount > 0:
+                live_order.status = OrderStatus.PARTIAL
+
+            # Record the missing fill
+            self._record_fill(
+                live_order,
+                trade.price,
+                trade.amount,
+                trade.fee,
+                live_order.fee,
+                "reconcile",
+                trade.timestamp,
+                exchange_tid=trade.trade_id,
+                taker_or_maker=trade.taker_or_maker,
+            )
+
+            self._check_trade_completion(had_open_trade, circuit_breaker_before, "reconcile")
+            self._processed_trade_ids[trade.trade_id] = True
+            missing_trade_ids.append(trade.trade_id)
+
+        # Record correction event if fills were missing
+        if missing_trade_ids:
+            # Calculate expected totals from all exchange trades
+            exchange_filled = sum(t.amount for t in trades)
+
+            corrections: list[dict[str, str]] = []
+            if abs(live_order.filled_amount - exchange_filled) > Decimal("0.00000001"):
+                corrections.append(
+                    {
+                        "field": "filled_amount",
+                        "before": str(
+                            live_order.filled_amount
+                            - sum(t.amount for t in trades if t.trade_id in missing_trade_ids)
+                        ),
+                        "after": str(live_order.filled_amount),
+                    }
+                )
+
+            if corrections or missing_trade_ids:
+                self._pending_order_events.append(
+                    {
+                        "type": "correction",
+                        "internal_id": live_order.internal_id,
+                        "exchange_order_id": live_order.exchange_order_id,
+                        "corrections": corrections,
+                        "reason": "reconcile_missing_fills",
+                        "missing_trade_ids": missing_trade_ids,
+                        "timestamp": datetime.now(UTC).isoformat(),
+                    }
+                )
+
+            logger.info(
+                f"Reconciled order {live_order.exchange_order_id}: "
+                f"{len(missing_trade_ids)} missing fills recovered"
+            )
+
+    async def _reconcile_pending_orders(self) -> None:
+        """Reconcile orders that need fill data recovery.
+
+        Called from process_candle() after draining WS updates.
+        Rate-limited by reconcile_interval_ms and reconcile_batch_size from RiskConfig.
+        """
+        if not self._orders_needing_reconciliation:
+            return
+
+        batch_size = self._risk_manager.config.reconcile_batch_size
+        interval = self._risk_manager.config.reconcile_interval_ms / 1000.0
+
+        batch = list(self._orders_needing_reconciliation)[:batch_size]
+
+        for internal_id in batch:
+            live_order = self._live_orders.get(internal_id)
+            if live_order is None:
+                self._orders_needing_reconciliation.discard(internal_id)
+                continue
+
+            await self._reconcile_order_fills(live_order)
+            self._orders_needing_reconciliation.discard(internal_id)
+
+            if interval > 0 and len(batch) > 1:
+                await asyncio.sleep(interval)
 
     def _candle_to_bar(self, candle: WSCandle) -> Bar:
         """Convert WSCandle to Bar."""
@@ -1935,9 +2057,7 @@ class LiveTradingEngine:
                     "old_status": order.status.value,  # already terminal at cleanup time
                     "new_status": order.status.value,  # same — ensures DB catches up
                     "filled_amount": str(order.filled_amount),
-                    "avg_fill_price": str(order.avg_fill_price)
-                    if order.avg_fill_price
-                    else None,
+                    "avg_fill_price": str(order.avg_fill_price) if order.avg_fill_price else None,
                     "fee": str(order.fee),
                     "fee_currency": order.fee_currency,
                     "timestamp": datetime.now(UTC).isoformat(),
@@ -2020,10 +2140,7 @@ class LiveTradingEngine:
         # or fetchOrderTrades reconciliation. REST polling only syncs status.
 
         # If REST polling sees FILLED but local fills incomplete, queue reconciliation
-        if (
-            response.status == OrderStatus.FILLED
-            and live_order.filled_amount < live_order.amount
-        ):
+        if response.status == OrderStatus.FILLED and live_order.filled_amount < live_order.amount:
             self._orders_needing_reconciliation.add(live_order.internal_id)
 
         # Emit "status_change" audit event when polling detects terminal status.
@@ -2563,9 +2680,20 @@ class LiveTradingEngine:
             if internal_id in self._live_orders:
                 self._exchange_order_map[exchange_id] = internal_id
 
+        # Queue all restored orders with exchange IDs for fill reconciliation
+        # to recover any fills that occurred during downtime.
+        for internal_id, live_order in self._live_orders.items():
+            if live_order.exchange_order_id:
+                self._orders_needing_reconciliation.add(internal_id)
+
         logger.info(
             f"Restored {len(self._live_orders)} live orders and "
             f"{len(self._exchange_order_map)} exchange mappings"
+            + (
+                f", {len(self._orders_needing_reconciliation)} queued for reconciliation"
+                if self._orders_needing_reconciliation
+                else ""
+            )
         )
 
     def _build_bar_update_event(self) -> dict[str, Any]:

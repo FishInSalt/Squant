@@ -1,17 +1,18 @@
 """Tests for engine fill processing refactor — watchMyTrades per-fill data.
 
-Tests _process_trade_execution, _drain_ws_updates ordering, and
-reconciliation queue logic.
+Tests _process_trade_execution, _drain_ws_updates ordering,
+reconciliation queue logic, and REST fill reconciliation.
 """
 
 from collections import OrderedDict, deque
 from datetime import UTC, datetime
 from decimal import Decimal
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from squant.engine.live.engine import LiveOrder, LiveTradingEngine
+from squant.infra.exchange.types import TradeInfo
 from squant.infra.exchange.ws_types import WSOrderUpdate, WSTradeExecution
 from squant.models.enums import OrderSide, OrderStatus
 
@@ -662,3 +663,407 @@ class TestRecordFillNewParams:
         event = engine._pending_order_events[0]
         assert event["exchange_tid"] is None
         assert event["taker_or_maker"] is None
+
+
+class TestReconcileOrderFills:
+    """Tests for _reconcile_order_fills — REST fill recovery for single order."""
+
+    @pytest.fixture
+    def engine(self):
+        engine = LiveTradingEngine.__new__(LiveTradingEngine)
+        engine._is_running = True
+        engine._symbol = "BTC/USDT"
+        engine._adapter = AsyncMock()
+        engine._processed_trade_ids = OrderedDict()
+        engine._MAX_PROCESSED_TRADE_IDS = 10000
+        engine._live_orders = {}
+        engine._exchange_order_map = {}
+        engine._pending_order_events = []
+        engine._orders_needing_reconciliation = set()
+        engine._context = MagicMock()
+        engine._context._open_trade = None
+        engine._risk_manager = MagicMock()
+        engine._risk_manager.state.circuit_breaker_triggered = False
+        engine._risk_manager.config.reconcile_interval_ms = 200
+        engine._risk_manager.config.reconcile_batch_size = 20
+        engine._current_price = Decimal("96500")
+        engine._has_recent_fill = False
+        engine._circuit_breaker_triggered = False
+
+        live_order = LiveOrder(
+            internal_id="int-001",
+            exchange_order_id="exch-001",
+            symbol="BTC/USDT",
+            side=OrderSide.BUY,
+            order_type="market",
+            amount=Decimal("0.02"),
+            price=None,
+            status=OrderStatus.PARTIAL,
+        )
+        live_order.filled_amount = Decimal("0.008")
+        live_order.avg_fill_price = Decimal("96500")
+        live_order.fee = Decimal("0.077")
+        live_order.fee_currency = "USDT"
+        engine._live_orders["int-001"] = live_order
+        engine._exchange_order_map["exch-001"] = "int-001"
+        engine._processed_trade_ids["t001"] = True
+
+        return engine
+
+    async def test_finds_and_records_missing_fills(self, engine):
+        """Reconciliation should find fills not in processed_trade_ids and record them."""
+        engine._adapter.get_order_trades.return_value = [
+            TradeInfo(
+                trade_id="t001",
+                order_id="exch-001",
+                symbol="BTC/USDT",
+                side="buy",
+                price=Decimal("96500"),
+                amount=Decimal("0.008"),
+                fee=Decimal("0.077"),
+                fee_currency="USDT",
+                taker_or_maker="taker",
+                timestamp=datetime(2026, 3, 20, 10, 30, 15, tzinfo=UTC),
+            ),
+            TradeInfo(
+                trade_id="t002",
+                order_id="exch-001",
+                symbol="BTC/USDT",
+                side="buy",
+                price=Decimal("96480"),
+                amount=Decimal("0.005"),
+                fee=Decimal("0.048"),
+                fee_currency="USDT",
+                taker_or_maker="maker",
+                timestamp=datetime(2026, 3, 20, 10, 30, 17, tzinfo=UTC),
+            ),
+        ]
+
+        with (
+            patch.object(engine, "_record_fill") as mock_record,
+            patch.object(engine, "_check_trade_completion"),
+        ):
+            await engine._reconcile_order_fills(engine._live_orders["int-001"])
+
+            # t001 already processed, only t002 should be recorded
+            mock_record.assert_called_once()
+            args = mock_record.call_args
+            assert args[0][1] == Decimal("96480")  # fill_price of t002
+
+        assert "t002" in engine._processed_trade_ids
+
+    async def test_emits_correction_event(self, engine):
+        """Missing fills should produce a correction audit event."""
+        engine._adapter.get_order_trades.return_value = [
+            TradeInfo(
+                trade_id="t001",
+                order_id="exch-001",
+                symbol="BTC/USDT",
+                side="buy",
+                price=Decimal("96500"),
+                amount=Decimal("0.008"),
+                fee=Decimal("0.077"),
+                fee_currency="USDT",
+                timestamp=datetime(2026, 3, 20, 10, 30, 15, tzinfo=UTC),
+            ),
+            TradeInfo(
+                trade_id="t002",
+                order_id="exch-001",
+                symbol="BTC/USDT",
+                side="buy",
+                price=Decimal("96480"),
+                amount=Decimal("0.005"),
+                fee=Decimal("0.048"),
+                fee_currency="USDT",
+                timestamp=datetime(2026, 3, 20, 10, 30, 17, tzinfo=UTC),
+            ),
+        ]
+
+        with (
+            patch.object(engine, "_record_fill"),
+            patch.object(engine, "_check_trade_completion"),
+        ):
+            await engine._reconcile_order_fills(engine._live_orders["int-001"])
+
+        corrections = [e for e in engine._pending_order_events if e["type"] == "correction"]
+        assert len(corrections) == 1
+        assert "t002" in corrections[0]["missing_trade_ids"]
+        assert corrections[0]["reason"] == "reconcile_missing_fills"
+
+    async def test_skips_order_without_exchange_id(self, engine):
+        """Orders with no exchange_order_id should be skipped."""
+        order = LiveOrder(
+            internal_id="no-exch",
+            exchange_order_id=None,
+            symbol="BTC/USDT",
+            side=OrderSide.BUY,
+            order_type="market",
+            amount=Decimal("0.01"),
+            price=None,
+        )
+        await engine._reconcile_order_fills(order)
+        engine._adapter.get_order_trades.assert_not_called()
+
+    async def test_handles_fetch_error(self, engine):
+        """Network error during fetch should be caught, not raised."""
+        engine._adapter.get_order_trades.side_effect = Exception("network error")
+        await engine._reconcile_order_fills(engine._live_orders["int-001"])
+        # Should not raise, just log the error
+
+    async def test_no_correction_when_all_fills_known(self, engine):
+        """When all exchange fills are already processed, no correction event."""
+        engine._adapter.get_order_trades.return_value = [
+            TradeInfo(
+                trade_id="t001",
+                order_id="exch-001",
+                symbol="BTC/USDT",
+                side="buy",
+                price=Decimal("96500"),
+                amount=Decimal("0.008"),
+                fee=Decimal("0.077"),
+                fee_currency="USDT",
+                timestamp=datetime(2026, 3, 20, 10, 30, 15, tzinfo=UTC),
+            ),
+        ]
+
+        await engine._reconcile_order_fills(engine._live_orders["int-001"])
+
+        corrections = [e for e in engine._pending_order_events if e["type"] == "correction"]
+        assert len(corrections) == 0
+
+    async def test_updates_order_status_to_filled(self, engine):
+        """When reconciliation recovers enough fills, order status should update."""
+        order = engine._live_orders["int-001"]
+        order.amount = Decimal("0.013")  # 0.008 + 0.005 = 0.013
+
+        engine._adapter.get_order_trades.return_value = [
+            TradeInfo(
+                trade_id="t001",
+                order_id="exch-001",
+                symbol="BTC/USDT",
+                side="buy",
+                price=Decimal("96500"),
+                amount=Decimal("0.008"),
+                fee=Decimal("0.077"),
+                fee_currency="USDT",
+                timestamp=datetime(2026, 3, 20, 10, 30, 15, tzinfo=UTC),
+            ),
+            TradeInfo(
+                trade_id="t002",
+                order_id="exch-001",
+                symbol="BTC/USDT",
+                side="buy",
+                price=Decimal("96480"),
+                amount=Decimal("0.005"),
+                fee=Decimal("0.048"),
+                fee_currency="USDT",
+                timestamp=datetime(2026, 3, 20, 10, 30, 17, tzinfo=UTC),
+            ),
+        ]
+
+        with (
+            patch.object(engine, "_record_fill"),
+            patch.object(engine, "_check_trade_completion"),
+        ):
+            await engine._reconcile_order_fills(order)
+
+        assert order.status == OrderStatus.FILLED
+        assert order.filled_amount == Decimal("0.013")
+
+
+class TestReconcilePendingOrders:
+    """Tests for _reconcile_pending_orders — batch processing of reconciliation queue."""
+
+    @pytest.fixture
+    def engine(self):
+        engine = LiveTradingEngine.__new__(LiveTradingEngine)
+        engine._is_running = True
+        engine._symbol = "BTC/USDT"
+        engine._adapter = AsyncMock()
+        engine._processed_trade_ids = OrderedDict()
+        engine._MAX_PROCESSED_TRADE_IDS = 10000
+        engine._live_orders = {}
+        engine._exchange_order_map = {}
+        engine._pending_order_events = []
+        engine._orders_needing_reconciliation = set()
+        engine._context = MagicMock()
+        engine._context._open_trade = None
+        engine._risk_manager = MagicMock()
+        engine._risk_manager.state.circuit_breaker_triggered = False
+        engine._risk_manager.config.reconcile_interval_ms = 0  # No delay for tests
+        engine._risk_manager.config.reconcile_batch_size = 20
+        engine._current_price = Decimal("96500")
+        engine._has_recent_fill = False
+        engine._circuit_breaker_triggered = False
+        return engine
+
+    async def test_processes_batch_and_clears_queue(self, engine):
+        """Reconciliation should process queued orders and remove from set."""
+        live_order = LiveOrder(
+            internal_id="int-001",
+            exchange_order_id="exch-001",
+            symbol="BTC/USDT",
+            side=OrderSide.BUY,
+            order_type="market",
+            amount=Decimal("0.02"),
+            price=None,
+        )
+        engine._live_orders["int-001"] = live_order
+        engine._orders_needing_reconciliation = {"int-001"}
+
+        with patch.object(engine, "_reconcile_order_fills", new_callable=AsyncMock) as mock:
+            await engine._reconcile_pending_orders()
+            mock.assert_called_once_with(live_order)
+
+        assert "int-001" not in engine._orders_needing_reconciliation
+
+    async def test_skips_missing_orders(self, engine):
+        """Orders not in _live_orders should be silently discarded from queue."""
+        engine._orders_needing_reconciliation = {"nonexistent-001"}
+
+        with patch.object(engine, "_reconcile_order_fills", new_callable=AsyncMock) as mock:
+            await engine._reconcile_pending_orders()
+            mock.assert_not_called()
+
+        assert "nonexistent-001" not in engine._orders_needing_reconciliation
+
+    async def test_empty_queue_is_noop(self, engine):
+        """Empty reconciliation queue should do nothing."""
+        with patch.object(engine, "_reconcile_order_fills", new_callable=AsyncMock) as mock:
+            await engine._reconcile_pending_orders()
+            mock.assert_not_called()
+
+    async def test_respects_batch_size(self, engine):
+        """Only batch_size orders should be processed per call."""
+        engine._risk_manager.config.reconcile_batch_size = 2
+
+        for i in range(5):
+            order = LiveOrder(
+                internal_id=f"int-{i:03d}",
+                exchange_order_id=f"exch-{i:03d}",
+                symbol="BTC/USDT",
+                side=OrderSide.BUY,
+                order_type="market",
+                amount=Decimal("0.01"),
+                price=None,
+            )
+            engine._live_orders[f"int-{i:03d}"] = order
+            engine._orders_needing_reconciliation.add(f"int-{i:03d}")
+
+        with patch.object(engine, "_reconcile_order_fills", new_callable=AsyncMock) as mock:
+            await engine._reconcile_pending_orders()
+            assert mock.call_count == 2
+
+        # 2 processed, 3 remaining
+        assert len(engine._orders_needing_reconciliation) == 3
+
+
+class TestRestoreLiveOrdersReconciliation:
+    """Tests that restore_live_orders queues restored orders for reconciliation."""
+
+    @patch("squant.config.get_settings")
+    def test_restored_orders_queued_for_reconciliation(self, mock_settings):
+        """Restored orders with exchange_order_id should be queued for reconciliation."""
+        mock_settings.return_value = MagicMock(
+            strategy=MagicMock(max_bar_history=500),
+            paper_max_equity_curve_size=5000,
+            paper_max_completed_orders=1000,
+            paper_max_fills=5000,
+            paper_max_trades=1000,
+            paper_max_logs=1000,
+        )
+
+        from squant.engine.risk import RiskConfig
+
+        engine = LiveTradingEngine(
+            run_id="11111111-1111-1111-1111-111111111111",
+            strategy=MagicMock(),
+            symbol="BTC/USDT",
+            timeframe="1m",
+            adapter=MagicMock(),
+            risk_config=RiskConfig(),
+            initial_equity=Decimal("10000"),
+        )
+
+        state = {
+            "live_orders": {
+                "int-001": {
+                    "internal_id": "int-001",
+                    "exchange_order_id": "exch-001",
+                    "symbol": "BTC/USDT",
+                    "side": "buy",
+                    "order_type": "limit",
+                    "amount": "0.1",
+                    "price": "96000",
+                    "status": "submitted",
+                    "filled_amount": "0",
+                    "fee": "0",
+                },
+                "int-002": {
+                    "internal_id": "int-002",
+                    "exchange_order_id": "exch-002",
+                    "symbol": "BTC/USDT",
+                    "side": "sell",
+                    "order_type": "limit",
+                    "amount": "0.05",
+                    "price": "97000",
+                    "status": "partial",
+                    "filled_amount": "0.01",
+                    "fee": "0.01",
+                },
+            },
+            "exchange_order_map": {
+                "exch-001": "int-001",
+                "exch-002": "int-002",
+            },
+        }
+
+        engine.restore_live_orders(state)
+
+        assert "int-001" in engine._orders_needing_reconciliation
+        assert "int-002" in engine._orders_needing_reconciliation
+
+    @patch("squant.config.get_settings")
+    def test_restored_orders_without_exchange_id_not_queued(self, mock_settings):
+        """Restored orders without exchange_order_id should NOT be queued."""
+        mock_settings.return_value = MagicMock(
+            strategy=MagicMock(max_bar_history=500),
+            paper_max_equity_curve_size=5000,
+            paper_max_completed_orders=1000,
+            paper_max_fills=5000,
+            paper_max_trades=1000,
+            paper_max_logs=1000,
+        )
+
+        from squant.engine.risk import RiskConfig
+
+        engine = LiveTradingEngine(
+            run_id="11111111-1111-1111-1111-111111111111",
+            strategy=MagicMock(),
+            symbol="BTC/USDT",
+            timeframe="1m",
+            adapter=MagicMock(),
+            risk_config=RiskConfig(),
+            initial_equity=Decimal("10000"),
+        )
+
+        state = {
+            "live_orders": {
+                "int-001": {
+                    "internal_id": "int-001",
+                    "exchange_order_id": None,
+                    "symbol": "BTC/USDT",
+                    "side": "buy",
+                    "order_type": "market",
+                    "amount": "0.1",
+                    "status": "submitted",
+                    "filled_amount": "0",
+                    "fee": "0",
+                },
+            },
+            "exchange_order_map": {},
+        }
+
+        engine.restore_live_orders(state)
+
+        assert "int-001" not in engine._orders_needing_reconciliation
