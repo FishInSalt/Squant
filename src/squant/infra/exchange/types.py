@@ -34,6 +34,7 @@ class WSMessageType(str, Enum):
     TRADE = "trade"
     ORDERBOOK = "orderbook"
     ORDER_UPDATE = "order_update"
+    TRADE_EXECUTION = "trade_execution"
     ACCOUNT_UPDATE = "account_update"
     EXCHANGE_SWITCHING = "exchange_switching"  # Notify clients of exchange switch
     SERVICE_READY = "service_ready"  # Notify clients that stream manager is ready

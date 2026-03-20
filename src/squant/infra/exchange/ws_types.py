@@ -110,6 +110,27 @@ class WSAccountUpdate(BaseModel):
     timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
+class WSTradeExecution(BaseModel):
+    """Per-fill record from watchMyTrades (private channel).
+
+    Unlike WSOrderUpdate which gives order-level aggregates (total filled_size,
+    blended avg_price), this type represents a single fill with exact price,
+    amount, fee, and exchange timestamp.
+    """
+
+    trade_id: str
+    order_id: str
+    client_order_id: str | None = None
+    symbol: str
+    side: str
+    price: Decimal
+    amount: Decimal
+    fee: Decimal = Decimal("0")
+    fee_currency: str = ""
+    taker_or_maker: str | None = None
+    timestamp: datetime
+
+
 class WSMessage(BaseModel):
     """Unified WebSocket message wrapper for Redis pub/sub."""
 
@@ -130,5 +151,6 @@ __all__ = [
     "WSOrderUpdate",
     "WSBalanceUpdate",
     "WSAccountUpdate",
+    "WSTradeExecution",
     "WSMessage",
 ]
