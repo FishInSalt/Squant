@@ -152,7 +152,7 @@ watchOrders   → status changes only (cancelled/rejected) → no fill processin
    - Buffer `"fill"` audit event with `exchange_tid` populated
    - Add `exec.trade_id` to `_processed_trade_ids`
 
-6. **`_handle_order_ws_update()` simplified**:
+6. **Order status handling in `_drain_ws_updates()` simplified** (currently inline logic within the drain loop, may be extracted to a named method during implementation):
    - No longer detects fill_delta or calculates incremental_price
    - Only processes: CANCELLED, REJECTED status transitions
    - FILLED status: if local already FILLED (fills arrived first), ignore; if not, mark for reconciliation
@@ -366,8 +366,10 @@ WS message type for `watchMyTrades` channel.
 
 ### Modified: TradeDetail schema (schemas/order.py)
 
-- Add `taker_or_maker: str | None`
-- Backend schema changes required: update `TradeDetail` and `OrderWithTrades` Pydantic schemas, then regenerate OpenAPI types via `./scripts/generate-api-types.sh`
+- Add `taker_or_maker: str | None` (new field)
+- Add `fill_source: str | None` (field exists in DB model but missing from current Pydantic schema)
+- Add `corrections: list | None` to `OrderDetail` schema
+- Regenerate OpenAPI types via `./scripts/generate-api-types.sh`
 
 ### Modified: Provider `_dispatch()` type union (provider.py)
 
