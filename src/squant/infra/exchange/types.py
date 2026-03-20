@@ -146,6 +146,21 @@ class OrderResponse(BaseModel):
     updated_at: datetime | None = Field(default=None, description="Order update time")
 
 
+class TradeInfo(BaseModel):
+    """Individual fill record from exchange (REST fetchOrderTrades)."""
+
+    trade_id: str
+    order_id: str
+    symbol: str
+    side: str
+    price: Decimal
+    amount: Decimal
+    fee: Decimal = Decimal("0")
+    fee_currency: str = ""
+    taker_or_maker: str | None = None
+    timestamp: datetime
+
+
 class CancelOrderRequest(BaseModel):
     """Cancel order request."""
 

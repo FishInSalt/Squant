@@ -32,6 +32,7 @@ from squant.infra.exchange.types import (
     OrderResponse,
     Ticker,
     TimeFrame,
+    TradeInfo,
 )
 from squant.models.enums import OrderSide, OrderStatus, OrderType
 
@@ -606,6 +607,48 @@ class CCXTRestAdapter(ExchangeAdapter):
                 message=f"Failed to fetch open orders: {e}",
                 exchange=self._exchange_id,
             ) from e
+
+    async def get_order_trades(self, symbol: str, order_id: str) -> list[TradeInfo]:
+        """Get all individual fills for a specific order via CCXT fetchOrderTrades."""
+        return await with_retry(
+            lambda: self._get_order_trades_impl(symbol, order_id),
+            config=_READ_RETRY,
+            operation_name="get_order_trades",
+        )
+
+    async def _get_order_trades_impl(self, symbol: str, order_id: str) -> list[TradeInfo]:
+        """Internal implementation (retryable)."""
+        if not self._exchange:
+            raise ExchangeConnectionError(
+                message="Exchange not connected. Call connect() first.",
+                exchange=self._exchange_id,
+            )
+        raw_trades = await self._exchange.fetch_order_trades(order_id, symbol)
+        result = []
+        for t in raw_trades:
+            fee_info = t.get("fee") or {}
+            ts = t.get("timestamp")
+            timestamp = (
+                datetime.fromtimestamp(ts / 1000, tz=UTC)
+                if ts is not None
+                else datetime.now(UTC)
+            )
+            result.append(
+                TradeInfo(
+                    trade_id=str(t.get("id", "")),
+                    order_id=str(t.get("order", "")),
+                    symbol=t.get("symbol", symbol),
+                    side=t.get("side", ""),
+                    price=Decimal(str(t.get("price") or 0)),
+                    amount=Decimal(str(t.get("amount") or 0)),
+                    fee=Decimal(str(fee_info.get("cost") or 0)),
+                    fee_currency=fee_info.get("currency") or "",
+                    taker_or_maker=t.get("takerOrMaker"),
+                    timestamp=timestamp,
+                )
+            )
+        result.sort(key=lambda x: x.timestamp)
+        return result
 
     # ==================== Dead Man's Switch (F-2) ====================
 
