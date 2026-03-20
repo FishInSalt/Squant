@@ -77,8 +77,7 @@ async def _create_adapter_from_account(account: ExchangeAccount) -> CCXTRestAdap
         logger.error(f"Failed to decrypt credentials for account {account.id}: {e}")
         raise HTTPException(
             status_code=500,
-            detail="Unable to access account credentials. "
-            "The stored credentials may be corrupted.",
+            detail="Unable to access account credentials. The stored credentials may be corrupted.",
         ) from e
 
     exchange_id = account.exchange.lower()

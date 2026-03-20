@@ -523,7 +523,12 @@ async def get_backtest_candles(
             # Fetch N oldest candles after cursor
             stmt = (
                 select(
-                    Kline.time, Kline.open, Kline.high, Kline.low, Kline.close, Kline.volume,
+                    Kline.time,
+                    Kline.open,
+                    Kline.high,
+                    Kline.low,
+                    Kline.close,
+                    Kline.volume,
                 )
                 .where(and_(*filters))
                 .order_by(Kline.time.asc())
@@ -533,7 +538,12 @@ async def get_backtest_candles(
             # Default: last N candles of the backtest period
             stmt = (
                 select(
-                    Kline.time, Kline.open, Kline.high, Kline.low, Kline.close, Kline.volume,
+                    Kline.time,
+                    Kline.open,
+                    Kline.high,
+                    Kline.low,
+                    Kline.close,
+                    Kline.volume,
                 )
                 .where(and_(*filters))
                 .order_by(Kline.time.desc())
@@ -546,8 +556,12 @@ async def get_backtest_candles(
 
     candles = [
         CandlestickPoint(
-            timestamp=row[0], open=row[1], high=row[2],
-            low=row[3], close=row[4], volume=row[5],
+            timestamp=row[0],
+            open=row[1],
+            high=row[2],
+            low=row[3],
+            close=row[4],
+            volume=row[5],
         )
         for row in rows
     ]

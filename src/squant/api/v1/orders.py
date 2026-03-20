@@ -305,9 +305,7 @@ async def create_order(
 @router.get("", response_model=ApiResponse[OrderListData])
 async def list_orders(
     session: DbSession,
-    account_id: Annotated[
-        UUID | None, Query(description="Filter by exchange account ID")
-    ] = None,
+    account_id: Annotated[UUID | None, Query(description="Filter by exchange account ID")] = None,
     status: Annotated[list[OrderStatus] | None, Query(description="Filter by status")] = None,
     symbol: Annotated[str | None, Query(description="Filter by trading pair")] = None,
     side: Annotated[OrderSide | None, Query(description="Filter by side")] = None,

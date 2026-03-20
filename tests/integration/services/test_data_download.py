@@ -38,14 +38,14 @@ class TestUpsertCandles:
         """Test inserting candles into empty table."""
         candles = [_make_candle(h) for h in range(5)]
 
-        await DataDownloadService._upsert_candles(
-            db_session, "binance", "BTC/USDT", "1h", candles
-        )
+        await DataDownloadService._upsert_candles(db_session, "binance", "BTC/USDT", "1h", candles)
         await db_session.commit()
 
         # Verify data was written
         result = await db_session.execute(
-            select(func.count()).select_from(Kline).where(
+            select(func.count())
+            .select_from(Kline)
+            .where(
                 and_(
                     Kline.exchange == "binance",
                     Kline.symbol == "BTC/USDT",
@@ -62,20 +62,18 @@ class TestUpsertCandles:
         candles = [_make_candle(h) for h in range(3)]
 
         # Write once
-        await DataDownloadService._upsert_candles(
-            db_session, "binance", "BTC/USDT", "1h", candles
-        )
+        await DataDownloadService._upsert_candles(db_session, "binance", "BTC/USDT", "1h", candles)
         await db_session.commit()
 
         # Write again (same data)
-        await DataDownloadService._upsert_candles(
-            db_session, "binance", "BTC/USDT", "1h", candles
-        )
+        await DataDownloadService._upsert_candles(db_session, "binance", "BTC/USDT", "1h", candles)
         await db_session.commit()
 
         # Should still have 3 rows, not 6
         result = await db_session.execute(
-            select(func.count()).select_from(Kline).where(
+            select(func.count())
+            .select_from(Kline)
+            .where(
                 and_(
                     Kline.exchange == "binance",
                     Kline.symbol == "BTC/USDT",
@@ -93,15 +91,11 @@ class TestUpsertCandles:
         updated = [_make_candle(0, price=Decimal("50000"))]
 
         # Write original
-        await DataDownloadService._upsert_candles(
-            db_session, "binance", "BTC/USDT", "1h", original
-        )
+        await DataDownloadService._upsert_candles(db_session, "binance", "BTC/USDT", "1h", original)
         await db_session.commit()
 
         # Write updated
-        await DataDownloadService._upsert_candles(
-            db_session, "binance", "BTC/USDT", "1h", updated
-        )
+        await DataDownloadService._upsert_candles(db_session, "binance", "BTC/USDT", "1h", updated)
         await db_session.commit()
 
         # Verify updated values
@@ -159,13 +153,13 @@ class TestUpsertCandles:
     @pytest.mark.asyncio
     async def test_empty_candles_noop(self, db_session):
         """Test that empty candle list is a no-op."""
-        await DataDownloadService._upsert_candles(
-            db_session, "binance", "BTC/USDT", "1h", []
-        )
+        await DataDownloadService._upsert_candles(db_session, "binance", "BTC/USDT", "1h", [])
         await db_session.commit()
 
         result = await db_session.execute(
-            select(func.count()).select_from(Kline).where(
+            select(func.count())
+            .select_from(Kline)
+            .where(
                 Kline.exchange == "binance",
             )
         )

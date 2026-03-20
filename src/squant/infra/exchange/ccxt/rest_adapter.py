@@ -629,9 +629,7 @@ class CCXTRestAdapter(ExchangeAdapter):
             fee_info = t.get("fee") or {}
             ts = t.get("timestamp")
             timestamp = (
-                datetime.fromtimestamp(ts / 1000, tz=UTC)
-                if ts is not None
-                else datetime.now(UTC)
+                datetime.fromtimestamp(ts / 1000, tz=UTC) if ts is not None else datetime.now(UTC)
             )
             result.append(
                 TradeInfo(

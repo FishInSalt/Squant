@@ -471,9 +471,7 @@ class BacktestService:
             # Progress callback updates class-level tracking
             def on_progress(current: int, total: int) -> None:
                 if total > 0:
-                    BacktestService._backtest_progress[run.id] = min(
-                        99.0, (current / total) * 100
-                    )
+                    BacktestService._backtest_progress[run.id] = min(99.0, (current / total) * 100)
 
             result = await runner.run(
                 bars,

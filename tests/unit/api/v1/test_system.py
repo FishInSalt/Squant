@@ -382,9 +382,7 @@ class TestListHistoricalData:
             mock_loader.get_available_symbols = AsyncMock(return_value=symbols)
             mock_loader_class.return_value = mock_loader
 
-            response = await client.get(
-                "/api/v1/system/data/list", params={"symbol": "BTC/USDT"}
-            )
+            response = await client.get("/api/v1/system/data/list", params={"symbol": "BTC/USDT"})
 
         assert response.status_code == 200
         data = response.json()

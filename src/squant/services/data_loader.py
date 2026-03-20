@@ -51,7 +51,9 @@ class DataAvailability:
         self.total_bars = total_bars
         # Ensure timezone-aware (naive datetimes treated as UTC)
         self.requested_start = (
-            requested_start.replace(tzinfo=UTC) if requested_start.tzinfo is None else requested_start
+            requested_start.replace(tzinfo=UTC)
+            if requested_start.tzinfo is None
+            else requested_start
         )
         self.requested_end = (
             requested_end.replace(tzinfo=UTC) if requested_end.tzinfo is None else requested_end

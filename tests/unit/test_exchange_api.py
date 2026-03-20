@@ -65,9 +65,7 @@ def mock_session():
 
 
 @pytest.fixture
-async def client(
-    mock_exchange: AsyncMock, mock_session
-) -> AsyncGenerator[AsyncClient, None]:
+async def client(mock_exchange: AsyncMock, mock_session) -> AsyncGenerator[AsyncClient, None]:
     """Create async test client with mocked exchange and session.
 
     Properly overrides async generator dependencies using httpx.AsyncClient.

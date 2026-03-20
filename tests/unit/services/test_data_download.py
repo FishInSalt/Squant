@@ -383,9 +383,7 @@ class TestUpsertCandles:
         mock_session = MagicMock()
         mock_session.execute = AsyncMock()
 
-        await DataDownloadService._upsert_candles(
-            mock_session, "binance", "BTC/USDT", "1h", []
-        )
+        await DataDownloadService._upsert_candles(mock_session, "binance", "BTC/USDT", "1h", [])
 
         mock_session.execute.assert_not_called()
 

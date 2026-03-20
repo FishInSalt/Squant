@@ -1061,7 +1061,13 @@ class CCXTStreamProvider:
     async def _dispatch(
         self,
         data_type: str,
-        data: WSTicker | WSCandle | WSTrade | WSOrderBook | WSOrderUpdate | WSAccountUpdate | WSTradeExecution,
+        data: WSTicker
+        | WSCandle
+        | WSTrade
+        | WSOrderBook
+        | WSOrderUpdate
+        | WSAccountUpdate
+        | WSTradeExecution,
     ) -> None:
         """Dispatch data to all registered handlers.
 

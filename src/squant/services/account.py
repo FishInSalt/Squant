@@ -535,15 +535,11 @@ class ExchangeAccountService:
             old_crypto = get_old_crypto_manager()
             if old_crypto is None:
                 raise
-            logger.info(
-                f"Retrying decryption for account {account.id} with old encryption key"
-            )
+            logger.info(f"Retrying decryption for account {account.id} with old encryption key")
             return ExchangeAccountService._decrypt_with_manager(old_crypto, account)
 
     @staticmethod
-    def _decrypt_with_manager(
-        crypto: CryptoManager, account: ExchangeAccount
-    ) -> dict[str, str]:
+    def _decrypt_with_manager(crypto: CryptoManager, account: ExchangeAccount) -> dict[str, str]:
         """Decrypt credentials using a specific CryptoManager."""
         result = {
             "api_key": crypto.decrypt_with_derived_nonce(

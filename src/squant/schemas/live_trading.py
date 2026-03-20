@@ -102,8 +102,7 @@ class StartLiveTradingRequest(BaseModel):
         """Validate timeframe is a supported value."""
         if v not in VALID_TIMEFRAMES:
             raise ValueError(
-                f"Invalid timeframe: '{v}'. "
-                f"Must be one of: {', '.join(sorted(VALID_TIMEFRAMES))}"
+                f"Invalid timeframe: '{v}'. Must be one of: {', '.join(sorted(VALID_TIMEFRAMES))}"
             )
         return v
 

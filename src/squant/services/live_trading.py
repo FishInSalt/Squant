@@ -855,12 +855,14 @@ class LiveTradingService:
                                 order = await order_repo.get(db_order_id)
                                 if order:
                                     existing = order.corrections or []
-                                    existing.append({
-                                        "timestamp": event["timestamp"],
-                                        "reason": event["reason"],
-                                        "changes": event.get("corrections", []),
-                                        "missing_trade_ids": event.get("missing_trade_ids", []),
-                                    })
+                                    existing.append(
+                                        {
+                                            "timestamp": event["timestamp"],
+                                            "reason": event["reason"],
+                                            "changes": event.get("corrections", []),
+                                            "missing_trade_ids": event.get("missing_trade_ids", []),
+                                        }
+                                    )
                                     await order_repo.update(db_order_id, corrections=existing)
 
                     except Exception as e:

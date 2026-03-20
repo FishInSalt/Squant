@@ -1,5 +1,4 @@
 # tests/unit/infra/exchange/test_get_order_trades.py
-from datetime import datetime, UTC
 from decimal import Decimal
 from unittest.mock import AsyncMock, MagicMock
 
@@ -79,8 +78,28 @@ class TestGetOrderTrades:
 
     async def test_sorted_by_timestamp(self, adapter):
         adapter._exchange.fetch_order_trades.return_value = [
-            {"id": "t002", "order": "o1", "symbol": "BTC/USDT", "side": "buy", "price": 100, "amount": 1, "fee": None, "takerOrMaker": None, "timestamp": 1711000220000},
-            {"id": "t001", "order": "o1", "symbol": "BTC/USDT", "side": "buy", "price": 100, "amount": 1, "fee": None, "takerOrMaker": None, "timestamp": 1711000210000},
+            {
+                "id": "t002",
+                "order": "o1",
+                "symbol": "BTC/USDT",
+                "side": "buy",
+                "price": 100,
+                "amount": 1,
+                "fee": None,
+                "takerOrMaker": None,
+                "timestamp": 1711000220000,
+            },
+            {
+                "id": "t001",
+                "order": "o1",
+                "symbol": "BTC/USDT",
+                "side": "buy",
+                "price": 100,
+                "amount": 1,
+                "fee": None,
+                "takerOrMaker": None,
+                "timestamp": 1711000210000,
+            },
         ]
         result = await adapter._get_order_trades_impl("BTC/USDT", "o1")
         assert result[0].trade_id == "t001"  # earlier timestamp first

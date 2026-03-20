@@ -359,9 +359,7 @@ class TestAccountCredentialUpdate:
         """Test updating passphrase to empty string removes it."""
         from pydantic import SecretStr
 
-        request = UpdateExchangeAccountRequest(
-            api_key=SecretStr("key"), passphrase=SecretStr("")
-        )
+        request = UpdateExchangeAccountRequest(api_key=SecretStr("key"), passphrase=SecretStr(""))
 
         with patch.object(service.repository, "get", new_callable=AsyncMock) as mock_get:
             mock_get.return_value = mock_account
@@ -620,13 +618,9 @@ class TestConnectionTest:
                 with patch("squant.services.account.CCXTRestAdapter") as MockAdapter:
                     mock_adapter_instance = MagicMock()
                     mock_adapter_instance.get_balance = AsyncMock(
-                        side_effect=ExchangeAuthenticationError(
-                            "Missing passphrase for OKX"
-                        )
+                        side_effect=ExchangeAuthenticationError("Missing passphrase for OKX")
                     )
-                    mock_adapter_instance.__aenter__ = AsyncMock(
-                        return_value=mock_adapter_instance
-                    )
+                    mock_adapter_instance.__aenter__ = AsyncMock(return_value=mock_adapter_instance)
                     mock_adapter_instance.__aexit__ = AsyncMock(return_value=None)
                     MockAdapter.return_value = mock_adapter_instance
 

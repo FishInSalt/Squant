@@ -2731,9 +2731,7 @@ class TestForceFillOnValueError:
         assert engine._context._cash < Decimal("0")  # Negative cash from discrepancy
 
     @pytest.mark.asyncio
-    async def test_polling_no_longer_records_fills(
-        self, engine_with_buy_order, mock_adapter
-    ):
+    async def test_polling_no_longer_records_fills(self, engine_with_buy_order, mock_adapter):
         """Test polling path no longer records fills directly.
 
         Fills now come exclusively from _process_trade_execution.

@@ -31,9 +31,7 @@ class EquityCurve(Base):
     unrealized_pnl: Mapped[Decimal] = mapped_column(
         Numeric(20, 8), default=Decimal("0"), nullable=False
     )
-    benchmark_equity: Mapped[Decimal | None] = mapped_column(
-        Numeric(20, 8), nullable=True
-    )
+    benchmark_equity: Mapped[Decimal | None] = mapped_column(Numeric(20, 8), nullable=True)
 
     def __repr__(self) -> str:
         return f"<EquityCurve(run_id={self.run_id}, time={self.time}, equity={self.equity})>"

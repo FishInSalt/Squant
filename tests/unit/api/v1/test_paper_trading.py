@@ -496,9 +496,7 @@ class TestGetStatusWithTradesAndLogs:
     """Tests for trades and logs in status response."""
 
     @pytest.mark.asyncio
-    async def test_status_includes_trades_and_logs(
-        self, client: AsyncClient, mock_run
-    ) -> None:
+    async def test_status_includes_trades_and_logs(self, client: AsyncClient, mock_run) -> None:
         """Test that status response includes trades and logs fields."""
         now = datetime.now(UTC)
         mock_status = {
