@@ -8924,6 +8924,19 @@
             "title": "Strategy Name",
             "description": "Strategy name (from run.strategy)"
           },
+          "corrections": {
+            "anyOf": [
+              {
+                "items": {},
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Corrections",
+            "description": "Data correction audit log"
+          },
           "created_at": {
             "type": "string",
             "format": "date-time",
@@ -9252,6 +9265,19 @@
             ],
             "title": "Strategy Name",
             "description": "Strategy name (from run.strategy)"
+          },
+          "corrections": {
+            "anyOf": [
+              {
+                "items": {},
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Corrections",
+            "description": "Data correction audit log"
           },
           "created_at": {
             "type": "string",
@@ -11316,6 +11342,30 @@
             "format": "date-time",
             "title": "Timestamp",
             "description": "Execution time"
+          },
+          "fill_source": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fill Source",
+            "description": "Fill source: ws, poll, or reconcile"
+          },
+          "taker_or_maker": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Taker Or Maker",
+            "description": "Maker or taker fill"
           }
         },
         "type": "object",
