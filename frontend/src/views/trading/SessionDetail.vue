@@ -1267,6 +1267,7 @@ async function handleEmergencyClose() {
   try {
     const resp = await emergencyClosePositions(props.id)
     showEmergencyCloseResult(resp.data)
+    unsubscribeTradingChannel()
     stopPolling()
     await loadSession()
     await loadStatus()
