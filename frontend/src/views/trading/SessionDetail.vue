@@ -145,8 +145,8 @@
           :symbol="session.symbol"
           :timeframe="session.timeframe"
           :trades="isPaper ? paperTrades : undefined"
-          :fills="isPaper ? paperFills : undefined"
-          :open-trade="isPaper ? paperOpenTrade : undefined"
+          :fills="isPaper ? paperFills : liveFills"
+          :open-trade="isPaper ? paperOpenTrade : liveOpenTrade"
           :realtime="isRunning && !!status?.is_running"
           height="500px"
         />
@@ -792,6 +792,44 @@ const paperLogs = computed<string[]>(() => {
   return (status.value as PaperTradingStatus).logs || []
 })
 
+// Live session trade markers: accumulate fills from WebSocket events and audit orders
+const liveWsFills = ref<Fill[]>([])
+const liveOpenTrade = ref<{ entry_time: string; entry_price: number; amount: number } | null>(null)
+
+// Combine fills from audit orders (initial load) with incremental WebSocket fills
+const liveAllOrders = ref<LiveSessionOrder[]>([])
+
+const liveFills = computed<Fill[]>(() => {
+  if (!isLive.value) return []
+  // Build fills from all audit orders (each order has nested trades = fills)
+  const auditFills: Fill[] = []
+  for (const order of liveAllOrders.value) {
+    if (!order.trades || order.trades.length === 0) continue
+    for (const trade of order.trades) {
+      auditFills.push({
+        order_id: order.id,
+        symbol: order.symbol,
+        side: order.side as 'buy' | 'sell',
+        price: trade.price,
+        amount: trade.amount,
+        fee: trade.fee,
+        timestamp: trade.timestamp,
+      })
+    }
+  }
+  // Merge with WebSocket fills, deduplicating by timestamp+price+amount
+  const seen = new Set(auditFills.map(f => `${f.timestamp}|${f.price}|${f.amount}|${f.side}`))
+  const merged = [...auditFills]
+  for (const f of liveWsFills.value) {
+    const key = `${f.timestamp}|${f.price}|${f.amount}|${f.side}`
+    if (!seen.has(key)) {
+      merged.push(f)
+      seen.add(key)
+    }
+  }
+  return merged
+})
+
 // Live audit orders (from DB audit table)
 const liveAuditOrders = ref<LiveSessionOrder[]>([])
 const liveAuditTotal = ref(0)
@@ -820,6 +858,17 @@ async function loadLiveAuditOrders() {
 function handleAuditPageChange(page: number) {
   liveAuditPage.value = page
   loadLiveAuditOrders()
+}
+
+// Load recent audit orders for chart fill markers (max 100 per API limit)
+async function loadAllLiveOrders() {
+  if (!isLive.value) return
+  try {
+    const resp = await getLiveSessionOrders(props.id, { page: 1, page_size: 100 })
+    liveAllOrders.value = resp.data.items
+  } catch {
+    // non-critical
+  }
 }
 
 const riskState = computed<RiskState | null>(() => {
@@ -892,6 +941,9 @@ function handleTradingEvent(data: Record<string, unknown>) {
     if (isPaper.value) {
       const ps = status.value as PaperTradingStatus
       ps.open_trade = data.open_trade as OpenTrade | undefined
+    } else if (isLive.value) {
+      const ot = data.open_trade as OpenTrade | undefined
+      liveOpenTrade.value = ot ? { entry_time: ot.entry_time, entry_price: ot.entry_price, amount: ot.amount } : null
     }
 
     // Append incremental data
@@ -909,6 +961,16 @@ function handleTradingEvent(data: Record<string, unknown>) {
       if (Array.isArray(newLogs) && newLogs.length && ps.logs) {
         ps.logs.push(...newLogs)
       }
+    } else if (isLive.value) {
+      // Accumulate live fills for chart markers
+      const newFills = data.new_fills as Fill[] | undefined
+      if (Array.isArray(newFills) && newFills.length) {
+        liveWsFills.value.push(...newFills)
+        // Cap to prevent unbounded growth in long-running sessions
+        if (liveWsFills.value.length > 500) {
+          liveWsFills.value = liveWsFills.value.slice(-500)
+        }
+      }
     }
 
     if (data.risk_state) {
@@ -919,6 +981,7 @@ function handleTradingEvent(data: Record<string, unknown>) {
     const newCount = data.completed_orders_count as number
     if (isLive.value && newCount > prevCompletedOrdersCount.value) {
       loadLiveAuditOrders()
+      loadAllLiveOrders()
     }
     prevCompletedOrdersCount.value = newCount
 
@@ -948,6 +1011,9 @@ function handleTradingEvent(data: Record<string, unknown>) {
     if (isPaper.value) {
       const ps = status.value as PaperTradingStatus
       ps.open_trade = data.open_trade as OpenTrade | undefined
+    } else if (isLive.value) {
+      const ot = data.open_trade as OpenTrade | undefined
+      liveOpenTrade.value = ot ? { entry_time: ot.entry_time, entry_price: ot.entry_price, amount: ot.amount } : null
     }
   } else if (eventType === 'engine_stopped') {
     status.value.is_running = false
@@ -1203,6 +1269,7 @@ async function handleEmergencyClose() {
     showEmergencyCloseResult(resp.data)
     stopPolling()
     await loadSession()
+    await loadStatus()
   } catch (error) {
     toastError('执行失败')
   }
@@ -1217,6 +1284,7 @@ onMounted(async () => {
   // Load audit orders for live sessions
   if (isLive.value) {
     loadLiveAuditOrders()
+    loadAllLiveOrders()
   }
   if (isRunning.value && status.value?.is_running) {
     // Subscribe to WebSocket for real-time updates + fallback polling (30s)

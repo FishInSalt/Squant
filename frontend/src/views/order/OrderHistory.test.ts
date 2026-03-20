@@ -2,10 +2,15 @@ import { flushPromises } from '@vue/test-utils'
 import { mountView } from '@/__tests__/test-utils'
 import OrderHistory from './OrderHistory.vue'
 import * as orderApi from '@/api/order'
-import { wrapPaginatedResponse } from '@/__tests__/fixtures'
+import * as accountApi from '@/api/account'
+import { wrapPaginatedResponse, wrapApiResponse } from '@/__tests__/fixtures'
 
 vi.mock('@/api/order', () => ({
   getOrderHistory: vi.fn(),
+}))
+
+vi.mock('@/api/account', () => ({
+  getAccounts: vi.fn(),
 }))
 
 const mockOrders = [
@@ -47,6 +52,7 @@ const mockOrders = [
 
 beforeEach(() => {
   vi.mocked(orderApi.getOrderHistory).mockResolvedValue(wrapPaginatedResponse(mockOrders, 2))
+  vi.mocked(accountApi.getAccounts).mockResolvedValue(wrapApiResponse([]))
 })
 
 describe('OrderHistory', () => {
@@ -67,7 +73,7 @@ describe('OrderHistory', () => {
   it('shows filter form with status filter', async () => {
     const wrapper = mountView(OrderHistory)
     await flushPromises()
-    expect(wrapper.text()).toContain('交易所')
+    expect(wrapper.text()).toContain('账户')
     expect(wrapper.text()).toContain('状态')
     expect(wrapper.text()).toContain('查询')
   })

@@ -647,8 +647,8 @@ class TestReconcilePositions:
         assert not report["cash_adjusted"]
         assert not report["position_discrepancy"]
 
-    async def test_cash_mismatch_adjusted(self, service):
-        """Cash discrepancy should be adjusted to exchange value."""
+    async def test_cash_mismatch_warning_only(self, service):
+        """Cash discrepancy should be logged but NOT adjusted (session cash is source of truth)."""
         engine = MagicMock()
         engine.context._cash = Decimal("10000")
         engine.context.get_position.return_value = None
@@ -663,9 +663,11 @@ class TestReconcilePositions:
 
         report = await service._reconcile_positions(engine, adapter, "BTC/USDT")
 
-        assert report["cash_adjusted"]
-        assert engine.context._cash == Decimal("9500")
+        # Cash should NOT be adjusted — local session state is source of truth
+        assert not report["cash_adjusted"]
+        assert engine.context._cash == Decimal("10000")
         assert len(report["discrepancies"]) == 1
+        assert report["discrepancies"][0]["type"] == "cash_mismatch"
 
     async def test_balance_query_failure(self, service):
         """Balance query failure returns error in report."""
@@ -719,10 +721,12 @@ class TestRecoverOrphanedSessions:
 class TestLiveTradingSettings:
     """Tests for LiveTradingSettings."""
 
-    def test_defaults(self):
+    def test_defaults(self, monkeypatch):
         from squant.config import LiveTradingSettings
 
-        settings = LiveTradingSettings()
+        # Isolate from .env to test true code defaults
+        monkeypatch.delenv("LIVE_AUTO_RECOVERY", raising=False)
+        settings = LiveTradingSettings(_env_file=None)
         assert settings.max_sessions == 10
         assert settings.warmup_bars == 200
         assert settings.auto_recovery is False  # Safety default

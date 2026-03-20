@@ -393,7 +393,7 @@ class TestCreateAdapter:
     ) -> None:
         """Test creating OKX adapter with decrypted credentials."""
         with (
-            patch("squant.services.live_trading.OKXAdapter") as mock_adapter_class,
+            patch("squant.services.live_trading.CCXTRestAdapter") as mock_adapter_class,
             patch("squant.services.account.ExchangeAccountService") as mock_service_class,
         ):
             mock_adapter = MagicMock()
@@ -410,11 +410,16 @@ class TestCreateAdapter:
             adapter = service._create_adapter(mock_okx_account)
 
             assert adapter == mock_adapter
+            from squant.infra.exchange.ccxt import ExchangeCredentials
+
             mock_adapter_class.assert_called_once_with(
-                api_key="test_key",
-                api_secret="test_secret",
-                passphrase="test_pass",
-                testnet=False,
+                "okx",
+                ExchangeCredentials(
+                    api_key="test_key",
+                    api_secret="test_secret",
+                    passphrase="test_pass",
+                    sandbox=False,
+                ),
             )
 
     def test_create_okx_adapter_case_insensitive(
@@ -424,7 +429,7 @@ class TestCreateAdapter:
         mock_okx_account.exchange = "OKX"  # uppercase
 
         with (
-            patch("squant.services.live_trading.OKXAdapter") as mock_adapter_class,
+            patch("squant.services.live_trading.CCXTRestAdapter") as mock_adapter_class,
             patch("squant.services.account.ExchangeAccountService") as mock_service_class,
         ):
             mock_adapter = MagicMock()
@@ -447,7 +452,7 @@ class TestCreateAdapter:
     ) -> None:
         """Test creating Binance adapter."""
         with (
-            patch("squant.services.live_trading.BinanceAdapter") as mock_adapter_class,
+            patch("squant.services.live_trading.CCXTRestAdapter") as mock_adapter_class,
             patch("squant.services.account.ExchangeAccountService") as mock_service_class,
         ):
             mock_adapter = MagicMock()
@@ -463,10 +468,16 @@ class TestCreateAdapter:
             adapter = service._create_adapter(mock_binance_account)
 
             assert adapter == mock_adapter
+            from squant.infra.exchange.ccxt import ExchangeCredentials
+
             mock_adapter_class.assert_called_once_with(
-                api_key="test_key",
-                api_secret="test_secret",
-                testnet=False,
+                "binance",
+                ExchangeCredentials(
+                    api_key="test_key",
+                    api_secret="test_secret",
+                    passphrase=None,
+                    sandbox=False,
+                ),
             )
 
     def test_create_unsupported_exchange(self, service: LiveTradingService) -> None:
@@ -684,7 +695,7 @@ class TestStartSession:
             patch("squant.services.strategy.StrategyRepository") as mock_strat_repo_class,
             patch("squant.services.account.ExchangeAccountRepository") as mock_acct_repo_class,
             patch("squant.services.account.ExchangeAccountService") as mock_acct_svc_class,
-            patch("squant.services.live_trading.OKXAdapter") as mock_adapter_class,
+            patch("squant.services.live_trading.CCXTRestAdapter") as mock_adapter_class,
         ):
             mock_strat_repo = MagicMock()
             mock_strategy = MagicMock()
@@ -733,7 +744,7 @@ class TestStartSession:
             patch("squant.services.strategy.StrategyRepository") as mock_strat_repo_class,
             patch("squant.services.account.ExchangeAccountRepository") as mock_acct_repo_class,
             patch("squant.services.account.ExchangeAccountService") as mock_acct_svc_class,
-            patch("squant.services.live_trading.OKXAdapter") as mock_adapter_class,
+            patch("squant.services.live_trading.CCXTRestAdapter") as mock_adapter_class,
         ):
             mock_strat_repo = MagicMock()
             mock_strategy = MagicMock()
@@ -794,7 +805,7 @@ class TestStartSession:
             patch("squant.services.strategy.StrategyRepository") as mock_strat_repo_class,
             patch("squant.services.account.ExchangeAccountRepository") as mock_acct_repo_class,
             patch("squant.services.account.ExchangeAccountService") as mock_acct_svc_class,
-            patch("squant.services.live_trading.OKXAdapter") as mock_adapter_class,
+            patch("squant.services.live_trading.CCXTRestAdapter") as mock_adapter_class,
         ):
             mock_strat_repo = MagicMock()
             mock_strategy = MagicMock()
@@ -2013,7 +2024,7 @@ class TestExchangeConnectionErrorRename:
             patch("squant.services.strategy.StrategyRepository") as mock_strat_repo_class,
             patch("squant.services.account.ExchangeAccountRepository") as mock_acct_repo_class,
             patch("squant.services.account.ExchangeAccountService") as mock_acct_svc_class,
-            patch("squant.services.live_trading.OKXAdapter") as mock_adapter_class,
+            patch("squant.services.live_trading.CCXTRestAdapter") as mock_adapter_class,
         ):
             mock_strat_repo = MagicMock()
             mock_strategy = MagicMock()
@@ -2348,7 +2359,7 @@ class TestResumeFailureUpdatesDB:
             patch("squant.services.strategy.StrategyRepository") as mock_strat_repo_class,
             patch("squant.services.account.ExchangeAccountRepository") as mock_acct_repo_class,
             patch("squant.services.account.ExchangeAccountService") as mock_acct_svc_class,
-            patch("squant.services.live_trading.OKXAdapter") as mock_adapter_class,
+            patch("squant.services.live_trading.CCXTRestAdapter") as mock_adapter_class,
             patch("squant.services.live_trading.LiveTradingEngine") as mock_engine_class,
             patch("squant.websocket.manager.get_stream_manager") as mock_stream_mgr,
             patch("squant.config.get_settings") as mock_settings,
@@ -2493,7 +2504,7 @@ class TestStartAdapterCloseOnFailure:
             patch("squant.services.strategy.StrategyRepository") as mock_strat_repo_class,
             patch("squant.services.account.ExchangeAccountRepository") as mock_acct_repo_class,
             patch("squant.services.account.ExchangeAccountService") as mock_acct_svc_class,
-            patch("squant.services.live_trading.OKXAdapter") as mock_adapter_class,
+            patch("squant.services.live_trading.CCXTRestAdapter") as mock_adapter_class,
         ):
             mock_strat_repo = MagicMock()
             mock_strategy = MagicMock()
@@ -3866,7 +3877,7 @@ class TestResumeSuccessPath:
             "discrepancies": [],
         }
         p["mock_reconcile_positions"].return_value = {
-            "cash_adjusted": True,
+            "cash_adjusted": False,
             "position_discrepancy": False,
             "discrepancies": [{"type": "cash_mismatch", "local": "10000", "exchange": "9500"}],
         }
@@ -3879,7 +3890,7 @@ class TestResumeSuccessPath:
 
         assert report["orders_reconciled"] == 2
         assert report["fills_processed"] == 1
-        assert report["position_reconciliation"]["cash_adjusted"] is True
+        assert report["position_reconciliation"]["cash_adjusted"] is False
         assert len(report["position_reconciliation"]["discrepancies"]) == 1
 
 

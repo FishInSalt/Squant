@@ -4,25 +4,18 @@ import asyncio
 import contextlib
 import logging
 from collections import deque
-from datetime import UTC, datetime
-from decimal import Decimal
 from typing import Any
 
 from redis.asyncio import Redis
 
 from squant.config import get_settings
 from squant.infra.exchange.ccxt import CCXTStreamProvider, ExchangeCredentials
-from squant.infra.exchange.okx.ws_client import OKXWebSocketClient
-from squant.infra.exchange.okx.ws_types import (
-    CANDLE_CHANNELS,
-    OKXChannel,
+from squant.infra.exchange.ws_types import (
     WSAccountUpdate,
-    WSBalanceUpdate,
     WSCandle,
     WSMessage,
     WSMessageType,
     WSOrderBook,
-    WSOrderBookLevel,
     WSOrderUpdate,
     WSTicker,
     WSTrade,
@@ -36,9 +29,9 @@ class StreamManager:
     """Manages WebSocket connections and distributes data via Redis pub/sub.
 
     This manager:
-    1. Maintains OKX WebSocket connections (public and private)
-    2. Converts OKX message format to internal types
-    3. Publishes data to Redis channels for FastAPI WebSocket endpoints
+    1. Maintains exchange WebSocket connections via CCXTStreamProvider
+    2. Publishes normalized data to Redis channels for FastAPI WebSocket endpoints
+    3. Supports multiple exchanges (OKX, Binance, Bybit) through CCXT
     """
 
     REDIS_CHANNEL_PREFIX = "squant:ws:"
@@ -49,12 +42,7 @@ class StreamManager:
 
     def __init__(self) -> None:
         """Initialize stream manager."""
-        # Native OKX clients (kept as backup)
-        self._public_client: OKXWebSocketClient | None = None
-        self._business_client: OKXWebSocketClient | None = None  # For candles
-        self._private_client: OKXWebSocketClient | None = None
-
-        # CCXT provider (primary when use_ccxt_provider=True)
+        # CCXT provider for exchange WebSocket connections
         self._ccxt_provider: CCXTStreamProvider | None = None
 
         self._redis: Redis | None = None
@@ -100,25 +88,17 @@ class StreamManager:
         """Check if stream manager is running and connections are healthy.
 
         This is a more thorough check than is_running - it verifies that
-        the underlying connections (CCXT provider or native clients) are
-        actually connected and operational.
+        the CCXT provider is actually connected and operational.
         """
         if not self._running:
             return False
 
-        if self._settings.use_ccxt_provider:
-            # Check if CCXT provider is connected and healthy
-            if self._ccxt_provider is None:
-                return False
-            # Use the detailed health check if available
-            if hasattr(self._ccxt_provider, "is_healthy"):
-                return self._ccxt_provider.is_healthy()
-            return self._ccxt_provider.is_connected
-        else:
-            # Check if native OKX clients are connected
-            public_ok = self._public_client is not None and self._public_client.is_connected
-            business_ok = self._business_client is not None and self._business_client.is_connected
-            return public_ok and business_ok
+        if self._ccxt_provider is None:
+            return False
+        # Use the detailed health check if available
+        if hasattr(self._ccxt_provider, "is_healthy"):
+            return self._ccxt_provider.is_healthy()
+        return self._ccxt_provider.is_connected
 
     async def start(self) -> None:
         """Start the public WebSocket connection."""
@@ -132,10 +112,7 @@ class StreamManager:
         # Get Redis client (initialized at app startup)
         self._redis = get_redis_client()
 
-        if self._settings.use_ccxt_provider:
-            await self._start_ccxt_provider()
-        else:
-            await self._start_native_okx()
+        await self._start_ccxt_provider()
 
         self._running = True
 
@@ -227,31 +204,6 @@ class StreamManager:
 
         logger.info(f"CCXT provider started for {exchange_id}")
 
-    async def _start_native_okx(self) -> None:
-        """Start native OKX WebSocket clients (backup mode)."""
-        logger.info("Starting native OKX WebSocket clients...")
-
-        # Initialize public WebSocket client (for tickers, trades, orderbook)
-        self._public_client = OKXWebSocketClient(
-            testnet=self._settings.okx_testnet,
-            private=False,
-        )
-        self._public_client.add_handler(self._handle_public_message)
-
-        # Initialize business WebSocket client (for candles)
-        # OKX requires candle subscriptions on the /business endpoint since June 2023
-        self._business_client = OKXWebSocketClient(
-            testnet=self._settings.okx_testnet,
-            private=False,
-            business=True,
-        )
-        self._business_client.add_handler(self._handle_public_message)
-
-        await self._public_client.connect()
-        await self._business_client.connect()
-
-        logger.info("Native OKX WebSocket clients started")
-
     async def switch_exchange(self, exchange_id: str) -> None:
         """Switch to a new exchange data source.
 
@@ -260,15 +212,7 @@ class StreamManager:
 
         Args:
             exchange_id: New exchange identifier (okx, binance, bybit).
-
-        Note:
-            This only works in CCXT provider mode. Native OKX mode does not
-            support exchange switching.
         """
-        if not self._settings.use_ccxt_provider:
-            logger.warning("Exchange switching only supported in CCXT provider mode")
-            return
-
         if not self._running:
             logger.warning("Stream manager not running, cannot switch exchange")
             return
@@ -376,78 +320,9 @@ class StreamManager:
         Returns:
             ExchangeCredentials or None if not configured.
         """
-        if exchange_id == "okx":
-            if self._settings.okx_api_key and self._settings.okx_api_secret:
-                return ExchangeCredentials(
-                    api_key=self._settings.okx_api_key.get_secret_value(),
-                    api_secret=self._settings.okx_api_secret.get_secret_value(),
-                    passphrase=self._settings.okx_passphrase.get_secret_value()
-                    if self._settings.okx_passphrase
-                    else None,
-                    sandbox=self._settings.okx_testnet,
-                )
-        elif exchange_id == "binance":
-            if self._settings.binance_api_key and self._settings.binance_api_secret:
-                return ExchangeCredentials(
-                    api_key=self._settings.binance_api_key.get_secret_value(),
-                    api_secret=self._settings.binance_api_secret.get_secret_value(),
-                    sandbox=self._settings.binance_testnet,
-                )
-        elif exchange_id == "bybit":
-            if self._settings.bybit_api_key and self._settings.bybit_api_secret:
-                return ExchangeCredentials(
-                    api_key=self._settings.bybit_api_key.get_secret_value(),
-                    api_secret=self._settings.bybit_api_secret.get_secret_value(),
-                    sandbox=self._settings.bybit_testnet,
-                )
-        return None
+        from squant.infra.exchange.credentials import build_exchange_credentials
 
-    async def start_private(self) -> None:
-        """Start the private WebSocket connection (requires credentials).
-
-        For CCXT provider mode, private channels are handled by the same provider.
-        For native OKX mode, a separate private client is used.
-        """
-        if self._settings.use_ccxt_provider and self._ccxt_provider:
-            # CCXT provider already handles private channels if credentials are provided
-            logger.info("CCXT provider already supports private channels")
-            return
-
-        # Native OKX mode
-        if not all(
-            [
-                self._settings.okx_api_key,
-                self._settings.okx_api_secret,
-                self._settings.okx_passphrase,
-            ]
-        ):
-            logger.warning("OKX credentials not configured, private channels unavailable")
-            return
-
-        logger.info("Starting private WebSocket connection...")
-
-        # Get Redis client if not already set
-        if self._redis is None:
-            self._redis = get_redis_client()
-
-        # Initialize private WebSocket client
-        self._private_client = OKXWebSocketClient(
-            api_key=self._settings.okx_api_key.get_secret_value()
-            if self._settings.okx_api_key
-            else None,
-            api_secret=self._settings.okx_api_secret.get_secret_value()
-            if self._settings.okx_api_secret
-            else None,
-            passphrase=self._settings.okx_passphrase.get_secret_value()
-            if self._settings.okx_passphrase
-            else None,
-            testnet=self._settings.okx_testnet,
-            private=True,
-        )
-        self._private_client.add_handler(self._handle_private_message)
-
-        await self._private_client.connect()
-        logger.info("Stream manager private connection established")
+        return build_exchange_credentials(exchange_id, self._settings)
 
     async def stop(self) -> None:
         """Stop all WebSocket connections."""
@@ -490,19 +365,6 @@ class StreamManager:
             await self._ccxt_provider.close()
             self._ccxt_provider = None
 
-        # Close native OKX clients
-        if self._public_client:
-            await self._public_client.close()
-            self._public_client = None
-
-        if self._business_client:
-            await self._business_client.close()
-            self._business_client = None
-
-        if self._private_client:
-            await self._private_client.close()
-            self._private_client = None
-
         self._redis = None
         logger.info("Stream manager stopped")
 
@@ -522,17 +384,9 @@ class StreamManager:
             return
 
         # First subscriber: subscribe to exchange, then record ref count
-        if self._settings.use_ccxt_provider:
-            if not self._ccxt_provider:
-                raise RuntimeError("CCXT provider not started. Call start() first.")
-            await self._ccxt_provider.watch_ticker(normalized_symbol)
-        else:
-            if not self._public_client:
-                raise RuntimeError("Public client not started. Call start() first.")
-            okx_symbol = self._to_okx_symbol(symbol)
-            await self._public_client.subscribe(
-                [{"channel": OKXChannel.TICKERS.value, "instId": okx_symbol}]
-            )
+        if not self._ccxt_provider:
+            raise RuntimeError("CCXT provider not started. Call start() first.")
+        await self._ccxt_provider.watch_ticker(normalized_symbol)
 
         self._ticker_subscriptions[normalized_symbol] = 1
         logger.info(f"Subscribed to ticker: {normalized_symbol}")
@@ -553,15 +407,8 @@ class StreamManager:
 
         del self._ticker_subscriptions[normalized_symbol]
 
-        if self._settings.use_ccxt_provider:
-            if self._ccxt_provider:
-                await self._ccxt_provider.unwatch(f"ticker:{normalized_symbol}")
-        else:
-            if self._public_client:
-                okx_symbol = self._to_okx_symbol(symbol)
-                await self._public_client.unsubscribe(
-                    [{"channel": OKXChannel.TICKERS.value, "instId": okx_symbol}]
-                )
+        if self._ccxt_provider:
+            await self._ccxt_provider.unwatch(f"ticker:{normalized_symbol}")
 
     async def subscribe_candles(self, symbol: str, timeframe: str = "1m") -> None:
         """Subscribe to candlestick updates.
@@ -579,33 +426,14 @@ class StreamManager:
             return
 
         # First subscriber: subscribe to exchange, then record ref count
-        if self._settings.use_ccxt_provider:
-            if not self._ccxt_provider:
-                logger.error("CCXT provider not started!")
-                raise RuntimeError("CCXT provider not started. Call start() first.")
+        if not self._ccxt_provider:
+            logger.error("CCXT provider not started!")
+            raise RuntimeError("CCXT provider not started. Call start() first.")
 
-            logger.info(
-                f"Subscribing to candles via CCXT: symbol={normalized_symbol}, timeframe={timeframe}"
-            )
-            await self._ccxt_provider.watch_ohlcv(normalized_symbol, timeframe)
-        else:
-            # Native OKX mode
-            if not self._business_client:
-                logger.error("Business client not started!")
-                raise RuntimeError("Business client not started. Call start() first.")
-
-            channel = CANDLE_CHANNELS.get(timeframe.lower())
-            if not channel:
-                logger.error(f"Invalid timeframe: {timeframe}")
-                raise ValueError(f"Invalid timeframe: {timeframe}")
-
-            okx_symbol = self._to_okx_symbol(symbol)
-            logger.info(
-                f"Sending candle subscription to OKX business endpoint: channel={channel.value}, instId={okx_symbol}"
-            )
-            await self._business_client.subscribe(
-                [{"channel": channel.value, "instId": okx_symbol}]
-            )
+        logger.info(
+            f"Subscribing to candles via CCXT: symbol={normalized_symbol}, timeframe={timeframe}"
+        )
+        await self._ccxt_provider.watch_ohlcv(normalized_symbol, timeframe)
 
         self._candle_subscriptions[key] = 1
         logger.info(f"Subscribed to candles: {normalized_symbol} {timeframe}")
@@ -626,17 +454,8 @@ class StreamManager:
 
         del self._candle_subscriptions[key]
 
-        if self._settings.use_ccxt_provider:
-            if self._ccxt_provider:
-                await self._ccxt_provider.unwatch(f"ohlcv:{normalized_symbol}:{timeframe}")
-        else:
-            if self._business_client:
-                channel = CANDLE_CHANNELS.get(timeframe.lower())
-                if channel:
-                    okx_symbol = self._to_okx_symbol(symbol)
-                    await self._business_client.unsubscribe(
-                        [{"channel": channel.value, "instId": okx_symbol}]
-                    )
+        if self._ccxt_provider:
+            await self._ccxt_provider.unwatch(f"ohlcv:{normalized_symbol}:{timeframe}")
 
     async def subscribe_trades(self, symbol: str) -> None:
         """Subscribe to trade updates for a symbol."""
@@ -648,17 +467,9 @@ class StreamManager:
             return
 
         # First subscriber: subscribe to exchange, then record ref count
-        if self._settings.use_ccxt_provider:
-            if not self._ccxt_provider:
-                raise RuntimeError("CCXT provider not started. Call start() first.")
-            await self._ccxt_provider.watch_trades(normalized_symbol)
-        else:
-            if not self._public_client:
-                raise RuntimeError("Public client not started. Call start() first.")
-            okx_symbol = self._to_okx_symbol(symbol)
-            await self._public_client.subscribe(
-                [{"channel": OKXChannel.TRADES.value, "instId": okx_symbol}]
-            )
+        if not self._ccxt_provider:
+            raise RuntimeError("CCXT provider not started. Call start() first.")
+        await self._ccxt_provider.watch_trades(normalized_symbol)
 
         self._trade_subscriptions[normalized_symbol] = 1
         logger.info(f"Subscribed to trades: {normalized_symbol}")
@@ -678,15 +489,8 @@ class StreamManager:
 
         del self._trade_subscriptions[normalized_symbol]
 
-        if self._settings.use_ccxt_provider:
-            if self._ccxt_provider:
-                await self._ccxt_provider.unwatch(f"trades:{normalized_symbol}")
-        else:
-            if self._public_client:
-                okx_symbol = self._to_okx_symbol(symbol)
-                await self._public_client.unsubscribe(
-                    [{"channel": OKXChannel.TRADES.value, "instId": okx_symbol}]
-                )
+        if self._ccxt_provider:
+            await self._ccxt_provider.unwatch(f"trades:{normalized_symbol}")
 
     async def subscribe_orderbook(self, symbol: str) -> None:
         """Subscribe to order book updates (5-level depth)."""
@@ -698,17 +502,9 @@ class StreamManager:
             return
 
         # First subscriber: subscribe to exchange, then record ref count
-        if self._settings.use_ccxt_provider:
-            if not self._ccxt_provider:
-                raise RuntimeError("CCXT provider not started. Call start() first.")
-            await self._ccxt_provider.watch_order_book(normalized_symbol, limit=5)
-        else:
-            if not self._public_client:
-                raise RuntimeError("Public client not started. Call start() first.")
-            okx_symbol = self._to_okx_symbol(symbol)
-            await self._public_client.subscribe(
-                [{"channel": OKXChannel.BOOKS5.value, "instId": okx_symbol}]
-            )
+        if not self._ccxt_provider:
+            raise RuntimeError("CCXT provider not started. Call start() first.")
+        await self._ccxt_provider.watch_order_book(normalized_symbol, limit=5)
 
         self._orderbook_subscriptions[normalized_symbol] = 1
         logger.info(f"Subscribed to orderbook: {normalized_symbol}")
@@ -728,15 +524,8 @@ class StreamManager:
 
         del self._orderbook_subscriptions[normalized_symbol]
 
-        if self._settings.use_ccxt_provider:
-            if self._ccxt_provider:
-                await self._ccxt_provider.unwatch(f"orderbook:{normalized_symbol}")
-        else:
-            if self._public_client:
-                okx_symbol = self._to_okx_symbol(symbol)
-                await self._public_client.unsubscribe(
-                    [{"channel": OKXChannel.BOOKS5.value, "instId": okx_symbol}]
-                )
+        if self._ccxt_provider:
+            await self._ccxt_provider.unwatch(f"orderbook:{normalized_symbol}")
 
     # ==================== Private Channel Subscriptions ====================
 
@@ -746,82 +535,20 @@ class StreamManager:
         Args:
             inst_type: Instrument type (SPOT, MARGIN, SWAP, FUTURES, OPTION).
         """
-        if self._settings.use_ccxt_provider:
-            if not self._ccxt_provider:
-                raise RuntimeError("CCXT provider not started. Call start() first.")
-            # CCXT watches all orders by default
-            await self._ccxt_provider.watch_orders()
-            logger.info("Subscribed to orders via CCXT")
-        else:
-            if not self._private_client:
-                await self.start_private()
-
-            if not self._private_client:
-                raise RuntimeError("Private client not available (credentials missing)")
-
-            await self._private_client.subscribe(
-                [{"channel": OKXChannel.ORDERS.value, "instType": inst_type}]
-            )
-            logger.info(f"Subscribed to orders: {inst_type}")
+        if not self._ccxt_provider:
+            raise RuntimeError("CCXT provider not started. Call start() first.")
+        # CCXT watches all orders by default
+        await self._ccxt_provider.watch_orders()
+        logger.info("Subscribed to orders via CCXT")
 
     async def subscribe_account(self) -> None:
         """Subscribe to account balance updates (private channel)."""
-        if self._settings.use_ccxt_provider:
-            if not self._ccxt_provider:
-                raise RuntimeError("CCXT provider not started. Call start() first.")
-            await self._ccxt_provider.watch_balance()
-            logger.info("Subscribed to account updates via CCXT")
-        else:
-            if not self._private_client:
-                await self.start_private()
-
-            if not self._private_client:
-                raise RuntimeError("Private client not available (credentials missing)")
-
-            await self._private_client.subscribe([{"channel": OKXChannel.ACCOUNT.value}])
-            logger.info("Subscribed to account updates")
+        if not self._ccxt_provider:
+            raise RuntimeError("CCXT provider not started. Call start() first.")
+        await self._ccxt_provider.watch_balance()
+        logger.info("Subscribed to account updates via CCXT")
 
     # ==================== Message Handlers ====================
-
-    async def _handle_public_message(self, msg: dict[str, Any]) -> None:
-        """Handle messages from public WebSocket."""
-        try:
-            arg = msg.get("arg", {})
-            channel = arg.get("channel", "")
-            data = msg.get("data", [])
-
-            if not data:
-                return
-
-            if channel == OKXChannel.TICKERS.value:
-                await self._process_ticker(arg, data)
-            elif channel.startswith("candle"):
-                await self._process_candle(arg, data, channel)
-            elif channel == OKXChannel.TRADES.value:
-                await self._process_trades(arg, data)
-            elif channel == OKXChannel.BOOKS5.value:
-                await self._process_orderbook(arg, data)
-
-        except Exception as e:
-            logger.exception(f"Error processing public message: {e}")
-
-    async def _handle_private_message(self, msg: dict[str, Any]) -> None:
-        """Handle messages from private WebSocket."""
-        try:
-            arg = msg.get("arg", {})
-            channel = arg.get("channel", "")
-            data = msg.get("data", [])
-
-            if not data:
-                return
-
-            if channel == OKXChannel.ORDERS.value:
-                await self._process_orders(data)
-            elif channel == OKXChannel.ACCOUNT.value:
-                await self._process_account(data)
-
-        except Exception as e:
-            logger.exception(f"Error processing private message: {e}")
 
     async def _handle_ccxt_message(self, msg: dict[str, Any]) -> None:
         """Handle messages from CCXT provider.
@@ -914,204 +641,12 @@ class StreamManager:
         except Exception as e:
             logger.exception(f"Error processing CCXT message: {e}")
 
-    async def _process_ticker(self, arg: dict, data: list) -> None:
-        """Process ticker data and publish to Redis."""
-        for item in data:
-            symbol = self._from_okx_symbol(item.get("instId", ""))
-
-            ticker = WSTicker(
-                symbol=symbol,
-                last=Decimal(item.get("last", "0")),
-                bid=Decimal(item["bidPx"]) if item.get("bidPx") else None,
-                ask=Decimal(item["askPx"]) if item.get("askPx") else None,
-                bid_size=Decimal(item["bidSz"]) if item.get("bidSz") else None,
-                ask_size=Decimal(item["askSz"]) if item.get("askSz") else None,
-                high_24h=Decimal(item["high24h"]) if item.get("high24h") else None,
-                low_24h=Decimal(item["low24h"]) if item.get("low24h") else None,
-                volume_24h=Decimal(item["vol24h"]) if item.get("vol24h") else None,
-                volume_quote_24h=Decimal(item["volCcy24h"]) if item.get("volCcy24h") else None,
-                open_24h=Decimal(item["open24h"]) if item.get("open24h") else None,
-                timestamp=self._parse_timestamp(item.get("ts")),
-            )
-
-            await self._publish(
-                WSMessageType.TICKER,
-                f"ticker:{symbol}",
-                ticker.model_dump(mode="json"),
-            )
-
-            # Dispatch to paper trading sessions for spread simulation
-            from squant.engine.paper.manager import get_session_manager
-
-            session_manager = get_session_manager()
-            session_manager.dispatch_ticker(ticker)
-
-    async def _process_candle(self, arg: dict, data: list, channel: str) -> None:
-        """Process candlestick data and publish to Redis."""
-        symbol = self._from_okx_symbol(arg.get("instId", ""))
-
-        # Extract timeframe from channel (e.g., "candle1m" -> "1m")
-        timeframe = channel.replace("candle", "").lower()
-        logger.debug(
-            f"Processing candle data: symbol={symbol}, timeframe={timeframe}, count={len(data)}"
-        )
-
-        for item in data:
-            # OKX candle format: [ts, o, h, l, c, vol, volCcy, volCcyQuote, confirm]
-            if len(item) >= 9:
-                candle = WSCandle(
-                    symbol=symbol,
-                    timeframe=timeframe,
-                    timestamp=self._parse_timestamp(item[0]),
-                    open=Decimal(item[1]),
-                    high=Decimal(item[2]),
-                    low=Decimal(item[3]),
-                    close=Decimal(item[4]),
-                    volume=Decimal(item[5]),
-                    volume_quote=Decimal(item[7]) if item[7] else None,
-                    is_closed=item[8] == "1",
-                )
-
-                # Publish to Redis for WebSocket clients
-                await self._publish(
-                    WSMessageType.CANDLE,
-                    f"candle:{symbol}:{timeframe}",
-                    candle.model_dump(mode="json"),
-                )
-
-                # Dispatch to paper trading sessions
-                from squant.engine.paper.manager import get_session_manager
-
-                session_manager = get_session_manager()
-                await session_manager.dispatch_candle(candle)
-
-                # Dispatch to live trading sessions
-                from squant.engine.live.manager import get_live_session_manager
-
-                live_manager = get_live_session_manager()
-                await live_manager.dispatch_candle(candle)
-
-    async def _process_trades(self, arg: dict, data: list) -> None:
-        """Process trade data and publish to Redis."""
-        symbol = self._from_okx_symbol(arg.get("instId", ""))
-
-        for item in data:
-            trade = WSTrade(
-                symbol=symbol,
-                trade_id=item.get("tradeId", ""),
-                price=Decimal(item.get("px", "0")),
-                size=Decimal(item.get("sz", "0")),
-                side=item.get("side", "").lower(),
-                timestamp=self._parse_timestamp(item.get("ts")),
-            )
-
-            await self._publish(
-                WSMessageType.TRADE,
-                f"trade:{symbol}",
-                trade.model_dump(mode="json"),
-            )
-
-    async def _process_orderbook(self, arg: dict, data: list) -> None:
-        """Process order book data and publish to Redis."""
-        symbol = self._from_okx_symbol(arg.get("instId", ""))
-
-        for item in data:
-            bids = [
-                WSOrderBookLevel(
-                    price=Decimal(b[0]),
-                    size=Decimal(b[1]),
-                    num_orders=int(b[3]) if len(b) > 3 else None,
-                )
-                for b in item.get("bids", [])
-            ]
-
-            asks = [
-                WSOrderBookLevel(
-                    price=Decimal(a[0]),
-                    size=Decimal(a[1]),
-                    num_orders=int(a[3]) if len(a) > 3 else None,
-                )
-                for a in item.get("asks", [])
-            ]
-
-            orderbook = WSOrderBook(
-                symbol=symbol,
-                bids=bids,
-                asks=asks,
-                timestamp=self._parse_timestamp(item.get("ts")),
-                checksum=int(item["checksum"]) if item.get("checksum") else None,
-            )
-
-            await self._publish(
-                WSMessageType.ORDERBOOK,
-                f"orderbook:{symbol}",
-                orderbook.model_dump(mode="json"),
-            )
-
-    async def _process_orders(self, data: list) -> None:
-        """Process order updates and publish to Redis."""
-        for item in data:
-            symbol = self._from_okx_symbol(item.get("instId", ""))
-
-            order = WSOrderUpdate(
-                order_id=item.get("ordId", ""),
-                client_order_id=item.get("clOrdId") or None,
-                symbol=symbol,
-                side=item.get("side", "").lower(),
-                order_type=item.get("ordType", "").lower(),
-                status=self._map_order_status(item.get("state", "")),
-                price=Decimal(item["px"]) if item.get("px") else None,
-                size=Decimal(item.get("sz", "0")),
-                filled_size=Decimal(item.get("fillSz", "0")),
-                avg_price=Decimal(item["avgPx"]) if item.get("avgPx") else None,
-                fee=Decimal(item["fee"]) if item.get("fee") else None,
-                fee_currency=item.get("feeCcy") or None,
-                created_at=self._parse_timestamp(item.get("cTime")),
-                updated_at=self._parse_timestamp(item.get("uTime")),
-            )
-
-            await self._publish(
-                WSMessageType.ORDER_UPDATE,
-                "orders",
-                order.model_dump(mode="json"),
-            )
-
-            # Dispatch to live trading sessions
-            from squant.engine.live.manager import get_live_session_manager
-
-            live_manager = get_live_session_manager()
-            live_manager.dispatch_order_update(order)
-
-    async def _process_account(self, data: list) -> None:
-        """Process account balance updates and publish to Redis."""
-        for item in data:
-            balances = []
-            for detail in item.get("details", []):
-                balances.append(
-                    WSBalanceUpdate(
-                        currency=detail.get("ccy", ""),
-                        available=Decimal(detail.get("availBal", "0")),
-                        frozen=Decimal(detail.get("frozenBal", "0")),
-                    )
-                )
-
-            account = WSAccountUpdate(
-                balances=balances,
-                timestamp=self._parse_timestamp(item.get("uTime")),
-            )
-
-            await self._publish(
-                WSMessageType.ACCOUNT_UPDATE,
-                "account",
-                account.model_dump(mode="json"),
-            )
-
     # ==================== Helper Methods ====================
 
     async def _publish_service_ready(self) -> None:
         """Publish service_ready event to notify clients that the stream manager is ready.
 
-        Clients receiving this can re-subscribe to OKX channels that may have
+        Clients receiving this can re-subscribe to channels that may have
         failed during stream manager downtime.
         """
         await self._publish(
@@ -1286,66 +821,25 @@ class StreamManager:
     async def _attempt_recovery(self) -> bool:
         """Attempt to recover from an unhealthy state.
 
-        For CCXT provider mode, triggers a reconnection attempt.
-        For native OKX mode, attempts to reconnect the clients.
+        Triggers a reconnection attempt on the CCXT provider.
 
         Returns:
             True if recovery was successful, False otherwise.
         """
-        if self._settings.use_ccxt_provider:
-            if self._ccxt_provider and hasattr(self._ccxt_provider, "reconnect"):
-                logger.info("Triggering CCXT provider reconnection...")
-                success = await self._ccxt_provider.reconnect()
-                if success:
-                    logger.info("CCXT provider reconnection successful")
-                    await self._publish_service_ready()
-                    return True
-                else:
-                    logger.error("CCXT provider reconnection failed")
-                    return False
-            return False
-        else:
-            # Native OKX mode - try to reconnect clients
-            logger.info("Attempting to reconnect native OKX clients...")
-            try:
-                if self._public_client and not self._public_client.is_connected:
-                    await self._public_client.connect()
-                if self._business_client and not self._business_client.is_connected:
-                    await self._business_client.connect()
-                logger.info("Native OKX clients reconnection attempted")
+        if self._ccxt_provider and hasattr(self._ccxt_provider, "reconnect"):
+            logger.info("Triggering CCXT provider reconnection...")
+            success = await self._ccxt_provider.reconnect()
+            if success:
+                logger.info("CCXT provider reconnection successful")
                 await self._publish_service_ready()
                 return True
-            except Exception as e:
-                logger.exception(f"Failed to reconnect native OKX clients: {e}")
+            else:
+                logger.error("CCXT provider reconnection failed")
                 return False
-
-    def _to_okx_symbol(self, symbol: str) -> str:
-        """Convert standard symbol to OKX format.
-
-        Args:
-            symbol: Standard format (e.g., "BTC/USDT").
-
-        Returns:
-            OKX format (e.g., "BTC-USDT").
-        """
-        return symbol.replace("/", "-")
-
-    def _from_okx_symbol(self, symbol: str) -> str:
-        """Convert OKX symbol to standard format.
-
-        Args:
-            symbol: OKX format (e.g., "BTC-USDT").
-
-        Returns:
-            Standard format (e.g., "BTC/USDT").
-        """
-        return symbol.replace("-", "/")
+        return False
 
     def _normalize_symbol(self, symbol: str) -> str:
-        """Normalize symbol to standard format (using '/').
-
-        CCXT uses '/' separator, OKX uses '-'. This method normalizes
-        both formats to the standard '/' format used internally.
+        """Normalize symbol to standard CCXT format (using '/').
 
         Args:
             symbol: Symbol in either format (e.g., "BTC/USDT" or "BTC-USDT").
@@ -1354,37 +848,6 @@ class StreamManager:
             Standard format (e.g., "BTC/USDT").
         """
         return symbol.replace("-", "/")
-
-    def _parse_timestamp(self, ts: str | None) -> datetime:
-        """Parse OKX timestamp (milliseconds) to datetime.
-
-        Args:
-            ts: Timestamp in milliseconds as string.
-
-        Returns:
-            Datetime object.
-        """
-        if not ts:
-            return datetime.now(UTC)
-        return datetime.fromtimestamp(int(ts) / 1000, tz=UTC)
-
-    def _map_order_status(self, status: str) -> str:
-        """Map OKX order status to internal status.
-
-        Args:
-            status: OKX order status.
-
-        Returns:
-            Internal order status.
-        """
-        status_map = {
-            "live": "submitted",
-            "partially_filled": "partial",
-            "filled": "filled",
-            "canceled": "cancelled",
-            "mmp_canceled": "cancelled",
-        }
-        return status_map.get(status.lower(), status.lower())
 
 
 # Global stream manager instance

@@ -245,10 +245,8 @@ def mock_settings():
     Create mock application settings.
 
     Provides a MagicMock with common settings attributes:
-        - use_ccxt_provider: True (default to CCXT)
         - default_exchange: "okx"
         - Exchange credentials (as SecretStr mocks)
-        - Testnet flags
 
     Returns:
         MagicMock: Mock settings object
@@ -259,7 +257,6 @@ def mock_settings():
             # Test code
     """
     settings = MagicMock()
-    settings.use_ccxt_provider = True
     settings.default_exchange = "okx"
 
     # OKX credentials
@@ -269,17 +266,14 @@ def mock_settings():
     settings.okx_api_secret.get_secret_value.return_value = "test-okx-secret"
     settings.okx_passphrase = MagicMock()
     settings.okx_passphrase.get_secret_value.return_value = "test-okx-passphrase"
-    settings.okx_testnet = True
 
     # Binance credentials (not configured by default)
     settings.binance_api_key = None
     settings.binance_api_secret = None
-    settings.binance_testnet = False
 
     # Bybit credentials (not configured by default)
     settings.bybit_api_key = None
     settings.bybit_api_secret = None
-    settings.bybit_testnet = False
 
     return settings
 

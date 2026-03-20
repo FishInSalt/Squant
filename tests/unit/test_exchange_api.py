@@ -7,13 +7,14 @@ async endpoints with mocked async dependencies.
 from collections.abc import AsyncGenerator
 from datetime import UTC, datetime
 from decimal import Decimal
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from squant.api.deps import get_exchange, get_okx_exchange
+from squant.api.deps import get_exchange
 from squant.api.v1.market import _market_cache
+from squant.infra.database import get_session
 from squant.infra.exchange import (
     AccountBalance,
     Balance,
@@ -37,29 +38,51 @@ def clear_market_cache() -> None:
 
 @pytest.fixture
 def mock_exchange() -> AsyncMock:
-    """Create mock OKX exchange."""
-    return AsyncMock()
+    """Create mock exchange adapter."""
+    mock = AsyncMock()
+    mock.__aenter__ = AsyncMock(return_value=mock)
+    mock.__aexit__ = AsyncMock(return_value=None)
+    return mock
 
 
 @pytest.fixture
-async def client(mock_exchange: AsyncMock) -> AsyncGenerator[AsyncClient, None]:
-    """Create async test client with mocked exchange.
+def mock_session():
+    """Create a mock database session for account endpoints."""
+    from uuid import uuid4
+
+    mock_account = MagicMock()
+    mock_account.id = str(uuid4())
+    mock_account.exchange = "okx"
+    mock_account.is_active = True
+    mock_account.testnet = False
+    mock_account.nonce = b"valid_nonce_12"
+
+    session = MagicMock()
+    mock_result = MagicMock()
+    mock_result.scalar_one_or_none.return_value = mock_account
+    session.execute = AsyncMock(return_value=mock_result)
+    return session
+
+
+@pytest.fixture
+async def client(
+    mock_exchange: AsyncMock, mock_session
+) -> AsyncGenerator[AsyncClient, None]:
+    """Create async test client with mocked exchange and session.
 
     Properly overrides async generator dependencies using httpx.AsyncClient.
-    Overrides both get_okx_exchange and get_exchange to handle both account
-    and market endpoints.
+    Overrides get_exchange for market endpoints and get_session for account endpoints.
     """
-
-    async def override_get_okx_exchange() -> AsyncGenerator[AsyncMock, None]:
-        """Override dependency with async generator that yields the mock."""
-        yield mock_exchange
 
     async def override_get_exchange() -> AsyncGenerator[AsyncMock, None]:
         """Override dependency with async generator that yields the mock."""
         yield mock_exchange
 
-    app.dependency_overrides[get_okx_exchange] = override_get_okx_exchange
+    async def override_get_session():
+        yield mock_session
+
     app.dependency_overrides[get_exchange] = override_get_exchange
+    app.dependency_overrides[get_session] = override_get_session
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
         yield ac
@@ -82,7 +105,11 @@ class TestAccountBalanceEndpoints:
             timestamp=datetime(2024, 1, 15, 10, 30, 0, tzinfo=UTC),
         )
 
-        response = await client.get("/api/v1/account/balance")
+        with patch(
+            "squant.api.v1.account._create_adapter_from_account",
+            return_value=mock_exchange,
+        ):
+            response = await client.get("/api/v1/account/balance")
 
         assert response.status_code == 200
         json_resp = response.json()
@@ -106,7 +133,11 @@ class TestAccountBalanceEndpoints:
             frozen=Decimal("0.5"),
         )
 
-        response = await client.get("/api/v1/account/balance/BTC")
+        with patch(
+            "squant.api.v1.account._create_adapter_from_account",
+            return_value=mock_exchange,
+        ):
+            response = await client.get("/api/v1/account/balance/BTC")
 
         assert response.status_code == 200
         json_resp = response.json()
@@ -122,7 +153,11 @@ class TestAccountBalanceEndpoints:
         """Test getting balance for non-existent currency."""
         mock_exchange.get_balance_currency.return_value = None
 
-        response = await client.get("/api/v1/account/balance/XYZ")
+        with patch(
+            "squant.api.v1.account._create_adapter_from_account",
+            return_value=mock_exchange,
+        ):
+            response = await client.get("/api/v1/account/balance/XYZ")
 
         assert response.status_code == 200
         json_resp = response.json()
@@ -138,7 +173,11 @@ class TestAccountBalanceEndpoints:
             message="Invalid API key", exchange="okx"
         )
 
-        response = await client.get("/api/v1/account/balance")
+        with patch(
+            "squant.api.v1.account._create_adapter_from_account",
+            return_value=mock_exchange,
+        ):
+            response = await client.get("/api/v1/account/balance")
 
         assert response.status_code == 401
 

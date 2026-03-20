@@ -57,7 +57,6 @@ services:
 
       # 交易所配置（测试网）
       DEFAULT_EXCHANGE: okx
-      USE_CCXT_PROVIDER: "true"
 
       # 测试环境标识
       ENVIRONMENT: test

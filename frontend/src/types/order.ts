@@ -7,6 +7,7 @@ export type OrderStatus = 'pending' | 'submitted' | 'partial' | 'filled' | 'canc
 export interface Order {
   id: string
   account_id: string
+  account_name?: string
   run_id?: string
   exchange: string
   exchange_oid?: string
@@ -29,14 +30,14 @@ export interface Order {
 }
 
 export interface OrderFilter {
-  exchange?: string
+  account_id?: string
   symbol?: string
   side?: OrderSide
   status?: OrderStatus | OrderStatus[]
   strategy_id?: string
   run_id?: string
-  start_date?: string
-  end_date?: string
+  start_time?: string
+  end_time?: string
 }
 
 // 订单统计

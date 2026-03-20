@@ -11,8 +11,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from squant.config import get_settings
 from squant.infra.database import get_session, get_session_readonly
-from squant.infra.exchange import OKXAdapter
-from squant.infra.exchange.ccxt import CCXTRestAdapter, ExchangeCredentials
+from squant.infra.exchange.ccxt import CCXTRestAdapter
+from squant.infra.exchange.credentials import build_exchange_credentials
 from squant.infra.redis import get_redis
 
 logger = logging.getLogger(__name__)
@@ -94,7 +94,7 @@ def _get_current_exchange_id() -> str:
     return get_current_exchange()
 
 
-def _get_exchange_credentials(exchange_id: str) -> ExchangeCredentials | None:
+def _get_exchange_credentials(exchange_id: str):
     """Get credentials for the specified exchange.
 
     Args:
@@ -104,31 +104,7 @@ def _get_exchange_credentials(exchange_id: str) -> ExchangeCredentials | None:
         ExchangeCredentials or None if not configured.
     """
     settings = get_settings()
-
-    if exchange_id == "okx":
-        if settings.okx_api_key and settings.okx_api_secret:
-            return ExchangeCredentials(
-                api_key=settings.okx_api_key.get_secret_value(),
-                api_secret=settings.okx_api_secret.get_secret_value(),
-                passphrase=settings.okx_passphrase.get_secret_value()
-                if settings.okx_passphrase
-                else None,
-                sandbox=settings.okx_testnet,
-            )
-    elif exchange_id == "binance":
-        if settings.binance_api_key and settings.binance_api_secret:
-            return ExchangeCredentials(
-                api_key=settings.binance_api_key.get_secret_value(),
-                api_secret=settings.binance_api_secret.get_secret_value(),
-                sandbox=settings.binance_testnet,
-            )
-    elif exchange_id == "bybit" and settings.bybit_api_key and settings.bybit_api_secret:
-        return ExchangeCredentials(
-            api_key=settings.bybit_api_key.get_secret_value(),
-            api_secret=settings.bybit_api_secret.get_secret_value(),
-            sandbox=settings.bybit_testnet,
-        )
-    return None
+    return build_exchange_credentials(exchange_id, settings)
 
 
 async def get_exchange() -> AsyncGenerator[CCXTRestAdapter, None]:
@@ -151,33 +127,3 @@ async def get_exchange() -> AsyncGenerator[CCXTRestAdapter, None]:
 # Dynamic exchange adapter (uses current configured exchange)
 Exchange = Annotated[CCXTRestAdapter, Depends(get_exchange)]
 
-
-async def get_okx_exchange() -> AsyncGenerator[OKXAdapter, None]:
-    """Get OKX exchange adapter.
-
-    Requires OKX API credentials to be configured in settings.
-
-    Yields:
-        Connected OKXAdapter instance.
-
-    Raises:
-        ValueError: If OKX credentials are not configured.
-    """
-    settings = get_settings()
-
-    if not settings.okx_api_key or not settings.okx_api_secret or not settings.okx_passphrase:
-        raise ValueError("OKX API credentials not configured")
-
-    adapter = OKXAdapter(
-        api_key=settings.okx_api_key.get_secret_value(),
-        api_secret=settings.okx_api_secret.get_secret_value(),
-        passphrase=settings.okx_passphrase.get_secret_value(),
-        testnet=settings.okx_testnet,
-    )
-
-    async with adapter:
-        yield adapter
-
-
-# Legacy: OKX-specific adapter (kept for backward compatibility)
-OKXExchange = Annotated[OKXAdapter, Depends(get_okx_exchange)]

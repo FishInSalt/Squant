@@ -214,7 +214,8 @@ export interface paths {
          * Get Balance
          * @description Get account balance for all currencies.
          *
-         *     Returns the available and frozen balance for each currency in the account.
+         *     Returns the available and frozen balance for each currency
+         *     using the first active exchange account.
          */
         get: operations["get_balance_api_v1_account_balance_get"];
         put?: never;
@@ -392,7 +393,7 @@ export interface paths {
          * List Orders
          * @description List orders with optional filters.
          *
-         *     Returns paginated list of orders matching the specified criteria.
+         *     Returns paginated list of orders across all accounts matching the specified criteria.
          */
         get: operations["list_orders_api_v1_orders_get"];
         put?: never;
@@ -424,7 +425,7 @@ export interface paths {
          * Get Open Orders
          * @description Get all open (non-terminal) orders.
          *
-         *     Returns orders with status PENDING, SUBMITTED, or PARTIAL.
+         *     Returns orders with status PENDING, SUBMITTED, or PARTIAL across all accounts.
          */
         get: operations["get_open_orders_api_v1_orders_open_get"];
         put?: never;
@@ -444,7 +445,7 @@ export interface paths {
         };
         /**
          * Get Order Stats
-         * @description Get order statistics by status.
+         * @description Get order statistics by status across all accounts.
          */
         get: operations["get_order_stats_api_v1_orders_stats_get"];
         put?: never;
@@ -4506,6 +4507,11 @@ export interface components {
              */
             account_id: string;
             /**
+             * Account Name
+             * @description Exchange account name
+             */
+            account_name?: string | null;
+            /**
              * Run Id
              * @description Strategy run ID
              */
@@ -4710,6 +4716,11 @@ export interface components {
              * @description Account ID
              */
             account_id: string;
+            /**
+             * Account Name
+             * @description Exchange account name
+             */
+            account_name?: string | null;
             /**
              * Run Id
              * @description Strategy run ID
@@ -6535,12 +6546,18 @@ export interface operations {
     list_orders_api_v1_orders_get: {
         parameters: {
             query?: {
+                /** @description Filter by exchange account ID */
+                account_id?: string | null;
                 /** @description Filter by status */
                 status?: components["schemas"]["OrderStatus"][] | null;
                 /** @description Filter by trading pair */
                 symbol?: string | null;
                 /** @description Filter by side */
                 side?: components["schemas"]["OrderSide"] | null;
+                /** @description Filter orders created after this time */
+                start_time?: string | null;
+                /** @description Filter orders created before this time */
+                end_time?: string | null;
                 /** @description Page number (starts from 1) */
                 page?: number;
                 /** @description Items per page */

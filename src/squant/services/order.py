@@ -144,6 +144,114 @@ class OrderRepository(BaseRepository[Order]):
         result = await self.session.execute(stmt)
         return result.scalar_one()
 
+    async def list_all(
+        self,
+        *,
+        account_id: str | UUID | None = None,
+        status: OrderStatus | list[OrderStatus] | None = None,
+        symbol: str | None = None,
+        side: OrderSide | None = None,
+        start_time: datetime | None = None,
+        end_time: datetime | None = None,
+        offset: int = 0,
+        limit: int = 100,
+    ) -> list[Order]:
+        """List orders across all accounts with filters."""
+        stmt = select(Order)
+
+        if account_id is not None:
+            stmt = stmt.where(Order.account_id == str(account_id))
+
+        if status is not None:
+            if isinstance(status, list):
+                stmt = stmt.where(Order.status.in_(status))
+            else:
+                stmt = stmt.where(Order.status == status)
+
+        if symbol is not None:
+            stmt = stmt.where(Order.symbol == symbol)
+
+        if side is not None:
+            stmt = stmt.where(Order.side == side)
+
+        if start_time is not None:
+            stmt = stmt.where(Order.created_at >= start_time)
+
+        if end_time is not None:
+            stmt = stmt.where(Order.created_at <= end_time)
+
+        stmt = stmt.order_by(Order.created_at.desc())
+        stmt = stmt.offset(offset).limit(limit)
+
+        result = await self.session.execute(stmt)
+        return list(result.scalars().all())
+
+    async def count_all(
+        self,
+        *,
+        account_id: str | UUID | None = None,
+        status: OrderStatus | list[OrderStatus] | None = None,
+        symbol: str | None = None,
+        side: OrderSide | None = None,
+        start_time: datetime | None = None,
+        end_time: datetime | None = None,
+    ) -> int:
+        """Count orders across all accounts."""
+        from sqlalchemy import func
+
+        stmt = select(func.count()).select_from(Order)
+
+        if account_id is not None:
+            stmt = stmt.where(Order.account_id == str(account_id))
+
+        if status is not None:
+            if isinstance(status, list):
+                stmt = stmt.where(Order.status.in_(status))
+            else:
+                stmt = stmt.where(Order.status == status)
+
+        if symbol is not None:
+            stmt = stmt.where(Order.symbol == symbol)
+
+        if side is not None:
+            stmt = stmt.where(Order.side == side)
+
+        if start_time is not None:
+            stmt = stmt.where(Order.created_at >= start_time)
+
+        if end_time is not None:
+            stmt = stmt.where(Order.created_at <= end_time)
+
+        result = await self.session.execute(stmt)
+        return result.scalar_one()
+
+    async def list_all_open(
+        self,
+        symbol: str | None = None,
+    ) -> list[Order]:
+        """List open (non-terminal) orders across all accounts."""
+        open_statuses = [OrderStatus.PENDING, OrderStatus.SUBMITTED, OrderStatus.PARTIAL]
+        return await self.list_all(
+            status=open_statuses,
+            symbol=symbol,
+            limit=1000,
+        )
+
+    async def get_all_stats_by_status(self) -> dict[OrderStatus, int]:
+        """Get order counts grouped by status across all accounts.
+
+        Returns:
+            Dict mapping OrderStatus to count.
+        """
+        from sqlalchemy import func
+
+        stmt = (
+            select(Order.status, func.count())
+            .group_by(Order.status)
+        )
+        result = await self.session.execute(stmt)
+        return {row[0]: row[1] for row in result.all()}
+
     async def list_by_run(
         self,
         run_id: str | UUID,

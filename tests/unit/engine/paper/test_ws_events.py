@@ -10,7 +10,7 @@ import pytest
 from squant.engine.backtest.strategy_base import Strategy
 from squant.engine.backtest.types import Bar
 from squant.engine.paper.engine import PaperTradingEngine
-from squant.infra.exchange.okx.ws_types import WSCandle
+from squant.infra.exchange.ws_types import WSCandle
 
 
 class SimpleStrategy(Strategy):

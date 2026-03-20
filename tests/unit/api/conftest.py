@@ -34,7 +34,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from fastapi.testclient import TestClient
 
-from squant.api.deps import get_exchange, get_okx_exchange, get_session
+from squant.api.deps import get_exchange, get_session
 from squant.main import app
 
 if TYPE_CHECKING:
@@ -92,34 +92,6 @@ def api_client_with_exchange(mock_exchange_adapter) -> TestClient:
 
 
 @pytest.fixture
-def api_client_with_okx(mock_exchange_adapter) -> TestClient:
-    """
-    Create a FastAPI TestClient with mocked OKX exchange dependency.
-
-    This fixture overrides the get_okx_exchange dependency with a mock
-    adapter. Use this for testing account and order endpoints.
-
-    Args:
-        mock_exchange_adapter: Mock exchange adapter from unit conftest
-
-    Returns:
-        TestClient: FastAPI test client with OKX exchange override
-
-    Example:
-        def test_get_balance(api_client_with_okx, mock_exchange_adapter):
-            mock_exchange_adapter.get_balance.return_value = ...
-            response = api_client_with_okx.get("/api/v1/account/balance")
-    """
-
-    async def override_get_okx_exchange():
-        yield mock_exchange_adapter
-
-    app.dependency_overrides[get_okx_exchange] = override_get_okx_exchange
-    yield TestClient(app)
-    app.dependency_overrides.clear()
-
-
-@pytest.fixture
 def api_client_with_session(mock_db_session) -> TestClient:
     """
     Create a FastAPI TestClient with mocked database session dependency.
@@ -169,12 +141,8 @@ def api_client_with_all_deps(mock_db_session, mock_exchange_adapter) -> TestClie
     async def override_get_session():
         yield mock_db_session
 
-    async def override_get_okx_exchange():
-        yield mock_exchange_adapter
-
     app.dependency_overrides[get_session] = override_get_session
     app.dependency_overrides[get_exchange] = lambda: mock_exchange_adapter
-    app.dependency_overrides[get_okx_exchange] = override_get_okx_exchange
     yield TestClient(app)
     app.dependency_overrides.clear()
 

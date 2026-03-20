@@ -44,7 +44,7 @@ class Order(Base, UUIDMixin, TimestampMixin):
 
     # Relationships
     run: Mapped["StrategyRun | None"] = relationship(back_populates="orders", lazy="selectin")
-    account: Mapped["ExchangeAccount"] = relationship(back_populates="orders")
+    account: Mapped["ExchangeAccount"] = relationship(back_populates="orders", lazy="selectin")
     trades: Mapped[list["Trade"]] = relationship(back_populates="order", lazy="selectin")
 
     __table_args__ = (

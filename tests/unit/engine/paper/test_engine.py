@@ -10,7 +10,7 @@ import pytest
 from squant.engine.backtest.strategy_base import Strategy
 from squant.engine.backtest.types import Bar
 from squant.engine.paper.engine import PaperTradingEngine
-from squant.infra.exchange.okx.ws_types import WSCandle
+from squant.infra.exchange.ws_types import WSCandle
 
 
 class SimpleStrategy(Strategy):
@@ -651,19 +651,25 @@ class TestHealthCheck:
     """Tests for health check functionality."""
 
     @pytest.mark.asyncio
-    async def test_last_active_at_set_on_start(self, engine):
-        """Test that last_active_at is set when engine starts."""
+    async def test_last_active_at_none_on_start(self, engine):
+        """Test that last_active_at stays None after start (no premature health check timeout).
+
+        The engine should not set _last_active_at in start() because that would
+        start the health check countdown before any candle data arrives. If the
+        first candle takes longer than the timeout, the session would be incorrectly
+        marked INTERRUPTED. is_healthy() handles None correctly (returns True).
+        """
         assert engine.last_active_at is None
 
         await engine.start()
 
-        assert engine.last_active_at is not None
+        assert engine.last_active_at is None
 
     @pytest.mark.asyncio
     async def test_last_active_at_updated_on_candle(self, engine):
         """Test that last_active_at is updated when processing candles."""
         await engine.start()
-        initial_time = engine.last_active_at
+        assert engine.last_active_at is None  # Not set until first candle
 
         candle = WSCandle(
             symbol="BTC/USDT",
@@ -678,7 +684,17 @@ class TestHealthCheck:
         )
         await engine.process_candle(candle)
 
-        assert engine.last_active_at >= initial_time
+        assert engine.last_active_at is not None
+
+    @pytest.mark.asyncio
+    async def test_is_healthy_startup_grace_period(self, engine):
+        """Test that is_healthy returns False after timeout_seconds with no candles."""
+        await engine.start()
+        assert engine.is_healthy(timeout_seconds=300) is True  # Within grace period
+
+        # Simulate time elapsed beyond timeout_seconds (default 300s)
+        engine._started_at = datetime.now(UTC) - timedelta(seconds=301)
+        assert engine.is_healthy(timeout_seconds=300) is False  # Timeout expired, no candle arrived
 
     @pytest.mark.asyncio
     async def test_is_healthy_returns_true_when_active(self, engine):
@@ -732,10 +748,27 @@ class TestProcessingLock:
         """Test is_healthy uses adaptive timeout based on timeframe.
 
         For 1m timeframe, effective timeout = max(timeout_seconds, 60*3=180).
-        So even with timeout_seconds=0, a just-started engine is healthy.
+        Adaptive timeout applies after first candle arrives.
+        Before first candle, startup grace uses timeout_seconds directly.
         """
         await engine.start()
-        # Effective timeout = max(0, 180) = 180s, just started so healthy
+        # Before first candle: startup grace uses timeout_seconds=300 (default)
+        assert engine.is_healthy(timeout_seconds=300) is True
+
+        # After receiving a candle, adaptive timeout kicks in
+        candle = WSCandle(
+            symbol="BTC/USDT",
+            timeframe="1m",
+            timestamp=datetime.now(UTC),
+            open=Decimal("45000"),
+            high=Decimal("46000"),
+            low=Decimal("44000"),
+            close=Decimal("45500"),
+            volume=Decimal("100"),
+            is_closed=True,
+        )
+        await engine.process_candle(candle)
+        # Now adaptive: max(0, 180) = 180s, just received candle so healthy
         assert engine.is_healthy(timeout_seconds=0) is True
 
     @pytest.mark.asyncio
@@ -763,7 +796,7 @@ class TestAskPriceCostEstimation:
         The fix makes buy() use max(close*(1+slippage), ask) for estimation,
         so the cash check at order creation time is consistent with the fill.
         """
-        from squant.infra.exchange.okx.ws_types import WSTicker
+        from squant.infra.exchange.ws_types import WSTicker
 
         class AllInBuyStrategy(Strategy):
             """Strategy that uses most cash on a single buy."""

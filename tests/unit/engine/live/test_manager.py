@@ -8,7 +8,7 @@ from uuid import uuid4
 import pytest
 
 from squant.engine.live.manager import LiveSessionManager, get_live_session_manager
-from squant.infra.exchange.okx.ws_types import WSCandle, WSOrderUpdate
+from squant.infra.exchange.ws_types import WSCandle, WSOrderUpdate
 from squant.models.enums import OrderStatus
 
 

@@ -24,7 +24,7 @@ from decimal import Decimal
 from squant.main import app
 
 # 导入依赖
-# from squant.api.deps import get_session, get_okx_exchange
+# from squant.api.deps import get_session, get_exchange
 
 # 导入schemas
 # from squant.schemas.<schema> import <ResponseSchema>
@@ -97,7 +97,7 @@ def client(mock_session, mock_exchange) -> TestClient:
     #     yield mock_exchange
     #
     # app.dependency_overrides[get_session] = override_get_session
-    # app.dependency_overrides[get_okx_exchange] = override_get_exchange
+    # app.dependency_overrides[get_exchange] = override_get_exchange
 
     yield TestClient(app)
 

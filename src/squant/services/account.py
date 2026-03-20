@@ -10,7 +10,6 @@ from sqlalchemy import and_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from squant.infra.exchange import BinanceAdapter, OKXAdapter
 from squant.infra.exchange.ccxt import CCXTRestAdapter, ExchangeCredentials
 from squant.infra.exchange.exceptions import (
     ExchangeAPIError,
@@ -453,37 +452,14 @@ class ExchangeAccountService:
 
         # Create adapter and test connection
         try:
-            if account.exchange == "okx":
-                passphrase = credentials.get("passphrase")
-                if not passphrase:
-                    return {
-                        "success": False,
-                        "message": "OKX account missing passphrase",
-                        "balance_count": None,
-                    }
-                adapter = OKXAdapter(
-                    api_key=credentials["api_key"],
-                    api_secret=credentials["api_secret"],
-                    passphrase=passphrase,
-                    testnet=account.testnet,
-                )
-            elif account.exchange == "binance":
-                adapter = BinanceAdapter(
-                    api_key=credentials["api_key"],
-                    api_secret=credentials["api_secret"],
-                    testnet=account.testnet,
-                )
-            elif account.exchange == "bybit":
-                # Use CCXT adapter for Bybit (no native adapter available)
-                ccxt_credentials = ExchangeCredentials(
-                    api_key=credentials["api_key"],
-                    api_secret=credentials["api_secret"],
-                    passphrase=credentials.get("passphrase"),
-                    sandbox=account.testnet,
-                )
-                adapter = CCXTRestAdapter("bybit", ccxt_credentials)
-            else:
-                raise ConnectionTestError(f"Unknown exchange: {account.exchange}")
+            exchange_id = account.exchange.lower()
+            ccxt_credentials = ExchangeCredentials(
+                api_key=credentials["api_key"],
+                api_secret=credentials["api_secret"],
+                passphrase=credentials.get("passphrase"),
+                sandbox=account.testnet,
+            )
+            adapter = CCXTRestAdapter(exchange_id, ccxt_credentials)
 
             async with adapter:
                 balance = await adapter.get_balance()
@@ -528,7 +504,8 @@ class ExchangeAccountService:
                 "balance_count": None,
             }
 
-    def get_decrypted_credentials(self, account: ExchangeAccount) -> dict[str, str]:
+    @staticmethod
+    def get_decrypted_credentials(account: ExchangeAccount) -> dict[str, str]:
         """Decrypt and return account credentials.
 
         Uses derived nonces for each field:
@@ -553,7 +530,7 @@ class ExchangeAccountService:
         crypto = get_crypto_manager()
 
         try:
-            return self._decrypt_with_manager(crypto, account)
+            return ExchangeAccountService._decrypt_with_manager(crypto, account)
         except DecryptionError:
             old_crypto = get_old_crypto_manager()
             if old_crypto is None:
@@ -561,7 +538,7 @@ class ExchangeAccountService:
             logger.info(
                 f"Retrying decryption for account {account.id} with old encryption key"
             )
-            return self._decrypt_with_manager(old_crypto, account)
+            return ExchangeAccountService._decrypt_with_manager(old_crypto, account)
 
     @staticmethod
     def _decrypt_with_manager(

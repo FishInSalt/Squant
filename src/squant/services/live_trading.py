@@ -25,9 +25,7 @@ from squant.engine.live.engine import LiveTradingEngine
 from squant.engine.live.manager import get_live_session_manager
 from squant.engine.risk import RiskConfig
 from squant.engine.sandbox import compile_strategy
-from squant.infra.exchange.binance.adapter import BinanceAdapter
 from squant.infra.exchange.ccxt import CCXTRestAdapter, ExchangeCredentials
-from squant.infra.exchange.okx.adapter import OKXAdapter
 from squant.infra.repository import BaseRepository
 from squant.models.enums import OrderSide, OrderStatus, OrderType, RunMode, RunStatus
 from squant.models.exchange import ExchangeAccount
@@ -593,29 +591,13 @@ class LiveTradingService:
 
         exchange = account.exchange.lower()
 
-        if exchange == "okx":
-            return OKXAdapter(
-                api_key=credentials["api_key"],
-                api_secret=credentials["api_secret"],
-                passphrase=credentials.get("passphrase", ""),
-                testnet=account.testnet,
-            )
-        elif exchange == "binance":
-            return BinanceAdapter(
-                api_key=credentials["api_key"],
-                api_secret=credentials["api_secret"],
-                testnet=account.testnet,
-            )
-        elif exchange == "bybit":
-            # Use CCXT adapter for Bybit (no native adapter available)
-            ccxt_credentials = ExchangeCredentials(
-                api_key=credentials["api_key"],
-                api_secret=credentials["api_secret"],
-                passphrase=credentials.get("passphrase"),
-                sandbox=account.testnet,
-            )
-            return CCXTRestAdapter("bybit", ccxt_credentials)
-        raise ValueError(f"Unsupported exchange: {exchange}")
+        ccxt_credentials = ExchangeCredentials(
+            api_key=credentials["api_key"],
+            api_secret=credentials["api_secret"],
+            passphrase=credentials.get("passphrase"),
+            sandbox=account.testnet,
+        )
+        return CCXTRestAdapter(exchange, ccxt_credentials)
 
     def _build_ws_credentials(self, account: ExchangeAccount) -> ExchangeCredentials | None:
         """Build ExchangeCredentials for private WS order push (LIVE-CN-001).
@@ -819,6 +801,23 @@ class LiveTradingService:
                                 "filled": Decimal(event["total_filled"]),
                                 "status": OrderStatus(event["status"]),
                             }
+                            if event.get("avg_fill_price"):
+                                update_kwargs["avg_price"] = Decimal(event["avg_fill_price"])
+                            await order_repo.update(db_order_id, **update_kwargs)
+
+                        elif event["type"] == "status_change":
+                            db_order_id = order_id_map.get(event["internal_id"])
+                            if not db_order_id:
+                                logger.warning(
+                                    f"No DB order for internal_id={event['internal_id']}, "
+                                    f"skipping status_change"
+                                )
+                                continue
+                            update_kwargs: dict[str, Any] = {
+                                "status": OrderStatus(event["new_status"]),
+                            }
+                            if event.get("filled_amount"):
+                                update_kwargs["filled"] = Decimal(event["filled_amount"])
                             if event.get("avg_fill_price"):
                                 update_kwargs["avg_price"] = Decimal(event["avg_fill_price"])
                             await order_repo.update(db_order_id, **update_kwargs)
@@ -1360,11 +1359,12 @@ class LiveTradingService:
     ) -> dict[str, Any]:
         """Reconcile local positions with exchange balance during resume.
 
-        Exchange balance is source of truth for cash. Position discrepancies
-        are logged but not auto-adjusted (preserves avg_entry_price).
-
-        Tech debt (M-10): Directly accesses engine.context._cash. See
-        _reconcile_orders docstring for rationale on deferring this refactor.
+        Local cash from restore_state() is the source of truth for the session,
+        since the exchange balance reflects the entire account (which may include
+        funds from other sessions or manual trades). Cash discrepancies are
+        logged as warnings but NOT auto-adjusted — consistent with _sync_balance()
+        in the engine (LIVE-012). Position discrepancies are also logged but not
+        auto-adjusted (preserves avg_entry_price).
 
         Args:
             engine: Live trading engine with restored context.
@@ -1397,7 +1397,11 @@ class LiveTradingService:
             threshold = max(local_cash * Decimal("0.01"), Decimal("1"))
 
             if diff > threshold:
-                logger.warning(f"Cash discrepancy: local={local_cash}, exchange={exchange_cash}")
+                logger.warning(
+                    f"Cash discrepancy (warning only, not adjusting): "
+                    f"local={local_cash}, exchange={exchange_cash}. "
+                    f"Local cash from restored session state is source of truth."
+                )
                 report["discrepancies"].append(
                     {
                         "type": "cash_mismatch",
@@ -1405,8 +1409,6 @@ class LiveTradingService:
                         "exchange": str(exchange_cash),
                     }
                 )
-                engine.context._cash = exchange_cash
-                report["cash_adjusted"] = True
 
         # Reconcile base currency (position)
         base_currency = symbol.split("/")[0]

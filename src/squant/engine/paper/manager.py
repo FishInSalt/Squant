@@ -12,7 +12,7 @@ from uuid import UUID
 
 if TYPE_CHECKING:
     from squant.engine.paper.engine import PaperTradingEngine
-    from squant.infra.exchange.okx.ws_types import WSCandle, WSTicker
+    from squant.infra.exchange.ws_types import WSCandle, WSTicker
 
 logger = logging.getLogger(__name__)
 

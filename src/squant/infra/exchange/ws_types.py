@@ -1,49 +1,17 @@
-"""OKX WebSocket message types and channel definitions."""
+"""Shared WebSocket message types for all exchange adapters.
+
+These types are exchange-agnostic and used across the system for
+real-time market data, order updates, and account notifications
+via Redis pub/sub.
+"""
 
 from datetime import UTC, datetime
 from decimal import Decimal
-from enum import Enum
 from typing import Any
 
 from pydantic import BaseModel, Field
 
 from squant.infra.exchange.types import WSMessageType
-
-
-class OKXChannel(str, Enum):
-    """OKX WebSocket channel types."""
-
-    # Public channels
-    TICKERS = "tickers"
-    CANDLE_1M = "candle1m"
-    CANDLE_5M = "candle5m"
-    CANDLE_15M = "candle15m"
-    CANDLE_30M = "candle30m"
-    CANDLE_1H = "candle1H"
-    CANDLE_4H = "candle4H"
-    CANDLE_1D = "candle1D"
-    CANDLE_1W = "candle1W"
-    TRADES = "trades"
-    BOOKS5 = "books5"  # 5-level orderbook
-
-    # Private channels
-    ACCOUNT = "account"
-    ORDERS = "orders"
-
-
-CANDLE_CHANNELS = {
-    "1m": OKXChannel.CANDLE_1M,
-    "5m": OKXChannel.CANDLE_5M,
-    "15m": OKXChannel.CANDLE_15M,
-    "30m": OKXChannel.CANDLE_30M,
-    "1h": OKXChannel.CANDLE_1H,
-    "4h": OKXChannel.CANDLE_4H,
-    "1d": OKXChannel.CANDLE_1D,
-    "1w": OKXChannel.CANDLE_1W,
-}
-
-# Re-export WSMessageType for backwards compatibility
-__all__ = ["WSMessageType"]
 
 
 class WSTicker(BaseModel):
@@ -149,3 +117,18 @@ class WSMessage(BaseModel):
     channel: str = Field(..., description="Channel name (e.g., ticker:BTC-USDT)")
     data: dict[str, Any] = Field(..., description="Message payload")
     timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+# Re-export WSMessageType for convenience
+__all__ = [
+    "WSMessageType",
+    "WSTicker",
+    "WSCandle",
+    "WSTrade",
+    "WSOrderBookLevel",
+    "WSOrderBook",
+    "WSOrderUpdate",
+    "WSBalanceUpdate",
+    "WSAccountUpdate",
+    "WSMessage",
+]

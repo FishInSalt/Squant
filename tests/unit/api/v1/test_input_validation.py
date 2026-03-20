@@ -20,7 +20,7 @@ import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 
-from squant.api.deps import get_okx_exchange
+from squant.api.v1.orders import get_order_service
 from squant.infra.database import get_session
 from squant.infra.redis import get_redis
 from squant.main import app
@@ -64,19 +64,24 @@ async def client() -> AsyncGenerator[AsyncClient, None]:
     async def override_get_redis():
         yield MagicMock()
 
-    async def override_get_okx_exchange():
-        yield MagicMock()
+    # Override order service dependency so it doesn't try to decrypt credentials
+    # (order validation tests only care about Pydantic 422 errors)
+    mock_order_service = MagicMock()
+    mock_order_service.create_order = AsyncMock()
+
+    async def override_get_order_service():
+        return mock_order_service
 
     app.dependency_overrides[get_session] = override_get_session
     app.dependency_overrides[get_redis] = override_get_redis
-    app.dependency_overrides[get_okx_exchange] = override_get_okx_exchange
+    app.dependency_overrides[get_order_service] = override_get_order_service
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
         yield ac
 
     app.dependency_overrides.pop(get_session, None)
     app.dependency_overrides.pop(get_redis, None)
-    app.dependency_overrides.pop(get_okx_exchange, None)
+    app.dependency_overrides.pop(get_order_service, None)
 
 
 # ---------------------------------------------------------------------------

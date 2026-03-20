@@ -56,7 +56,6 @@ LOG_LEVEL=DEBUG
 
 # Exchange settings
 DEFAULT_EXCHANGE=okx
-USE_CCXT_PROVIDER=true
 
 # Exchange API credentials (add your testnet keys here)
 # OKX_API_KEY=

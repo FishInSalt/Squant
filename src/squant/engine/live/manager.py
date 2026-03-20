@@ -12,7 +12,7 @@ from uuid import UUID
 
 if TYPE_CHECKING:
     from squant.engine.live.engine import LiveTradingEngine
-    from squant.infra.exchange.okx.ws_types import WSCandle, WSOrderUpdate
+    from squant.infra.exchange.ws_types import WSCandle, WSOrderUpdate
 
 logger = logging.getLogger(__name__)
 

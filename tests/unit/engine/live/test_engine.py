@@ -11,12 +11,12 @@ from squant.engine.backtest.strategy_base import Strategy
 from squant.engine.backtest.types import Bar, SimulatedOrder
 from squant.engine.live.engine import LiveOrder, LiveTradingEngine
 from squant.engine.risk import RiskConfig
-from squant.infra.exchange.okx.ws_types import WSCandle, WSOrderUpdate
 from squant.infra.exchange.types import (
     AccountBalance,
     Balance,
     OrderResponse,
 )
+from squant.infra.exchange.ws_types import WSCandle, WSOrderUpdate
 from squant.models.enums import OrderSide, OrderStatus, OrderType
 
 
@@ -1221,19 +1221,25 @@ class TestHealthCheck:
     """Tests for health check functionality."""
 
     @pytest.mark.asyncio
-    async def test_last_active_at_set_on_start(self, engine):
-        """Test that last_active_at is set when engine starts."""
+    async def test_last_active_at_none_on_start(self, engine):
+        """Test that last_active_at stays None after start (no premature health check timeout).
+
+        The engine should not set _last_active_at in start() because that would
+        start the health check countdown before any candle data arrives. If the
+        first candle takes longer than the timeout, the session would be incorrectly
+        marked INTERRUPTED. is_healthy() handles None correctly (returns True).
+        """
         assert engine.last_active_at is None
 
         await engine.start()
 
-        assert engine.last_active_at is not None
+        assert engine.last_active_at is None
 
     @pytest.mark.asyncio
     async def test_last_active_at_updated_on_candle(self, engine):
         """Test that last_active_at is updated when processing candles."""
         await engine.start()
-        initial_time = engine.last_active_at
+        assert engine.last_active_at is None  # Not set until first candle
 
         candle = WSCandle(
             symbol="BTC/USDT",
@@ -1248,7 +1254,7 @@ class TestHealthCheck:
         )
         await engine.process_candle(candle)
 
-        assert engine.last_active_at >= initial_time
+        assert engine.last_active_at is not None
 
     @pytest.mark.asyncio
     async def test_is_healthy_returns_true_when_active(self, engine):
@@ -1275,12 +1281,12 @@ class TestHealthCheck:
     async def test_is_healthy_adapts_to_timeframe(self, engine):
         """Test is_healthy uses adaptive timeout based on timeframe.
 
-        For 1m timeframe, effective timeout = max(timeout_seconds, 60*3=180).
-        So even with timeout_seconds=0, a just-started engine is healthy.
+        Adaptive timeout (max(timeout_seconds, tf_seconds * 2)) applies after
+        first candle arrives. Before that, startup grace uses timeout_seconds.
         """
         await engine.start()
-        # Effective timeout = max(0, 180) = 180s, just started so healthy
-        assert engine.is_healthy(timeout_seconds=0) is True
+        # Before first candle: startup grace uses timeout_seconds directly
+        assert engine.is_healthy(timeout_seconds=300) is True
 
     @pytest.mark.asyncio
     async def test_is_healthy_returns_false_when_expired(self, engine):
@@ -2666,7 +2672,8 @@ class TestEmergencyCloseTimestamp:
     async def test_emergency_close_updates_last_active_at(self, engine, mock_adapter):
         """Test that emergency close updates last_active_at timestamp."""
         await engine.start()
-        initial_time = engine._last_active_at
+        # _last_active_at is None after start (no premature health check timeout)
+        assert engine._last_active_at is None
 
         # Simulate a position
         engine.context._positions["BTC/USDT"] = MagicMock()
@@ -2688,7 +2695,7 @@ class TestEmergencyCloseTimestamp:
         await engine.emergency_close()
 
         # last_active_at should have been updated during emergency close
-        assert engine._last_active_at >= initial_time
+        assert engine._last_active_at is not None
 
 
 class TestForceFillOnValueError:
@@ -2897,7 +2904,7 @@ class TestTimedOutOrderReconciliation:
         mock_adapter.get_open_orders.return_value = [
             OrderResponse(
                 order_id="exchange-recovered-1",
-                client_order_id=order.id,
+                client_order_id=order.id.replace("-", ""),
                 symbol="BTC/USDT",
                 side=OrderSide.BUY,
                 type=OrderType.MARKET,
@@ -2948,7 +2955,7 @@ class TestTimedOutOrderReconciliation:
         mock_adapter.get_open_orders.return_value = [
             OrderResponse(
                 order_id="exchange-recovered-2",
-                client_order_id=order.id,
+                client_order_id=order.id.replace("-", ""),
                 symbol="BTC/USDT",
                 side=OrderSide.BUY,
                 type=OrderType.MARKET,
@@ -3587,7 +3594,7 @@ class TestReconcileTimedOutOrdersFilledCheck:
         mock_adapter.get_order = AsyncMock(
             return_value=OrderResponse(
                 order_id="exchange-filled-123",
-                client_order_id=order.id,
+                client_order_id=order.id.replace("-", ""),
                 symbol="BTC/USDT",
                 side=OrderSide.BUY,
                 type=OrderType.MARKET,
@@ -3630,7 +3637,7 @@ class TestReconcileTimedOutOrdersFilledCheck:
         mock_adapter.get_order = AsyncMock(
             return_value=OrderResponse(
                 order_id="exchange-cancelled-123",
-                client_order_id=order.id,
+                client_order_id=order.id.replace("-", ""),
                 symbol="BTC/USDT",
                 side=OrderSide.BUY,
                 type=OrderType.MARKET,

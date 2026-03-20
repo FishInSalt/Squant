@@ -35,7 +35,7 @@ from squant.models.enums import OrderSide, OrderStatus
 if TYPE_CHECKING:
     from squant.infra.exchange.base import ExchangeAdapter
     from squant.infra.exchange.ccxt.types import ExchangeCredentials
-    from squant.infra.exchange.okx.ws_types import WSCandle, WSOrderUpdate
+    from squant.infra.exchange.ws_types import WSCandle, WSOrderUpdate
 
 # Callback type for synchronous snapshot persistence
 SnapshotPersistCallback = Callable[[str, EquitySnapshot], Awaitable[None]]
@@ -546,7 +546,12 @@ class LiveTradingEngine:
         if not self._is_running:
             return False
         if self._last_active_at is None:
-            return True
+            # No candles processed yet — healthy if started recently,
+            # stale if no candle ever arrived within timeout period.
+            if self._started_at is None:
+                return True
+            startup_elapsed = (datetime.now(UTC) - self._started_at).total_seconds()
+            return startup_elapsed < timeout_seconds
         tf_seconds = self._TIMEFRAME_SECONDS.get(self._timeframe, 300)
         effective_timeout = max(timeout_seconds, tf_seconds * 2)
         elapsed = (datetime.now(UTC) - self._last_active_at).total_seconds()
@@ -572,7 +577,9 @@ class LiveTradingEngine:
 
             self._is_running = True
             self._started_at = datetime.now(UTC)
-            self._last_active_at = datetime.now(UTC)
+            # NOTE: Do NOT set _last_active_at here. It stays None until the first
+            # candle arrives, so is_healthy() returns True for a just-started engine
+            # that hasn't received data yet (prevents premature health-check timeout).
 
             # Start private WS for real-time order updates (LIVE-CN-001)
             await self._start_private_ws()
@@ -1367,6 +1374,33 @@ class LiveTradingEngine:
             )
             self._check_trade_completion(had_open_trade, circuit_breaker_before, "ws")
 
+        # Emit a "status_change" audit event when order reaches terminal status
+        # without new fill data. This covers the case where the last WS update
+        # transitions to FILLED but all fills were already processed (fill_delta == 0),
+        # ensuring the DB record is updated to the final status (BUG-FIX: split fills).
+        if (
+            new_status != old_status
+            and live_order.is_complete
+            and fill_delta <= 0
+        ):
+            self._pending_order_events.append(
+                {
+                    "type": "status_change",
+                    "internal_id": internal_id,
+                    "exchange_order_id": live_order.exchange_order_id,
+                    "old_status": old_status.value,
+                    "new_status": new_status.value,
+                    "filled_amount": str(live_order.filled_amount),
+                    "avg_fill_price": str(live_order.avg_fill_price)
+                    if live_order.avg_fill_price
+                    else None,
+                    "fee": str(live_order.fee),
+                    "fee_currency": live_order.fee_currency,
+                    "timestamp": (update.updated_at or datetime.now(UTC)).isoformat(),
+                    "source": "ws",
+                }
+            )
+
     def _candle_to_bar(self, candle: WSCandle) -> Bar:
         """Convert WSCandle to Bar."""
         return Bar(
@@ -1508,7 +1542,9 @@ class LiveTradingEngine:
 
         reconciled: list[str] = []
         for client_id, order in list(self._timed_out_orders.items()):
-            exchange_resp = exchange_by_client_id.get(client_id)
+            # client_order_id sent to exchange has hyphens stripped
+            exchange_client_id = client_id.replace("-", "")
+            exchange_resp = exchange_by_client_id.get(exchange_client_id)
             if exchange_resp:
                 # Order exists on exchange — create LiveOrder and track it
                 live_order = LiveOrder(
@@ -1607,7 +1643,8 @@ class LiveTradingEngine:
             (eid for eid, iid in self._exchange_order_map.items() if iid == client_id),
             None,
         )
-        query_id = exchange_oid or client_id
+        # client_order_id sent to exchange has hyphens stripped
+        query_id = exchange_oid or client_id.replace("-", "")
         try:
             response = await self._adapter.get_order(order.symbol, query_id)
         except Exception as e:
@@ -1810,16 +1847,37 @@ class LiveTradingEngine:
             if order.exchange_order_id and order.exchange_order_id in self._exchange_order_map:
                 del self._exchange_order_map[order.exchange_order_id]
 
+            # Emit a final "status_change" audit event so the DB record reflects
+            # the terminal status. Without this, orders whose last fill event
+            # captured an intermediate "partial" status would never be updated
+            # to "filled" in the database (BUG-FIX: split fills).
+            self._pending_order_events.append(
+                {
+                    "type": "status_change",
+                    "internal_id": internal_id,
+                    "exchange_order_id": order.exchange_order_id,
+                    "old_status": order.status.value,  # already terminal at cleanup time
+                    "new_status": order.status.value,  # same — ensures DB catches up
+                    "filled_amount": str(order.filled_amount),
+                    "avg_fill_price": str(order.avg_fill_price)
+                    if order.avg_fill_price
+                    else None,
+                    "fee": str(order.fee),
+                    "fee_currency": order.fee_currency,
+                    "timestamp": datetime.now(UTC).isoformat(),
+                    "source": "cleanup",
+                }
+            )
+
             # Move corresponding SimulatedOrder to completed_orders so strategy
-            # receives on_order_done notification (m-4 fix)
-            if order.status == OrderStatus.REJECTED:
-                for pending in list(self._context._pending_orders):
-                    if pending.id == internal_id:
-                        pending.status = OrderStatus.REJECTED
-                        self._context._completed_orders.append(pending)
-                        self._context._total_completed_added += 1
-                        self._context._pending_orders.remove(pending)
-                        break
+            # context stays in sync and orders are not re-submitted.
+            for pending in list(self._context._pending_orders):
+                if pending.id == internal_id:
+                    pending.status = order.status
+                    self._context._completed_orders.append(pending)
+                    self._context._total_completed_added += 1
+                    self._context._pending_orders.remove(pending)
+                    break
 
     async def _expire_ttl_orders(self) -> None:
         """Cancel live orders whose bars_remaining TTL has expired.
@@ -1863,6 +1921,7 @@ class LiveTradingEngine:
     def _update_order_from_response(self, live_order: LiveOrder, response: OrderResponse) -> None:
         """Update live order from exchange response."""
         old_filled = live_order.filled_amount
+        old_status = live_order.status
 
         # Skip stale poll responses entirely (BUG-1/BUG-2): if the response
         # reports less filled than we already know, it's outdated — don't let
@@ -1883,11 +1942,14 @@ class LiveTradingEngine:
         live_order.fee_currency = response.fee_currency
         live_order.updated_at = datetime.now(UTC)
 
+        has_new_fills = False
+
         # Process new fills
         if response.filled > old_filled:
             if response.avg_price is None:
                 return
 
+            has_new_fills = True
             fill_amount = response.filled - old_filled
             # Only compute fee delta if fee info is available (LV-2)
             fee_delta = None
@@ -1919,6 +1981,33 @@ class LiveTradingEngine:
                 exchange_timestamp=response.updated_at,
             )
             self._check_trade_completion(had_open_trade, circuit_breaker_before, "polling")
+
+        # Emit "status_change" audit event when polling detects terminal status
+        # without new fill data. This ensures the DB record is updated even when
+        # WS fills were already processed but the final status was missed
+        # (BUG-FIX: split fills stuck at partial).
+        if (
+            response.status != old_status
+            and live_order.is_complete
+            and not has_new_fills
+        ):
+            self._pending_order_events.append(
+                {
+                    "type": "status_change",
+                    "internal_id": live_order.internal_id,
+                    "exchange_order_id": live_order.exchange_order_id,
+                    "old_status": old_status.value,
+                    "new_status": response.status.value,
+                    "filled_amount": str(live_order.filled_amount),
+                    "avg_fill_price": str(live_order.avg_fill_price)
+                    if live_order.avg_fill_price
+                    else None,
+                    "fee": str(live_order.fee),
+                    "fee_currency": live_order.fee_currency,
+                    "timestamp": (response.updated_at or datetime.now(UTC)).isoformat(),
+                    "source": "poll",
+                }
+            )
 
     def _record_fill(
         self,
@@ -2134,7 +2223,7 @@ class LiveTradingEngine:
                 amount=order.amount,
                 price=order.price,
                 stop_price=order.stop_price,
-                client_order_id=order.id,
+                client_order_id=order.id.replace("-", ""),
             )
 
             # F-4: explicit timeout to prevent blocking process_candle indefinitely.

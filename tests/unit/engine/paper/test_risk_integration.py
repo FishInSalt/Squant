@@ -8,7 +8,7 @@ from uuid import uuid4
 from squant.engine.backtest.strategy_base import Strategy
 from squant.engine.paper.engine import PaperTradingEngine
 from squant.engine.risk.models import RiskConfig
-from squant.infra.exchange.okx.ws_types import WSCandle
+from squant.infra.exchange.ws_types import WSCandle
 
 
 class DummyStrategy(Strategy):

@@ -20,8 +20,8 @@ from squant.engine.paper.matching import PaperMatchingEngine
 from squant.engine.resource_limits import ResourceLimitExceededError, resource_limiter
 from squant.engine.risk.manager import RiskManager
 from squant.engine.risk.models import RiskConfig
-from squant.infra.exchange.okx.ws_types import WSCandle, WSTicker
 from squant.infra.exchange.types import OrderRequest
+from squant.infra.exchange.ws_types import WSCandle, WSTicker
 from squant.models.enums import OrderSide as ExchangeOrderSide
 from squant.models.enums import OrderType as ExchangeOrderType
 
@@ -295,7 +295,12 @@ class PaperTradingEngine:
         if not self._is_running:
             return False
         if self._last_active_at is None:
-            return True  # Just started, no candles processed yet
+            # No candles processed yet — healthy if started recently,
+            # stale if no candle ever arrived within timeout period.
+            if self._started_at is None:
+                return True
+            startup_elapsed = (datetime.now(UTC) - self._started_at).total_seconds()
+            return startup_elapsed < timeout_seconds
         tf_seconds = self._TIMEFRAME_SECONDS.get(self._timeframe, 300)
         effective_timeout = max(timeout_seconds, tf_seconds * 3)
         elapsed = (datetime.now(UTC) - self._last_active_at).total_seconds()
@@ -318,7 +323,9 @@ class PaperTradingEngine:
         logger.info(f"Starting paper trading engine {self._run_id}")
         self._is_running = True
         self._started_at = datetime.now(UTC)
-        self._last_active_at = datetime.now(UTC)
+        # NOTE: Do NOT set _last_active_at here. It stays None until the first
+        # candle arrives, so is_healthy() returns True for a just-started engine
+        # that hasn't received data yet (prevents premature health-check timeout).
 
         try:
             # Call strategy initialization
