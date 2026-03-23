@@ -423,7 +423,7 @@
               </el-table-column>
               <el-table-column prop="amount" label="数量" min-width="100" align="right">
                 <template #default="{ row }">
-                  {{ formatNumber(row.amount, 4) }}
+                  {{ formatNumber(row.amount, 8) }}
                 </template>
               </el-table-column>
               <el-table-column label="成交额" min-width="120" align="right">
@@ -433,7 +433,7 @@
               </el-table-column>
               <el-table-column prop="fee" label="手续费" min-width="90" align="right">
                 <template #default="{ row }">
-                  {{ formatNumber(row.fee, 4) }}
+                  {{ formatNumber(Math.abs(row.fee), 8) }}
                 </template>
               </el-table-column>
             </el-table>
@@ -490,7 +490,7 @@
                       </el-table-column>
                       <el-table-column label="数量" min-width="100" align="right">
                         <template #default="{ row: trade }">
-                          {{ formatNumber(trade.amount, 4) }}
+                          {{ formatNumber(trade.amount, 8) }}
                         </template>
                       </el-table-column>
                       <el-table-column label="成交额" min-width="120" align="right">
@@ -500,7 +500,7 @@
                       </el-table-column>
                       <el-table-column label="手续费" min-width="120" align="right">
                         <template #default="{ row: trade }">
-                          {{ formatNumber(trade.fee, 4) }}
+                          {{ formatNumber(Math.abs(trade.fee), trade.fee_currency === 'USDT' ? 4 : 8) }}
                           <span v-if="trade.fee_currency" class="fee-currency">{{ trade.fee_currency }}</span>
                         </template>
                       </el-table-column>
