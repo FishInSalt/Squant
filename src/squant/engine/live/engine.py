@@ -923,6 +923,22 @@ class LiveTradingEngine:
                                 f"{abs(position.amount)} (order_id={response.order_id})"
                             )
 
+                            # Buffer "placed" event for audit persistence
+                            self._pending_order_events.append(
+                                {
+                                    "type": "placed",
+                                    "internal_id": f"emergency-{response.order_id}",
+                                    "exchange_order_id": response.order_id,
+                                    "symbol": symbol,
+                                    "side": side.value,
+                                    "order_type": "market",
+                                    "amount": str(abs(position.amount)),
+                                    "price": None,
+                                    "status": response.status.value,
+                                    "created_at": datetime.now(UTC).isoformat(),
+                                }
+                            )
+
                         except Exception as e:
                             logger.exception(f"Error closing position for {symbol}: {e}")
                             results["errors"].append(
@@ -1011,6 +1027,9 @@ class LiveTradingEngine:
                 else:
                     results["status"] = "completed"
                     results["message"] = None
+
+                # Flush order events before stopping to persist emergency close orders
+                await self._flush_order_events()
 
                 # Stop the engine — does NOT acquire _processing_lock (R3-002)
                 # so this is safe to call while holding the lock.
