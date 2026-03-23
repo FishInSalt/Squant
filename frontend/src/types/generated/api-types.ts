@@ -4230,6 +4230,8 @@ export interface components {
             status: string;
             /** Trades */
             trades?: components["schemas"]["LiveSessionTradeResponse"][];
+            /** Corrections */
+            corrections?: unknown[] | null;
             /**
              * Created At
              * Format: date-time
@@ -4251,6 +4253,8 @@ export interface components {
              * Format: uuid
              */
             id: string;
+            /** Exchange Tid */
+            exchange_tid?: string | null;
             /** Price */
             price: number;
             /** Amount */
@@ -4259,6 +4263,10 @@ export interface components {
             fee: number;
             /** Fee Currency */
             fee_currency?: string | null;
+            /** Fill Source */
+            fill_source?: string | null;
+            /** Taker Or Maker */
+            taker_or_maker?: string | null;
             /**
              * Timestamp
              * Format: date-time

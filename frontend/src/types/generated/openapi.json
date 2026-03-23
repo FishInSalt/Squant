@@ -8127,6 +8127,18 @@
             "type": "array",
             "title": "Trades"
           },
+          "corrections": {
+            "anyOf": [
+              {
+                "items": {},
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Corrections"
+          },
           "created_at": {
             "type": "string",
             "format": "date-time",
@@ -8160,6 +8172,17 @@
             "format": "uuid",
             "title": "Id"
           },
+          "exchange_tid": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Exchange Tid"
+          },
           "price": {
             "type": "number",
             "title": "Price"
@@ -8182,6 +8205,28 @@
               }
             ],
             "title": "Fee Currency"
+          },
+          "fill_source": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fill Source"
+          },
+          "taker_or_maker": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Taker Or Maker"
           },
           "timestamp": {
             "type": "string",
