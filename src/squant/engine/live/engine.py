@@ -1489,6 +1489,8 @@ class LiveTradingEngine:
         else:
             live_order.avg_fill_price = exec_data.price
         live_order.fee += exec_data.fee
+        if exec_data.fee_currency:
+            live_order.fee_currency = exec_data.fee_currency
         live_order.updated_at = exec_data.timestamp
 
         # Status transition
