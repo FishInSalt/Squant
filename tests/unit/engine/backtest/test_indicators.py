@@ -433,9 +433,7 @@ class TestKeltnerChannels:
         assert middle > lower
 
     def test_keltner_insufficient_data(self):
-        result = keltner_channels(
-            [Decimal("110")], [Decimal("90")], [Decimal("100")]
-        )
+        result = keltner_channels([Decimal("110")], [Decimal("90")], [Decimal("100")])
         assert result is None
 
 
@@ -522,10 +520,15 @@ class TestMFI:
         assert result == Decimal("100")
 
     def test_mfi_insufficient_data(self):
-        assert mfi(
-            [Decimal("110")], [Decimal("90")],
-            [Decimal("100")], [Decimal("1000")],
-        ) is None
+        assert (
+            mfi(
+                [Decimal("110")],
+                [Decimal("90")],
+                [Decimal("100")],
+                [Decimal("1000")],
+            )
+            is None
+        )
 
 
 class TestDonchianChannels:
@@ -543,9 +546,7 @@ class TestDonchianChannels:
         assert middle == (upper + lower) / Decimal("2")
 
     def test_donchian_insufficient_data(self):
-        assert donchian_channels(
-            [Decimal("110")], [Decimal("90")]
-        ) is None
+        assert donchian_channels([Decimal("110")], [Decimal("90")]) is None
 
     def test_donchian_custom_period(self):
         n = 10

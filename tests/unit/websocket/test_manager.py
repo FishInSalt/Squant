@@ -110,7 +110,6 @@ class TestStreamManagerHealth:
             assert manager.is_healthy is False
 
 
-
 class TestStreamManagerStart:
     """Test StreamManager start functionality."""
 
@@ -683,7 +682,6 @@ class TestHealthCheckRecovery:
             result = await manager._attempt_recovery()
 
             assert result is False
-
 
 
 class TestExchangeSwitchSubscriptionRecovery:

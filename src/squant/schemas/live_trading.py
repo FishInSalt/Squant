@@ -102,8 +102,7 @@ class StartLiveTradingRequest(BaseModel):
         """Validate timeframe is a supported value."""
         if v not in VALID_TIMEFRAMES:
             raise ValueError(
-                f"Invalid timeframe: '{v}'. "
-                f"Must be one of: {', '.join(sorted(VALID_TIMEFRAMES))}"
+                f"Invalid timeframe: '{v}'. Must be one of: {', '.join(sorted(VALID_TIMEFRAMES))}"
             )
         return v
 
@@ -255,10 +254,13 @@ class LiveSessionTradeResponse(BaseModel):
     """Trade execution record for a live session order."""
 
     id: UUID
+    exchange_tid: str | None = None
     price: NumberDecimal
     amount: NumberDecimal
     fee: NumberDecimal
     fee_currency: str | None = None
+    fill_source: str | None = None
+    taker_or_maker: str | None = None
     timestamp: datetime
 
     model_config = {"from_attributes": True}
@@ -278,6 +280,7 @@ class LiveSessionOrderResponse(BaseModel):
     price: NumberDecimal | None = None
     status: str
     trades: list[LiveSessionTradeResponse] = Field(default_factory=list)
+    corrections: list | None = None
     created_at: datetime
     updated_at: datetime
 

@@ -254,7 +254,9 @@ class TestHealthCheck:
         unhealthy_id = uuid4()
         mock_session_manager = AsyncMock()
         mock_session_manager.check_health = AsyncMock(return_value=[unhealthy_id])
-        mock_session_manager.cleanup_stale_sessions = AsyncMock(return_value=([unhealthy_id], [], []))
+        mock_session_manager.cleanup_stale_sessions = AsyncMock(
+            return_value=([unhealthy_id], [], [])
+        )
         mock_session_manager.get = MagicMock(return_value=None)
 
         mock_settings = MagicMock()
@@ -350,7 +352,9 @@ class TestHealthCheck:
 
         mock_session_manager = AsyncMock()
         mock_session_manager.check_health = AsyncMock(return_value=[unhealthy_id])
-        mock_session_manager.cleanup_stale_sessions = AsyncMock(return_value=([unhealthy_id], [], []))
+        mock_session_manager.cleanup_stale_sessions = AsyncMock(
+            return_value=([unhealthy_id], [], [])
+        )
         mock_session_manager.get = MagicMock(return_value=mock_engine)
 
         mock_settings = MagicMock()
@@ -379,7 +383,9 @@ class TestHealthCheck:
         # Should have passed result to mark_session_interrupted
         mock_service.mark_session_interrupted.assert_called_once()
         call_kwargs = mock_service.mark_session_interrupted.call_args
-        result = call_kwargs[1].get("result") or (call_kwargs[0][2] if len(call_kwargs[0]) > 2 else None)
+        result = call_kwargs[1].get("result") or (
+            call_kwargs[0][2] if len(call_kwargs[0]) > 2 else None
+        )
         assert result is not None
         # Verify open_trade is included in the captured state
         assert result["open_trade"] is not None

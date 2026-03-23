@@ -144,7 +144,9 @@ def macd(
 
 
 def bollinger_bands(
-    data: list[Decimal], period: int = 20, num_std: Decimal = Decimal("2"),
+    data: list[Decimal],
+    period: int = 20,
+    num_std: Decimal = Decimal("2"),
 ) -> tuple[Decimal, Decimal, Decimal] | None:
     """Bollinger Bands.
 
@@ -522,11 +524,13 @@ def adx(
         down_move = lows[i - 1] - lows[i]
         plus_dm_list.append(up_move if up_move > down_move and up_move > zero else zero)
         minus_dm_list.append(down_move if down_move > up_move and down_move > zero else zero)
-        tr_list.append(max(
-            highs[i] - lows[i],
-            abs(highs[i] - closes[i - 1]),
-            abs(lows[i] - closes[i - 1]),
-        ))
+        tr_list.append(
+            max(
+                highs[i] - lows[i],
+                abs(highs[i] - closes[i - 1]),
+                abs(lows[i] - closes[i - 1]),
+            )
+        )
 
     if len(tr_list) < 2 * period:
         return None

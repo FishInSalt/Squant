@@ -583,9 +583,7 @@ class TestFastRetry:
                 # Trigger fast_retry_max_attempts + 1 reconnect cycles
                 for cycle in range(provider._fast_retry_max_attempts + 1):
                     # Reset consecutive errors to simulate a fresh error cycle
-                    provider._consecutive_errors["test:key"] = (
-                        provider._max_consecutive_errors - 1
-                    )
+                    provider._consecutive_errors["test:key"] = provider._max_consecutive_errors - 1
                     await provider._handle_loop_error("test:key", Exception("Test"))
 
             # First N should be fast retry delay
@@ -757,7 +755,12 @@ class TestCandleCloseDetection:
         # Set up tracking state
         provider._last_candle_ts["BTC/USDT:1h"] = 1700000000000
         provider._last_candle_data["BTC/USDT:1h"] = [
-            1700000000000, 50000, 51000, 49000, 50500, 100,
+            1700000000000,
+            50000,
+            51000,
+            49000,
+            50500,
+            100,
         ]
 
         # Simulate the unwatch cleanup

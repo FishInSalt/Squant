@@ -76,6 +76,7 @@ class OrderDetail(BaseModel):
     )
     status_display: str = Field(default="", description="Frontend-friendly status (submitted→open)")
     strategy_name: str | None = Field(None, description="Strategy name (from run.strategy)")
+    corrections: list | None = Field(None, description="Data correction audit log")
     created_at: datetime = Field(..., description="Creation time")
     updated_at: datetime = Field(..., description="Last update time")
 
@@ -93,6 +94,8 @@ class TradeDetail(BaseModel):
     fee: NumberDecimal = Field(..., description="Trading fee")
     fee_currency: str | None = Field(None, description="Fee currency")
     timestamp: datetime = Field(..., description="Execution time")
+    fill_source: str | None = Field(None, description="Fill source: ws, poll, or reconcile")
+    taker_or_maker: str | None = Field(None, description="Maker or taker fill")
 
 
 class OrderWithTrades(OrderDetail):

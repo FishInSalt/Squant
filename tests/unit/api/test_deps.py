@@ -333,5 +333,3 @@ class TestGetExchange:
             pass
 
         mock_get_adapter.assert_called_once_with("binance")
-
-

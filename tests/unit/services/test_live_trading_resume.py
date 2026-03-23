@@ -235,9 +235,14 @@ class TestBuildResultForPersistence:
         )
 
         class DummyStrategy(Strategy):
-            def on_init(self): pass
-            def on_bar(self, bar): pass
-            def on_stop(self): pass
+            def on_init(self):
+                pass
+
+            def on_bar(self, bar):
+                pass
+
+            def on_stop(self):
+                pass
 
         engine = LiveTradingEngine(
             run_id=uuid4(),
@@ -299,9 +304,14 @@ class TestDeltaCounterSync:
         )
 
         class DummyStrategy(Strategy):
-            def on_init(self): pass
-            def on_bar(self, bar): pass
-            def on_stop(self): pass
+            def on_init(self):
+                pass
+
+            def on_bar(self, bar):
+                pass
+
+            def on_stop(self):
+                pass
 
         engine = LiveTradingEngine(
             run_id=uuid4(),
@@ -370,9 +380,14 @@ class TestRestoreLiveOrders:
         )
 
         class DummyStrategy(Strategy):
-            def on_init(self): pass
-            def on_bar(self, bar): pass
-            def on_stop(self): pass
+            def on_init(self):
+                pass
+
+            def on_bar(self, bar):
+                pass
+
+            def on_stop(self):
+                pass
 
         engine = LiveTradingEngine(
             run_id=uuid4(),
@@ -446,9 +461,14 @@ class TestRestoreLiveOrders:
         )
 
         class DummyStrategy(Strategy):
-            def on_init(self): pass
-            def on_bar(self, bar): pass
-            def on_stop(self): pass
+            def on_init(self):
+                pass
+
+            def on_bar(self, bar):
+                pass
+
+            def on_stop(self):
+                pass
 
         engine = LiveTradingEngine(
             run_id=uuid4(),
@@ -496,19 +516,21 @@ class TestReconcileOrders:
         engine._record_fill = MagicMock()
 
         adapter = AsyncMock()
-        adapter.get_open_orders = AsyncMock(return_value=[
-            OrderResponse(
-                order_id="ex-1",
-                symbol="BTC/USDT",
-                side=OrderSide.BUY,
-                type=OrderType.LIMIT,
-                status=OrderStatus.PARTIAL,
-                amount=Decimal("0.01"),
-                filled=Decimal("0.005"),
-                avg_price=Decimal("50000"),
-                fee=Decimal("0.01"),
-            ),
-        ])
+        adapter.get_open_orders = AsyncMock(
+            return_value=[
+                OrderResponse(
+                    order_id="ex-1",
+                    symbol="BTC/USDT",
+                    side=OrderSide.BUY,
+                    type=OrderType.LIMIT,
+                    status=OrderStatus.PARTIAL,
+                    amount=Decimal("0.01"),
+                    filled=Decimal("0.005"),
+                    avg_price=Decimal("50000"),
+                    fee=Decimal("0.01"),
+                ),
+            ]
+        )
 
         report = await service._reconcile_orders(engine, adapter, "BTC/USDT")
 
@@ -537,17 +559,19 @@ class TestReconcileOrders:
         # Not in open orders
         adapter.get_open_orders = AsyncMock(return_value=[])
         # Query shows filled
-        adapter.get_order = AsyncMock(return_value=OrderResponse(
-            order_id="ex-1",
-            symbol="BTC/USDT",
-            side=OrderSide.BUY,
-            type=OrderType.LIMIT,
-            status=OrderStatus.FILLED,
-            amount=Decimal("0.01"),
-            filled=Decimal("0.01"),
-            avg_price=Decimal("50000"),
-            fee=Decimal("0.02"),
-        ))
+        adapter.get_order = AsyncMock(
+            return_value=OrderResponse(
+                order_id="ex-1",
+                symbol="BTC/USDT",
+                side=OrderSide.BUY,
+                type=OrderType.LIMIT,
+                status=OrderStatus.FILLED,
+                amount=Decimal("0.01"),
+                filled=Decimal("0.01"),
+                avg_price=Decimal("50000"),
+                fee=Decimal("0.02"),
+            )
+        )
 
         report = await service._reconcile_orders(engine, adapter, "BTC/USDT")
 
@@ -587,17 +611,19 @@ class TestReconcileOrders:
         engine._exchange_order_map = {}
 
         adapter = AsyncMock()
-        adapter.get_open_orders = AsyncMock(return_value=[
-            OrderResponse(
-                order_id="unknown-1",
-                symbol="BTC/USDT",
-                side=OrderSide.BUY,
-                type=OrderType.LIMIT,
-                status=OrderStatus.SUBMITTED,
-                amount=Decimal("0.01"),
-                filled=Decimal("0"),
-            ),
-        ])
+        adapter.get_open_orders = AsyncMock(
+            return_value=[
+                OrderResponse(
+                    order_id="unknown-1",
+                    symbol="BTC/USDT",
+                    side=OrderSide.BUY,
+                    type=OrderType.LIMIT,
+                    status=OrderStatus.SUBMITTED,
+                    amount=Decimal("0.01"),
+                    filled=Decimal("0"),
+                ),
+            ]
+        )
 
         report = await service._reconcile_orders(engine, adapter, "BTC/USDT")
 
@@ -635,12 +661,14 @@ class TestReconcilePositions:
         engine.context.get_position.return_value = None
 
         adapter = AsyncMock()
-        adapter.get_balance = AsyncMock(return_value=AccountBalance(
-            exchange="okx",
-            balances=[
-                Balance(currency="USDT", available=Decimal("10000"), frozen=Decimal("0")),
-            ],
-        ))
+        adapter.get_balance = AsyncMock(
+            return_value=AccountBalance(
+                exchange="okx",
+                balances=[
+                    Balance(currency="USDT", available=Decimal("10000"), frozen=Decimal("0")),
+                ],
+            )
+        )
 
         report = await service._reconcile_positions(engine, adapter, "BTC/USDT")
 
@@ -654,12 +682,14 @@ class TestReconcilePositions:
         engine.context.get_position.return_value = None
 
         adapter = AsyncMock()
-        adapter.get_balance = AsyncMock(return_value=AccountBalance(
-            exchange="okx",
-            balances=[
-                Balance(currency="USDT", available=Decimal("9500"), frozen=Decimal("0")),
-            ],
-        ))
+        adapter.get_balance = AsyncMock(
+            return_value=AccountBalance(
+                exchange="okx",
+                balances=[
+                    Balance(currency="USDT", available=Decimal("9500"), frozen=Decimal("0")),
+                ],
+            )
+        )
 
         report = await service._reconcile_positions(engine, adapter, "BTC/USDT")
 

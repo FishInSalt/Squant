@@ -192,7 +192,7 @@ class MomentumBreakoutStrategy(Strategy):  # noqa: F821
         ema_f = ta.ema(closes, self.ema_fast)  # noqa: F821
         ema_s = ta.ema(closes, self.ema_slow)  # noqa: F821
         ema_t = ta.ema(closes, self.ema_trend)  # noqa: F821
-        atr_val = ta.atr(highs, lows, closes[-len(highs):], self.atr_period)  # noqa: F821
+        atr_val = ta.atr(highs, lows, closes[-len(highs) :], self.atr_period)  # noqa: F821
         vol_ma = ta.sma(volumes, self.vol_ma_period)  # noqa: F821
         macd_result = ta.macd(closes)  # noqa: F821
 
@@ -288,8 +288,7 @@ class MomentumBreakoutStrategy(Strategy):  # noqa: F821
                     self.ctx.buy(bar.symbol, add_amount)
                     self.pyramid_count = self.pyramid_count + 1
                     self.ctx.log(
-                        f"加仓[{self.pyramid_count}] @ {bar.close} "
-                        f"PnL={pnl:.2f} ATR={atr_val:.2f}"
+                        f"加仓[{self.pyramid_count}] @ {bar.close} PnL={pnl:.2f} ATR={atr_val:.2f}"
                     )
             return
 
@@ -308,11 +307,7 @@ class MomentumBreakoutStrategy(Strategy):  # noqa: F821
             return
 
         # 做多信号：EMA金叉 + 趋势均线上方 + MACD正且增强 + 放量
-        macd_momentum = (
-            prev_hist is not None
-            and histogram > Decimal("0")
-            and histogram > prev_hist
-        )
+        macd_momentum = prev_hist is not None and histogram > Decimal("0") and histogram > prev_hist
         if (
             ema_f > ema_s
             and bar.close > ema_t

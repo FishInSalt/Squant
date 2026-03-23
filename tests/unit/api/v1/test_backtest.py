@@ -84,9 +84,7 @@ class TestRunBacktest:
 
         with (
             patch("squant.api.v1.backtest.BacktestService") as mock_service_class,
-            patch(
-                "squant.api.v1.backtest.BacktestService.run_in_background"
-            ) as mock_bg,
+            patch("squant.api.v1.backtest.BacktestService.run_in_background") as mock_bg,
         ):
             mock_service = MagicMock()
             mock_service.create = AsyncMock(return_value=mock_backtest_run)
@@ -203,9 +201,7 @@ class TestExecuteBacktest:
 
         with (
             patch("squant.api.v1.backtest.BacktestService") as mock_service_class,
-            patch(
-                "squant.api.v1.backtest.BacktestService.run_in_background"
-            ) as mock_bg,
+            patch("squant.api.v1.backtest.BacktestService.run_in_background") as mock_bg,
         ):
             mock_service = MagicMock()
             mock_service.get = AsyncMock(return_value=mock_backtest_run)
@@ -587,13 +583,19 @@ class TestGetBacktestCandles:
         mock_rows = [
             (
                 datetime(2024, 1, 1, 1, tzinfo=UTC),
-                Decimal("42300.0"), Decimal("42800.0"),
-                Decimal("42100.0"), Decimal("42600.0"), Decimal("150.2"),
+                Decimal("42300.0"),
+                Decimal("42800.0"),
+                Decimal("42100.0"),
+                Decimal("42600.0"),
+                Decimal("150.2"),
             ),
             (
                 datetime(2024, 1, 1, tzinfo=UTC),
-                Decimal("42000.0"), Decimal("42500.0"),
-                Decimal("41800.0"), Decimal("42300.0"), Decimal("100.5"),
+                Decimal("42000.0"),
+                Decimal("42500.0"),
+                Decimal("41800.0"),
+                Decimal("42300.0"),
+                Decimal("100.5"),
             ),
         ]
 
@@ -638,8 +640,11 @@ class TestGetBacktestCandles:
         mock_rows = [
             (
                 datetime(2024, 1, 1, tzinfo=UTC),
-                Decimal("42000.0"), Decimal("42500.0"),
-                Decimal("41800.0"), Decimal("42300.0"), Decimal("100.5"),
+                Decimal("42000.0"),
+                Decimal("42500.0"),
+                Decimal("41800.0"),
+                Decimal("42300.0"),
+                Decimal("100.5"),
             ),
         ]
 
@@ -684,8 +689,11 @@ class TestGetBacktestCandles:
         mock_rows = [
             (
                 datetime(2024, 1, 1, 2, tzinfo=UTC),
-                Decimal("42500.0"), Decimal("43000.0"),
-                Decimal("42200.0"), Decimal("42800.0"), Decimal("200.0"),
+                Decimal("42500.0"),
+                Decimal("43000.0"),
+                Decimal("42200.0"),
+                Decimal("42800.0"),
+                Decimal("200.0"),
             ),
         ]
 

@@ -306,9 +306,7 @@ class BacktestRunner:
         # Collect newly completed orders (from fills + expiry) for on_order_done
         completed_delta = self._context._total_completed_added - completed_before
         newly_completed = (
-            list(self._context._completed_orders)[-completed_delta:]
-            if completed_delta > 0
-            else []
+            list(self._context._completed_orders)[-completed_delta:] if completed_delta > 0 else []
         )
 
         # 4. Update current bar

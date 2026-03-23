@@ -12,6 +12,7 @@ from .types import (
     OrderResponse,
     Ticker,
     TimeFrame,
+    TradeInfo,
 )
 
 
@@ -212,6 +213,11 @@ class ExchangeAdapter(ABC):
         Raises:
             ExchangeAPIError: If API request fails.
         """
+        ...
+
+    @abstractmethod
+    async def get_order_trades(self, symbol: str, order_id: str) -> list[TradeInfo]:
+        """Get all individual fills for a specific order."""
         ...
 
     # Dead Man's Switch (F-2)

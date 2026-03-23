@@ -32,6 +32,7 @@ from squant.infra.exchange.types import (
     OrderResponse,
     Ticker,
     TimeFrame,
+    TradeInfo,
 )
 from squant.models.enums import OrderSide, OrderStatus, OrderType
 
@@ -113,6 +114,7 @@ class CCXTRestAdapter(ExchangeAdapter):
             # Build exchange configuration
             config: dict[str, Any] = {
                 "enableRateLimit": True,
+                "timeout": 30000,  # 30s timeout for REST requests (default 10s)
                 # Only load spot markets to avoid timeout on OPTION/FUTURES APIs
                 "options": {
                     "defaultType": "spot",
@@ -606,6 +608,74 @@ class CCXTRestAdapter(ExchangeAdapter):
                 message=f"Failed to fetch open orders: {e}",
                 exchange=self._exchange_id,
             ) from e
+
+    async def get_order_trades(self, symbol: str, order_id: str) -> list[TradeInfo]:
+        """Get all individual fills for a specific order via CCXT fetchOrderTrades."""
+        return await with_retry(
+            lambda: self._get_order_trades_impl(symbol, order_id),
+            config=_READ_RETRY,
+            operation_name="get_order_trades",
+        )
+
+    async def _get_order_trades_impl(self, symbol: str, order_id: str) -> list[TradeInfo]:
+        """Internal implementation (retryable)."""
+        if not self._exchange:
+            raise ExchangeConnectionError(
+                message="Exchange not connected. Call connect() first.",
+                exchange=self._exchange_id,
+            )
+        if not self._credentials:
+            raise ExchangeAuthenticationError(
+                message="Credentials required for get_order_trades.",
+                exchange=self._exchange_id,
+            )
+
+        try:
+            raw_trades = await self._exchange.fetch_order_trades(order_id, symbol)
+        except ccxt.AuthenticationError as e:
+            raise ExchangeAuthenticationError(
+                message=f"Authentication failed: {e}",
+                exchange=self._exchange_id,
+            ) from e
+        except ccxt.RateLimitExceeded as e:
+            raise ExchangeRateLimitError(
+                message=f"Rate limit exceeded: {e}",
+                exchange=self._exchange_id,
+            ) from e
+        except ccxt.OrderNotFound as e:
+            raise OrderNotFoundError(
+                message=f"Order not found: {e}",
+                exchange=self._exchange_id,
+            ) from e
+        except Exception as e:
+            raise ExchangeAPIError(
+                message=f"Failed to fetch order trades: {e}",
+                exchange=self._exchange_id,
+            ) from e
+
+        result = []
+        for t in raw_trades:
+            fee_info = t.get("fee") or {}
+            ts = t.get("timestamp")
+            timestamp = (
+                datetime.fromtimestamp(ts / 1000, tz=UTC) if ts is not None else datetime.now(UTC)
+            )
+            result.append(
+                TradeInfo(
+                    trade_id=str(t.get("id", "")),
+                    order_id=str(t.get("order", "")),
+                    symbol=t.get("symbol", symbol),
+                    side=t.get("side", ""),
+                    price=Decimal(str(t.get("price") or 0)),
+                    amount=Decimal(str(t.get("amount") or 0)),
+                    fee=Decimal(str(fee_info.get("cost") or 0)),
+                    fee_currency=fee_info.get("currency") or "",
+                    taker_or_maker=t.get("takerOrMaker"),
+                    timestamp=timestamp,
+                )
+            )
+        result.sort(key=lambda x: x.timestamp)
+        return result
 
     # ==================== Dead Man's Switch (F-2) ====================
 

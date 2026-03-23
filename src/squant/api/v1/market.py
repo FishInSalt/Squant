@@ -301,9 +301,7 @@ async def get_candles(
             tf_ms = TIMEFRAME_MS[timeframe]
             start_time = end_time - limit * tf_ms
 
-        candles = await exchange.get_candlesticks(
-            symbol, tf, limit=limit, start_time=start_time
-        )
+        candles = await exchange.get_candlesticks(symbol, tf, limit=limit, start_time=start_time)
 
         # Filter out candles at or after end_time
         if end_time is not None:

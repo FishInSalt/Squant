@@ -688,9 +688,7 @@ class TestBug1StaleResponseSkipsEntireUpdate:
 
         engine._update_order_from_response(live_order, stale_response)
 
-        assert live_order.fee == Decimal("0.35"), (
-            f"fee regressed from 0.35 to {live_order.fee}"
-        )
+        assert live_order.fee == Decimal("0.35"), f"fee regressed from 0.35 to {live_order.fee}"
 
     def test_stale_poll_does_not_regress_status(self):
         """status should not regress from FILLED to PARTIAL via stale poll."""
@@ -802,11 +800,9 @@ class TestBug3DmsNotificationOnlyOnce:
 
             # Should fire exactly once at failure #3, not on #4..#10
             dms_calls = [
-                c for c in mock_notify.call_args_list
-                if any(
-                    a == "dms_heartbeat_lost"
-                    for a in c.args + tuple(c.kwargs.values())
-                )
+                c
+                for c in mock_notify.call_args_list
+                if any(a == "dms_heartbeat_lost" for a in c.args + tuple(c.kwargs.values()))
             ]
             assert len(dms_calls) == 1, (
                 f"DMS notification should fire once, but fired {len(dms_calls)} times"

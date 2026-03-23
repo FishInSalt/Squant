@@ -23,6 +23,7 @@ from squant.models.enums import OrderSide, OrderStatus, OrderType
 # Helpers / Fixtures
 # ---------------------------------------------------------------------------
 
+
 class NoOpStrategy(Strategy):
     """Strategy that does nothing — used when we don't need on_bar logic."""
 
@@ -215,8 +216,12 @@ class TestOrderEventBuffering:
         engine._live_orders[live_order.internal_id] = live_order
 
         engine._record_fill(
-            live_order, Decimal("50000"), Decimal("0.01"),
-            Decimal("0.005"), Decimal("0.005"), source="ws",
+            live_order,
+            Decimal("50000"),
+            Decimal("0.01"),
+            Decimal("0.005"),
+            Decimal("0.005"),
+            source="ws",
         )
 
         assert len(engine._pending_order_events) == 1
@@ -234,8 +239,12 @@ class TestOrderEventBuffering:
         live_order = _make_live_order()
 
         engine._record_fill(
-            live_order, Decimal("49500"), Decimal("0.01"),
-            Decimal("0.004"), Decimal("0.004"), source="poll",
+            live_order,
+            Decimal("49500"),
+            Decimal("0.01"),
+            Decimal("0.004"),
+            Decimal("0.004"),
+            source="poll",
         )
 
         assert len(engine._pending_order_events) == 1
@@ -555,9 +564,7 @@ class TestOrderPersistCallback:
 
         mock_order_repo = AsyncMock()
         # First create fails, second succeeds
-        mock_order_repo.create = AsyncMock(
-            side_effect=[Exception("DB error"), mock_order_2]
-        )
+        mock_order_repo.create = AsyncMock(side_effect=[Exception("DB error"), mock_order_2])
 
         mock_trade_repo = AsyncMock()
 

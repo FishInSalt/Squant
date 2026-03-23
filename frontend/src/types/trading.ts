@@ -356,10 +356,13 @@ export type TradingStatusEvent = TradingBarUpdate | TradingEngineStopped | Tradi
 // 实盘会话成交记录（匹配后端 LiveSessionTradeResponse）
 export interface LiveSessionTrade {
   id: string
+  exchange_tid?: string | null
   price: number
   amount: number
   fee: number
-  fee_currency?: string
+  fee_currency?: string | null
+  fill_source?: string | null
+  taker_or_maker?: string | null
   timestamp: string
 }
 
@@ -376,6 +379,12 @@ export interface LiveSessionOrder {
   price?: number
   status: string
   trades: LiveSessionTrade[]
+  corrections?: Array<{
+    timestamp: string
+    reason: string
+    changes: Array<{ field: string; before: string; after: string }>
+    missing_trade_ids?: string[]
+  }> | null
   created_at: string
   updated_at: string
 }

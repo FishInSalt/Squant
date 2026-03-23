@@ -134,11 +134,11 @@ class TestStrategyLoadsInSandbox:
 
     def test_invalid_strategy_code_rejected(self) -> None:
         """Verify that code without a Strategy subclass is rejected."""
-        bad_code = '''
+        bad_code = """
 class NotAStrategy:
     def on_bar(self, bar):
         pass
-'''
+"""
         result = validate_strategy_code(bad_code)
         assert not result.valid
         assert any("Strategy" in err for err in result.errors)
@@ -154,9 +154,7 @@ class NotAStrategy:
 class TestOrderSubmissionToExchange:
     """Submit a real order to OKX demo, verify fill, and clean up."""
 
-    async def test_market_buy_fill_and_sell_back(
-        self, okx_adapter: CCXTRestAdapter
-    ) -> None:
+    async def test_market_buy_fill_and_sell_back(self, okx_adapter: CCXTRestAdapter) -> None:
         """Place a small market buy via the adapter, verify fill, sell back.
 
         This mirrors what the live/paper trading engine does when a strategy
@@ -181,9 +179,7 @@ class TestOrderSubmissionToExchange:
         await asyncio.sleep(2)
 
         buy_detail = await okx_adapter.get_order(TEST_SYMBOL, buy_resp.order_id)
-        assert buy_detail.status == OrderStatus.FILLED, (
-            f"Expected FILLED, got {buy_detail.status}"
-        )
+        assert buy_detail.status == OrderStatus.FILLED, f"Expected FILLED, got {buy_detail.status}"
         assert buy_detail.filled > Decimal("0")
 
         if buy_detail.avg_price is not None:

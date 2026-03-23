@@ -739,7 +739,7 @@ class TestStopOrderRunner:
 
     async def test_sell_stop_triggers_and_fills(self):
         """Strategy places a sell stop that triggers on a subsequent bar."""
-        strategy_code = '''
+        strategy_code = """
 class MyStrategy(Strategy):
     def on_init(self):
         self.bought = False
@@ -754,7 +754,7 @@ class MyStrategy(Strategy):
             # Set stop loss at 40000
             self.ctx.sell(bar.symbol, Decimal("1"), stop_price=Decimal("40000"))
             self.stop_placed = True
-'''
+"""
         # Bar 0: buy at open
         # Bar 1: place stop at 40000 (price above stop, no trigger)
         # Bar 2: price drops → stop triggers
@@ -768,11 +768,13 @@ class MyStrategy(Strategy):
                 close=close_p,
                 volume=Decimal("100"),
             )
-            for i, (open_p, high_p, low_p, close_p) in enumerate([
-                (Decimal("42000"), Decimal("43000"), Decimal("41000"), Decimal("42500")),
-                (Decimal("42500"), Decimal("43000"), Decimal("41500"), Decimal("42000")),
-                (Decimal("41000"), Decimal("41500"), Decimal("39500"), Decimal("40000")),
-            ])
+            for i, (open_p, high_p, low_p, close_p) in enumerate(
+                [
+                    (Decimal("42000"), Decimal("43000"), Decimal("41000"), Decimal("42500")),
+                    (Decimal("42500"), Decimal("43000"), Decimal("41500"), Decimal("42000")),
+                    (Decimal("41000"), Decimal("41500"), Decimal("39500"), Decimal("40000")),
+                ]
+            )
         ]
 
         runner = BacktestRunner(
@@ -794,7 +796,7 @@ class MyStrategy(Strategy):
 
     async def test_stop_order_expires_with_bars_remaining(self):
         """Stop order with valid_for_bars expires after N bars."""
-        strategy_code = '''
+        strategy_code = """
 class MyStrategy(Strategy):
     def on_init(self):
         self.bought = False
@@ -808,7 +810,7 @@ class MyStrategy(Strategy):
         elif not self.stop_placed and self.ctx.has_position(bar.symbol):
             self.ctx.sell(bar.symbol, Decimal("1"), stop_price=Decimal("38000"), valid_for_bars=2)
             self.stop_placed = True
-'''
+"""
         # Bar 0: buy
         # Bar 1: place stop at 38000 (valid_for_bars=2)
         # Bar 2: no trigger, bars_remaining 2→1

@@ -795,6 +795,8 @@ class LiveTradingService:
                                 fee_currency=event.get("fee_currency"),
                                 timestamp=datetime.fromisoformat(event["timestamp"]),
                                 fill_source=event.get("fill_source"),
+                                exchange_tid=event.get("exchange_tid"),
+                                taker_or_maker=event.get("taker_or_maker"),
                             )
                             # Update order with cumulative fill info
                             update_kwargs: dict[str, Any] = {
@@ -821,6 +823,91 @@ class LiveTradingService:
                             if event.get("avg_fill_price"):
                                 update_kwargs["avg_price"] = Decimal(event["avg_fill_price"])
                             await order_repo.update(db_order_id, **update_kwargs)
+
+                        elif event["type"] == "correction":
+                            internal_id = event["internal_id"]
+                            db_order_id = order_id_map.get(internal_id)
+                            if db_order_id:
+                                # Update order fields based on corrections
+                                update_data: dict[str, Any] = {}
+                                for c in event.get("corrections", []):
+                                    field = c["field"]
+                                    if field == "filled_amount":
+                                        update_data["filled"] = Decimal(c["after"])
+                                    elif field == "avg_fill_price":
+                                        update_data["avg_price"] = Decimal(c["after"])
+                                    elif field == "status":
+                                        status_map = {
+                                            "submitted": OrderStatus.SUBMITTED,
+                                            "partial": OrderStatus.PARTIAL,
+                                            "filled": OrderStatus.FILLED,
+                                            "cancelled": OrderStatus.CANCELLED,
+                                            "rejected": OrderStatus.REJECTED,
+                                        }
+                                        mapped = status_map.get(c["after"])
+                                        if mapped:
+                                            update_data["status"] = mapped
+
+                                if update_data:
+                                    await order_repo.update(db_order_id, **update_data)
+
+                                # Append correction record to JSONB field
+                                order = await order_repo.get(db_order_id)
+                                if order:
+                                    existing = order.corrections or []
+                                    existing.append(
+                                        {
+                                            "timestamp": event["timestamp"],
+                                            "reason": event["reason"],
+                                            "changes": event.get("corrections", []),
+                                            "missing_trade_ids": event.get("missing_trade_ids", []),
+                                        }
+                                    )
+                                    await order_repo.update(db_order_id, corrections=existing)
+
+                        elif event["type"] == "enrichment":
+                            # Async enrichment: update existing Trade records with
+                            # per-fill details (exchange_tid, exact prices, taker_or_maker)
+                            # fetched from REST get_order_trades after watchOrders fallback.
+                            db_order_id = order_id_map.get(event["internal_id"])
+                            if not db_order_id:
+                                continue
+                            for trade_data in event.get("trades", []):
+                                # Try to match existing Trade by timestamp+amount
+                                # and update with enrichment data
+                                from squant.models.order import Trade
+
+                                stmt = (
+                                    select(Trade)
+                                    .where(Trade.order_id == db_order_id)
+                                    .where(Trade.exchange_tid.is_(None))
+                                )
+                                result = await db_session.execute(stmt)
+                                unmatched_trades = result.scalars().all()
+
+                                if unmatched_trades:
+                                    # Update first unmatched trade with enrichment data
+                                    trade_to_update = unmatched_trades[0]
+                                    trade_to_update.exchange_tid = trade_data.get("exchange_tid")
+                                    trade_to_update.taker_or_maker = trade_data.get("taker_or_maker")
+                                    if trade_data.get("price"):
+                                        trade_to_update.price = Decimal(trade_data["price"])
+                                    if trade_data.get("amount"):
+                                        trade_to_update.amount = Decimal(trade_data["amount"])
+                                    if trade_data.get("fee"):
+                                        trade_to_update.fee = abs(Decimal(trade_data["fee"]))
+                                    if trade_data.get("fee_currency"):
+                                        trade_to_update.fee_currency = trade_data["fee_currency"]
+
+                            await db_session.commit()
+                            logger.info(
+                                f"Enriched trades for order {event.get('exchange_order_id')}"
+                            )
+
+                        else:
+                            logger.warning(
+                                f"Unknown order event type: {event.get('type')}"
+                            )
 
                     except Exception as e:
                         logger.warning(f"Failed to persist order event {event.get('type')}: {e}")
@@ -1351,6 +1438,83 @@ class LiveTradingService:
         )
         return report
 
+    async def _reconcile_stale_db_orders(
+        self,
+        run_id: UUID,
+        adapter: ExchangeAdapter,
+        symbol: str,
+    ) -> None:
+        """Reconcile DB orders that have non-terminal status after crash/restart.
+
+        When the engine crashes, order events may not have been flushed.
+        This queries the DB for orders with status 'submitted' or 'partial',
+        checks their actual status on the exchange, and updates the DB.
+        """
+        from squant.models.order import Trade
+        from squant.services.order import OrderRepository
+
+        order_repo = OrderRepository(self.session)
+        stale_orders = await order_repo.list_by_run(run_id, offset=0, limit=100)
+        non_terminal = [
+            o for o in stale_orders
+            if o.status in (OrderStatus.SUBMITTED, OrderStatus.PARTIAL)
+            and o.exchange_oid
+        ]
+
+        if not non_terminal:
+            return
+
+        logger.info(f"Reconciling {len(non_terminal)} stale DB orders for run {run_id}")
+
+        for order in non_terminal:
+            try:
+                exchange_state = await adapter.get_order(symbol, order.exchange_oid)
+                updates: dict[str, Any] = {}
+
+                if exchange_state.status != order.status:
+                    updates["status"] = exchange_state.status
+                if exchange_state.filled > (order.filled or Decimal("0")):
+                    updates["filled"] = exchange_state.filled
+                if exchange_state.avg_price and exchange_state.avg_price != order.avg_price:
+                    updates["avg_price"] = exchange_state.avg_price
+                # Note: fee is stored on Trade records, not on Order model
+
+                if updates:
+                    await order_repo.update(order.id, **updates)
+                    logger.info(
+                        f"Updated stale order {order.id} "
+                        f"(exchange: {order.exchange_oid}): {updates}"
+                    )
+
+                    # Also try to fetch and persist individual fills
+                    try:
+                        trades = await adapter.get_order_trades(symbol, order.exchange_oid)
+                        from squant.infra.repository import BaseRepository
+
+                        trade_repo = BaseRepository[Trade](self.session, Trade)
+                        for t in trades:
+                            existing = await self.session.execute(
+                                select(Trade).where(Trade.exchange_tid == t.trade_id)
+                            )
+                            if existing.scalar_one_or_none():
+                                continue
+                            await trade_repo.create(
+                                order_id=str(order.id),
+                                exchange_tid=t.trade_id,
+                                price=t.price,
+                                amount=t.amount,
+                                fee=t.fee,
+                                fee_currency=t.fee_currency,
+                                taker_or_maker=t.taker_or_maker,
+                                timestamp=t.timestamp,
+                                fill_source="reconcile",
+                            )
+                        await self.session.commit()
+                    except Exception as e:
+                        logger.warning(f"Failed to fetch trades for stale order {order.id}: {e}")
+            except Exception as e:
+                logger.warning(f"Failed to reconcile stale order {order.id}: {e}")
+
     async def _reconcile_positions(
         self,
         engine: LiveTradingEngine,
@@ -1677,9 +1841,12 @@ class LiveTradingService:
         if seed_map:
             logger.info(f"Resume: seeded order audit map with {len(seed_map)} orders")
 
-        # 11. Order reconciliation
+        # 11. Order reconciliation (live orders in engine state)
         reconciliation_report = await self._reconcile_orders(engine, adapter, run.symbol)
         logger.info(f"Order reconciliation for {run_id}: {reconciliation_report}")
+
+        # 11b. Reconcile stale DB orders (orders persisted but engine state lost on crash)
+        await self._reconcile_stale_db_orders(run.id, adapter, run.symbol)
 
         # 12. Position/balance reconciliation
         position_report = await self._reconcile_positions(engine, adapter, run.symbol)

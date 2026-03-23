@@ -57,9 +57,7 @@ class BBMeanReversionStrategy(Strategy):  # noqa: F821
         self.bb_std = Decimal(str(self.ctx.params.get("bb_std", 2.0)))
         self.rsi_period = self.ctx.params.get("rsi_period", 14)
         self.rsi_oversold = Decimal(str(self.ctx.params.get("rsi_oversold", 28)))
-        self.rsi_oversold_yellow = Decimal(
-            str(self.ctx.params.get("rsi_oversold_yellow", 25))
-        )
+        self.rsi_oversold_yellow = Decimal(str(self.ctx.params.get("rsi_oversold_yellow", 25)))
         self.rsi_neutral_exit = Decimal(str(self.ctx.params.get("rsi_neutral_exit", 55)))
         self.vol_ma_period = self.ctx.params.get("volume_ma_period", 20)
 

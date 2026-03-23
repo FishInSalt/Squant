@@ -245,10 +245,7 @@ class OrderRepository(BaseRepository[Order]):
         """
         from sqlalchemy import func
 
-        stmt = (
-            select(Order.status, func.count())
-            .group_by(Order.status)
-        )
+        stmt = select(Order.status, func.count()).group_by(Order.status)
         result = await self.session.execute(stmt)
         return {row[0]: row[1] for row in result.all()}
 

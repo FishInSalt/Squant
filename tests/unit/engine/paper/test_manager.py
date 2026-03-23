@@ -324,8 +324,8 @@ class TestHealthCheck:
         await session_manager.register(healthy_engine)
         await session_manager.register(stale_engine)
 
-        cleaned, keys_to_unsub, tickers_to_unsub = (
-            await session_manager.cleanup_stale_sessions(timeout_seconds=300)
+        cleaned, keys_to_unsub, tickers_to_unsub = await session_manager.cleanup_stale_sessions(
+            timeout_seconds=300
         )
 
         assert cleaned == [stale_engine.run_id]
@@ -347,8 +347,8 @@ class TestHealthCheck:
 
         await session_manager.register(engine)
 
-        cleaned, keys_to_unsub, tickers_to_unsub = (
-            await session_manager.cleanup_stale_sessions(timeout_seconds=300)
+        cleaned, keys_to_unsub, tickers_to_unsub = await session_manager.cleanup_stale_sessions(
+            timeout_seconds=300
         )
 
         assert cleaned == []

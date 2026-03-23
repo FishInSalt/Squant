@@ -231,9 +231,7 @@ class TestGetBalanceCurrency:
         assert float(data["data"]["total"]) == 2.0
 
     @pytest.mark.asyncio
-    async def test_get_balance_currency_not_found(
-        self, client: AsyncClient, mock_adapter
-    ) -> None:
+    async def test_get_balance_currency_not_found(self, client: AsyncClient, mock_adapter) -> None:
         """Test balance retrieval for non-existent currency."""
         mock_adapter.get_balance_currency = AsyncMock(return_value=None)
 

@@ -508,9 +508,7 @@ class PaperTradingEngine:
                     self._risk_manager.update_equity(self._context.equity)
                     # 5b. Update unrealized PnL so daily loss limit includes open positions
                     self._risk_manager.update_unrealized_pnl(self._context._get_unrealized_pnl())
-                    self._risk_manager.update_position_value(
-                        self._context._get_position_value()
-                    )
+                    self._risk_manager.update_position_value(self._context._get_position_value())
 
                     # 5c. Auto-stop if total loss limit triggered (IMP-005)
                     if self._risk_manager.check_total_loss_limit():
@@ -549,9 +547,7 @@ class PaperTradingEngine:
                 self._context._ref_ask = self._latest_ask
 
                 # 6c. Notify strategy of fills and completed orders (before on_bar)
-                fill_delta = (
-                    self._context._total_fills_added - self._last_callback_fill_total
-                )
+                fill_delta = self._context._total_fills_added - self._last_callback_fill_total
                 if fill_delta > 0:
                     recent_fills = list(self._context._fills)[-fill_delta:]
                     for fill in recent_fills:
@@ -563,22 +559,17 @@ class PaperTradingEngine:
                 self._last_callback_fill_total = self._context._total_fills_added
 
                 completed_delta = (
-                    self._context._total_completed_added
-                    - self._last_callback_completed_total
+                    self._context._total_completed_added - self._last_callback_completed_total
                 )
                 if completed_delta > 0:
-                    recent_completed = list(self._context._completed_orders)[
-                        -completed_delta:
-                    ]
+                    recent_completed = list(self._context._completed_orders)[-completed_delta:]
                     for order in recent_completed:
                         try:
                             self._strategy.on_order_done(order)
                         except Exception as e:
                             self._context.log(f"ERROR in on_order_done: {e}")
                             logger.warning(f"Strategy on_order_done error: {e}")
-                self._last_callback_completed_total = (
-                    self._context._total_completed_added
-                )
+                self._last_callback_completed_total = self._context._total_completed_added
 
                 # 7. Call strategy on_bar with resource limits (STR-013)
                 from squant.config import get_settings
@@ -689,9 +680,14 @@ class PaperTradingEngine:
                 if not self._validate_order_risk(order, current_price):
                     continue
                 fill = self._matching_engine.fill_market_order(
-                    order, current_price, timestamp,
-                    volume_budget=volume_budget, high=high, low=low,
-                    bid=bid, ask=ask,
+                    order,
+                    current_price,
+                    timestamp,
+                    volume_budget=volume_budget,
+                    high=high,
+                    low=low,
+                    bid=bid,
+                    ask=ask,
                 )
                 if fill:
                     self._process_fill_safe(fill)
@@ -711,9 +707,14 @@ class PaperTradingEngine:
         # Process STOP orders: check trigger → fill as market
         for order in stop_orders:
             fill = self._matching_engine.fill_stop_order(
-                order, current_price, timestamp,
-                high=high, low=low, volume_budget=volume_budget,
-                bid=bid, ask=ask,
+                order,
+                current_price,
+                timestamp,
+                high=high,
+                low=low,
+                volume_budget=volume_budget,
+                bid=bid,
+                ask=ask,
             )
             if fill:
                 if not self._validate_order_risk(order, current_price):
@@ -738,8 +739,12 @@ class PaperTradingEngine:
         for order in stop_limit_orders:
             was_triggered = order.triggered
             fills = self._matching_engine.match_pending_stop_limits(
-                [order], current_price, timestamp,
-                high=high, low=low, open_price=open_price,
+                [order],
+                current_price,
+                timestamp,
+                high=high,
+                low=low,
+                open_price=open_price,
                 volume_budget=volume_budget,
             )
             # Log trigger event (whether or not limit is reachable)
@@ -987,9 +992,7 @@ class PaperTradingEngine:
                     await self._on_snapshot(str(self._run_id), latest_snapshot)
                     persisted = True
                 except Exception as e:
-                    logger.warning(
-                        f"Snapshot persist on early stop failed for {self._run_id}: {e}"
-                    )
+                    logger.warning(f"Snapshot persist on early stop failed for {self._run_id}: {e}")
             if not persisted:
                 self._append_pending_snapshot(latest_snapshot)
 
@@ -999,9 +1002,7 @@ class PaperTradingEngine:
                 result_data = self.build_result_for_persistence()
                 await self._on_result(str(self._run_id), result_data)
             except Exception as e:
-                logger.warning(
-                    f"Result persist on early stop failed for {self._run_id}: {e}"
-                )
+                logger.warning(f"Result persist on early stop failed for {self._run_id}: {e}")
 
     def _candle_to_bar(self, candle: WSCandle) -> Bar:
         """Convert WSCandle to Bar.
@@ -1166,7 +1167,5 @@ class PaperTradingEngine:
             "new_fills": [_serialize_fill(f) for f in new_fills],
             "new_trades": [_serialize_trade(t) for t in new_trades],
             "new_logs": new_logs,
-            "risk_state": (
-                self._risk_manager.get_state_summary() if self._risk_manager else None
-            ),
+            "risk_state": (self._risk_manager.get_state_summary() if self._risk_manager else None),
         }

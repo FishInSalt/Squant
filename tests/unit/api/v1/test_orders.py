@@ -334,9 +334,7 @@ class TestGetOrderStats:
     """Tests for GET /api/v1/orders/stats endpoint."""
 
     @pytest.mark.asyncio
-    async def test_get_order_stats_success(
-        self, client: AsyncClient, mock_order_repo
-    ) -> None:
+    async def test_get_order_stats_success(self, client: AsyncClient, mock_order_repo) -> None:
         """Test getting order statistics."""
         mock_order_repo.get_all_stats_by_status.return_value = {
             OrderStatus.PENDING: 5,
@@ -414,9 +412,7 @@ class TestSyncOrder:
     """Tests for POST /api/v1/orders/{order_id}/sync endpoint."""
 
     @pytest.mark.asyncio
-    async def test_sync_order_success(
-        self, client: AsyncClient, mock_service, mock_order
-    ) -> None:
+    async def test_sync_order_success(self, client: AsyncClient, mock_service, mock_order) -> None:
         """Test syncing an order."""
         mock_service.sync_order.return_value = mock_order
 

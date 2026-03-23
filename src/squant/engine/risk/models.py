@@ -145,6 +145,18 @@ class RiskConfig(BaseModel):
         default=300.0,
         description="Seconds between balance sync checks with the exchange",
     )
+    reconcile_interval_ms: int = Field(
+        default=200,
+        ge=50,
+        le=5000,
+        description="Minimum interval between REST reconciliation queries (milliseconds)",
+    )
+    reconcile_batch_size: int = Field(
+        default=20,
+        ge=1,
+        le=100,
+        description="Maximum orders per reconciliation batch",
+    )
 
 
 class RiskCheckResult(BaseModel):
