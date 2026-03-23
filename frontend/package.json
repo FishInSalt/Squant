@@ -17,7 +17,7 @@
     "@element-plus/icons-vue": "^2.3.1",
     "@monaco-editor/loader": "^1.7.0",
     "axios": "^1.6.8",
-    "dayjs": "^1.11.10",
+    "dayjs": "^1.11.20",
     "echarts": "^5.5.0",
     "element-plus": "^2.6.1",
     "klinecharts": "^9.8.10",
