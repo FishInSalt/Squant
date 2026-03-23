@@ -1434,11 +1434,11 @@ class LiveTradingEngine:
                     fill_delta,
                     fee_delta,
                     update.fee or Decimal("0"),
-                    source="ws",
+                    source="ws_order",
                     exchange_timestamp=update.updated_at,
                 )
                 self._check_trade_completion(
-                    had_open_trade, circuit_breaker_before, "ws"
+                    had_open_trade, circuit_breaker_before, "ws_order"
                 )
 
                 # Queue async enrichment: fetch per-fill details via REST
@@ -1538,7 +1538,7 @@ class LiveTradingEngine:
             exec_data.amount,
             exec_data.fee,
             live_order.fee,
-            "ws",
+            "ws_trade",
             exec_data.timestamp,
             exchange_tid=exec_data.trade_id,
             taker_or_maker=exec_data.taker_or_maker,
@@ -2356,7 +2356,7 @@ class LiveTradingEngine:
             fill_amount: Incremental fill amount (new fills only).
             fee_delta: Incremental fee, or None to use total_fee as fallback.
             total_fee: Total cumulative fee (used as fallback when fee_delta is None).
-            source: Fill source identifier for audit trail ("ws", "poll", "reconcile").
+            source: Fill source identifier for audit trail ("ws_trade", "ws_order", "poll", "reconcile", "emergency_close").
             exchange_timestamp: Exchange-reported fill time. Falls back to local
                 UTC time when not available (R5-F4).
             exchange_tid: Exchange trade ID for per-fill tracking.
