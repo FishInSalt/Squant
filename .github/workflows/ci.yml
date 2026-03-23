@@ -120,7 +120,7 @@ jobs:
       run: cd frontend && pnpm test:coverage
 
     - name: Upload coverage
-      uses: codecov/codecov-action@v4
+      uses: codecov/codecov-action@v5
       with:
         files: ./frontend/coverage/lcov.info
         flags: frontend
@@ -159,7 +159,7 @@ jobs:
         uv run pytest tests/unit -v --cov=src/squant --cov-report=xml
 
     - name: Upload coverage
-      uses: codecov/codecov-action@v4
+      uses: codecov/codecov-action@v5
       with:
         files: ./coverage.xml
         flags: unittests
@@ -232,7 +232,7 @@ jobs:
         uv run pytest tests/integration -v --cov=src/squant --cov-report=xml
 
     - name: Upload coverage
-      uses: codecov/codecov-action@v4
+      uses: codecov/codecov-action@v5
       with:
         files: ./coverage.xml
         flags: integration
@@ -296,7 +296,7 @@ jobs:
         uv run pytest tests/e2e -v --cov=src/squant --cov-report=xml
 
     - name: Upload coverage
-      uses: codecov/codecov-action@v4
+      uses: codecov/codecov-action@v5
       with:
         files: ./coverage.xml
         flags: e2e
