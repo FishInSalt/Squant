@@ -882,7 +882,7 @@ class LiveTradingService:
                                     .where(Trade.order_id == db_order_id)
                                     .where(Trade.exchange_tid.is_(None))
                                 )
-                                result = await session.execute(stmt)
+                                result = await db_session.execute(stmt)
                                 unmatched_trades = result.scalars().all()
 
                                 if unmatched_trades:
@@ -899,7 +899,7 @@ class LiveTradingService:
                                     if trade_data.get("fee_currency"):
                                         trade_to_update.fee_currency = trade_data["fee_currency"]
 
-                            await session.commit()
+                            await db_session.commit()
                             logger.info(
                                 f"Enriched trades for order {event.get('exchange_order_id')}"
                             )
