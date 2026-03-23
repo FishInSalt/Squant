@@ -1104,6 +1104,10 @@ class LiveTradingEngine:
                 # consistent state (ISSUE-203 fix: no concurrent mutation)
                 self._drain_ws_updates()
 
+                # Flush fill/order events immediately after WS drain to minimize
+                # data loss window on crash/reload (FIX: event loss on reload)
+                await self._flush_order_events()
+
                 # Reconcile any orders needing fill recovery (WS reconnect, fill mismatch)
                 await self._reconcile_pending_orders()
 
@@ -1227,6 +1231,9 @@ class LiveTradingEngine:
                 # Process pending order requests from strategy
                 await self._process_order_requests()
 
+                # Flush order events again after order submission
+                await self._flush_order_events()
+
                 self._bar_count += 1
                 self._last_bar_time = bar.time  # Dedup tracking (fix #5)
 
@@ -1238,29 +1245,8 @@ class LiveTradingEngine:
                     except Exception as e:
                         logger.warning(f"Result persist callback failed for {self._run_id}: {e}")
 
-                # Flush order/trade audit events (LIVE-013)
-                if self._on_order_persist and self._pending_order_events:
-                    events_to_persist = self._pending_order_events.copy()
-                    self._pending_order_events.clear()
-                    try:
-                        await self._on_order_persist(str(self._run_id), events_to_persist)
-                    except Exception as e:
-                        logger.warning(f"Order persist callback failed for {self._run_id}: {e}")
-                        # Put events back for retry on next bar
-                        self._pending_order_events = events_to_persist + self._pending_order_events
-                        # M-8: Cap pending events to prevent unbounded growth
-                        if len(self._pending_order_events) > self._MAX_PENDING_ORDER_EVENTS:
-                            discarded = (
-                                len(self._pending_order_events) - self._MAX_PENDING_ORDER_EVENTS
-                            )
-                            self._pending_order_events = self._pending_order_events[
-                                -self._MAX_PENDING_ORDER_EVENTS :
-                            ]
-                            logger.warning(
-                                f"Dropped {discarded} oldest pending order events "
-                                f"(limit={self._MAX_PENDING_ORDER_EVENTS}) "
-                                f"for {self._run_id}"
-                            )
+                # Final flush for any remaining events (e.g., from strategy callbacks)
+                await self._flush_order_events()
 
                 # Emit bar update event via WebSocket
                 if self._on_event:
@@ -1303,6 +1289,33 @@ class LiveTradingEngine:
 
         # deque(maxlen=) auto-evicts oldest on overflow (DESIGN-1)
         self._pending_ws_updates.append(update)
+
+    async def _flush_order_events(self) -> None:
+        """Flush pending order/trade audit events to persistence.
+
+        Called multiple times per bar (after WS drain, after order submission)
+        to minimize the data loss window on crash/reload.
+        """
+        if not self._on_order_persist or not self._pending_order_events:
+            return
+
+        events_to_persist = self._pending_order_events.copy()
+        self._pending_order_events.clear()
+        try:
+            await self._on_order_persist(str(self._run_id), events_to_persist)
+        except Exception as e:
+            logger.warning(f"Order persist callback failed for {self._run_id}: {e}")
+            # Put events back for retry
+            self._pending_order_events = events_to_persist + self._pending_order_events
+            if len(self._pending_order_events) > self._MAX_PENDING_ORDER_EVENTS:
+                discarded = len(self._pending_order_events) - self._MAX_PENDING_ORDER_EVENTS
+                self._pending_order_events = self._pending_order_events[
+                    -self._MAX_PENDING_ORDER_EVENTS :
+                ]
+                logger.warning(
+                    f"Dropped {discarded} oldest pending order events "
+                    f"(limit={self._MAX_PENDING_ORDER_EVENTS}) for {self._run_id}"
+                )
 
     def _drain_ws_updates(self) -> None:
         """Process all buffered WebSocket updates.
@@ -2592,13 +2605,25 @@ class LiveTradingEngine:
             # the exchange and recover the order on the next bar (R5-F3).
             self._timed_out_orders[order.id] = order
         except Exception as e:
-            logger.exception(f"Failed to submit order {order.id}: {e}")
-            # Mark as rejected
-            order.status = OrderStatus.REJECTED
-            self._context._completed_orders.append(order)
-            self._context._total_completed_added += 1
-            if order in self._context._pending_orders:
-                self._context._pending_orders.remove(order)
+            # Check if this is a timeout wrapped as ExchangeAPIError (CCXT
+            # RequestTimeout → adapter → ExchangeAPIError). Timeouts mean the
+            # order may have been placed — don't mark as REJECTED.
+            err_msg = str(e).lower()
+            if "timeout" in err_msg or "requesttimeout" in err_msg:
+                logger.error(
+                    f"Order submission likely timed out for {order.id} "
+                    f"({order.symbol} {order.side.value} {order.amount}): {e}. "
+                    "Order may have been placed — will reconcile on next sync."
+                )
+                self._timed_out_orders[order.id] = order
+            else:
+                logger.exception(f"Failed to submit order {order.id}: {e}")
+                # Mark as rejected
+                order.status = OrderStatus.REJECTED
+                self._context._completed_orders.append(order)
+                self._context._total_completed_added += 1
+                if order in self._context._pending_orders:
+                    self._context._pending_orders.remove(order)
 
     async def _cancel_all_orders(self) -> list[str]:
         """Cancel all open orders.

@@ -1394,6 +1394,84 @@ class LiveTradingService:
         )
         return report
 
+    async def _reconcile_stale_db_orders(
+        self,
+        run_id: UUID,
+        adapter: ExchangeAdapter,
+        symbol: str,
+    ) -> None:
+        """Reconcile DB orders that have non-terminal status after crash/restart.
+
+        When the engine crashes, order events may not have been flushed.
+        This queries the DB for orders with status 'submitted' or 'partial',
+        checks their actual status on the exchange, and updates the DB.
+        """
+        from squant.models.order import Trade
+        from squant.services.order import OrderRepository
+
+        order_repo = OrderRepository(self.session)
+        stale_orders = await order_repo.list_by_run(run_id, offset=0, limit=100)
+        non_terminal = [
+            o for o in stale_orders
+            if o.status in (OrderStatus.SUBMITTED, OrderStatus.PARTIAL)
+            and o.exchange_oid
+        ]
+
+        if not non_terminal:
+            return
+
+        logger.info(f"Reconciling {len(non_terminal)} stale DB orders for run {run_id}")
+
+        for order in non_terminal:
+            try:
+                exchange_state = await adapter.get_order(symbol, order.exchange_oid)
+                updates: dict[str, Any] = {}
+
+                if exchange_state.status != order.status:
+                    updates["status"] = exchange_state.status
+                if exchange_state.filled > (order.filled or Decimal("0")):
+                    updates["filled"] = exchange_state.filled
+                if exchange_state.avg_price and exchange_state.avg_price != order.avg_price:
+                    updates["avg_price"] = exchange_state.avg_price
+                if exchange_state.fee is not None:
+                    updates["fee"] = exchange_state.fee
+
+                if updates:
+                    await order_repo.update(order.id, **updates)
+                    logger.info(
+                        f"Updated stale order {order.id} "
+                        f"(exchange: {order.exchange_oid}): {updates}"
+                    )
+
+                    # Also try to fetch and persist individual fills
+                    try:
+                        trades = await adapter.get_order_trades(symbol, order.exchange_oid)
+                        from squant.infra.repository import BaseRepository
+
+                        trade_repo = BaseRepository[Trade](self.session, Trade)
+                        for t in trades:
+                            existing = await self.session.execute(
+                                select(Trade).where(Trade.exchange_tid == t.trade_id)
+                            )
+                            if existing.scalar_one_or_none():
+                                continue
+                            await trade_repo.create(
+                                order_id=str(order.id),
+                                exchange_tid=t.trade_id,
+                                price=t.price,
+                                amount=t.amount,
+                                fee=t.fee,
+                                fee_currency=t.fee_currency,
+                                taker_or_maker=t.taker_or_maker,
+                                timestamp=t.timestamp,
+                                fill_source="reconcile",
+                            )
+                        await self.session.commit()
+                    except Exception as e:
+                        logger.warning(f"Failed to fetch trades for stale order {order.id}: {e}")
+            except Exception as e:
+                logger.warning(f"Failed to reconcile stale order {order.id}: {e}")
+
     async def _reconcile_positions(
         self,
         engine: LiveTradingEngine,
@@ -1720,9 +1798,12 @@ class LiveTradingService:
         if seed_map:
             logger.info(f"Resume: seeded order audit map with {len(seed_map)} orders")
 
-        # 11. Order reconciliation
+        # 11. Order reconciliation (live orders in engine state)
         reconciliation_report = await self._reconcile_orders(engine, adapter, run.symbol)
         logger.info(f"Order reconciliation for {run_id}: {reconciliation_report}")
+
+        # 11b. Reconcile stale DB orders (orders persisted but engine state lost on crash)
+        await self._reconcile_stale_db_orders(run.id, adapter, run.symbol)
 
         # 12. Position/balance reconciliation
         position_report = await self._reconcile_positions(engine, adapter, run.symbol)
