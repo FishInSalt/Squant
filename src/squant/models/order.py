@@ -4,7 +4,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import TYPE_CHECKING
 
-from sqlalchemy import JSON, DateTime, ForeignKey, Index, Numeric, String, Text
+from sqlalchemy import JSON, DateTime, ForeignKey, Index, Numeric, String, Text, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .base import Base, TimestampMixin, UUIDMixin
@@ -41,7 +41,7 @@ class Order(Base, UUIDMixin, TimestampMixin):
         String(16), default=OrderStatus.PENDING, nullable=False
     )
     reject_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
-    corrections: Mapped[dict | None] = mapped_column(JSON, nullable=True, default=None)
+    corrections: Mapped[list | None] = mapped_column(JSON, nullable=True, default=None)
 
     # Relationships
     run: Mapped["StrategyRun | None"] = relationship(back_populates="orders", lazy="selectin")
@@ -98,6 +98,12 @@ class Trade(Base, UUIDMixin, TimestampMixin):
     __table_args__ = (
         Index("idx_trades_order", "order_id"),
         Index("idx_trades_timestamp", "timestamp"),
+        Index(
+            "ix_trades_exchange_tid_unique",
+            "exchange_tid",
+            unique=True,
+            postgresql_where=text("exchange_tid IS NOT NULL"),
+        ),
     )
 
     def __repr__(self) -> str:

@@ -189,14 +189,18 @@
           <el-table :data="selectedOrder.trades" size="small" border>
             <el-table-column label="成交ID" width="130">
               <template #default="{ row }">
-                {{ row.exchange_tid ? row.exchange_tid.substring(0, 12) + '...' : '-' }}
+                {{ row.exchange_tid ? (row.exchange_tid.length > 12 ? row.exchange_tid.substring(0, 12) + '...' : row.exchange_tid) : '-' }}
               </template>
             </el-table-column>
             <el-table-column prop="price" label="价格" width="120" />
-            <el-table-column prop="amount" label="数量" width="100" />
+            <el-table-column label="数量" width="100">
+              <template #default="{ row }">
+                {{ formatNumber(row.amount, 8) }}
+              </template>
+            </el-table-column>
             <el-table-column label="手续费" width="120">
               <template #default="{ row }">
-                {{ row.fee }} {{ row.fee_currency || '' }}
+                {{ formatNumber(Math.abs(row.fee), row.fee_currency === 'USDT' ? 4 : 8) }} {{ row.fee_currency || '' }}
               </template>
             </el-table-column>
             <el-table-column prop="taker_or_maker" label="类型" width="80" />
@@ -243,7 +247,7 @@ import {
   formatDateTime,
 } from '@/utils/format'
 import { ORDER_STATUS_OPTIONS } from '@/utils/constants'
-import { getOrderHistory } from '@/api/order'
+import { getOrderHistory, getOrder } from '@/api/order'
 import { getAccounts } from '@/api/account'
 import { useNotification } from '@/composables/useNotification'
 import type { Order, ExchangeAccount } from '@/types'
@@ -299,8 +303,13 @@ async function loadOrders() {
 const selectedOrder = ref<Order | null>(null)
 const detailVisible = ref(false)
 
-function handleRowClick(row: Order) {
-  selectedOrder.value = row
+async function handleRowClick(row: Order) {
+  try {
+    const res = await getOrder(row.id)
+    selectedOrder.value = res.data ?? row
+  } catch {
+    selectedOrder.value = row
+  }
   detailVisible.value = true
 }
 

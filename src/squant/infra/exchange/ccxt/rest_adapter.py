@@ -624,7 +624,35 @@ class CCXTRestAdapter(ExchangeAdapter):
                 message="Exchange not connected. Call connect() first.",
                 exchange=self._exchange_id,
             )
-        raw_trades = await self._exchange.fetch_order_trades(order_id, symbol)
+        if not self._credentials:
+            raise ExchangeAuthenticationError(
+                message="Credentials required for get_order_trades.",
+                exchange=self._exchange_id,
+            )
+
+        try:
+            raw_trades = await self._exchange.fetch_order_trades(order_id, symbol)
+        except ccxt.AuthenticationError as e:
+            raise ExchangeAuthenticationError(
+                message=f"Authentication failed: {e}",
+                exchange=self._exchange_id,
+            ) from e
+        except ccxt.RateLimitExceeded as e:
+            raise ExchangeRateLimitError(
+                message=f"Rate limit exceeded: {e}",
+                exchange=self._exchange_id,
+            ) from e
+        except ccxt.OrderNotFound as e:
+            raise OrderNotFoundError(
+                message=f"Order not found: {e}",
+                exchange=self._exchange_id,
+            ) from e
+        except Exception as e:
+            raise ExchangeAPIError(
+                message=f"Failed to fetch order trades: {e}",
+                exchange=self._exchange_id,
+            ) from e
+
         result = []
         for t in raw_trades:
             fee_info = t.get("fee") or {}

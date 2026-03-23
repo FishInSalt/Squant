@@ -15,6 +15,7 @@ class TestGetOrderTrades:
         adapter._exchange = MagicMock()
         adapter._exchange.fetch_order_trades = AsyncMock()
         adapter._exchange_id = "okx"
+        adapter._credentials = MagicMock()
         adapter._connected = True
         return adapter
 

@@ -865,6 +865,50 @@ class LiveTradingService:
                                     )
                                     await order_repo.update(db_order_id, corrections=existing)
 
+                        elif event["type"] == "enrichment":
+                            # Async enrichment: update existing Trade records with
+                            # per-fill details (exchange_tid, exact prices, taker_or_maker)
+                            # fetched from REST get_order_trades after watchOrders fallback.
+                            db_order_id = order_id_map.get(event["internal_id"])
+                            if not db_order_id:
+                                continue
+                            for trade_data in event.get("trades", []):
+                                # Try to match existing Trade by timestamp+amount
+                                # and update with enrichment data
+                                from squant.models.order import Trade
+
+                                stmt = (
+                                    select(Trade)
+                                    .where(Trade.order_id == db_order_id)
+                                    .where(Trade.exchange_tid.is_(None))
+                                )
+                                result = await session.execute(stmt)
+                                unmatched_trades = result.scalars().all()
+
+                                if unmatched_trades:
+                                    # Update first unmatched trade with enrichment data
+                                    trade_to_update = unmatched_trades[0]
+                                    trade_to_update.exchange_tid = trade_data.get("exchange_tid")
+                                    trade_to_update.taker_or_maker = trade_data.get("taker_or_maker")
+                                    if trade_data.get("price"):
+                                        trade_to_update.price = Decimal(trade_data["price"])
+                                    if trade_data.get("amount"):
+                                        trade_to_update.amount = Decimal(trade_data["amount"])
+                                    if trade_data.get("fee"):
+                                        trade_to_update.fee = abs(Decimal(trade_data["fee"]))
+                                    if trade_data.get("fee_currency"):
+                                        trade_to_update.fee_currency = trade_data["fee_currency"]
+
+                            await session.commit()
+                            logger.info(
+                                f"Enriched trades for order {event.get('exchange_order_id')}"
+                            )
+
+                        else:
+                            logger.warning(
+                                f"Unknown order event type: {event.get('type')}"
+                            )
+
                     except Exception as e:
                         logger.warning(f"Failed to persist order event {event.get('type')}: {e}")
 
@@ -1433,8 +1477,7 @@ class LiveTradingService:
                     updates["filled"] = exchange_state.filled
                 if exchange_state.avg_price and exchange_state.avg_price != order.avg_price:
                     updates["avg_price"] = exchange_state.avg_price
-                if exchange_state.fee is not None:
-                    updates["fee"] = exchange_state.fee
+                # Note: fee is stored on Trade records, not on Order model
 
                 if updates:
                     await order_repo.update(order.id, **updates)
