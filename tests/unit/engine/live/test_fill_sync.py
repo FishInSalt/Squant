@@ -457,8 +457,8 @@ class TestReconciliationQueue:
         engine._circuit_breaker_triggered = False
         return engine
 
-    def test_ws_filled_but_incomplete_fills_queues_reconciliation(self, engine):
-        """watchOrders FILLED but fills incomplete should queue for reconciliation."""
+    def test_ws_filled_with_fill_delta_queues_enrichment(self, engine):
+        """watchOrders with fill_delta > 0 processes fill and queues async enrichment."""
         live_order = LiveOrder(
             internal_id="int-001",
             exchange_order_id="exch-001",
@@ -469,7 +469,7 @@ class TestReconciliationQueue:
             price=None,
             status=OrderStatus.SUBMITTED,
         )
-        live_order.filled_amount = Decimal("0")  # No fills arrived yet
+        live_order.filled_amount = Decimal("0")
         engine._live_orders["int-001"] = live_order
         engine._exchange_order_map["exch-001"] = "int-001"
 
@@ -485,12 +485,12 @@ class TestReconciliationQueue:
             timestamp=datetime.now(UTC),
         )
 
-        engine._process_single_ws_update(update)
+        with patch.object(engine, "_record_fill"), \
+             patch.object(engine, "_check_trade_completion"):
+            engine._process_single_ws_update(update)
 
-        # filled_amount updated from WS (max(0, 0.1) = 0.1)
-        # But since filled_amount (0.1) >= amount (0.1), reconciliation
-        # should NOT be queued
-        assert "int-001" not in engine._orders_needing_reconciliation
+        # Fallback fill processed, queued for async enrichment
+        assert "int-001" in engine._orders_needing_reconciliation
 
     def test_ws_filled_with_zero_local_fills_queues(self, engine):
         """watchOrders FILLED but filled_size < amount queues reconciliation."""
@@ -710,8 +710,14 @@ class TestReconcileOrderFills:
 
         return engine
 
-    async def test_finds_and_records_missing_fills(self, engine):
-        """Reconciliation should find fills not in processed_trade_ids and record them."""
+    async def test_recovery_mode_records_missing_fills(self, engine):
+        """Recovery mode: filled_amount=0, reconciliation records all fills."""
+        # Reset to simulate crash recovery (no fills recorded locally)
+        order = engine._live_orders["int-001"]
+        order.filled_amount = Decimal("0")
+        order.fee = Decimal("0")
+        engine._processed_trade_ids.clear()
+
         engine._adapter.get_order_trades.return_value = [
             TradeInfo(
                 trade_id="t001",
@@ -743,17 +749,44 @@ class TestReconcileOrderFills:
             patch.object(engine, "_record_fill") as mock_record,
             patch.object(engine, "_check_trade_completion"),
         ):
-            await engine._reconcile_order_fills(engine._live_orders["int-001"])
+            await engine._reconcile_order_fills(order)
+            # Both fills should be recorded (none were processed before)
+            assert mock_record.call_count == 2
 
-            # t001 already processed, only t002 should be recorded
-            mock_record.assert_called_once()
-            args = mock_record.call_args
-            assert args[0][1] == Decimal("96480")  # fill_price of t002
-
+        assert "t001" in engine._processed_trade_ids
         assert "t002" in engine._processed_trade_ids
 
-    async def test_emits_correction_event(self, engine):
-        """Missing fills should produce a correction audit event."""
+    async def test_enrichment_mode_emits_enrichment_event(self, engine):
+        """Enrichment mode: fills already recorded, fetch per-fill details."""
+        engine._adapter.get_order_trades.return_value = [
+            TradeInfo(
+                trade_id="t001",
+                order_id="exch-001",
+                symbol="BTC/USDT",
+                side="buy",
+                price=Decimal("96500"),
+                amount=Decimal("0.008"),
+                fee=Decimal("0.077"),
+                fee_currency="USDT",
+                taker_or_maker="taker",
+                timestamp=datetime(2026, 3, 20, 10, 30, 15, tzinfo=UTC),
+            ),
+        ]
+
+        await engine._reconcile_order_fills(engine._live_orders["int-001"])
+
+        enrichments = [e for e in engine._pending_order_events if e["type"] == "enrichment"]
+        assert len(enrichments) == 1
+        assert len(enrichments[0]["trades"]) == 1
+        assert enrichments[0]["trades"][0]["exchange_tid"] == "t001"
+
+    async def test_recovery_emits_correction_event(self, engine):
+        """Recovery mode should produce a correction audit event."""
+        order = engine._live_orders["int-001"]
+        order.filled_amount = Decimal("0")
+        order.fee = Decimal("0")
+        engine._processed_trade_ids.clear()
+
         engine._adapter.get_order_trades.return_value = [
             TradeInfo(
                 trade_id="t001",
@@ -783,10 +816,11 @@ class TestReconcileOrderFills:
             patch.object(engine, "_record_fill"),
             patch.object(engine, "_check_trade_completion"),
         ):
-            await engine._reconcile_order_fills(engine._live_orders["int-001"])
+            await engine._reconcile_order_fills(order)
 
         corrections = [e for e in engine._pending_order_events if e["type"] == "correction"]
         assert len(corrections) == 1
+        assert "t001" in corrections[0]["missing_trade_ids"]
         assert "t002" in corrections[0]["missing_trade_ids"]
         assert corrections[0]["reason"] == "reconcile_missing_fills"
 
@@ -835,6 +869,9 @@ class TestReconcileOrderFills:
         """When reconciliation recovers enough fills, order status should update."""
         order = engine._live_orders["int-001"]
         order.amount = Decimal("0.013")  # 0.008 + 0.005 = 0.013
+        order.filled_amount = Decimal("0")  # Reset for recovery mode
+        order.fee = Decimal("0")
+        engine._processed_trade_ids.clear()
 
         engine._adapter.get_order_trades.return_value = [
             TradeInfo(

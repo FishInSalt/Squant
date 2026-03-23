@@ -1500,13 +1500,14 @@ class TestCircuitBreakerIntegration:
         assert engine.circuit_breaker_triggered is True
 
     @pytest.mark.asyncio
-    async def test_on_order_update_no_longer_processes_fills(
+    async def test_on_order_update_fallback_fill_processing(
         self, engine_with_circuit_breaker, mock_adapter
     ):
-        """Test that on_order_update (watchOrders) no longer processes fills.
+        """Test that watchOrders processes fills as fallback when watchMyTrades
+        hasn't handled them (e.g., OKX demo mode).
 
-        Fill processing has been moved to _process_trade_execution (watchMyTrades).
-        watchOrders only syncs order status/metadata now.
+        When watchMyTrades processes fills first, filled_amount is already
+        updated and fill_delta will be 0, preventing duplicate processing.
         """
         engine = engine_with_circuit_breaker
         await engine.start()
@@ -1526,7 +1527,7 @@ class TestCircuitBreakerIntegration:
         )
         engine._exchange_order_map[exchange_id] = internal_id
 
-        # Create order update
+        # Create order update with fill data
         update = WSOrderUpdate(
             order_id=exchange_id,
             client_order_id=None,
@@ -1547,10 +1548,9 @@ class TestCircuitBreakerIntegration:
             engine.on_order_update(update)
             engine._drain_ws_updates()
 
-            # _process_fill should NOT be called — fills come from watchMyTrades
-            mock_fill.assert_not_called()
+            # Fallback fill processing should be called (watchMyTrades didn't handle it)
+            mock_fill.assert_called_once()
 
-        # Status and metadata should be updated though
         live_order = engine._live_orders[internal_id]
         assert live_order.status == OrderStatus.FILLED
         assert live_order.filled_amount == Decimal("0.1")
@@ -2064,14 +2064,11 @@ class TestFillProcessing:
             assert fill_arg.fee == Decimal("0.45")
 
     @pytest.mark.asyncio
-    async def test_update_order_from_response_no_fill_processing(
+    async def test_update_order_from_response_fallback_fill_processing(
         self, engine_with_buy_order, mock_adapter
     ):
-        """Test _update_order_from_response no longer processes fills.
-
-        Fill processing has been moved to _process_trade_execution (watchMyTrades).
-        REST polling only syncs status/metadata now.
-        """
+        """Test _update_order_from_response processes fills as fallback
+        when watchMyTrades hasn't handled them."""
         engine = engine_with_buy_order
         await engine.start()
 
@@ -2096,10 +2093,9 @@ class TestFillProcessing:
         with patch.object(engine._context, "_process_fill") as mock_fill:
             engine._update_order_from_response(live_order, response)
 
-            # No fill processing — only status/metadata sync
-            mock_fill.assert_not_called()
+            # Fallback fill processing should be called
+            mock_fill.assert_called_once()
 
-        # Metadata should be updated
         assert live_order.filled_amount == Decimal("0.7")
         assert live_order.fee == Decimal("0.315")
 
@@ -2135,11 +2131,8 @@ class TestFillProcessing:
             mock_fill.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_polling_path_no_fill_processing(self, engine_with_buy_order, mock_adapter):
-        """Test that _update_order_from_response no longer processes fills for risk mgmt.
-
-        Fills and trade PnL recording now come exclusively from _process_trade_execution.
-        """
+    async def test_polling_path_fallback_fill_processing(self, engine_with_buy_order, mock_adapter):
+        """Test that _update_order_from_response processes fills as fallback."""
         engine = engine_with_buy_order
         await engine.start()
 
@@ -2160,11 +2153,9 @@ class TestFillProcessing:
 
         with patch.object(engine._context, "_process_fill") as mock_fill:
             engine._update_order_from_response(live_order, response)
-            mock_fill.assert_not_called()
+            # Fallback fill processing kicks in since fill_delta > 0
+            mock_fill.assert_called_once()
 
-        # No fill processing, so risk state unchanged
-        assert engine._risk_manager.state.consecutive_losses == 0
-        # Status synced
         assert live_order.status == OrderStatus.FILLED
 
     @pytest.mark.asyncio
@@ -2202,11 +2193,10 @@ class TestFillProcessing:
 
         with patch.object(engine._context, "_process_fill") as mock_fill:
             engine._update_order_from_response(live_order, response)
-            mock_fill.assert_not_called()
+            # Fallback fill processing is now active
+            mock_fill.assert_called_once()
 
-        # No fill processing, so circuit breaker not affected by polling
-        assert engine._risk_manager.state.consecutive_losses == 1  # Only the prior one
-        assert engine._circuit_breaker_triggered is False
+        assert live_order.status == OrderStatus.FILLED
 
     @pytest.mark.asyncio
     async def test_polling_path_no_risk_update_when_no_trade_completed(
@@ -2731,12 +2721,9 @@ class TestForceFillOnValueError:
         assert engine._context._cash < Decimal("0")  # Negative cash from discrepancy
 
     @pytest.mark.asyncio
-    async def test_polling_no_longer_records_fills(self, engine_with_buy_order, mock_adapter):
-        """Test polling path no longer records fills directly.
-
-        Fills now come exclusively from _process_trade_execution.
-        REST polling only syncs order status and metadata.
-        """
+    async def test_polling_records_fills_as_fallback(self, engine_with_buy_order, mock_adapter):
+        """Test polling path records fills as fallback when watchMyTrades
+        hasn't handled them."""
         engine = engine_with_buy_order
         await engine.start()
 
@@ -2759,8 +2746,8 @@ class TestForceFillOnValueError:
 
         engine._update_order_from_response(live_order, response)
 
-        # No fills recorded from polling — fills come from watchMyTrades only
-        assert len(engine._context.fills) == 0
+        # Fallback fill processing records the fill
+        assert len(engine._context.fills) == 1
         # Status should be synced
         assert live_order.status == OrderStatus.FILLED
 

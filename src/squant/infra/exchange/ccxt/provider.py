@@ -1041,8 +1041,13 @@ class CCXTStreamProvider:
                     if not self._exchange:
                         await asyncio.sleep(1)
                         continue
+                    logger.debug(f"Calling watch_my_trades for {symbol}")
                     trades = await self._exchange.watch_my_trades(symbol)
                     self._mark_success(key)
+                    logger.info(
+                        f"Received {len(trades)} my_trades for {symbol}: "
+                        f"{[t.get('id', 'no-id') for t in trades]}"
+                    )
                     for trade in trades:
                         ws_trade = self._transformer.trade_to_ws_trade_execution(trade)
                         await self._dispatch("trade_execution", ws_trade)

@@ -114,6 +114,7 @@ class CCXTRestAdapter(ExchangeAdapter):
             # Build exchange configuration
             config: dict[str, Any] = {
                 "enableRateLimit": True,
+                "timeout": 30000,  # 30s timeout for REST requests (default 10s)
                 # Only load spot markets to avoid timeout on OPTION/FUTURES APIs
                 "options": {
                     "defaultType": "spot",

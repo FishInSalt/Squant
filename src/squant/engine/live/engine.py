@@ -1356,6 +1356,9 @@ class LiveTradingEngine:
 
         # Update order state
         old_status = live_order.status
+        old_filled = live_order.filled_amount
+        old_avg = live_order.avg_fill_price
+        old_fee = live_order.fee
         live_order.status = new_status
         # Guard against filled_amount regression from out-of-order WS messages (fix #4)
         live_order.filled_amount = max(live_order.filled_amount, update.filled_size)
@@ -1369,12 +1372,54 @@ class LiveTradingEngine:
             f"filled={update.filled_size}/{live_order.amount}"
         )
 
-        # Fill processing removed — fills come exclusively from watchMyTrades
-        # or fetchOrderTrades reconciliation. watchOrders only syncs status/metadata.
+        # Fallback fill processing from watchOrders aggregated data.
+        # If watchMyTrades already processed the fills (drained first in _drain_ws_updates),
+        # old_filled will already reflect them and fill_delta will be 0 — no duplicate.
+        # If watchMyTrades is unavailable (e.g., OKX demo), this is the primary fill path.
+        fill_delta = update.filled_size - old_filled
+        has_new_fills = False
+        if new_status in (OrderStatus.PARTIAL, OrderStatus.FILLED) and fill_delta > 0:
+            if update.avg_price is not None:
+                has_new_fills = True
+                had_open_trade = self._context._open_trade is not None
+                circuit_breaker_before = self._risk_manager.state.circuit_breaker_triggered
 
-        # Emit a "status_change" audit event when order reaches terminal status.
-        # This ensures the DB record is updated to the final status.
-        if new_status != old_status and live_order.is_complete:
+                # Calculate incremental fee
+                fee_delta = None
+                if update.fee is not None:
+                    fee_delta = update.fee - old_fee
+                    if fee_delta < 0:
+                        fee_delta = Decimal("0")
+
+                # Compute incremental fill price from blended averages
+                fill_price = _compute_incremental_fill_price(
+                    update.avg_price, update.filled_size, old_avg, old_filled, fill_delta
+                )
+
+                self._record_fill(
+                    live_order,
+                    fill_price,
+                    fill_delta,
+                    fee_delta,
+                    update.fee or Decimal("0"),
+                    source="ws",
+                    exchange_timestamp=update.updated_at,
+                )
+                self._check_trade_completion(
+                    had_open_trade, circuit_breaker_before, "ws"
+                )
+
+                # Queue async enrichment: fetch per-fill details via REST
+                # to populate exchange_tid, exact per-fill prices, taker_or_maker
+                self._orders_needing_reconciliation.add(internal_id)
+
+        # Emit "status_change" audit event when order reaches terminal status
+        # without new fill data (fills already processed or no fills at all).
+        if (
+            new_status != old_status
+            and live_order.is_complete
+            and not has_new_fills
+        ):
             self._pending_order_events.append(
                 {
                     "type": "status_change",
@@ -1393,7 +1438,7 @@ class LiveTradingEngine:
                 }
             )
 
-        # If watchOrders reports FILLED but fills haven't all arrived via watchMyTrades yet,
+        # If watchOrders reports FILLED but fills haven't all arrived,
         # queue for REST reconciliation to recover missing fills
         if new_status == OrderStatus.FILLED and live_order.filled_amount < live_order.amount:
             self._orders_needing_reconciliation.add(internal_id)
@@ -1480,25 +1525,77 @@ class LiveTradingEngine:
     async def _reconcile_order_fills(self, live_order: LiveOrder) -> None:
         """Reconcile fills for a single order against exchange records.
 
-        Fetches all fills from exchange via REST, compares with locally
-        processed trade_ids, and records any missing fills.
+        Two modes of operation:
+        1. **Fill recovery**: If fills were missed (e.g., WS reconnect, crash recovery),
+           records the missing fills and updates LiveOrder state.
+        2. **Async enrichment**: If fills were already processed from watchOrders
+           aggregated data, enriches existing Trade records with per-fill details
+           (exchange_tid, exact prices, taker_or_maker) via "enrichment" audit events.
         """
         if not live_order.exchange_order_id:
             return
 
+        logger.info(
+            f"Reconciling fills for order {live_order.internal_id} "
+            f"(exchange: {live_order.exchange_order_id})"
+        )
         try:
             trades = await self._adapter.get_order_trades(
                 live_order.symbol, live_order.exchange_order_id
             )
         except Exception as e:
-            logger.error(f"Failed to fetch order trades for {live_order.exchange_order_id}: {e}")
+            logger.error(
+                f"Failed to fetch order trades for {live_order.exchange_order_id}: {e}"
+            )
             return
 
+        logger.info(
+            f"Fetched {len(trades)} trades for order {live_order.exchange_order_id}: "
+            f"{[(t.trade_id, str(t.amount), str(t.price)) for t in trades]}"
+        )
+
+        if not trades:
+            return
+
+        # Mark all exchange trade_ids as processed (dedup for future WS messages)
+        for trade in trades:
+            self._processed_trade_ids[trade.trade_id] = True
+
+        # Check if fills were already recorded (from watchOrders fallback or watchMyTrades)
+        # by comparing context fill count with exchange trade count.
+        # If context already has fills for this order, this is an enrichment pass.
+        fills_already_recorded = live_order.filled_amount > 0
+
+        if fills_already_recorded:
+            # Enrichment mode: emit enrichment events so persistence layer
+            # can update existing Trade records with exchange_tid, exact prices
+            self._pending_order_events.append({
+                "type": "enrichment",
+                "internal_id": live_order.internal_id,
+                "exchange_order_id": live_order.exchange_order_id,
+                "trades": [
+                    {
+                        "exchange_tid": t.trade_id,
+                        "price": str(t.price),
+                        "amount": str(t.amount),
+                        "fee": str(t.fee),
+                        "fee_currency": t.fee_currency,
+                        "taker_or_maker": t.taker_or_maker,
+                        "timestamp": t.timestamp.isoformat(),
+                    }
+                    for t in trades
+                ],
+                "timestamp": datetime.now(UTC).isoformat(),
+            })
+            logger.info(
+                f"Enrichment data fetched for order {live_order.exchange_order_id}: "
+                f"{len(trades)} trades"
+            )
+            return
+
+        # Recovery mode: fills not yet recorded, process them now
         missing_trade_ids: list[str] = []
         for trade in trades:
-            if trade.trade_id in self._processed_trade_ids:
-                continue
-
             # Capture pre-fill state
             had_open_trade = self._context._open_trade is not None
             circuit_breaker_before = self._risk_manager.state.circuit_breaker_triggered
@@ -2129,6 +2226,8 @@ class LiveTradingEngine:
             )
             return
 
+        old_avg = live_order.avg_fill_price
+        old_fee = live_order.fee
         live_order.status = response.status
         live_order.filled_amount = response.filled
         live_order.avg_fill_price = response.avg_price
@@ -2136,16 +2235,52 @@ class LiveTradingEngine:
         live_order.fee_currency = response.fee_currency
         live_order.updated_at = datetime.now(UTC)
 
-        # Fill processing removed — fills come exclusively from watchMyTrades
-        # or fetchOrderTrades reconciliation. REST polling only syncs status.
+        # Fallback fill processing (same logic as watchOrders path)
+        has_new_fills = False
+        if response.filled > old_filled:
+            if response.avg_price is not None:
+                has_new_fills = True
+                fill_amount = response.filled - old_filled
+                fee_delta = None
+                if response.fee is not None:
+                    fee_delta = response.fee - old_fee
+                    if fee_delta < 0:
+                        fee_delta = Decimal("0")
+
+                had_open_trade = self._context._open_trade is not None
+                circuit_breaker_before = self._risk_manager.state.circuit_breaker_triggered
+
+                fill_price = _compute_incremental_fill_price(
+                    response.avg_price, response.filled, old_avg, old_filled, fill_amount
+                )
+
+                self._record_fill(
+                    live_order,
+                    fill_price,
+                    fill_amount,
+                    fee_delta,
+                    response.fee or Decimal("0"),
+                    source="poll",
+                    exchange_timestamp=response.updated_at,
+                )
+                self._check_trade_completion(
+                    had_open_trade, circuit_breaker_before, "polling"
+                )
+
+                # Queue async enrichment
+                self._orders_needing_reconciliation.add(live_order.internal_id)
 
         # If REST polling sees FILLED but local fills incomplete, queue reconciliation
         if response.status == OrderStatus.FILLED and live_order.filled_amount < live_order.amount:
             self._orders_needing_reconciliation.add(live_order.internal_id)
 
-        # Emit "status_change" audit event when polling detects terminal status.
-        # This ensures the DB record is updated to the final status.
-        if response.status != old_status and live_order.is_complete:
+        # Emit "status_change" audit event when polling detects terminal status
+        # without new fill data.
+        if (
+            response.status != old_status
+            and live_order.is_complete
+            and not has_new_fills
+        ):
             self._pending_order_events.append(
                 {
                     "type": "status_change",
