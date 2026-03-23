@@ -2347,6 +2347,9 @@ class LiveTradingEngine:
             return
 
         fill_fee = fee_delta if fee_delta is not None else total_fee
+        # OKX (and some other exchanges) return negative fees to indicate
+        # deduction from received currency. Context expects positive fee (cost).
+        fill_fee = abs(fill_fee)
 
         fill = Fill(
             order_id=live_order.internal_id,
