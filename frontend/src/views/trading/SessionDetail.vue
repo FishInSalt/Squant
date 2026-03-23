@@ -76,7 +76,7 @@
           </div>
           <div class="metric-card card">
             <span class="label">总手续费</span>
-            <span class="value secondary-value">{{ formatNumber(status.total_fees, 2) }}</span>
+            <span class="value secondary-value">{{ formatNumber(Math.abs(status.total_fees), 2) }}</span>
           </div>
           <div class="metric-card card">
             <span class="label">最大回撤</span>
