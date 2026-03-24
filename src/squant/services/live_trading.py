@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
@@ -1886,6 +1886,27 @@ class LiveTradingService:
             quote_currency=quote_currency,
         )
 
+        # 10d. Recovery reconciliation -- find orders on exchange missing from DB (B4)
+        last_bar_time = None
+        if run.result.get("last_bar_time"):
+            last_bar_time = datetime.fromisoformat(run.result["last_bar_time"])
+        recovery_since = self._compute_reconciliation_since(
+            last_bar_time=last_bar_time,
+            timeframe=run.timeframe,
+            fallback=run.started_at,
+        )
+        recovery_report = await self._reconcile_missing_orders(
+            adapter=adapter,
+            run_id=run.id,
+            account_id=str(run.account_id),
+            exchange=exchange_account.exchange,
+            symbol=run.symbol,
+            db_orders=existing_orders,  # from step 10b
+            since=recovery_since,
+            order_id_map=seed_map,
+        )
+        logger.info(f"Recovery reconciliation for {run_id}: {recovery_report}")
+
         # 11. Order reconciliation (live orders in engine state)
         reconciliation_report = await self._reconcile_orders(engine, adapter, run.symbol)
         logger.info(f"Order reconciliation for {run_id}: {reconciliation_report}")
@@ -2146,6 +2167,163 @@ class LiveTradingService:
                 f"Balance check failed for account {account_id}, "
                 f"proceeding with resume: {e}"
             )
+
+    @staticmethod
+    def _compute_reconciliation_since(
+        last_bar_time: datetime | None,
+        timeframe: str,
+        fallback: datetime | None = None,
+    ) -> datetime:
+        """Compute the 'since' timestamp for recovery reconciliation.
+
+        When resuming after a crash, we need to check the exchange for orders
+        that may have been placed but never recorded. This method determines
+        how far back to look.
+
+        Args:
+            last_bar_time: Timestamp of the last processed bar (from saved state).
+            timeframe: Candle timeframe string (e.g. "1h", "5m").
+            fallback: Fallback datetime if last_bar_time is not available
+                      (typically run.started_at).
+
+        Returns:
+            A datetime to use as the 'since' parameter for exchange order queries.
+        """
+        if not last_bar_time:
+            if fallback:
+                return fallback
+            return datetime.now(UTC) - timedelta(hours=24)
+
+        tf_map = {
+            "1m": timedelta(minutes=1),
+            "3m": timedelta(minutes=3),
+            "5m": timedelta(minutes=5),
+            "15m": timedelta(minutes=15),
+            "30m": timedelta(minutes=30),
+            "1h": timedelta(hours=1),
+            "2h": timedelta(hours=2),
+            "4h": timedelta(hours=4),
+            "6h": timedelta(hours=6),
+            "12h": timedelta(hours=12),
+            "1d": timedelta(days=1),
+            "1w": timedelta(weeks=1),
+            "1M": timedelta(days=30),
+        }
+        interval = tf_map.get(timeframe, timedelta(hours=1))
+        return last_bar_time - interval
+
+    async def _reconcile_missing_orders(
+        self,
+        adapter: ExchangeAdapter,
+        run_id: str,
+        account_id: str,
+        exchange: str,
+        symbol: str,
+        db_orders: list,
+        since: datetime,
+        order_id_map: dict[str, str],
+    ) -> dict[str, Any]:
+        """Find and recover orders on exchange that are missing from DB.
+
+        During a crash, orders may have been placed on the exchange via
+        adapter.place_order() but never persisted to our database. This
+        method fetches all orders from the exchange since a given time,
+        compares against existing DB orders by exchange_order_id, and
+        creates Order + Trade records for any missing ones.
+
+        Args:
+            adapter: Exchange adapter for querying orders/trades.
+            run_id: Strategy run ID.
+            account_id: Exchange account ID.
+            exchange: Exchange name (e.g. "okx").
+            symbol: Trading symbol (e.g. "BTC/USDT").
+            db_orders: Existing DB order records for this run.
+            since: How far back to look for orders on the exchange.
+            order_id_map: Existing internal_id -> DB order UUID mapping.
+
+        Returns:
+            Dict with keys: missing_orders_found, missing_orders_recovered, errors.
+        """
+        from squant.infra.database import get_session_context
+        from squant.services.order import OrderRepository, TradeRepository
+
+        report: dict[str, Any] = {
+            "missing_orders_found": 0,
+            "missing_orders_recovered": 0,
+            "errors": [],
+        }
+
+        try:
+            exchange_orders = await adapter.get_orders(symbol, since=since)
+        except Exception as e:
+            logger.warning(f"Recovery reconciliation: failed to fetch orders: {e}")
+            report["errors"].append(str(e))
+            return report
+
+        known_eoids = {o.exchange_oid for o in db_orders if o.exchange_oid}
+        missing = [o for o in exchange_orders if o.order_id not in known_eoids]
+        report["missing_orders_found"] = len(missing)
+
+        if not missing:
+            return report
+
+        logger.info(
+            f"Recovery reconciliation for {run_id}: found {len(missing)} missing orders"
+        )
+
+        async with get_session_context() as db_session:
+            order_repo = OrderRepository(db_session)
+            trade_repo = TradeRepository(db_session)
+
+            for ex_order in missing:
+                try:
+                    db_order = await order_repo.create(
+                        run_id=run_id,
+                        account_id=account_id,
+                        exchange=exchange,
+                        exchange_oid=ex_order.order_id,
+                        symbol=ex_order.symbol,
+                        side=ex_order.side,
+                        type=ex_order.type,
+                        amount=ex_order.amount,
+                        price=ex_order.price,
+                        status=ex_order.status,
+                    )
+
+                    try:
+                        fills = await adapter.get_order_trades(symbol, ex_order.order_id)
+                        for fill in fills:
+                            await trade_repo.create(
+                                order_id=db_order.id,
+                                price=fill.price,
+                                amount=fill.amount,
+                                fee=abs(fill.fee) if fill.fee else Decimal("0"),
+                                fee_currency=fill.fee_currency,
+                                timestamp=fill.timestamp or datetime.now(UTC),
+                                fill_source="recovery",
+                                exchange_tid=fill.trade_id,
+                                taker_or_maker=fill.taker_or_maker,
+                            )
+                    except Exception as e:
+                        logger.warning(
+                            f"Failed to fetch fills for recovered order "
+                            f"{ex_order.order_id}: {e}"
+                        )
+
+                    if ex_order.filled and ex_order.filled > 0:
+                        await order_repo.update(
+                            db_order.id,
+                            filled=ex_order.filled,
+                            avg_price=ex_order.avg_price,
+                            status=ex_order.status,
+                        )
+
+                    report["missing_orders_recovered"] += 1
+                except Exception as e:
+                    logger.warning(f"Failed to recover order {ex_order.order_id}: {e}")
+                    report["errors"].append(str(e))
+
+        return report
 
     async def persist_snapshots(self, run_id: UUID) -> int:
         """Persist pending equity snapshots for a session.
