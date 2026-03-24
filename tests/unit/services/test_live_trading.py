@@ -3392,6 +3392,11 @@ class TestResumeSuccessPath:
                 "squant.services.order.OrderRepository",
                 return_value=mock_order_repo,
             ),
+            patch.object(
+                LiveTradingService,
+                "_check_resume_balance",
+                new_callable=AsyncMock,
+            ) as mock_balance_check,
         ):
             # Set up strategy repo mock
             mock_strat_repo = MagicMock()
@@ -3424,6 +3429,7 @@ class TestResumeSuccessPath:
                 "mock_reconcile_positions": mock_reconcile_positions,
                 "mock_warmup": mock_warmup,
                 "mock_order_repo": mock_order_repo,
+                "mock_balance_check": mock_balance_check,
             }
 
     async def test_resume_success_full_flow(

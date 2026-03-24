@@ -1877,6 +1877,15 @@ class LiveTradingService:
         if seed_map:
             logger.info(f"Resume: seeded order audit map with {len(seed_map)} orders")
 
+        # 10c. Balance sufficiency check (B1+)
+        session_equity = Decimal(str(run.result.get("equity", 0)))
+        quote_currency = run.symbol.split("/")[1] if "/" in run.symbol else "USDT"
+        await self._check_resume_balance(
+            account_id=str(run.account_id),
+            session_equity=session_equity,
+            quote_currency=quote_currency,
+        )
+
         # 11. Order reconciliation (live orders in engine state)
         reconciliation_report = await self._reconcile_orders(engine, adapter, run.symbol)
         logger.info(f"Order reconciliation for {run_id}: {reconciliation_report}")
@@ -2111,6 +2120,32 @@ class LiveTradingService:
             sessions_total_equity=total_equity,
             available=available,
         )
+
+    async def _check_resume_balance(
+        self, account_id: str, session_equity: Decimal, quote_currency: str
+    ) -> None:
+        """Check if account has sufficient balance to resume a session.
+
+        Raises ValueError if insufficient. Logs warning and continues
+        if the balance check itself fails (non-blocking).
+        """
+        try:
+            balance_info = await self.get_account_available_balance(
+                account_id, quote_currency
+            )
+            if session_equity > balance_info.available:
+                raise ValueError(
+                    f"Insufficient balance to resume session. "
+                    f"Session equity: {session_equity}, "
+                    f"Available: {balance_info.available} {quote_currency}"
+                )
+        except ValueError:
+            raise  # Re-raise insufficient balance
+        except Exception as e:
+            logger.warning(
+                f"Balance check failed for account {account_id}, "
+                f"proceeding with resume: {e}"
+            )
 
     async def persist_snapshots(self, run_id: UUID) -> int:
         """Persist pending equity snapshots for a session.
