@@ -34,6 +34,7 @@ from squant.models.strategy import StrategyRun
 
 if TYPE_CHECKING:
     from squant.infra.exchange.base import ExchangeAdapter
+    from squant.schemas.live_trading import AccountBalanceResponse
 
 logger = logging.getLogger(__name__)
 
@@ -200,6 +201,17 @@ class LiveStrategyRunRepository(BaseRepository[StrategyRun]):
         if status is not None:
             filters["status"] = status
         return await self.count(**filters)
+
+    async def list_running_by_account(self, account_id: str) -> list[StrategyRun]:
+        """List all RUNNING sessions for a given exchange account."""
+        result = await self.session.execute(
+            select(StrategyRun).where(
+                StrategyRun.account_id == account_id,
+                StrategyRun.mode == RunMode.LIVE,
+                StrategyRun.status == RunStatus.RUNNING,
+            )
+        )
+        return list(result.scalars().all())
 
     async def get_orphaned_sessions(self) -> list[StrategyRun]:
         """Get recoverable live trading sessions after restart.
@@ -598,6 +610,30 @@ class LiveTradingService:
             sandbox=account.testnet,
         )
         return CCXTRestAdapter(exchange, ccxt_credentials)
+
+    async def _create_adapter_for_account(self, account_id: str) -> ExchangeAdapter:
+        """Create and connect an exchange adapter for the given account."""
+        from squant.services.account import ExchangeAccountRepository
+
+        account_repo = ExchangeAccountRepository(self.session)
+        account = await account_repo.get(UUID(account_id))
+        if not account:
+            raise ExchangeAccountNotFoundError(account_id, "not found")
+        if not account.is_active:
+            raise ExchangeAccountNotFoundError(account_id, "account is not active")
+
+        adapter = self._create_adapter(account)
+        try:
+            await asyncio.wait_for(adapter.connect(), timeout=30.0)
+        except Exception as e:
+            try:
+                await adapter.close()
+            except Exception:
+                pass
+            raise LiveExchangeConnectionError(
+                f"Failed to connect to exchange: {e}"
+            ) from e
+        return adapter
 
     def _build_ws_credentials(self, account: ExchangeAccount) -> ExchangeCredentials | None:
         """Build ExchangeCredentials for private WS order push (LIVE-CN-001).
@@ -2008,6 +2044,73 @@ class LiveTradingService:
                 return list(persisted) + pending
 
         return persisted
+
+    async def get_account_available_balance(
+        self, account_id: str, quote_currency: str
+    ) -> AccountBalanceResponse:
+        """Calculate available balance for an exchange account.
+
+        Fetches total account value from the exchange, then subtracts
+        the equity allocated to running live trading sessions.
+
+        Args:
+            account_id: Exchange account ID.
+            quote_currency: Quote currency for balance (e.g., "USDT").
+
+        Returns:
+            AccountBalanceResponse with total, allocated, and available balance.
+
+        Raises:
+            ExchangeAccountNotFoundError: If account not found or inactive.
+            LiveExchangeConnectionError: If exchange connection fails.
+        """
+        from squant.schemas.live_trading import AccountBalanceResponse, RunningSessionEquity
+        from squant.services.strategy import StrategyRepository
+
+        adapter = await self._create_adapter_for_account(account_id)
+        try:
+            total_value, _ = await adapter.get_account_total_value(quote_currency)
+        finally:
+            await adapter.close()
+
+        running_runs = await self.run_repo.list_running_by_account(account_id)
+
+        session_manager = get_live_session_manager()
+        strategy_repo = StrategyRepository(self.session)
+        running_sessions: list[RunningSessionEquity] = []
+        total_equity = Decimal("0")
+
+        for run in running_runs:
+            engine = session_manager.get(UUID(run.id))
+            if engine:
+                equity = engine.context.equity
+            elif run.result and "equity" in run.result:
+                equity = Decimal(str(run.result["equity"]))
+            else:
+                equity = run.initial_capital or Decimal("0")
+
+            strategy = await strategy_repo.get(UUID(run.strategy_id))
+            strategy_name = strategy.name if strategy else None
+
+            running_sessions.append(
+                RunningSessionEquity(
+                    run_id=UUID(run.id),
+                    strategy_name=strategy_name,
+                    symbol=run.symbol,
+                    equity=equity,
+                )
+            )
+            total_equity += equity
+
+        available = total_value - total_equity
+
+        return AccountBalanceResponse(
+            account_total_value=total_value,
+            quote_currency=quote_currency,
+            running_sessions=running_sessions,
+            sessions_total_equity=total_equity,
+            available=available,
+        )
 
     async def persist_snapshots(self, run_id: UUID) -> int:
         """Persist pending equity snapshots for a session.

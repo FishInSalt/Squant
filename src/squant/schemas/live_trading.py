@@ -287,6 +287,25 @@ class LiveSessionOrderResponse(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class RunningSessionEquity(BaseModel):
+    """Equity info for a running session."""
+
+    run_id: UUID
+    strategy_name: str | None = None
+    symbol: str
+    equity: NumberDecimal
+
+
+class AccountBalanceResponse(BaseModel):
+    """Account balance with available capital calculation."""
+
+    account_total_value: NumberDecimal
+    quote_currency: str
+    running_sessions: list[RunningSessionEquity] = Field(default_factory=list)
+    sessions_total_equity: NumberDecimal = Field(default=Decimal("0"))
+    available: NumberDecimal = Field(default=Decimal("0"))
+
+
 class EmergencyCloseResponse(BaseModel):
     """Response from emergency close operation."""
 
