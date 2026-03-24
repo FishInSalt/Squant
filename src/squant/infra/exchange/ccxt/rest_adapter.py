@@ -772,6 +772,83 @@ class CCXTRestAdapter(ExchangeAdapter):
         result.sort(key=lambda x: x.timestamp)
         return result
 
+    async def get_orders(
+        self, symbol: str, since: datetime | None = None
+    ) -> list[OrderResponse]:
+        """Get all orders (open + closed) for a symbol with pagination.
+
+        Fetches closed orders with automatic pagination (100 per page),
+        then fetches open orders, and deduplicates by order ID.
+        """
+        if not self._exchange:
+            raise ExchangeConnectionError(
+                message="Exchange not connected. Call connect() first.",
+                exchange=self._exchange_id,
+            )
+
+        if not self._credentials:
+            raise ExchangeAuthenticationError(
+                message="Credentials required for order query",
+                exchange=self._exchange_id,
+            )
+
+        since_ms: int | None = int(since.timestamp() * 1000) if since else None
+
+        try:
+            # Paginate closed orders
+            seen_ids: set[str] = set()
+            all_orders: list[OrderResponse] = []
+            cursor = since_ms
+            page_size = 100
+
+            while True:
+                batch = await self._exchange.fetch_closed_orders(
+                    symbol, since=cursor, limit=page_size
+                )
+
+                for raw_order in batch:
+                    oid = str(raw_order.get("id", ""))
+                    if oid and oid not in seen_ids:
+                        seen_ids.add(oid)
+                        all_orders.append(self._transform_order(raw_order))
+
+                # Stop if short page (less than page_size means no more data)
+                if len(batch) < page_size:
+                    break
+
+                # Advance cursor to last order's timestamp + 1ms
+                last_ts = batch[-1].get("timestamp")
+                if last_ts is not None:
+                    cursor = last_ts + 1
+                else:
+                    break
+
+            # Fetch open orders (no pagination needed, typically few)
+            open_orders = await self._exchange.fetch_open_orders(symbol, since=since_ms)
+            for raw_order in open_orders:
+                oid = str(raw_order.get("id", ""))
+                if oid and oid not in seen_ids:
+                    seen_ids.add(oid)
+                    all_orders.append(self._transform_order(raw_order))
+
+            return all_orders
+
+        except ccxt.AuthenticationError as e:
+            raise ExchangeAuthenticationError(
+                message=f"Authentication failed: {e}",
+                exchange=self._exchange_id,
+            ) from e
+        except ccxt.RateLimitExceeded as e:
+            raise ExchangeRateLimitError(
+                message=f"Rate limit exceeded: {e}",
+                exchange=self._exchange_id,
+            ) from e
+        except Exception as e:
+            raise ExchangeAPIError(
+                message=f"Failed to fetch orders for {symbol}: {e}",
+                exchange=self._exchange_id,
+            ) from e
+
     # ==================== Dead Man's Switch (F-2) ====================
 
     @property

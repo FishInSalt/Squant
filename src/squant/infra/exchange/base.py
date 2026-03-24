@@ -246,6 +246,29 @@ class ExchangeAdapter(ABC):
         """Get all individual fills for a specific order."""
         ...
 
+    @abstractmethod
+    async def get_orders(
+        self, symbol: str, since: datetime | None = None
+    ) -> list[OrderResponse]:
+        """Get all orders (open + closed) for a symbol with pagination.
+
+        Fetches closed orders with automatic pagination and open orders,
+        deduplicating by order ID.
+
+        Args:
+            symbol: Trading pair in standard format (e.g., 'BTC/USDT').
+            since: Only return orders created after this time (optional).
+
+        Returns:
+            List of all orders (both open and closed), deduplicated.
+
+        Raises:
+            ExchangeAuthenticationError: If not authenticated.
+            ExchangeConnectionError: If not connected.
+            ExchangeAPIError: If API request fails.
+        """
+        ...
+
     # Dead Man's Switch (F-2)
 
     @property
