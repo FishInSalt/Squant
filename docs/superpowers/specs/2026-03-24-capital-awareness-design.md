@@ -45,17 +45,31 @@ New endpoint: `GET /api/v1/live/account-balance/{account_id}`
 
 **Implementation** (`LiveTradingService.get_account_available_balance`):
 
-1. Fetch exchange account → create adapter → `get_balance()` → sum all balances as `account_total_value` (quote currency)
-2. Query all RUNNING `StrategyRun` records for this account
+1. Fetch exchange account → create adapter → `get_balance()` → compute `account_total_value` in quote currency
+2. Query all RUNNING `StrategyRun` records for this account (new repo method: `list_running_by_account(account_id)`)
 3. For each running session:
-   - Try `session_manager.get_engine(run_id)` → `engine.context.equity` (real-time from memory)
+   - Try `session_manager.get(run_id)` → `engine.context.equity` (real-time from memory)
    - Fallback: read `StrategyRun.result` JSONB → `result["equity"]` (last saved snapshot)
 4. `available = account_total_value - sum(session equities)`
+
+**Computing `account_total_value`** (multi-currency conversion):
+
+The exchange account may hold multiple currencies (e.g., USDT + BTC). Session equity is denominated in the quote currency (e.g., USDT), so `account_total_value` must be converted to quote currency for the formula to be consistent.
+
+Strategy:
+1. **Priority**: Check `fetchBalance()` raw response (`info` field) for exchange-native total equity (e.g., OKX `totalEq`) → use directly if available
+2. **Fallback**: Manual conversion — for each non-zero, non-quote currency balance, call `get_ticker(CURRENCY/QUOTE)` to get price, then sum:
+   ```
+   account_total_value = quote_balance.total + Σ(other.total × ticker.last)
+   ```
+
+The quote currency is derived from the session's symbol (e.g., `BTC/USDT` → quote = `USDT`). This requires at most 1-2 ticker lookups (accounts rarely hold many different currencies), so latency is acceptable.
 
 **Edge cases**:
 - No running sessions → available = account_total_value
 - Engine not in memory (recovering) → use DB snapshot equity
 - Exchange API failure → return error, frontend shows warning but doesn't block form
+- Ticker lookup fails for a currency → include only the raw balance amount with a warning, don't block the calculation
 
 ### Frontend
 
@@ -93,7 +107,7 @@ When resuming a stopped/errored session, the account may no longer have sufficie
 
 ### Implementation
 
-**Location**: `LiveTradingService.resume()`, before restoring engine state.
+**Location**: `LiveTradingService.resume()`, after engine creation but before registration with session manager. This minimizes the race window between balance check and session becoming RUNNING.
 
 **Logic**:
 
@@ -111,6 +125,8 @@ if session_equity > balance_info.available:
 ```
 
 **Note**: This is a soft check — it uses the same formula as B1. The session being resumed is NOT yet in RUNNING state, so its equity is not included in `sessions_total_equity`. The check is: can the account absorb this session's equity on top of existing running sessions?
+
+**Known limitation**: If two sessions for the same account are resumed simultaneously, both may pass the check before either is registered. This is inherent to soft allocation and acceptable for a personal trading system.
 
 **Frontend**: The resume API already returns errors as `{"code": 400, "message": ...}`. The existing error toast in the frontend will display the insufficient balance message.
 
@@ -131,24 +147,32 @@ Current behavior: all non-timeout exceptions → `REJECTED` + log.
 New behavior: additionally detect insufficient funds and push notification.
 
 ```python
+from squant.infra.exchange.exceptions import InvalidOrderError
+
 except Exception as e:
     err_msg = str(e).lower()
     if "timeout" in err_msg or "requesttimeout" in err_msg:
         # existing timeout handling...
     else:
         order.status = OrderStatus.REJECTED
-        # NEW: detect insufficient funds, notify user
-        if "insufficient funds" in err_msg:
-            await self._emit_event({
-                "type": "notification",
-                "level": "warning",
-                "title": "余额不足",
-                "message": f"下单失败：{order.symbol} {order.side.value} {order.amount}，交易所余额不足",
-            })
+        # NEW: detect insufficient funds via exception type (not string matching)
+        is_insufficient = (
+            isinstance(e, InvalidOrderError) and e.field == "amount"
+        )
+        if is_insufficient:
+            _fire_notification(
+                self._run_id,
+                level="warning",
+                event_type="insufficient_funds",
+                title="余额不足",
+                message=f"下单失败：{order.symbol} {order.side.value} {order.amount}，交易所余额不足",
+            )
         # existing rejection logic...
 ```
 
-**Frontend**: Receives notification via existing WebSocket event channel → displays `ElNotification` warning.
+**Why type checking over string matching**: The adapter already maps `ccxt.InsufficientFunds` to `InvalidOrderError(field="amount")`. Checking the exception type is robust against message format changes across exchanges and CCXT versions.
+
+**Frontend**: Receives notification via existing WebSocket event channel → displays `ElNotification` warning. Reuses the existing `_fire_notification()` helper (fire-and-forget via `asyncio.create_task`).
 
 ### What This Does NOT Do
 
@@ -193,9 +217,9 @@ resume():
         - Fetch fills: adapter.get_order_trades(symbol, exchange_oid)
         - Create Order + Trade records in DB
         - Update engine context (cash, positions) if fills exist
-        - Mark fill_source = "reconcile"
+        - Mark fill_source = "reconcile_missing" (distinguishes from existing "reconcile" used for stale-status orders)
      e. For each DB order with stale status:
-        - Update from exchange data (existing _reconcile_stale_db_orders logic)
+        - Update from exchange data (existing _reconcile_stale_db_orders logic, fill_source = "reconcile")
   4. Subscribe to market data and start (existing)
 ```
 
@@ -210,10 +234,20 @@ async def get_orders(
 
 Underlying CCXT: `fetchClosedOrders(symbol, since) + fetchOpenOrders(symbol, since)` combined.
 
+### Relationship with Existing Reconciliation
+
+The current resume flow has two reconciliation steps:
+1. `_reconcile_orders()` — reconciles in-memory `_live_orders` against exchange **open** orders
+2. `_reconcile_stale_db_orders()` — reconciles DB orders with non-terminal status
+
+B4 **supplements** these (does not replace them). It covers the gap: orders that exist on the exchange but are **completely absent from DB** (crash during `place_order()`). B4 runs after engine state restore but before the existing reconciliation steps, so any orders it discovers and records in DB will be visible to subsequent steps.
+
+**Pagination**: Some exchanges limit `fetchClosedOrders` results (e.g., OKX: 100 per call). The `get_orders()` implementation should handle pagination to ensure completeness within the time range.
+
 ### Risk Controls
 
 - Reconciliation runs once on resume, not during normal operation
-- Supplemented orders marked `fill_source = "reconcile"` for audit trail
+- Missing orders marked `fill_source = "reconcile_missing"` for audit trail (distinct from existing `"reconcile"` for stale-status orders)
 - Errors during reconciliation logged as warning, do not block engine startup
 - Engine context (cash/positions) updated for reconciled fills to maintain consistency
 
@@ -275,12 +309,13 @@ Underlying CCXT: `fetchClosedOrders(symbol, since) + fetchOpenOrders(symbol, sin
 ## Files to Modify
 
 ### Backend
-- `src/squant/services/live_trading.py` — `get_account_available_balance()`, resume balance check, resume reconciliation
+- `src/squant/services/live_trading.py` — `get_account_available_balance()`, `list_running_by_account()` repo method, resume balance check, resume reconciliation
 - `src/squant/api/v1/live_trading.py` — new balance endpoint
 - `src/squant/schemas/live_trading.py` — balance response schema
-- `src/squant/engine/live/engine.py` — insufficient funds notification in `_submit_order()`
-- `src/squant/infra/exchange/ccxt/rest_adapter.py` — `get_orders()` method
+- `src/squant/engine/live/engine.py` — insufficient funds notification in `_submit_order()` (type-based detection using `InvalidOrderError`)
+- `src/squant/infra/exchange/ccxt/rest_adapter.py` — `get_orders()` method (with pagination), `get_account_total_value()` helper (multi-currency conversion)
 - `src/squant/infra/exchange/base.py` — abstract `get_orders()` method
+- `src/squant/infra/exchange/types.py` — `AccountTotalValue` response type (if needed)
 
 ### Frontend
 - `frontend/src/views/trading/LiveTrading.vue` — balance display + tooltip
