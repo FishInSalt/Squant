@@ -14,6 +14,7 @@ from squant.infra.database import get_session
 from squant.models.enums import RunStatus
 from squant.schemas.backtest import EquityCurvePoint
 from squant.schemas.live_trading import (
+    AccountBalanceResponse,
     EmergencyCloseResponse,
     LiveOrderInfo,
     LivePositionInfo,
@@ -447,6 +448,49 @@ async def list_live_trading_runs(
             page_size=page_size,
         )
     )
+
+
+@router.get(
+    "/account-balance/{account_id}",
+    response_model=ApiResponse[AccountBalanceResponse],
+)
+async def get_account_balance(
+    account_id: UUID,
+    quote_currency: str = "USDT",
+    session: AsyncSession = Depends(get_session),
+) -> ApiResponse[AccountBalanceResponse]:
+    """Get account balance with available capital for live trading.
+
+    Calculates the total account value on the exchange, subtracts equity
+    allocated to running live trading sessions, and returns the available
+    capital for new sessions.
+
+    Args:
+        account_id: Exchange account ID.
+        quote_currency: Quote currency for balance (default: USDT).
+        session: Database session.
+
+    Returns:
+        Account balance breakdown with available capital.
+
+    Raises:
+        HTTPException:
+            - 404 if exchange account not found
+            - 503 if exchange connection fails
+            - 400 for other live trading errors
+    """
+    service = LiveTradingService(session)
+    try:
+        result = await service.get_account_available_balance(
+            str(account_id), quote_currency
+        )
+        return ApiResponse(data=result)
+    except ExchangeAccountNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    except LiveExchangeConnectionError as e:
+        raise HTTPException(status_code=503, detail=str(e)) from e
+    except LiveTradingError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
 
 
 @router.get(
