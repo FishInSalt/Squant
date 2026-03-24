@@ -2,6 +2,8 @@
 
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
+from datetime import datetime
+from decimal import Decimal
 
 from .types import (
     AccountBalance,
@@ -89,6 +91,30 @@ class ExchangeAdapter(ABC):
         """
         account = await self.get_balance()
         return account.get_balance(currency)
+
+    @abstractmethod
+    async def get_account_total_value(
+        self, quote_currency: str
+    ) -> tuple[Decimal, list[Balance]]:
+        """Get total account value denominated in quote currency.
+
+        Converts all non-quote currency balances to quote currency using
+        current market prices (ticker last price).
+
+        Args:
+            quote_currency: Currency to denominate total value in (e.g., 'USDT').
+
+        Returns:
+            Tuple of (total_value, list_of_balances). The total_value is the sum
+            of all balances converted to quote currency. The balances list contains
+            all non-zero currency balances.
+
+        Raises:
+            ExchangeAuthenticationError: If not authenticated.
+            ExchangeConnectionError: If not connected.
+            ExchangeAPIError: If API request fails.
+        """
+        ...
 
     # Market data methods
 

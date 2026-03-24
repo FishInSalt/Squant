@@ -388,6 +388,101 @@ class CCXTRestAdapter(ExchangeAdapter):
                 exchange=self._exchange_id,
             ) from e
 
+    async def get_account_total_value(
+        self, quote_currency: str
+    ) -> tuple[Decimal, list[Balance]]:
+        """Get total account value denominated in quote currency.
+
+        Priority 1: Use OKX native totalEq from raw response info.
+        Priority 2: Manual conversion via ticker lookups for non-quote currencies.
+        """
+        if not self._exchange:
+            raise ExchangeConnectionError(
+                message="Exchange not connected. Call connect() first.",
+                exchange=self._exchange_id,
+            )
+
+        if not self._credentials:
+            raise ExchangeAuthenticationError(
+                message="Credentials required for account total value query",
+                exchange=self._exchange_id,
+            )
+
+        try:
+            raw_balance = await self._exchange.fetch_balance()
+        except ccxt.AuthenticationError as e:
+            raise ExchangeAuthenticationError(
+                message=f"Authentication failed: {e}",
+                exchange=self._exchange_id,
+            ) from e
+        except ccxt.RateLimitExceeded as e:
+            raise ExchangeRateLimitError(
+                message=f"Rate limit exceeded: {e}",
+                exchange=self._exchange_id,
+            ) from e
+        except Exception as e:
+            raise ExchangeAPIError(
+                message=f"Failed to fetch balance: {e}",
+                exchange=self._exchange_id,
+            ) from e
+
+        # Build balance list (non-zero only)
+        free_balances = raw_balance.get("free", {})
+        used_balances = raw_balance.get("used", {})
+        all_currencies = set(free_balances.keys()) | set(used_balances.keys())
+
+        balances: list[Balance] = []
+        for currency in all_currencies:
+            free = free_balances.get(currency, 0)
+            used = used_balances.get(currency, 0)
+            if free == 0 and used == 0:
+                continue
+            balances.append(
+                Balance(
+                    currency=currency,
+                    available=Decimal(str(free)) if free else Decimal("0"),
+                    frozen=Decimal(str(used)) if used else Decimal("0"),
+                )
+            )
+
+        # Priority 1: OKX native totalEq
+        try:
+            info_data = raw_balance.get("info", {}).get("data", [])
+            if info_data and isinstance(info_data, list) and len(info_data) > 0:
+                total_eq_str = info_data[0].get("totalEq")
+                if total_eq_str:
+                    return Decimal(total_eq_str), balances
+        except (KeyError, IndexError, TypeError):
+            pass
+
+        # Priority 2: Manual conversion
+        quote_upper = quote_currency.upper()
+        total_value = Decimal("0")
+
+        for bal in balances:
+            if bal.currency.upper() == quote_upper:
+                total_value += bal.total
+            else:
+                # Convert via ticker
+                pair = f"{bal.currency}/{quote_currency}"
+                try:
+                    ticker = await self._exchange.fetch_ticker(pair)
+                    last_price = ticker.get("last")
+                    if last_price is not None:
+                        total_value += bal.total * Decimal(str(last_price))
+                    else:
+                        logger.warning(
+                            f"Ticker {pair} has no last price, "
+                            f"skipping {bal.currency} in total value calculation"
+                        )
+                except Exception as e:
+                    logger.warning(
+                        f"Failed to fetch ticker for {pair}, "
+                        f"skipping {bal.currency} in total value calculation: {e}"
+                    )
+
+        return total_value, balances
+
     # ==================== Order Methods ====================
 
     async def place_order(self, request: OrderRequest) -> OrderResponse:
