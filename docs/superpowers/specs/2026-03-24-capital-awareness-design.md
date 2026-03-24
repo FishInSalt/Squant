@@ -165,17 +165,29 @@ except Exception as e:
             isinstance(e, InvalidOrderError) and e.field == "amount"
         )
         if is_insufficient:
+            # Distinguish buy (quote currency insufficient) vs sell (base currency insufficient)
+            if order.side == OrderSide.BUY:
+                title = "余额不足"
+                msg = f"买入失败：{order.symbol} {order.amount}，交易所余额不足"
+            else:
+                title = "持仓不足"
+                msg = (
+                    f"卖出失败：{order.symbol} {order.amount}，"
+                    "交易所持仓不足（可能因手续费从标的扣除导致）"
+                )
             _fire_notification(
                 self._run_id,
                 level="warning",
                 event_type="insufficient_funds",
-                title="余额不足",
-                message=f"下单失败：{order.symbol} {order.side.value} {order.amount}，交易所余额不足",
+                title=title,
+                message=msg,
             )
         # existing rejection logic...
 ```
 
 **Why type checking over string matching**: The adapter already maps `ccxt.InsufficientFunds` to `InvalidOrderError(field="amount")`. Checking the exception type is robust against message format changes across exchanges and CCXT versions.
+
+**Buy vs Sell distinction**: `ccxt.InsufficientFunds` fires for both scenarios — buying with insufficient quote currency (USDT) and selling with insufficient base currency (BTC). The latter typically occurs when exchange fees are deducted from the base currency, causing local position tracking to be slightly higher than the actual exchange holding. Different notification messages help users identify the root cause.
 
 **Frontend**: Receives notification via existing WebSocket event channel → displays `ElNotification` warning. Reuses the existing `_fire_notification()` helper (fire-and-forget via `asyncio.create_task`).
 
