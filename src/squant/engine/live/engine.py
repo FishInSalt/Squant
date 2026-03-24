@@ -29,6 +29,7 @@ from squant.engine.paper.engine import (
 )
 from squant.engine.resource_limits import ResourceLimitExceededError, resource_limiter
 from squant.engine.risk import RiskConfig, RiskManager
+from squant.infra.exchange.exceptions import InvalidOrderError
 from squant.infra.exchange.types import CancelOrderRequest, OrderRequest, OrderResponse
 from squant.infra.exchange.ws_types import WSTradeExecution
 from squant.models.enums import OrderSide, OrderStatus
@@ -2639,6 +2640,31 @@ class LiveTradingEngine:
                 )
                 self._timed_out_orders[order.id] = order
             else:
+                # Detect insufficient funds and notify user (B2)
+                is_insufficient = (
+                    isinstance(e, InvalidOrderError) and e.field == "amount"
+                )
+                if is_insufficient:
+                    if order.side == OrderSide.BUY:
+                        title = "余额不足"
+                        msg = (
+                            f"买入失败：{order.symbol} {order.amount}，"
+                            "交易所余额不足"
+                        )
+                    else:
+                        title = "持仓不足"
+                        msg = (
+                            f"卖出失败：{order.symbol} {order.amount}，"
+                            "交易所持仓不足（可能因手续费从标的扣除导致）"
+                        )
+                    _fire_notification(
+                        self._run_id,
+                        level="warning",
+                        event_type="insufficient_funds",
+                        title=title,
+                        message=msg,
+                    )
+
                 logger.exception(f"Failed to submit order {order.id}: {e}")
                 # Mark as rejected
                 order.status = OrderStatus.REJECTED
