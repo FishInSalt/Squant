@@ -97,6 +97,8 @@ The quote currency is derived from the session's symbol (e.g., `BTC/USDT` → qu
 可用余额：2,600.00
 ```
 
+**Fee hint**: Below the balance display, show a subtle tip: "建议预留部分余额用于交易手续费". No automatic deduction — the user sees the real available amount and decides how much to allocate. Fee rates vary by exchange/VIP level/maker-taker, and strategies typically use partial positions (e.g., max_position_size = 50%), so actual per-trade cost is well below initial_capital.
+
 **States**:
 - Loading: `el-skeleton` placeholder
 - Error: `el-alert` warning, form still submittable
