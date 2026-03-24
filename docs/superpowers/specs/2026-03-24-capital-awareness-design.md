@@ -56,14 +56,17 @@ New endpoint: `GET /api/v1/live/account-balance/{account_id}`
 
 The exchange account may hold multiple currencies (e.g., USDT + BTC). Session equity is denominated in the quote currency (e.g., USDT), so `account_total_value` must be converted to quote currency for the formula to be consistent.
 
-Strategy:
+Strategy — implemented as a single `get_account_total_value(quote_currency)` method on the adapter that calls `fetchBalance()` once and extracts both structured balances and raw info:
+
 1. **Priority**: Check `fetchBalance()` raw response (`info` field) for exchange-native total equity (e.g., OKX `totalEq`) → use directly if available
 2. **Fallback**: Manual conversion — for each non-zero, non-quote currency balance, call `get_ticker(CURRENCY/QUOTE)` to get price, then sum:
    ```
    account_total_value = quote_balance.total + Σ(other.total × ticker.last)
    ```
 
-The quote currency is derived from the session's symbol (e.g., `BTC/USDT` → quote = `USDT`). This requires at most 1-2 ticker lookups (accounts rarely hold many different currencies), so latency is acceptable.
+This is a **single API call** to the exchange (not separate from `get_balance()`). The method returns `(total_value, balances)` tuple so callers don't need to call `fetchBalance()` twice.
+
+The quote currency is derived from the session's symbol (e.g., `BTC/USDT` → quote = `USDT`). This requires at most 1-2 additional ticker lookups for non-quote currencies (accounts rarely hold many different currencies), so latency is acceptable.
 
 **Edge cases**:
 - No running sessions → available = account_total_value
@@ -212,12 +215,12 @@ resume():
   3. NEW: full order reconciliation
      a. Fetch exchange orders: adapter.get_orders(symbol, since=computed_since)
      b. Fetch DB orders: order_repo.list(run_id=run_id)
-     c. Match by exchange_order_id
+     c. Match by exchange_order_id (uses DB order seed map from resume step 10b)
      d. For each exchange order NOT in DB:
         - Fetch fills: adapter.get_order_trades(symbol, exchange_oid)
         - Create Order + Trade records in DB
         - Update engine context (cash, positions) if fills exist
-        - Mark fill_source = "reconcile_missing" (distinguishes from existing "reconcile" used for stale-status orders)
+        - Mark fill_source = "recovery" (distinguishes from existing "reconcile" used for stale-status orders)
      e. For each DB order with stale status:
         - Update from exchange data (existing _reconcile_stale_db_orders logic, fill_source = "reconcile")
   4. Subscribe to market data and start (existing)
@@ -232,7 +235,7 @@ async def get_orders(
     """Fetch all orders (open + closed) for symbol since given time."""
 ```
 
-Underlying CCXT: `fetchClosedOrders(symbol, since) + fetchOpenOrders(symbol, since)` combined.
+Underlying CCXT: `fetchClosedOrders(symbol, since) + fetchOpenOrders(symbol, since)` combined. Pagination handled internally — loop with `since = last_order.timestamp` until no more results (some exchanges like OKX limit to 100 per call).
 
 ### Relationship with Existing Reconciliation
 
@@ -247,7 +250,7 @@ B4 **supplements** these (does not replace them). It covers the gap: orders that
 ### Risk Controls
 
 - Reconciliation runs once on resume, not during normal operation
-- Missing orders marked `fill_source = "reconcile_missing"` for audit trail (distinct from existing `"reconcile"` for stale-status orders)
+- Missing orders marked `fill_source = "recovery"` for audit trail (distinct from existing `"reconcile"` for stale-status orders)
 - Errors during reconciliation logged as warning, do not block engine startup
 - Engine context (cash/positions) updated for reconciled fills to maintain consistency
 
