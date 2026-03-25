@@ -1384,6 +1384,10 @@ class LiveTradingService:
                     fee_delta = (exchange_order.fee or Decimal("0")) - live_order.fee
                     if fee_delta < 0:
                         fee_delta = Decimal("0")
+                    # Update fee_currency from exchange before recording fill —
+                    # it may be None if the session stopped before any fill arrived.
+                    if exchange_order.fee_currency:
+                        live_order.fee_currency = exchange_order.fee_currency
                     # Precision trade-off: using exchange avg_price as the fill price
                     # for the incremental fill. The REST API only provides the blended
                     # average price across all fills, not the price of each individual
@@ -1423,6 +1427,10 @@ class LiveTradingService:
                         fee_delta = (final_state.fee or Decimal("0")) - live_order.fee
                         if fee_delta < 0:
                             fee_delta = Decimal("0")
+                        # Update fee_currency from exchange before recording fill —
+                        # it may be None if the session stopped before any fill arrived.
+                        if final_state.fee_currency:
+                            live_order.fee_currency = final_state.fee_currency
                         # Precision trade-off: same as open-order path above.
                         # Using final_state.avg_price (blended average) as the fill
                         # price for the incremental amount. The actual per-fill price
