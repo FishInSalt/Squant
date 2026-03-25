@@ -424,6 +424,21 @@ class LiveTradingService:
                 f"Available balance: {initial_equity}"
             )
 
+        # Validate initial equity does not exceed available balance (B1 check)
+        try:
+            await self._check_resume_balance(
+                adapter=adapter,
+                account_id=exchange_account_id,
+                session_equity=initial_equity,
+                quote_currency=quote_currency,
+            )
+        except ValueError as e:
+            try:
+                await adapter.close()
+            except Exception:
+                pass
+            raise LiveTradingError(str(e)) from e
+
         # Create run record
         run = await self.run_repo.create(
             strategy_id=str(strategy_id),
