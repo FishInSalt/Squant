@@ -94,7 +94,9 @@ class TestCheckResumeBalance:
         mock_manager = MagicMock()
         mock_manager.get.return_value = None  # Not in memory, use DB snapshot
 
-        with patch("squant.services.live_trading.get_live_session_manager", return_value=mock_manager):
+        with patch(
+            "squant.services.live_trading.get_live_session_manager", return_value=mock_manager
+        ):
             # available = 15000 - 8000 = 7000, session_equity = 10000 > 7000
             with pytest.raises(LiveTradingError, match="账户可用余额不足"):
                 await service._check_balance_sufficiency(
@@ -106,7 +108,9 @@ class TestCheckResumeBalance:
 
     async def test_balance_check_failure_logs_warning(self, service, mock_adapter, caplog):
         """When adapter raises, log a warning and do not raise."""
-        mock_adapter.get_account_total_value.side_effect = RuntimeError("Exchange connection failed")
+        mock_adapter.get_account_total_value.side_effect = RuntimeError(
+            "Exchange connection failed"
+        )
 
         with caplog.at_level(logging.WARNING, logger="squant.services.live_trading"):
             await service._check_balance_sufficiency(

@@ -646,9 +646,7 @@ class LiveTradingService:
                 await adapter.close()
             except Exception:
                 pass
-            raise LiveExchangeConnectionError(
-                f"Failed to connect to exchange: {e}"
-            ) from e
+            raise LiveExchangeConnectionError(f"Failed to connect to exchange: {e}") from e
         return adapter
 
     def _build_ws_credentials(self, account: ExchangeAccount) -> ExchangeCredentials | None:
@@ -941,7 +939,9 @@ class LiveTradingService:
                                     # Update first unmatched trade with enrichment data
                                     trade_to_update = unmatched_trades[0]
                                     trade_to_update.exchange_tid = trade_data.get("exchange_tid")
-                                    trade_to_update.taker_or_maker = trade_data.get("taker_or_maker")
+                                    trade_to_update.taker_or_maker = trade_data.get(
+                                        "taker_or_maker"
+                                    )
                                     if trade_data.get("price"):
                                         trade_to_update.price = Decimal(trade_data["price"])
                                     if trade_data.get("amount"):
@@ -957,9 +957,7 @@ class LiveTradingService:
                             )
 
                         else:
-                            logger.warning(
-                                f"Unknown order event type: {event.get('type')}"
-                            )
+                            logger.warning(f"Unknown order event type: {event.get('type')}")
 
                     except Exception as e:
                         logger.warning(f"Failed to persist order event {event.get('type')}: {e}")
@@ -1386,6 +1384,10 @@ class LiveTradingService:
                     fee_delta = (exchange_order.fee or Decimal("0")) - live_order.fee
                     if fee_delta < 0:
                         fee_delta = Decimal("0")
+                    # Update fee_currency from exchange before recording fill —
+                    # it may be None if the session stopped before any fill arrived.
+                    if exchange_order.fee_currency:
+                        live_order.fee_currency = exchange_order.fee_currency
                     # Precision trade-off: using exchange avg_price as the fill price
                     # for the incremental fill. The REST API only provides the blended
                     # average price across all fills, not the price of each individual
@@ -1425,6 +1427,10 @@ class LiveTradingService:
                         fee_delta = (final_state.fee or Decimal("0")) - live_order.fee
                         if fee_delta < 0:
                             fee_delta = Decimal("0")
+                        # Update fee_currency from exchange before recording fill —
+                        # it may be None if the session stopped before any fill arrived.
+                        if final_state.fee_currency:
+                            live_order.fee_currency = final_state.fee_currency
                         # Precision trade-off: same as open-order path above.
                         # Using final_state.avg_price (blended average) as the fill
                         # price for the incremental amount. The actual per-fill price
@@ -1460,11 +1466,14 @@ class LiveTradingService:
                     orders_to_remove.append(internal_id)
                     report["orders_cancelled"] += 1
 
-        # Clean up completed orders from tracking
+        # Clean up completed orders from tracking and update context count
         for internal_id in orders_to_remove:
             order = engine._live_orders.pop(internal_id, None)
             if order and order.exchange_order_id:
                 engine._exchange_order_map.pop(order.exchange_order_id, None)
+            # Increment completed count — SimulatedOrders aren't restored on resume,
+            # so we bump the base count directly for the UI to reflect the update.
+            engine._context._restored_completed_orders_count += 1
 
         # Check for untracked exchange orders
         tracked_exchange_ids = set(engine._exchange_order_map.keys())
@@ -1508,9 +1517,9 @@ class LiveTradingService:
         order_repo = OrderRepository(self.session)
         stale_orders = await order_repo.list_by_run(run_id, offset=0, limit=100)
         non_terminal = [
-            o for o in stale_orders
-            if o.status in (OrderStatus.SUBMITTED, OrderStatus.PARTIAL)
-            and o.exchange_oid
+            o
+            for o in stale_orders
+            if o.status in (OrderStatus.SUBMITTED, OrderStatus.PARTIAL) and o.exchange_oid
         ]
 
         if not non_terminal:
@@ -1913,6 +1922,9 @@ class LiveTradingService:
             timeframe=run.timeframe,
             fallback=run.started_at,
         )
+        # Upper bound: stopped_at (session was inactive after that), with small margin
+        recovery_until = run.stopped_at if run.stopped_at else None
+
         recovery_report = await self._reconcile_missing_orders(
             adapter=adapter,
             run_id=run.id,
@@ -1921,12 +1933,21 @@ class LiveTradingService:
             symbol=run.symbol,
             db_orders=existing_orders,  # from step 10b
             since=recovery_since,
+            until=recovery_until,
         )
         logger.info(f"Recovery reconciliation for {run_id}: {recovery_report}")
 
         # 11. Order reconciliation (live orders in engine state)
         reconciliation_report = await self._reconcile_orders(engine, adapter, run.symbol)
         logger.info(f"Order reconciliation for {run_id}: {reconciliation_report}")
+
+        # 11a. Discard fill events buffered by step 11 — step 11b will write
+        # complete per-fill trade records from get_order_trades() with full
+        # exchange_tid/taker_or_maker fields. Keeping step 11's approximate
+        # fill events would cause duplicate, incomplete trade records.
+        engine._pending_order_events = [
+            e for e in engine._pending_order_events if e.get("type") != "fill"
+        ]
 
         # 11b. Reconcile stale DB orders (orders persisted but engine state lost on crash)
         await self._reconcile_stale_db_orders(run.id, adapter, run.symbol)
@@ -2198,10 +2219,7 @@ class LiveTradingService:
         except LiveTradingError:
             raise  # Re-raise insufficient balance
         except Exception as e:
-            logger.warning(
-                f"Balance check failed for account {account_id}, "
-                f"proceeding: {e}"
-            )
+            logger.warning(f"Balance check failed for account {account_id}, proceeding: {e}")
 
     @staticmethod
     def _compute_reconciliation_since(
@@ -2256,6 +2274,7 @@ class LiveTradingService:
         symbol: str,
         db_orders: list,
         since: datetime,
+        until: datetime | None = None,
     ) -> dict[str, Any]:
         """Find and recover orders on exchange that are missing from DB.
 
@@ -2276,6 +2295,7 @@ class LiveTradingService:
             symbol: Trading symbol (e.g. "BTC/USDT").
             db_orders: Existing DB order records for this run.
             since: How far back to look for orders on the exchange.
+            until: Upper time bound for order query (limits scope for old sessions).
 
         Returns:
             Dict with keys: missing_orders_found, missing_orders_recovered, errors.
@@ -2290,7 +2310,7 @@ class LiveTradingService:
         }
 
         try:
-            exchange_orders = await adapter.get_orders(symbol, since=since)
+            exchange_orders = await adapter.get_orders(symbol, since=since, until=until)
         except Exception as e:
             logger.warning(f"Recovery reconciliation: failed to fetch orders: {e}")
             report["errors"].append(str(e))
@@ -2303,9 +2323,7 @@ class LiveTradingService:
         if not missing:
             return report
 
-        logger.info(
-            f"Recovery reconciliation for {run_id}: found {len(missing)} missing orders"
-        )
+        logger.info(f"Recovery reconciliation for {run_id}: found {len(missing)} missing orders")
 
         async with get_session_context() as db_session:
             order_repo = OrderRepository(db_session)
@@ -2354,8 +2372,7 @@ class LiveTradingService:
                         )
                 except Exception as e:
                     logger.warning(
-                        f"Failed to fetch fills for recovered order "
-                        f"{ex_order.order_id}: {e}"
+                        f"Failed to fetch fills for recovered order {ex_order.order_id}: {e}"
                     )
 
                 if ex_order.filled and ex_order.filled > 0:
@@ -2367,9 +2384,7 @@ class LiveTradingService:
                             status=ex_order.status,
                         )
                     except Exception as e:
-                        logger.warning(
-                            f"Failed to update recovered order {ex_order.order_id}: {e}"
-                        )
+                        logger.warning(f"Failed to update recovered order {ex_order.order_id}: {e}")
 
                 report["missing_orders_recovered"] += 1
 

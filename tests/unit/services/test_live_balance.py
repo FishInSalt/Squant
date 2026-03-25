@@ -106,9 +106,7 @@ class TestListRunningByAccount:
         assert result == []
         repo.session.execute.assert_called_once()
 
-    async def test_returns_running_sessions(
-        self, repo: LiveStrategyRunRepository
-    ) -> None:
+    async def test_returns_running_sessions(self, repo: LiveStrategyRunRepository) -> None:
         """Test returns only running live sessions for account."""
         mock_run = MagicMock(spec=StrategyRun)
         mock_run.id = str(uuid4())
@@ -171,9 +169,7 @@ class TestGetAccountAvailableBalance:
     def mock_adapter(self) -> AsyncMock:
         """Create a mock exchange adapter."""
         adapter = AsyncMock()
-        adapter.get_account_total_value = AsyncMock(
-            return_value=(Decimal("10000"), [])
-        )
+        adapter.get_account_total_value = AsyncMock(return_value=(Decimal("10000"), []))
         adapter.connect = AsyncMock()
         adapter.close = AsyncMock()
         return adapter
@@ -197,9 +193,7 @@ class TestGetAccountAvailableBalance:
             mock_create.return_value = mock_adapter
             mock_list.return_value = []
 
-            result = await service.get_account_available_balance(
-                account_id, "USDT"
-            )
+            result = await service.get_account_available_balance(account_id, "USDT")
 
         assert isinstance(result, AccountBalanceResponse)
         assert result.account_total_value == Decimal("10000")
@@ -243,9 +237,7 @@ class TestGetAccountAvailableBalance:
                 "list_running_by_account",
                 new_callable=AsyncMock,
             ) as mock_list,
-            patch(
-                "squant.services.live_trading.get_live_session_manager"
-            ) as mock_get_mgr,
+            patch("squant.services.live_trading.get_live_session_manager") as mock_get_mgr,
             patch(
                 "squant.services.strategy.StrategyRepository.get",
                 new_callable=AsyncMock,
@@ -258,9 +250,7 @@ class TestGetAccountAvailableBalance:
             mock_get_mgr.return_value = mock_mgr
             mock_strat_get.return_value = mock_strategy
 
-            result = await service.get_account_available_balance(
-                account_id, "USDT"
-            )
+            result = await service.get_account_available_balance(account_id, "USDT")
 
         assert result.account_total_value == Decimal("10000")
         assert result.sessions_total_equity == Decimal("3000")
@@ -299,9 +289,7 @@ class TestGetAccountAvailableBalance:
                 "list_running_by_account",
                 new_callable=AsyncMock,
             ) as mock_list,
-            patch(
-                "squant.services.live_trading.get_live_session_manager"
-            ) as mock_get_mgr,
+            patch("squant.services.live_trading.get_live_session_manager") as mock_get_mgr,
             patch(
                 "squant.services.strategy.StrategyRepository.get",
                 new_callable=AsyncMock,
@@ -315,9 +303,7 @@ class TestGetAccountAvailableBalance:
             mock_get_mgr.return_value = mock_mgr
             mock_strat_get.return_value = mock_strategy
 
-            result = await service.get_account_available_balance(
-                account_id, "USDT"
-            )
+            result = await service.get_account_available_balance(account_id, "USDT")
 
         assert result.sessions_total_equity == Decimal("2500.50")
         assert result.available == Decimal("10000") - Decimal("2500.50")
@@ -352,9 +338,7 @@ class TestGetAccountAvailableBalance:
                 "list_running_by_account",
                 new_callable=AsyncMock,
             ) as mock_list,
-            patch(
-                "squant.services.live_trading.get_live_session_manager"
-            ) as mock_get_mgr,
+            patch("squant.services.live_trading.get_live_session_manager") as mock_get_mgr,
             patch(
                 "squant.services.strategy.StrategyRepository.get",
                 new_callable=AsyncMock,
@@ -367,9 +351,7 @@ class TestGetAccountAvailableBalance:
             mock_get_mgr.return_value = mock_mgr
             mock_strat_get.return_value = mock_strategy
 
-            result = await service.get_account_available_balance(
-                account_id, "USDT"
-            )
+            result = await service.get_account_available_balance(account_id, "USDT")
 
         assert result.sessions_total_equity == Decimal("500")
         assert result.available == Decimal("9500")
@@ -424,9 +406,7 @@ class TestGetAccountAvailableBalance:
                 "list_running_by_account",
                 new_callable=AsyncMock,
             ) as mock_list,
-            patch(
-                "squant.services.live_trading.get_live_session_manager"
-            ) as mock_get_mgr,
+            patch("squant.services.live_trading.get_live_session_manager") as mock_get_mgr,
             patch(
                 "squant.services.strategy.StrategyRepository.get",
                 new_callable=AsyncMock,
@@ -439,9 +419,7 @@ class TestGetAccountAvailableBalance:
             mock_get_mgr.return_value = mock_mgr
             mock_strat_get.return_value = mock_strategy
 
-            result = await service.get_account_available_balance(
-                account_id, "USDT"
-            )
+            result = await service.get_account_available_balance(account_id, "USDT")
 
         assert result.sessions_total_equity == Decimal("5000")
         assert result.available == Decimal("5000")

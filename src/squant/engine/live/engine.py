@@ -1438,9 +1438,7 @@ class LiveTradingEngine:
                     source="ws_order",
                     exchange_timestamp=update.updated_at,
                 )
-                self._check_trade_completion(
-                    had_open_trade, circuit_breaker_before, "ws_order"
-                )
+                self._check_trade_completion(had_open_trade, circuit_breaker_before, "ws_order")
 
                 # Queue async enrichment: fetch per-fill details via REST
                 # to populate exchange_tid, exact per-fill prices, taker_or_maker
@@ -1448,11 +1446,7 @@ class LiveTradingEngine:
 
         # Emit "status_change" audit event when order reaches terminal status
         # without new fill data (fills already processed or no fills at all).
-        if (
-            new_status != old_status
-            and live_order.is_complete
-            and not has_new_fills
-        ):
+        if new_status != old_status and live_order.is_complete and not has_new_fills:
             self._pending_order_events.append(
                 {
                     "type": "status_change",
@@ -1579,9 +1573,7 @@ class LiveTradingEngine:
                 live_order.symbol, live_order.exchange_order_id
             )
         except Exception as e:
-            logger.error(
-                f"Failed to fetch order trades for {live_order.exchange_order_id}: {e}"
-            )
+            logger.error(f"Failed to fetch order trades for {live_order.exchange_order_id}: {e}")
             return
 
         logger.info(
@@ -1604,24 +1596,26 @@ class LiveTradingEngine:
         if fills_already_recorded:
             # Enrichment mode: emit enrichment events so persistence layer
             # can update existing Trade records with exchange_tid, exact prices
-            self._pending_order_events.append({
-                "type": "enrichment",
-                "internal_id": live_order.internal_id,
-                "exchange_order_id": live_order.exchange_order_id,
-                "trades": [
-                    {
-                        "exchange_tid": t.trade_id,
-                        "price": str(t.price),
-                        "amount": str(t.amount),
-                        "fee": str(t.fee),
-                        "fee_currency": t.fee_currency,
-                        "taker_or_maker": t.taker_or_maker,
-                        "timestamp": t.timestamp.isoformat(),
-                    }
-                    for t in trades
-                ],
-                "timestamp": datetime.now(UTC).isoformat(),
-            })
+            self._pending_order_events.append(
+                {
+                    "type": "enrichment",
+                    "internal_id": live_order.internal_id,
+                    "exchange_order_id": live_order.exchange_order_id,
+                    "trades": [
+                        {
+                            "exchange_tid": t.trade_id,
+                            "price": str(t.price),
+                            "amount": str(t.amount),
+                            "fee": str(t.fee),
+                            "fee_currency": t.fee_currency,
+                            "taker_or_maker": t.taker_or_maker,
+                            "timestamp": t.timestamp.isoformat(),
+                        }
+                        for t in trades
+                    ],
+                    "timestamp": datetime.now(UTC).isoformat(),
+                }
+            )
             logger.info(
                 f"Enrichment data fetched for order {live_order.exchange_order_id}: "
                 f"{len(trades)} trades"
@@ -2298,9 +2292,7 @@ class LiveTradingEngine:
                     source="poll",
                     exchange_timestamp=response.updated_at,
                 )
-                self._check_trade_completion(
-                    had_open_trade, circuit_breaker_before, "polling"
-                )
+                self._check_trade_completion(had_open_trade, circuit_breaker_before, "polling")
 
                 # Queue async enrichment
                 self._orders_needing_reconciliation.add(live_order.internal_id)
@@ -2311,11 +2303,7 @@ class LiveTradingEngine:
 
         # Emit "status_change" audit event when polling detects terminal status
         # without new fill data.
-        if (
-            response.status != old_status
-            and live_order.is_complete
-            and not has_new_fills
-        ):
+        if response.status != old_status and live_order.is_complete and not has_new_fills:
             self._pending_order_events.append(
                 {
                     "type": "status_change",
@@ -2379,6 +2367,7 @@ class LiveTradingEngine:
             amount=fill_amount,
             fee=fill_fee,
             timestamp=exchange_timestamp or datetime.now(UTC),
+            fee_currency=live_order.fee_currency,
         )
 
         # force=True: live fills are already executed on the exchange and must
@@ -2641,16 +2630,11 @@ class LiveTradingEngine:
                 self._timed_out_orders[order.id] = order
             else:
                 # Detect insufficient funds and notify user (B2)
-                is_insufficient = (
-                    isinstance(e, InvalidOrderError) and e.field == "amount"
-                )
+                is_insufficient = isinstance(e, InvalidOrderError) and e.field == "amount"
                 if is_insufficient:
                     if order.side == OrderSide.BUY:
                         title = "余额不足"
-                        msg = (
-                            f"买入失败：{order.symbol} {order.amount}，"
-                            "交易所余额不足"
-                        )
+                        msg = f"买入失败：{order.symbol} {order.amount}，交易所余额不足"
                     else:
                         title = "持仓不足"
                         msg = (
@@ -2931,7 +2915,8 @@ class LiveTradingEngine:
             "unrealized_pnl": str(ctx._get_unrealized_pnl()),
             "realized_pnl": str(ctx._cumulative_realized_pnl),
             "total_fees": str(ctx._total_fees),
-            "completed_orders_count": len(ctx._completed_orders),
+            "completed_orders_count": ctx._restored_completed_orders_count
+            + len(ctx._completed_orders),
             "trades_count": len(ctx._trades),
             "positions": {
                 sym: {
