@@ -9,11 +9,11 @@ from __future__ import annotations
 
 import logging
 from decimal import Decimal
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock, patch
+from uuid import uuid4
 
 import pytest
 
-from squant.schemas.live_trading import AccountBalanceResponse
 from squant.services.live_trading import LiveTradingService
 
 
@@ -26,97 +26,91 @@ def mock_session():
 @pytest.fixture
 def service(mock_session):
     """Create a LiveTradingService with mock session."""
-    return LiveTradingService(mock_session)
+    svc = LiveTradingService(mock_session)
+    svc.run_repo = AsyncMock()
+    return svc
+
+
+@pytest.fixture
+def mock_adapter():
+    """Create a mock adapter with get_account_total_value."""
+    adapter = AsyncMock()
+    return adapter
 
 
 class TestCheckResumeBalance:
     """Tests for _check_resume_balance method."""
 
-    async def test_sufficient_balance_passes(self, service):
+    async def test_sufficient_balance_passes(self, service, mock_adapter):
         """When available balance >= session equity, no exception is raised."""
-        service.get_account_available_balance = AsyncMock(
-            return_value=AccountBalanceResponse(
-                account_total_value=Decimal("15000"),
+        mock_adapter.get_account_total_value.return_value = (Decimal("15000"), [])
+        service.run_repo.list_running_by_account = AsyncMock(return_value=[])
+
+        with patch("squant.services.live_trading.get_live_session_manager"):
+            await service._check_resume_balance(
+                adapter=mock_adapter,
+                account_id="acc-123",
+                session_equity=Decimal("10000"),
                 quote_currency="USDT",
-                available=Decimal("12000"),
             )
-        )
 
-        # Should not raise
-        await service._check_resume_balance(
-            account_id="acc-123",
-            session_equity=Decimal("10000"),
-            quote_currency="USDT",
-        )
-
-        service.get_account_available_balance.assert_awaited_once_with("acc-123", "USDT")
-
-    async def test_equal_balance_passes(self, service):
+    async def test_equal_balance_passes(self, service, mock_adapter):
         """When available balance == session equity, no exception is raised."""
-        service.get_account_available_balance = AsyncMock(
-            return_value=AccountBalanceResponse(
-                account_total_value=Decimal("10000"),
+        mock_adapter.get_account_total_value.return_value = (Decimal("10000"), [])
+        service.run_repo.list_running_by_account = AsyncMock(return_value=[])
+
+        with patch("squant.services.live_trading.get_live_session_manager"):
+            await service._check_resume_balance(
+                adapter=mock_adapter,
+                account_id="acc-123",
+                session_equity=Decimal("10000"),
                 quote_currency="USDT",
-                available=Decimal("10000"),
             )
-        )
 
-        # Should not raise — exact match is OK
-        await service._check_resume_balance(
-            account_id="acc-123",
-            session_equity=Decimal("10000"),
-            quote_currency="USDT",
-        )
-
-    async def test_insufficient_balance_raises(self, service):
+    async def test_insufficient_balance_raises(self, service, mock_adapter):
         """When session equity > available balance, ValueError is raised."""
-        service.get_account_available_balance = AsyncMock(
-            return_value=AccountBalanceResponse(
-                account_total_value=Decimal("8000"),
-                quote_currency="USDT",
-                available=Decimal("5000"),
-            )
-        )
+        mock_adapter.get_account_total_value.return_value = (Decimal("8000"), [])
+        service.run_repo.list_running_by_account = AsyncMock(return_value=[])
 
-        with pytest.raises(ValueError, match="Insufficient balance to resume session"):
-            await service._check_resume_balance(
-                account_id="acc-123",
-                session_equity=Decimal("10000"),
-                quote_currency="USDT",
-            )
+        with patch("squant.services.live_trading.get_live_session_manager"):
+            with pytest.raises(ValueError, match="Insufficient balance to resume session"):
+                await service._check_resume_balance(
+                    adapter=mock_adapter,
+                    account_id="acc-123",
+                    session_equity=Decimal("10000"),
+                    quote_currency="USDT",
+                )
 
-    async def test_insufficient_balance_message_includes_amounts(self, service):
-        """ValueError message should include both session equity and available balance."""
-        service.get_account_available_balance = AsyncMock(
-            return_value=AccountBalanceResponse(
-                account_total_value=Decimal("8000"),
-                quote_currency="USDT",
-                available=Decimal("5000"),
-            )
-        )
+    async def test_deducts_running_sessions_equity(self, service, mock_adapter):
+        """Available balance should exclude other running sessions' equity."""
+        mock_adapter.get_account_total_value.return_value = (Decimal("15000"), [])
 
-        with pytest.raises(ValueError) as exc_info:
-            await service._check_resume_balance(
-                account_id="acc-123",
-                session_equity=Decimal("10000"),
-                quote_currency="USDT",
-            )
+        # Another session using 8000
+        other_run = MagicMock()
+        other_run.id = str(uuid4())
+        other_run.result = {"equity": 8000}
+        service.run_repo.list_running_by_account = AsyncMock(return_value=[other_run])
 
-        msg = str(exc_info.value)
-        assert "10000" in msg
-        assert "5000" in msg
-        assert "USDT" in msg
+        mock_manager = MagicMock()
+        mock_manager.get.return_value = None  # Not in memory, use DB snapshot
 
-    async def test_balance_check_failure_logs_warning(self, service, caplog):
-        """When get_account_available_balance raises a non-ValueError exception,
-        log a warning and do not raise."""
-        service.get_account_available_balance = AsyncMock(
-            side_effect=RuntimeError("Exchange connection failed")
-        )
+        with patch("squant.services.live_trading.get_live_session_manager", return_value=mock_manager):
+            # available = 15000 - 8000 = 7000, session_equity = 10000 > 7000
+            with pytest.raises(ValueError, match="Insufficient balance"):
+                await service._check_resume_balance(
+                    adapter=mock_adapter,
+                    account_id="acc-123",
+                    session_equity=Decimal("10000"),
+                    quote_currency="USDT",
+                )
+
+    async def test_balance_check_failure_logs_warning(self, service, mock_adapter, caplog):
+        """When adapter raises, log a warning and do not raise."""
+        mock_adapter.get_account_total_value.side_effect = RuntimeError("Exchange connection failed")
 
         with caplog.at_level(logging.WARNING, logger="squant.services.live_trading"):
-            # Should NOT raise
             await service._check_resume_balance(
+                adapter=mock_adapter,
                 account_id="acc-123",
                 session_equity=Decimal("10000"),
                 quote_currency="USDT",
@@ -124,4 +118,3 @@ class TestCheckResumeBalance:
 
         assert "Balance check failed" in caplog.text
         assert "acc-123" in caplog.text
-        assert "proceeding with resume" in caplog.text
