@@ -471,11 +471,10 @@ class TestStateSnapshot:
         snapshot = engine.get_state_snapshot()
 
         assert "trades" in snapshot
-        assert "logs" in snapshot
         assert isinstance(snapshot["trades"], list)
-        assert isinstance(snapshot["logs"], list)
         assert snapshot["trades"] == []
-        assert snapshot["logs"] == []
+        assert isinstance(engine.context.logs, list)
+        assert engine.context.logs == []
 
     @pytest.mark.asyncio
     async def test_state_snapshot_with_completed_trade(self, run_id):
@@ -578,10 +577,10 @@ class TestStateSnapshot:
         # Manually add a log via context
         engine.context.log("Test log message")
 
-        snapshot = engine.get_state_snapshot()
+        logs = engine.context.logs
 
-        assert len(snapshot["logs"]) == 1
-        assert "Test log message" in snapshot["logs"][0]
+        assert len(logs) == 1
+        assert "Test log message" in logs[0]
 
 
 class TestPendingSnapshots:
@@ -1474,7 +1473,6 @@ class TestResultCallback:
         assert "trades" in result_data
         assert "unrealized_pnl" in result_data
         assert "realized_pnl" in result_data
-        assert "logs" in result_data
         assert "bar_count" in result_data
 
     @pytest.mark.asyncio

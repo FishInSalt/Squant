@@ -8,6 +8,7 @@ The BacktestContext is injected into user strategies and provides:
 - Logging
 """
 
+import logging
 from collections import deque
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -52,6 +53,8 @@ class BacktestContext:
         max_trades: int | None = None,
         max_logs: int = 1000,
         min_order_value: Decimal = Decimal("5"),
+        file_logger: logging.Logger | None = None,
+        use_real_time: bool = False,
     ):
         """Initialize backtest context.
 
@@ -106,6 +109,8 @@ class BacktestContext:
 
         # Logging
         self._logs: deque[str] = deque(maxlen=max_logs)
+        self._file_logger = file_logger
+        self._use_real_time = use_real_time
 
         # Cumulative counters for incremental WebSocket tracking and callback delivery.
         # Deque maxlen causes old items to be evicted, so len(deque) plateaus.
@@ -714,15 +719,23 @@ class BacktestContext:
     # Logging
     # =========================================================================
 
-    def log(self, message: str) -> None:
-        """Log a message.
+    def log(self, message: str, level: str = "info", category: str = "strategy") -> None:
+        """Log a message with level and category.
 
         Args:
             message: Message to log.
+            level: Log level (info, warning, error).
+            category: Log category (strategy, order, fill, risk, system).
         """
-        timestamp = self._current_bar.time if self._current_bar else datetime.now(UTC)
-        self._logs.append(f"[{timestamp}] {message}")
+        if self._use_real_time:
+            timestamp = datetime.now(UTC)
+        else:
+            timestamp = self._current_bar.time if self._current_bar else datetime.now(UTC)
+        entry = f"[{timestamp:%Y-%m-%d %H:%M:%S}] [{level.upper()}] [{category}] {message}"
+        self._logs.append(entry)
         self._total_logs_added += 1
+        if self._file_logger:
+            self._file_logger.info(entry)
 
     # =========================================================================
     # Internal Methods (called by BacktestRunner)
@@ -1135,7 +1148,6 @@ class BacktestContext:
             "trades_count": len(self._trades),
             "completed_orders_count": self._restored_completed_orders_count
             + len(self._completed_orders),
-            "logs": list(self._logs),
             "benchmark_initial_price": (
                 str(self._benchmark_initial_price)
                 if self._benchmark_initial_price is not None
@@ -1221,13 +1233,6 @@ class BacktestContext:
         # Restore completed orders count (content not serialized, only count)
         self._restored_completed_orders_count = state.get("completed_orders_count", 0)
         self._total_completed_added = self._restored_completed_orders_count
-
-        # Restore logs
-        if state.get("logs") is not None:
-            self._logs.clear()
-            for log_entry in state["logs"]:
-                self._logs.append(log_entry)
-            self._total_logs_added = len(self._logs)
 
         # Restore benchmark initial price for buy-and-hold comparison
         bip = state.get("benchmark_initial_price")

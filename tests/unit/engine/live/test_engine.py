@@ -1136,7 +1136,6 @@ class TestStateSnapshot:
         assert snapshot["pending_orders"] == []
         assert snapshot["trades"] == []
         assert snapshot["open_trade"] is None
-        assert "logs" in snapshot
         assert "risk_state" in snapshot
 
     @pytest.mark.asyncio
