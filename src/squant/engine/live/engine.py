@@ -803,6 +803,11 @@ class LiveTradingEngine:
                 f"Failed to refresh Dead Man's Switch: {e} "
                 f"(consecutive failures: {self._dms_consecutive_failures})"
             )
+            self._context.log(
+                f"Dead Man's Switch 续期失败: {e}",
+                level="warning",
+                category="system",
+            )
             if self._dms_consecutive_failures == self._dms_failure_threshold:
                 logger.error(
                     f"DMS heartbeat lost for {self._run_id}: "
@@ -2237,6 +2242,11 @@ class LiveTradingEngine:
                     f"Order {internal_id} expired (TTL reached), "
                     f"cancel status={live_order.status.value}"
                 )
+                self._context.log(
+                    f"订单超时已取消 #{internal_id[:8]}",
+                    level="warning",
+                    category="order",
+                )
             except Exception as e:
                 logger.warning(f"Failed to cancel expired order {internal_id}: {e}")
 
@@ -2374,6 +2384,15 @@ class LiveTradingEngine:
         # be recorded regardless of local cash/position tracking (ISSUE-201 fix)
         self._context._process_fill(fill, force=True)
         self._context._move_completed_orders()
+
+        side_cn = "买入" if live_order.side == OrderSide.BUY else "卖出"
+        fee_info = f" fee={fill_fee}"
+        if live_order.fee_currency:
+            fee_info += f" {live_order.fee_currency}"
+        self._context.log(
+            f"{side_cn}成交 {live_order.symbol} {fill_amount} @{fill_price}{fee_info} ({source})",
+            category="fill",
+        )
 
         # Record fill for daily trade count limit (LIVE-RM-001)
         self._risk_manager.record_order_fill()
@@ -2587,6 +2606,11 @@ class LiveTradingEngine:
                 f"Order submitted: {order.id} -> exchange:{response.order_id}, "
                 f"status={response.status.value}"
             )
+            self._context.log(
+                f"订单已提交 {order.symbol} {order.side.value} {order.amount} "
+                f"{order.type.value} → exchange:{response.order_id}",
+                category="order",
+            )
 
             # Buffer "placed" event for audit persistence (LIVE-013)
             self._pending_order_events.append(
@@ -2612,6 +2636,11 @@ class LiveTradingEngine:
                 f"({order.symbol} {order.side.value} {order.amount}). "
                 "Order may have been placed — will reconcile on next sync."
             )
+            self._context.log(
+                f"订单提交超时 {order.symbol} {order.side.value} {order.amount}，将在下次同步时对账",
+                level="warning",
+                category="order",
+            )
             # Do NOT mark as REJECTED — the order may be live on the exchange.
             # Track by client_order_id so _reconcile_timed_out_orders can query
             # the exchange and recover the order on the next bar (R5-F3).
@@ -2626,6 +2655,11 @@ class LiveTradingEngine:
                     f"Order submission likely timed out for {order.id} "
                     f"({order.symbol} {order.side.value} {order.amount}): {e}. "
                     "Order may have been placed — will reconcile on next sync."
+                )
+                self._context.log(
+                    f"订单提交超时 {order.symbol} {order.side.value} {order.amount}，将在下次同步时对账",
+                    level="warning",
+                    category="order",
                 )
                 self._timed_out_orders[order.id] = order
             else:
@@ -2648,8 +2682,14 @@ class LiveTradingEngine:
                         title=title,
                         message=msg,
                     )
+                    self._context.log(msg, level="warning", category="order")
 
                 logger.exception(f"Failed to submit order {order.id}: {e}")
+                self._context.log(
+                    f"下单失败: {e}",
+                    level="error",
+                    category="order",
+                )
                 # Mark as rejected
                 order.status = OrderStatus.REJECTED
                 self._context._completed_orders.append(order)
@@ -2679,6 +2719,10 @@ class LiveTradingEngine:
                     if live_order.status == OrderStatus.CANCELLED:
                         cancelled.append(internal_id)
                         logger.info(f"Cancelled order {internal_id}")
+                        self._context.log(
+                            f"订单已取消 #{internal_id[:8]}",
+                            category="order",
+                        )
                     else:
                         logger.warning(
                             f"Order {internal_id} was {live_order.status.value} "
