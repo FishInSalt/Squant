@@ -772,11 +772,8 @@ class BacktestContext:
 
         # Calculate trade cost/proceeds and validate
         if fill.side == OrderSide.BUY:
-            if fee_in_base:
-                # Fee deducted from received base currency, not from cash
-                cost = fill.price * fill.amount
-            else:
-                cost = fill.price * fill.amount + fill.fee
+            # Fee in base currency doesn't affect cash; fee in quote adds to cost
+            cost = fill.price * fill.amount if fee_in_base else fill.price * fill.amount + fill.fee
             # Validate sufficient cash before executing
             if not force and self._cash < cost:
                 raise ValueError(

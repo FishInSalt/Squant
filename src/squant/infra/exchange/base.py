@@ -93,9 +93,7 @@ class ExchangeAdapter(ABC):
         return account.get_balance(currency)
 
     @abstractmethod
-    async def get_account_total_value(
-        self, quote_currency: str
-    ) -> tuple[Decimal, list[Balance]]:
+    async def get_account_total_value(self, quote_currency: str) -> tuple[Decimal, list[Balance]]:
         """Get total account value denominated in quote currency.
 
         Converts all non-quote currency balances to quote currency using

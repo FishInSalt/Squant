@@ -115,9 +115,7 @@ class TestInsufficientFundsNotification:
         engine._context._pending_orders = [order]
 
         engine._adapter.place_order = AsyncMock(
-            side_effect=InvalidOrderError(
-                message="Invalid price", exchange="okx", field="price"
-            )
+            side_effect=InvalidOrderError(message="Invalid price", exchange="okx", field="price")
         )
 
         with patch("squant.engine.live.engine._fire_notification") as mock_notify:
@@ -134,9 +132,7 @@ class TestInsufficientFundsNotification:
         order = _make_order(OrderSide.BUY)
         engine._context._pending_orders = [order]
 
-        engine._adapter.place_order = AsyncMock(
-            side_effect=RuntimeError("Something went wrong")
-        )
+        engine._adapter.place_order = AsyncMock(side_effect=RuntimeError("Something went wrong"))
 
         with patch("squant.engine.live.engine._fire_notification") as mock_notify:
             await engine._submit_order(order)

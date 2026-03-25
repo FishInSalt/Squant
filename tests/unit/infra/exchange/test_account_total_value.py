@@ -69,10 +69,17 @@ class TestGetAccountTotalValue:
         adapter._exchange.fetch_balance.return_value = {
             "free": {"USDT": 1000.0, "BTC": 0.5},
             "used": {"USDT": 0, "BTC": 0},
-            "info": {"data": [{"totalEq": "42000.55", "details": [
-                {"ccy": "USDT", "eq": "1000.0"},
-                {"ccy": "BTC", "eq": "0.5"},
-            ]}]},
+            "info": {
+                "data": [
+                    {
+                        "totalEq": "42000.55",
+                        "details": [
+                            {"ccy": "USDT", "eq": "1000.0"},
+                            {"ccy": "BTC", "eq": "0.5"},
+                        ],
+                    }
+                ]
+            },
         }
         adapter._exchange.fetch_ticker.return_value = {"last": 60000.0}
 
@@ -88,10 +95,17 @@ class TestGetAccountTotalValue:
         adapter._exchange.fetch_balance.return_value = {
             "free": {"USDT": 86412.55},
             "used": {"USDT": 0},
-            "info": {"data": [{"totalEq": "86390.95", "details": [
-                {"ccy": "USDT", "eq": "86412.55"},
-                {"ccy": "BTC", "eq": "0.00000000009"},
-            ]}]},
+            "info": {
+                "data": [
+                    {
+                        "totalEq": "86390.95",
+                        "details": [
+                            {"ccy": "USDT", "eq": "86412.55"},
+                            {"ccy": "BTC", "eq": "0.00000000009"},
+                        ],
+                    }
+                ]
+            },
         }
         adapter._exchange.fetch_ticker.return_value = {"last": 87000.0}
 

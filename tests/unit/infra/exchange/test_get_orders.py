@@ -80,16 +80,19 @@ class TestGetOrders:
             "BTC/USDT", since=since_ms, limit=100
         )
         # Verify open orders called with since_ms
-        adapter._exchange.fetch_open_orders.assert_called_once_with(
-            "BTC/USDT", since=since_ms
-        )
+        adapter._exchange.fetch_open_orders.assert_called_once_with("BTC/USDT", since=since_ms)
 
     async def test_pagination_loops_until_short_page(self, adapter):
         """When first page returns 100 orders, fetches next page; stops at short page."""
         # Page 1: 100 orders
-        page1 = [_make_raw_order(f"ord-{i:03d}", timestamp=1711000000000 + i * 1000) for i in range(100)]
+        page1 = [
+            _make_raw_order(f"ord-{i:03d}", timestamp=1711000000000 + i * 1000) for i in range(100)
+        ]
         # Page 2: 30 orders (short page -> stop)
-        page2 = [_make_raw_order(f"ord-{i:03d}", timestamp=1711000100000 + i * 1000) for i in range(100, 130)]
+        page2 = [
+            _make_raw_order(f"ord-{i:03d}", timestamp=1711000100000 + i * 1000)
+            for i in range(100, 130)
+        ]
 
         adapter._exchange.fetch_closed_orders.side_effect = [page1, page2]
         adapter._exchange.fetch_open_orders.return_value = []
@@ -157,9 +160,7 @@ class TestGetOrders:
         adapter._exchange.fetch_closed_orders.assert_called_once_with(
             "BTC/USDT", since=None, limit=100
         )
-        adapter._exchange.fetch_open_orders.assert_called_once_with(
-            "BTC/USDT", since=None
-        )
+        adapter._exchange.fetch_open_orders.assert_called_once_with("BTC/USDT", since=None)
 
     async def test_until_filters_closed_orders(self, adapter):
         """Closed orders after until timestamp are excluded."""

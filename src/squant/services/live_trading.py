@@ -646,9 +646,7 @@ class LiveTradingService:
                 await adapter.close()
             except Exception:
                 pass
-            raise LiveExchangeConnectionError(
-                f"Failed to connect to exchange: {e}"
-            ) from e
+            raise LiveExchangeConnectionError(f"Failed to connect to exchange: {e}") from e
         return adapter
 
     def _build_ws_credentials(self, account: ExchangeAccount) -> ExchangeCredentials | None:
@@ -941,7 +939,9 @@ class LiveTradingService:
                                     # Update first unmatched trade with enrichment data
                                     trade_to_update = unmatched_trades[0]
                                     trade_to_update.exchange_tid = trade_data.get("exchange_tid")
-                                    trade_to_update.taker_or_maker = trade_data.get("taker_or_maker")
+                                    trade_to_update.taker_or_maker = trade_data.get(
+                                        "taker_or_maker"
+                                    )
                                     if trade_data.get("price"):
                                         trade_to_update.price = Decimal(trade_data["price"])
                                     if trade_data.get("amount"):
@@ -957,9 +957,7 @@ class LiveTradingService:
                             )
 
                         else:
-                            logger.warning(
-                                f"Unknown order event type: {event.get('type')}"
-                            )
+                            logger.warning(f"Unknown order event type: {event.get('type')}")
 
                     except Exception as e:
                         logger.warning(f"Failed to persist order event {event.get('type')}: {e}")
@@ -1511,9 +1509,9 @@ class LiveTradingService:
         order_repo = OrderRepository(self.session)
         stale_orders = await order_repo.list_by_run(run_id, offset=0, limit=100)
         non_terminal = [
-            o for o in stale_orders
-            if o.status in (OrderStatus.SUBMITTED, OrderStatus.PARTIAL)
-            and o.exchange_oid
+            o
+            for o in stale_orders
+            if o.status in (OrderStatus.SUBMITTED, OrderStatus.PARTIAL) and o.exchange_oid
         ]
 
         if not non_terminal:
@@ -2213,10 +2211,7 @@ class LiveTradingService:
         except LiveTradingError:
             raise  # Re-raise insufficient balance
         except Exception as e:
-            logger.warning(
-                f"Balance check failed for account {account_id}, "
-                f"proceeding: {e}"
-            )
+            logger.warning(f"Balance check failed for account {account_id}, proceeding: {e}")
 
     @staticmethod
     def _compute_reconciliation_since(
@@ -2320,9 +2315,7 @@ class LiveTradingService:
         if not missing:
             return report
 
-        logger.info(
-            f"Recovery reconciliation for {run_id}: found {len(missing)} missing orders"
-        )
+        logger.info(f"Recovery reconciliation for {run_id}: found {len(missing)} missing orders")
 
         async with get_session_context() as db_session:
             order_repo = OrderRepository(db_session)
@@ -2371,8 +2364,7 @@ class LiveTradingService:
                         )
                 except Exception as e:
                     logger.warning(
-                        f"Failed to fetch fills for recovered order "
-                        f"{ex_order.order_id}: {e}"
+                        f"Failed to fetch fills for recovered order {ex_order.order_id}: {e}"
                     )
 
                 if ex_order.filled and ex_order.filled > 0:
@@ -2384,9 +2376,7 @@ class LiveTradingService:
                             status=ex_order.status,
                         )
                     except Exception as e:
-                        logger.warning(
-                            f"Failed to update recovered order {ex_order.order_id}: {e}"
-                        )
+                        logger.warning(f"Failed to update recovered order {ex_order.order_id}: {e}")
 
                 report["missing_orders_recovered"] += 1
 

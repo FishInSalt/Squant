@@ -485,8 +485,7 @@ class TestReconciliationQueue:
             timestamp=datetime.now(UTC),
         )
 
-        with patch.object(engine, "_record_fill"), \
-             patch.object(engine, "_check_trade_completion"):
+        with patch.object(engine, "_record_fill"), patch.object(engine, "_check_trade_completion"):
             engine._process_single_ws_update(update)
 
         # Fallback fill processed, queued for async enrichment

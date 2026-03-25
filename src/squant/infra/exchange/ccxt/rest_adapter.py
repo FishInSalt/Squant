@@ -388,9 +388,7 @@ class CCXTRestAdapter(ExchangeAdapter):
                 exchange=self._exchange_id,
             ) from e
 
-    async def get_account_total_value(
-        self, quote_currency: str
-    ) -> tuple[Decimal, list[Balance]]:
+    async def get_account_total_value(self, quote_currency: str) -> tuple[Decimal, list[Balance]]:
         """Get total account value denominated in quote currency.
 
         Priority 1: Use OKX native totalEq from raw response info.
@@ -471,9 +469,7 @@ class CCXTRestAdapter(ExchangeAdapter):
                         else:
                             # Convert non-quote currency via ticker
                             try:
-                                ticker = await self._exchange.fetch_ticker(
-                                    f"{ccy}/{quote_upper}"
-                                )
+                                ticker = await self._exchange.fetch_ticker(f"{ccy}/{quote_upper}")
                                 price = Decimal(str(ticker["last"]))
                                 total_value += eq_val * price
                                 used_native = True

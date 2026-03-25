@@ -8,7 +8,6 @@ includes _restored_completed_orders_count after resume.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
 from decimal import Decimal
 from unittest.mock import AsyncMock, MagicMock
 
@@ -130,7 +129,7 @@ class TestReconcileOrderCount:
 
         engine._record_fill = MagicMock()
 
-        report = await service._reconcile_orders(engine, adapter, "BTC/USDT")
+        await service._reconcile_orders(engine, adapter, "BTC/USDT")
 
         # Order still tracked, count unchanged
         assert "int-1" in engine._live_orders

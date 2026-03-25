@@ -14,7 +14,7 @@ from decimal import Decimal
 import pytest
 
 from squant.engine.backtest.context import BacktestContext
-from squant.engine.backtest.types import Fill, Position
+from squant.engine.backtest.types import Fill
 from squant.models.enums import OrderSide
 
 

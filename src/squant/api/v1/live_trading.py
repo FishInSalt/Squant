@@ -481,9 +481,7 @@ async def get_account_balance(
     """
     service = LiveTradingService(session)
     try:
-        result = await service.get_account_available_balance(
-            str(account_id), quote_currency
-        )
+        result = await service.get_account_available_balance(str(account_id), quote_currency)
         return ApiResponse(data=result)
     except ExchangeAccountNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e)) from e

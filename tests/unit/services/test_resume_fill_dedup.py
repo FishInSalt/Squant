@@ -10,14 +10,14 @@ This test verifies that fill events from step 11 are discarded before step 11b.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from decimal import Decimal
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from squant.infra.exchange.types import OrderResponse
-from squant.models.enums import OrderSide, OrderStatus, OrderType, RunStatus
+from squant.models.enums import OrderSide, OrderStatus, OrderType
 from squant.services.live_trading import LiveTradingService
 
 
@@ -79,13 +79,15 @@ class TestResumeFillDedup:
 
         # _record_fill should add a fill event
         def mock_record_fill(lo, price, amount, fee_delta, total_fee, source, **kwargs):
-            engine._pending_order_events.append({
-                "type": "fill",
-                "internal_id": lo.internal_id,
-                "fill_price": str(price),
-                "fill_amount": str(amount),
-                "fill_source": source,
-            })
+            engine._pending_order_events.append(
+                {
+                    "type": "fill",
+                    "internal_id": lo.internal_id,
+                    "fill_price": str(price),
+                    "fill_amount": str(amount),
+                    "fill_source": source,
+                }
+            )
 
         engine._record_fill = mock_record_fill
 
