@@ -248,7 +248,10 @@ class ExchangeAdapter(ABC):
 
     @abstractmethod
     async def get_orders(
-        self, symbol: str, since: datetime | None = None
+        self,
+        symbol: str,
+        since: datetime | None = None,
+        until: datetime | None = None,
     ) -> list[OrderResponse]:
         """Get all orders (open + closed) for a symbol with pagination.
 
@@ -258,6 +261,8 @@ class ExchangeAdapter(ABC):
         Args:
             symbol: Trading pair in standard format (e.g., 'BTC/USDT').
             since: Only return orders created after this time (optional).
+            until: Only return orders created before this time (optional).
+                Used to limit query scope for old sessions during recovery.
 
         Returns:
             List of all orders (both open and closed), deduplicated.

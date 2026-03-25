@@ -1913,6 +1913,9 @@ class LiveTradingService:
             timeframe=run.timeframe,
             fallback=run.started_at,
         )
+        # Upper bound: stopped_at (session was inactive after that), with small margin
+        recovery_until = run.stopped_at if run.stopped_at else None
+
         recovery_report = await self._reconcile_missing_orders(
             adapter=adapter,
             run_id=run.id,
@@ -1921,6 +1924,7 @@ class LiveTradingService:
             symbol=run.symbol,
             db_orders=existing_orders,  # from step 10b
             since=recovery_since,
+            until=recovery_until,
         )
         logger.info(f"Recovery reconciliation for {run_id}: {recovery_report}")
 
@@ -2264,6 +2268,7 @@ class LiveTradingService:
         symbol: str,
         db_orders: list,
         since: datetime,
+        until: datetime | None = None,
     ) -> dict[str, Any]:
         """Find and recover orders on exchange that are missing from DB.
 
@@ -2284,6 +2289,7 @@ class LiveTradingService:
             symbol: Trading symbol (e.g. "BTC/USDT").
             db_orders: Existing DB order records for this run.
             since: How far back to look for orders on the exchange.
+            until: Upper time bound for order query (limits scope for old sessions).
 
         Returns:
             Dict with keys: missing_orders_found, missing_orders_recovered, errors.
@@ -2298,7 +2304,7 @@ class LiveTradingService:
         }
 
         try:
-            exchange_orders = await adapter.get_orders(symbol, since=since)
+            exchange_orders = await adapter.get_orders(symbol, since=since, until=until)
         except Exception as e:
             logger.warning(f"Recovery reconciliation: failed to fetch orders: {e}")
             report["errors"].append(str(e))

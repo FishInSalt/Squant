@@ -804,12 +804,16 @@ class CCXTRestAdapter(ExchangeAdapter):
         return result
 
     async def get_orders(
-        self, symbol: str, since: datetime | None = None
+        self,
+        symbol: str,
+        since: datetime | None = None,
+        until: datetime | None = None,
     ) -> list[OrderResponse]:
         """Get all orders (open + closed) for a symbol with pagination.
 
         Fetches closed orders with automatic pagination (100 per page),
         then fetches open orders, and deduplicates by order ID.
+        Orders with timestamp after `until` are excluded from results.
         """
         if not self._exchange:
             raise ExchangeConnectionError(
@@ -824,6 +828,7 @@ class CCXTRestAdapter(ExchangeAdapter):
             )
 
         since_ms: int | None = int(since.timestamp() * 1000) if since else None
+        until_ms: int | None = int(until.timestamp() * 1000) if until else None
 
         try:
             # Paginate closed orders
@@ -837,11 +842,20 @@ class CCXTRestAdapter(ExchangeAdapter):
                     symbol, since=cursor, limit=page_size
                 )
 
+                reached_until = False
                 for raw_order in batch:
+                    # Stop if order is beyond the until boundary
+                    if until_ms and raw_order.get("timestamp", 0) > until_ms:
+                        reached_until = True
+                        break
                     oid = str(raw_order.get("id", ""))
                     if oid and oid not in seen_ids:
                         seen_ids.add(oid)
                         all_orders.append(self._transform_order(raw_order))
+
+                # Stop if we've reached the until boundary
+                if reached_until:
+                    break
 
                 # Stop if short page (less than page_size means no more data)
                 if len(batch) < page_size:
@@ -857,6 +871,9 @@ class CCXTRestAdapter(ExchangeAdapter):
             # Fetch open orders (no pagination needed, typically few)
             open_orders = await self._exchange.fetch_open_orders(symbol, since=since_ms)
             for raw_order in open_orders:
+                # Skip if beyond until boundary
+                if until_ms and raw_order.get("timestamp", 0) > until_ms:
+                    continue
                 oid = str(raw_order.get("id", ""))
                 if oid and oid not in seen_ids:
                     seen_ids.add(oid)

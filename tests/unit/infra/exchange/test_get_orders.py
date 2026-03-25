@@ -160,3 +160,69 @@ class TestGetOrders:
         adapter._exchange.fetch_open_orders.assert_called_once_with(
             "BTC/USDT", since=None
         )
+
+    async def test_until_filters_closed_orders(self, adapter):
+        """Closed orders after until timestamp are excluded."""
+        t1 = 1711000000000  # within range
+        t2 = 1711000001000  # within range
+        t3 = 1711000010000  # beyond until
+        order1 = _make_raw_order("o1", timestamp=t1)
+        order2 = _make_raw_order("o2", timestamp=t2)
+        order3 = _make_raw_order("o3", timestamp=t3)  # should be filtered
+
+        adapter._exchange.fetch_closed_orders.return_value = [order1, order2, order3]
+        adapter._exchange.fetch_open_orders.return_value = []
+
+        # until is between t2 and t3
+        until_dt = datetime(2024, 3, 21, 14, 46, 42, tzinfo=UTC)
+        until_ms = int(until_dt.timestamp() * 1000)
+        # Make t3 clearly after until
+        order3["timestamp"] = until_ms + 5000
+
+        result = await adapter.get_orders("BTC/USDT", until=until_dt)
+
+        order_ids = {r.order_id for r in result}
+        assert "o1" in order_ids
+        assert "o2" in order_ids
+        assert "o3" not in order_ids
+
+    async def test_until_filters_open_orders(self, adapter):
+        """Open orders after until timestamp are excluded."""
+        adapter._exchange.fetch_closed_orders.return_value = []
+
+        until_dt = datetime(2024, 3, 21, 12, 0, 0, tzinfo=UTC)
+        until_ms = int(until_dt.timestamp() * 1000)
+
+        open_in_range = _make_raw_order("o1", status="open", timestamp=until_ms - 1000)
+        open_out_range = _make_raw_order("o2", status="open", timestamp=until_ms + 1000)
+
+        adapter._exchange.fetch_open_orders.return_value = [open_in_range, open_out_range]
+
+        result = await adapter.get_orders("BTC/USDT", until=until_dt)
+
+        order_ids = {r.order_id for r in result}
+        assert "o1" in order_ids
+        assert "o2" not in order_ids
+
+    async def test_until_stops_pagination_early(self, adapter):
+        """When until boundary is hit during pagination, stops fetching more pages."""
+        until_dt = datetime(2024, 3, 21, 12, 0, 0, tzinfo=UTC)
+        until_ms = int(until_dt.timestamp() * 1000)
+
+        # Full page of 100 orders, last one is beyond until
+        page1 = [
+            _make_raw_order(f"ord-{i:03d}", timestamp=until_ms - (100 - i) * 1000)
+            for i in range(99)
+        ]
+        # 100th order is beyond until
+        page1.append(_make_raw_order("ord-099", timestamp=until_ms + 1000))
+
+        adapter._exchange.fetch_closed_orders.return_value = page1
+        adapter._exchange.fetch_open_orders.return_value = []
+
+        result = await adapter.get_orders("BTC/USDT", until=until_dt)
+
+        # Should have 99 orders (the 100th is beyond until)
+        assert len(result) == 99
+        # Should NOT fetch a second page since we hit the until boundary
+        assert adapter._exchange.fetch_closed_orders.call_count == 1
