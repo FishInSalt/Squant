@@ -7,15 +7,12 @@ from pathlib import Path
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-
-from squant.infra.trading_logger import DEFAULT_LOG_BASE
-
-TRADING_LOG_BASE = DEFAULT_LOG_BASE
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from squant.api.utils import ApiResponse, PaginatedData
 from squant.engine.risk import RiskConfig
 from squant.infra.database import get_session
+from squant.infra.trading_logger import DEFAULT_LOG_BASE
 from squant.models.enums import RunStatus
 from squant.schemas.backtest import EquityCurvePoint
 from squant.schemas.live_trading import (
@@ -46,6 +43,8 @@ from squant.services.live_trading import (
 from squant.services.strategy import StrategyNotFoundError
 
 logger = logging.getLogger(__name__)
+
+TRADING_LOG_BASE = DEFAULT_LOG_BASE
 
 router = APIRouter()
 

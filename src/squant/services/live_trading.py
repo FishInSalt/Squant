@@ -23,12 +23,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from squant.engine.backtest.strategy_base import Strategy
 from squant.engine.backtest.types import EquitySnapshot
 from squant.engine.live.engine import LiveTradingEngine
-from squant.infra.trading_logger import close_trading_logger, create_trading_logger
 from squant.engine.live.manager import get_live_session_manager
 from squant.engine.risk import RiskConfig
 from squant.engine.sandbox import compile_strategy
 from squant.infra.exchange.ccxt import CCXTRestAdapter, ExchangeCredentials
 from squant.infra.repository import BaseRepository
+from squant.infra.trading_logger import close_trading_logger, create_trading_logger
 from squant.models.enums import OrderSide, OrderStatus, OrderType, RunMode, RunStatus
 from squant.models.exchange import ExchangeAccount
 from squant.models.metrics import EquityCurve

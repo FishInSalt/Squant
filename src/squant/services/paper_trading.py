@@ -20,11 +20,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from squant.engine.backtest.strategy_base import Strategy
 from squant.engine.backtest.types import EquitySnapshot
 from squant.engine.paper.engine import PaperTradingEngine
-from squant.infra.trading_logger import close_trading_logger, create_trading_logger
 from squant.engine.paper.manager import get_session_manager
 from squant.engine.resource_limits import resource_limiter
 from squant.engine.sandbox import compile_strategy
 from squant.infra.repository import BaseRepository
+from squant.infra.trading_logger import close_trading_logger, create_trading_logger
 from squant.models.enums import RunMode, RunStatus
 from squant.models.metrics import EquityCurve
 from squant.models.strategy import StrategyRun

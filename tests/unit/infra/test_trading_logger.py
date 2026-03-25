@@ -1,13 +1,8 @@
 """Tests for per-session trading logger with timestamp-suffixed rotation."""
-import logging
-import os
-import shutil
-from pathlib import Path
-from unittest.mock import patch
 
 import pytest
 
-from squant.infra.trading_logger import create_trading_logger, cleanup_trading_logs
+from squant.infra.trading_logger import cleanup_trading_logs, create_trading_logger
 
 
 @pytest.fixture
