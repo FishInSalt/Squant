@@ -182,7 +182,7 @@
               </el-table-column>
               <el-table-column prop="amount" label="数量" min-width="100" align="right">
                 <template #default="{ row }">
-                  {{ formatNumber(row.amount, 4) }}
+                  {{ formatNumber(row.amount, 8) }}
                 </template>
               </el-table-column>
               <el-table-column prop="avg_entry_price" label="均价" min-width="120" align="right">
