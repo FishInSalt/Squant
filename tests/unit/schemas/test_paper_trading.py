@@ -461,8 +461,8 @@ class TestPaperTradingStatusResponse:
         assert data["unrealized_pnl"] == 123.45
         assert data["realized_pnl"] == 456.78
 
-    def test_status_response_with_trades_and_logs(self):
-        """Test status response with trades and logs fields."""
+    def test_status_response_with_trades(self):
+        """Test status response with trades field."""
         from squant.schemas.backtest import TradeRecordResponse
 
         now = datetime.now(UTC)
@@ -480,7 +480,6 @@ class TestPaperTradingStatusResponse:
                 fees=Decimal("0.1"),
             )
         ]
-        logs = ["[2024-01-01 12:00:00] Buy signal triggered", "[2024-01-01 12:01:00] Order filled"]
 
         response = PaperTradingStatusResponse(
             run_id=uuid4(),
@@ -500,17 +499,14 @@ class TestPaperTradingStatusResponse:
             completed_orders_count=1,
             trades_count=1,
             trades=trades,
-            logs=logs,
         )
 
         assert len(response.trades) == 1
         assert response.trades[0].symbol == "BTC/USDT"
         assert response.trades[0].pnl == Decimal("100")
-        assert len(response.logs) == 2
-        assert "Buy signal" in response.logs[0]
 
-    def test_status_response_trades_and_logs_default_empty(self):
-        """Test trades and logs default to empty lists when not provided."""
+    def test_status_response_trades_default_empty(self):
+        """Test trades defaults to empty list when not provided."""
         now = datetime.now(UTC)
         response = PaperTradingStatusResponse(
             run_id=uuid4(),
@@ -532,7 +528,6 @@ class TestPaperTradingStatusResponse:
         )
 
         assert response.trades == []
-        assert response.logs == []
 
 
 class TestPaperTradingListItem:

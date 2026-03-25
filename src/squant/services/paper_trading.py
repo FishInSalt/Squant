@@ -754,7 +754,6 @@ class PaperTradingService:
                     "trades": run.result.get("trades", []),
                     "fills": run.result.get("fills", []),
                     "open_trade": run.result.get("open_trade"),
-                    "logs": run.result.get("logs", []),
                     "risk_state": run.result.get("risk_state"),
                 }
             )
@@ -774,7 +773,6 @@ class PaperTradingService:
                     "trades_count": 0,
                     "trades": [],
                     "fills": [],
-                    "logs": [],
                 }
             )
 

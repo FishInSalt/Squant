@@ -1558,7 +1558,6 @@ class TestStopSavesResult:
             },
             "completed_orders_count": 8,
             "trades_count": 4,
-            "logs": ["Live log entry"],
             "risk_state": {"is_halted": False},
         }
 
@@ -1595,11 +1594,10 @@ class TestStopSavesResult:
                         assert result["equity"] == "10200"
                         assert result["trades_count"] == 4
                         assert result["risk_state"] == {"is_halted": False}
-                        # Verify open_trade, trades, and logs are preserved
+                        # Verify open_trade and trades are preserved
                         assert result["open_trade"] is not None
                         assert result["open_trade"]["entry_time"] == "2024-06-01T10:00:00+00:00"
                         assert len(result["trades"]) == 1
-                        assert len(result["logs"]) == 1
 
 
 class TestGetStatusFromResult:
@@ -1721,7 +1719,6 @@ class TestMarkOrphanedWithRecovery:
             "realized_pnl": "300",
             "positions": {"BTC/USDT": {"amount": "0.1"}},
             "trades": [{"symbol": "BTC/USDT", "pnl": "300"}],
-            "logs": ["[10:00] Buy BTC"],
         }
 
         with (
@@ -3236,7 +3233,6 @@ class TestResumeSuccessPath:
             "trades": [],
             "fills": [],
             "completed_orders_count": 0,
-            "logs": [],
             "bar_count": 50,
             "risk_state": {
                 "total_pnl": "0",

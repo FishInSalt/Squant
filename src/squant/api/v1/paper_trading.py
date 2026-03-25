@@ -267,7 +267,6 @@ async def get_paper_trading_status(
             trades=trades,
             fills=fills,
             open_trade=open_trade,
-            logs=status.get("logs", []),
             risk_state=status.get("risk_state"),
         )
 

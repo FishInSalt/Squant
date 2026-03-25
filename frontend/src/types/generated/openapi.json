@@ -2547,6 +2547,62 @@
         }
       }
     },
+    "/api/v1/paper/{run_id}/logs": {
+      "get": {
+        "tags": [
+          "Paper Trading"
+        ],
+        "summary": "Get Trading Logs",
+        "description": "Get trading logs for a session.\n\nReads the current log file for the given run_id.\nReturns the last `tail` lines.",
+        "operationId": "get_trading_logs_api_v1_paper__run_id__logs_get",
+        "parameters": [
+          {
+            "name": "run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Run Id"
+            }
+          },
+          {
+            "name": "tail",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 5000,
+              "minimum": 1,
+              "default": 500,
+              "title": "Tail"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/paper/{run_id}": {
       "get": {
         "tags": [
@@ -3157,6 +3213,62 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ApiResponse_PaginatedData_LiveSessionOrderResponse__"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/live/{run_id}/logs": {
+      "get": {
+        "tags": [
+          "Live Trading"
+        ],
+        "summary": "Get Trading Logs",
+        "description": "Get trading logs for a session.\n\nReads the current log file for the given run_id.\nReturns the last `tail` lines.",
+        "operationId": "get_trading_logs_api_v1_live__run_id__logs_get",
+        "parameters": [
+          {
+            "name": "run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Run Id"
+            }
+          },
+          {
+            "name": "tail",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 5000,
+              "minimum": 1,
+              "default": 500,
+              "title": "Tail"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse"
                 }
               }
             }
@@ -4784,6 +4896,29 @@
         ],
         "title": "AddToWatchlistRequest",
         "description": "Request to add a symbol to the watchlist."
+      },
+      "ApiResponse": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "default": 0
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "success"
+          },
+          "data": {
+            "title": "Data"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "title": "ApiResponse",
+        "description": "Standard API response wrapper.\n\nAll API responses follow this format per dev-docs/technical/api/01-conventions.md."
       },
       "ApiResponse_AccountBalanceResponse_": {
         "properties": {
@@ -10118,13 +10253,6 @@
                 "type": "null"
               }
             ]
-          },
-          "logs": {
-            "items": {
-              "type": "string"
-            },
-            "type": "array",
-            "title": "Logs"
           },
           "risk_state": {
             "anyOf": [

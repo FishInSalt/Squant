@@ -347,7 +347,6 @@ class TestHealthCheck:
             },
             "completed_orders_count": 5,
             "trades_count": 3,
-            "logs": [],
         }
 
         mock_session_manager = AsyncMock()

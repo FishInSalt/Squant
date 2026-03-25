@@ -1249,6 +1249,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/paper/{run_id}/logs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Trading Logs
+         * @description Get trading logs for a session.
+         *
+         *     Reads the current log file for the given run_id.
+         *     Returns the last `tail` lines.
+         */
+        get: operations["get_trading_logs_api_v1_paper__run_id__logs_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/paper/{run_id}": {
         parameters: {
             query?: never;
@@ -1618,6 +1641,29 @@ export interface paths {
          *         Paginated list of order records with trades.
          */
         get: operations["get_session_orders_api_v1_live__run_id__orders_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/live/{run_id}/logs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Trading Logs
+         * @description Get trading logs for a session.
+         *
+         *     Reads the current log file for the given run_id.
+         *     Returns the last `tail` lines.
+         */
+        get: operations["get_trading_logs_api_v1_live__run_id__logs_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -2409,6 +2455,26 @@ export interface components {
              * @description Exchange identifier
              */
             exchange: string;
+        };
+        /**
+         * ApiResponse
+         * @description Standard API response wrapper.
+         *
+         *     All API responses follow this format per dev-docs/technical/api/01-conventions.md.
+         */
+        ApiResponse: {
+            /**
+             * Code
+             * @default 0
+             */
+            code: number;
+            /**
+             * Message
+             * @default success
+             */
+            message: string;
+            /** Data */
+            data: unknown;
         };
         /** ApiResponse[AccountBalanceResponse] */
         ApiResponse_AccountBalanceResponse_: {
@@ -5161,8 +5227,6 @@ export interface components {
             /** Fills */
             fills?: components["schemas"]["FillRecordResponse"][];
             open_trade?: components["schemas"]["OpenTradeInfo"] | null;
-            /** Logs */
-            logs?: string[];
             /** Risk State */
             risk_state?: {
                 [key: string]: unknown;
@@ -7755,6 +7819,39 @@ export interface operations {
             };
         };
     };
+    get_trading_logs_api_v1_paper__run_id__logs_get: {
+        parameters: {
+            query?: {
+                tail?: number;
+            };
+            header?: never;
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_paper_trading_run_api_v1_paper__run_id__get: {
         parameters: {
             query?: never;
@@ -8128,6 +8225,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ApiResponse_PaginatedData_LiveSessionOrderResponse__"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_trading_logs_api_v1_live__run_id__logs_get: {
+        parameters: {
+            query?: {
+                tail?: number;
+            };
+            header?: never;
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse"];
                 };
             };
             /** @description Validation Error */

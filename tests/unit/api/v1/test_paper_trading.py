@@ -533,7 +533,6 @@ class TestGetStatusWithTradesAndLogs:
                 }
             ],
             "open_trade": None,
-            "logs": ["[2024-01-01] Buy triggered", "[2024-01-01] Order filled"],
         }
 
         with patch("squant.api.v1.paper_trading.PaperTradingService") as mock_service_class:
@@ -548,5 +547,3 @@ class TestGetStatusWithTradesAndLogs:
             assert len(data["trades"]) == 1
             assert data["trades"][0]["symbol"] == "BTC/USDT"
             assert data["trades"][0]["pnl"] == 100.0
-            assert len(data["logs"]) == 2
-            assert "Buy triggered" in data["logs"][0]

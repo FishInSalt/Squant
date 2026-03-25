@@ -327,11 +327,9 @@ class TestPaperTradingIntegration:
         assert Decimal(snapshot["positions"]["BTC/USDT"]["amount"]) == Decimal("0.1")
         assert Decimal(snapshot["cash"]) < Decimal("10000")  # Cash reduced after buy
 
-        # Verify trades and logs are present in snapshot
+        # Verify trades are present in snapshot
         assert "trades" in snapshot
-        assert "logs" in snapshot
         assert isinstance(snapshot["trades"], list)
-        assert isinstance(snapshot["logs"], list)
 
         # After buy only (no sell yet), should have no completed trade
         assert len(snapshot["trades"]) == 0

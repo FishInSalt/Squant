@@ -1254,7 +1254,6 @@ class LiveTradingService:
                     "trades_count": run.result.get("trades_count", 0),
                     "trades": run.result.get("trades", []),
                     "open_trade": run.result.get("open_trade"),
-                    "logs": run.result.get("logs", []),
                     "risk_state": run.result.get("risk_state"),
                 }
             )

@@ -65,7 +65,6 @@ def saved_result(risk_config_dict):
         "trades": [],
         "fills": [],
         "completed_orders_count": 0,
-        "logs": [],
         "bar_count": 50,
         "risk_state": {
             "total_pnl": "0",
