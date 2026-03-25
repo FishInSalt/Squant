@@ -36,7 +36,10 @@ Log entry format (plain text with tags):
 Implementation:
 ```python
 def log(self, message: str, level: str = "info", category: str = "strategy") -> None:
-    timestamp = datetime.now(UTC)
+    if self._use_real_time:
+        timestamp = datetime.now(UTC)
+    else:
+        timestamp = self._current_bar.time if self._current_bar else datetime.now(UTC)
     entry = f"[{timestamp:%Y-%m-%d %H:%M:%S}] [{level.upper()}] [{category}] {message}"
     self._logs.append(entry)
     self._total_logs_added += 1
@@ -44,9 +47,11 @@ def log(self, message: str, level: str = "info", category: str = "strategy") -> 
         self._file_logger.info(entry)
 ```
 
-`BacktestContext.__init__` accepts an optional `file_logger: logging.Logger | None = None`. File content and `_logs` deque content are identical strings.
+`BacktestContext.__init__` accepts optional parameters:
+- `file_logger: logging.Logger | None = None` — per-session file logger (Paper/Live only)
+- `use_real_time: bool = False` — when True, log timestamps use `datetime.now(UTC)` (Paper/Live); when False, use bar time (Backtest)
 
-Timestamp always uses `datetime.now(UTC)` (real event time), replacing the previous `self._current_bar.time` which was bar time.
+File content and `_logs` deque content are identical strings.
 
 ### 1.2 Per-Session Log File
 
@@ -59,9 +64,9 @@ logs/trading/{run_id}/
 ```
 
 **File handler setup (Live/Paper engine):**
-- Python `logging.Logger` with custom `RotatingFileHandler`
-- `maxBytes=10MB`, rotate with timestamp suffix (e.g., `trading.log.2026-03-25_163000`)
-- `backupCount` effectively unlimited (no automatic deletion of rotated files)
+- Python `logging.Logger` with custom `RotatingFileHandler` subclass (`TimestampRotatingFileHandler` in `infra/trading_logger.py`)
+- Subclass overrides `doRollover()` to rename rotated files with timestamp suffix (e.g., `trading.log.2026-03-25_163000`) instead of numeric suffixes
+- `maxBytes=10MB`, no automatic deletion of rotated files
 - Formatter: `logging.Formatter("%(message)s")` — writes entry text only, no extra metadata
 - Backtest does NOT create file logger (results are transient)
 
@@ -127,12 +132,13 @@ Same categories but fewer events (no exchange interaction):
 
 - Remove `v-if="isPaper"` guard — show log tab for both Paper and Live sessions
 - On page load: call `GET /api/v1/{mode}/{run_id}/logs?tail=500` to load historical logs from file
-- On WS `new_logs`: append incrementally (existing mechanism, unchanged)
+- **Fix live WS handler**: the `isLive` branch in `handleTradingEvent` currently only processes `new_fills` and ignores `new_logs`. Must add `new_logs` accumulation for live sessions (same as the existing paper branch).
 - Color coding by keyword matching:
   - `[ERROR]` → red text
   - `[WARNING]` → yellow/orange text
   - `[INFO]` → default text
 - Existing auto-scroll toggle preserved
+- Remove `logs` field from status response schemas (`PaperTradingStatusResponse`, `LiveTradingStatusResponse`) — logs now come exclusively from the file API endpoint and WS push
 
 ### 3.2 API Endpoint
 
