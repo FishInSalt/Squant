@@ -57,3 +57,7 @@ export const getRunningPaperSessions = () =>
 export const getPaperEquityCurve = (id: string, since?: string) =>
   get<EquityCurvePoint[]>(`/paper/${id}/equity-curve`, since ? { since } : undefined)
 
+// 获取交易日志
+export const getPaperLogs = (runId: string, tail = 500) =>
+  get<{ logs: string[] }>(`/paper/${runId}/logs`, { tail })
+

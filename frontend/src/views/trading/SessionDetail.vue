@@ -439,10 +439,10 @@
             </el-table>
           </el-tab-pane>
 
-          <el-tab-pane v-if="isPaper" name="logs">
+          <el-tab-pane name="logs">
             <template #label>
               日志
-              <el-badge v-if="paperLogs.length" :value="paperLogs.length" class="tab-badge" />
+              <el-badge v-if="tradingLogs.length" :value="tradingLogs.length" class="tab-badge" />
             </template>
             <div class="log-controls">
               <el-switch
@@ -452,10 +452,10 @@
               />
             </div>
             <div ref="logContainerRef" class="log-container">
-              <div v-for="(log, index) in paperLogs" :key="index" class="log-entry">
+              <div v-for="(log, index) in tradingLogs" :key="index" :class="['log-entry', logLevelClass(log)]">
                 {{ log }}
               </div>
-              <div v-if="paperLogs.length === 0" class="empty-logs">暂无日志</div>
+              <div v-if="tradingLogs.length === 0" class="empty-logs">暂无日志</div>
             </div>
           </el-tab-pane>
 
@@ -669,7 +669,7 @@ import PriceCell from '@/components/common/PriceCell.vue'
 import EquityCurve from '@/components/charts/EquityCurve.vue'
 import TradingKLineChart from '@/components/charts/TradingKLineChart.vue'
 import { formatNumber, formatPrice, formatOrderType, formatExchangeName, formatDuration } from '@/utils/format'
-import { getPaperSession, getPaperSessionStatus, stopPaperTrading, getPaperEquityCurve, resumePaperTrading } from '@/api/paper'
+import { getPaperSession, getPaperSessionStatus, stopPaperTrading, getPaperEquityCurve, resumePaperTrading, getPaperLogs } from '@/api/paper'
 import {
   getLiveSession,
   getLiveSessionStatus,
@@ -678,6 +678,7 @@ import {
   getLiveEquityCurve,
   resumeLiveTrading,
   getLiveSessionOrders,
+  getLiveLogs,
 } from '@/api/live'
 import { useWebSocketStore } from '@/stores/websocket'
 import { useNotification } from '@/composables/useNotification'
@@ -827,10 +828,18 @@ const paperOpenTrade = computed(() => {
   return (status.value as PaperTradingStatus).open_trade ?? null
 })
 
-const paperLogs = computed<string[]>(() => {
-  if (!status.value || !isPaper.value) return []
-  return (status.value as PaperTradingStatus).logs || []
-})
+const tradingLogs = ref<string[]>([])
+
+async function loadTradingLogs() {
+  try {
+    const resp = isPaper.value
+      ? await getPaperLogs(props.id)
+      : await getLiveLogs(props.id)
+    tradingLogs.value = resp.data.logs || []
+  } catch {
+    // ignore
+  }
+}
 
 // Live session trade markers: accumulate fills from WebSocket events and audit orders
 const liveWsFills = ref<Fill[]>([])
@@ -997,10 +1006,6 @@ function handleTradingEvent(data: Record<string, unknown>) {
       if (Array.isArray(newTrades) && newTrades.length && ps.trades) {
         ps.trades.push(...newTrades)
       }
-      const newLogs = data.new_logs as string[] | undefined
-      if (Array.isArray(newLogs) && newLogs.length && ps.logs) {
-        ps.logs.push(...newLogs)
-      }
     } else if (isLive.value) {
       // Accumulate live fills for chart markers
       const newFills = data.new_fills as Fill[] | undefined
@@ -1011,6 +1016,12 @@ function handleTradingEvent(data: Record<string, unknown>) {
           liveWsFills.value = liveWsFills.value.slice(-500)
         }
       }
+    }
+
+    // Append new logs (applies to both paper and live)
+    const newLogs = data.new_logs as string[] | undefined
+    if (Array.isArray(newLogs) && newLogs.length) {
+      tradingLogs.value.push(...newLogs)
     }
 
     if (data.risk_state) {
@@ -1091,13 +1102,19 @@ function formatTradeTime(time: string): string {
 }
 
 // Auto-scroll logs only when logs tab is visible
-watch(paperLogs, () => {
+watch(() => tradingLogs.value.length, () => {
   if (autoScrollLogs.value && logContainerRef.value && activeTab.value === 'logs') {
     nextTick(() => {
       logContainerRef.value!.scrollTop = logContainerRef.value!.scrollHeight
     })
   }
 })
+
+function logLevelClass(entry: string): string {
+  if (entry.includes('[ERROR]')) return 'log-error'
+  if (entry.includes('[WARNING]')) return 'log-warning'
+  return 'log-info'
+}
 
 async function loadSession() {
   try {
@@ -1107,6 +1124,7 @@ async function loadSession() {
       : await getLiveSession(props.id)
     session.value = response.data
     loadEquityCurve()
+    loadTradingLogs()
   } catch (error) {
     console.error('Failed to load session:', error)
     toastError('加载会话失败')
@@ -1575,6 +1593,18 @@ onUnmounted(() => {
     padding: 2px 0;
     color: #606266;
     word-break: break-all;
+  }
+
+  .log-error {
+    color: #f56c6c;
+  }
+
+  .log-warning {
+    color: #e6a23c;
+  }
+
+  .log-info {
+    color: inherit;
   }
 
   .empty-logs {
