@@ -1282,6 +1282,10 @@ async function handleResume() {
     toastSuccess(resumeMsg)
     await loadSession()
     await loadStatus()
+    if (isLive.value) {
+      loadLiveAuditOrders()
+      loadAllLiveOrders()
+    }
     subscribeTradingChannel()
     startPolling()
   } catch {
