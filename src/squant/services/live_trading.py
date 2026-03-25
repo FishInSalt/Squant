@@ -1928,6 +1928,14 @@ class LiveTradingService:
         reconciliation_report = await self._reconcile_orders(engine, adapter, run.symbol)
         logger.info(f"Order reconciliation for {run_id}: {reconciliation_report}")
 
+        # 11a. Discard fill events buffered by step 11 — step 11b will write
+        # complete per-fill trade records from get_order_trades() with full
+        # exchange_tid/taker_or_maker fields. Keeping step 11's approximate
+        # fill events would cause duplicate, incomplete trade records.
+        engine._pending_order_events = [
+            e for e in engine._pending_order_events if e.get("type") != "fill"
+        ]
+
         # 11b. Reconcile stale DB orders (orders persisted but engine state lost on crash)
         await self._reconcile_stale_db_orders(run.id, adapter, run.symbol)
 
