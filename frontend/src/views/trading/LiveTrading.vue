@@ -598,8 +598,8 @@ async function handleSubmit() {
     const response = await startLiveTrading(config)
     toastSuccess('实盘交易已启动')
     router.push(`/trading/monitor/live/${response.data.id}`)
-  } catch (error) {
-    toastError('启动失败')
+  } catch {
+    // Error already shown by Axios response interceptor
   } finally {
     submitting.value = false
   }
