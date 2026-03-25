@@ -14,7 +14,7 @@ from uuid import uuid4
 
 import pytest
 
-from squant.services.live_trading import LiveTradingService
+from squant.services.live_trading import LiveTradingError, LiveTradingService
 
 
 @pytest.fixture
@@ -73,7 +73,7 @@ class TestCheckResumeBalance:
         service.run_repo.list_running_by_account = AsyncMock(return_value=[])
 
         with patch("squant.services.live_trading.get_live_session_manager"):
-            with pytest.raises(ValueError, match="账户可用余额不足"):
+            with pytest.raises(LiveTradingError, match="账户可用余额不足"):
                 await service._check_balance_sufficiency(
                     adapter=mock_adapter,
                     account_id="acc-123",
@@ -96,7 +96,7 @@ class TestCheckResumeBalance:
 
         with patch("squant.services.live_trading.get_live_session_manager", return_value=mock_manager):
             # available = 15000 - 8000 = 7000, session_equity = 10000 > 7000
-            with pytest.raises(ValueError, match="账户可用余额不足"):
+            with pytest.raises(LiveTradingError, match="账户可用余额不足"):
                 await service._check_balance_sufficiency(
                     adapter=mock_adapter,
                     account_id="acc-123",

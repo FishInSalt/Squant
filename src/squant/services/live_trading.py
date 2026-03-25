@@ -432,12 +432,12 @@ class LiveTradingService:
                 required_equity=initial_equity,
                 quote_currency=quote_currency,
             )
-        except ValueError as e:
+        except LiveTradingError:
             try:
                 await adapter.close()
             except Exception:
                 pass
-            raise LiveTradingError(str(e)) from e
+            raise
 
         # Create run record
         run = await self.run_repo.create(
@@ -2190,12 +2190,12 @@ class LiveTradingService:
 
             available = total_value - total_running_equity
             if required_equity > available:
-                raise ValueError(
+                raise LiveTradingError(
                     f"账户可用余额不足。"
                     f"需要: {required_equity:.2f} {quote_currency}, "
                     f"可用: {available:.2f} {quote_currency}"
                 )
-        except ValueError:
+        except LiveTradingError:
             raise  # Re-raise insufficient balance
         except Exception as e:
             logger.warning(
