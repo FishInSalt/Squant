@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
 from sqlalchemy import select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from squant.engine.backtest.strategy_base import Strategy
@@ -2324,39 +2325,53 @@ class LiveTradingService:
                         price=ex_order.price,
                         status=ex_order.status,
                     )
-
+                except IntegrityError:
+                    # Order belongs to another session — skip
+                    await db_session.rollback()
+                    continue
+                except Exception as e:
+                    logger.warning(f"Failed to recover order {ex_order.order_id}: {e}")
+                    report["errors"].append(str(e))
                     try:
-                        fills = await adapter.get_order_trades(symbol, ex_order.order_id)
-                        for fill in fills:
-                            await trade_repo.create(
-                                order_id=db_order.id,
-                                price=fill.price,
-                                amount=fill.amount,
-                                fee=abs(fill.fee) if fill.fee else Decimal("0"),
-                                fee_currency=fill.fee_currency,
-                                timestamp=fill.timestamp or datetime.now(UTC),
-                                fill_source="recovery",
-                                exchange_tid=fill.trade_id,
-                                taker_or_maker=fill.taker_or_maker,
-                            )
-                    except Exception as e:
-                        logger.warning(
-                            f"Failed to fetch fills for recovered order "
-                            f"{ex_order.order_id}: {e}"
-                        )
+                        await db_session.rollback()
+                    except Exception:
+                        pass
+                    continue
 
-                    if ex_order.filled and ex_order.filled > 0:
+                try:
+                    fills = await adapter.get_order_trades(symbol, ex_order.order_id)
+                    for fill in fills:
+                        await trade_repo.create(
+                            order_id=db_order.id,
+                            price=fill.price,
+                            amount=fill.amount,
+                            fee=abs(fill.fee) if fill.fee else Decimal("0"),
+                            fee_currency=fill.fee_currency,
+                            timestamp=fill.timestamp or datetime.now(UTC),
+                            fill_source="recovery",
+                            exchange_tid=fill.trade_id,
+                            taker_or_maker=fill.taker_or_maker,
+                        )
+                except Exception as e:
+                    logger.warning(
+                        f"Failed to fetch fills for recovered order "
+                        f"{ex_order.order_id}: {e}"
+                    )
+
+                if ex_order.filled and ex_order.filled > 0:
+                    try:
                         await order_repo.update(
                             db_order.id,
                             filled=ex_order.filled,
                             avg_price=ex_order.avg_price,
                             status=ex_order.status,
                         )
+                    except Exception as e:
+                        logger.warning(
+                            f"Failed to update recovered order {ex_order.order_id}: {e}"
+                        )
 
-                    report["missing_orders_recovered"] += 1
-                except Exception as e:
-                    logger.warning(f"Failed to recover order {ex_order.order_id}: {e}")
-                    report["errors"].append(str(e))
+                report["missing_orders_recovered"] += 1
 
         return report
 
