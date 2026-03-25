@@ -20,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from squant.engine.backtest.strategy_base import Strategy
 from squant.engine.backtest.types import EquitySnapshot
 from squant.engine.paper.engine import PaperTradingEngine
+from squant.infra.trading_logger import close_trading_logger, create_trading_logger
 from squant.engine.paper.manager import get_session_manager
 from squant.engine.resource_limits import resource_limiter
 from squant.engine.sandbox import compile_strategy
@@ -357,6 +358,9 @@ class PaperTradingService:
                     min_order_value=risk_config.min_order_value,
                 )
 
+            # Create per-session file logger
+            file_logger = create_trading_logger(str(run.id))
+
             # Create engine with synchronous persistence callbacks
             engine = PaperTradingEngine(
                 run_id=UUID(run.id),
@@ -371,6 +375,7 @@ class PaperTradingService:
                 on_result=self._create_result_callback(),
                 risk_config=engine_risk_config,
                 on_event=self._create_event_callback(UUID(run.id)),
+                file_logger=file_logger,
             )
 
             # Register with session manager
@@ -643,6 +648,10 @@ class PaperTradingService:
             # is processed between result capture and engine stop.
             await engine.stop()
             error_message = engine.error_message
+
+            # Close file logger
+            if hasattr(engine._context, "_file_logger") and engine._context._file_logger:
+                close_trading_logger(engine._context._file_logger)
 
             # NOW capture result and snapshots (engine state is stable)
             result_data = engine.build_result_for_persistence()
@@ -944,6 +953,9 @@ class PaperTradingService:
 
             engine_risk_config = RiskConfig(**run.result["risk_config"])
 
+        # Create per-session file logger
+        file_logger = create_trading_logger(str(run.id))
+
         # Create engine with same parameters
         engine = PaperTradingEngine(
             run_id=UUID(run.id),
@@ -958,6 +970,7 @@ class PaperTradingService:
             on_result=self._create_result_callback(),
             risk_config=engine_risk_config,
             on_event=self._create_event_callback(UUID(run.id)),
+            file_logger=file_logger,
         )
 
         # Restore trading state from result JSONB

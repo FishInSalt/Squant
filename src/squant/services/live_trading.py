@@ -23,6 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from squant.engine.backtest.strategy_base import Strategy
 from squant.engine.backtest.types import EquitySnapshot
 from squant.engine.live.engine import LiveTradingEngine
+from squant.infra.trading_logger import close_trading_logger, create_trading_logger
 from squant.engine.live.manager import get_live_session_manager
 from squant.engine.risk import RiskConfig
 from squant.engine.sandbox import compile_strategy
@@ -465,6 +466,9 @@ class LiveTradingService:
             # Instantiate strategy
             strategy_instance = self._instantiate_strategy(strategy.code)
 
+            # Create per-session file logger
+            file_logger = create_trading_logger(str(run.id))
+
             # Create engine with synchronous persistence callbacks
             engine = LiveTradingEngine(
                 run_id=UUID(run.id),
@@ -484,6 +488,7 @@ class LiveTradingService:
                 ),
                 credentials=ws_credentials,
                 exchange_id=exchange_account.exchange.lower(),
+                file_logger=file_logger,
             )
 
             # Register with session manager
@@ -1037,6 +1042,10 @@ class LiveTradingService:
 
             # Stop engine (may trigger final fills from cancel responses)
             await engine.stop(cancel_orders=cancel_orders)
+
+            # Close file logger
+            if hasattr(engine._context, "_file_logger") and engine._context._file_logger:
+                close_trading_logger(engine._context._file_logger)
 
             # Flush any order events generated during stop (M-6: cancel fills)
             # process_candle() no longer runs after stop, so events from
@@ -1838,6 +1847,9 @@ class LiveTradingService:
             raise SessionNotResumableError(run_id, "no risk config in saved state")
 
         # 8. Create engine (on_order_persist wired after step 10 with seed map)
+        # Create per-session file logger
+        file_logger = create_trading_logger(str(run.id))
+
         engine = LiveTradingEngine(
             run_id=UUID(run.id),
             strategy=strategy_instance,
@@ -1852,6 +1864,7 @@ class LiveTradingService:
             on_event=self._create_event_callback(UUID(run.id)),
             credentials=ws_credentials,
             exchange_id=exchange_account.exchange.lower(),
+            file_logger=file_logger,
         )
 
         # 9. Restore trading state
