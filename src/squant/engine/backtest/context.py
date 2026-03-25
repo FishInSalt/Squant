@@ -789,8 +789,8 @@ class BacktestContext:
                     f"fill_amount={fill.amount}"
                 )
             if fee_in_base:
-                # Fee deducted from base currency, not from proceeds
-                proceeds = fill.price * fill.amount
+                # Fee taken from sold base amount: only (amount - fee) converts to proceeds
+                proceeds = fill.price * (fill.amount - fill.fee)
             else:
                 proceeds = fill.price * fill.amount - fill.fee
             self._cash += proceeds
@@ -803,9 +803,9 @@ class BacktestContext:
         # Update position (this may also raise if trying to go short)
         position.update(fill.amount, fill.price, fill.side)
 
-        # When fee is in base currency, deduct fee from position
-        # (e.g., bought 0.1 BTC with 0.0001 BTC fee → net position 0.0999 BTC)
-        if fee_in_base and fill.fee > 0:
+        # BUY + base fee: deduct fee from position (received less base currency)
+        # SELL + base fee: no position adjustment (fee already reflected in proceeds)
+        if fee_in_base and fill.fee > 0 and fill.side == OrderSide.BUY:
             position.amount -= fill.fee
 
         # Track trades (entry/exit)

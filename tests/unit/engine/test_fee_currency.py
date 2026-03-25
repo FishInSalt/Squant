@@ -104,8 +104,8 @@ class TestBaseCurrencyFee:
         assert position.amount == Decimal("0.1")
         assert ctx._cash == Decimal("4995")
 
-    def test_sell_fee_in_base_currency_full_proceeds(self, ctx):
-        """SELL with base currency fee: cash gets full proceeds (no fee deduction)."""
+    def test_sell_fee_in_base_currency_reduces_proceeds(self, ctx):
+        """SELL with base currency fee: fee reduces effective sold amount, position goes to 0."""
         # Setup: buy first
         buy_fill = Fill(
             order_id="o1",
@@ -132,12 +132,12 @@ class TestBaseCurrencyFee:
         )
         ctx._process_fill(sell_fill)
 
-        # Cash: 5000 + (50000 * 0.1) = 10000 (fee NOT deducted from proceeds)
-        assert ctx._cash == Decimal("10000")
-        # Position: 0.1 - 0.1 - 0.0001 = -0.0001 adjusted
-        # But position.update subtracts 0.1, then fee_in_base subtracts 0.0001
+        # Cash: 5000 + 50000 * (0.1 - 0.0001) = 5000 + 4995 = 9995
+        # (fee deducted from sold amount, not from proceeds directly)
+        assert ctx._cash == Decimal("9995")
+        # Position: 0.1 - 0.1 = 0 (no fee deduction from position for SELL)
         position = ctx._positions["BTC/USDT"]
-        assert position.amount == Decimal("-0.0001")
+        assert position.amount == Decimal("0")
 
     def test_sell_fee_in_quote_currency_default_behavior(self, ctx):
         """SELL with quote currency fee: fee deducted from proceeds (existing behavior)."""
