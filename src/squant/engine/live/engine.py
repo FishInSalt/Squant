@@ -2379,6 +2379,7 @@ class LiveTradingEngine:
             amount=fill_amount,
             fee=fill_fee,
             timestamp=exchange_timestamp or datetime.now(UTC),
+            fee_currency=live_order.fee_currency,
         )
 
         # force=True: live fills are already executed on the exchange and must

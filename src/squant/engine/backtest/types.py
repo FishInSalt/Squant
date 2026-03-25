@@ -194,6 +194,9 @@ class Fill:
     amount: Decimal
     fee: Decimal
     timestamp: datetime
+    # Fee currency — when fee is in base currency (e.g., BTC for BTC/USDT),
+    # _process_fill adjusts position instead of cash. None = quote currency (default).
+    fee_currency: str | None = None
     # 价格来源元数据（模拟交易撮合引擎填充，回测为 None）
     price_source: str | None = None  # "ask", "bid", "slippage", "limit", "stop_limit"
     reference_price: Decimal | None = None  # last price

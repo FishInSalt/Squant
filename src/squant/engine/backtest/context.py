@@ -764,9 +764,19 @@ class BacktestContext:
         position = self._positions[fill.symbol]
         prev_amount = position.amount
 
+        # Determine if fee is in base currency (e.g., BTC for BTC/USDT)
+        fee_in_base = False
+        if fill.fee_currency:
+            base_currency = fill.symbol.split("/")[0]
+            fee_in_base = fill.fee_currency.upper() == base_currency.upper()
+
         # Calculate trade cost/proceeds and validate
         if fill.side == OrderSide.BUY:
-            cost = fill.price * fill.amount + fill.fee
+            if fee_in_base:
+                # Fee deducted from received base currency, not from cash
+                cost = fill.price * fill.amount
+            else:
+                cost = fill.price * fill.amount + fill.fee
             # Validate sufficient cash before executing
             if not force and self._cash < cost:
                 raise ValueError(
@@ -781,7 +791,11 @@ class BacktestContext:
                     f"Insufficient position for sell fill: position={position.amount}, "
                     f"fill_amount={fill.amount}"
                 )
-            proceeds = fill.price * fill.amount - fill.fee
+            if fee_in_base:
+                # Fee deducted from base currency, not from proceeds
+                proceeds = fill.price * fill.amount
+            else:
+                proceeds = fill.price * fill.amount - fill.fee
             self._cash += proceeds
 
         # Record the fill (only after validation passes)
@@ -791,6 +805,11 @@ class BacktestContext:
 
         # Update position (this may also raise if trying to go short)
         position.update(fill.amount, fill.price, fill.side)
+
+        # When fee is in base currency, deduct fee from position
+        # (e.g., bought 0.1 BTC with 0.0001 BTC fee → net position 0.0999 BTC)
+        if fee_in_base and fill.fee > 0:
+            position.amount -= fill.fee
 
         # Track trades (entry/exit)
         self._update_trade_tracking(fill, prev_amount, position.amount)
