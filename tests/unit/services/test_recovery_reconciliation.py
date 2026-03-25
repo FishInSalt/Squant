@@ -211,7 +211,6 @@ class TestReconcileMissingOrders:
             symbol="BTC/USDT",
             db_orders=db_orders,
             since=datetime.now(UTC) - timedelta(hours=1),
-
         )
 
         assert report["missing_orders_found"] == 0
@@ -256,7 +255,6 @@ class TestReconcileMissingOrders:
                 symbol="BTC/USDT",
                 db_orders=db_orders,
                 since=datetime.now(UTC) - timedelta(hours=1),
-    
             )
 
         assert report["missing_orders_found"] == 1
@@ -286,9 +284,7 @@ class TestReconcileMissingOrders:
 
     async def test_exchange_fetch_failure_non_blocking(self, service, mock_adapter):
         """If get_orders fails, returns error in report but does not raise."""
-        mock_adapter.get_orders = AsyncMock(
-            side_effect=Exception("Exchange timeout")
-        )
+        mock_adapter.get_orders = AsyncMock(side_effect=Exception("Exchange timeout"))
 
         report = await service._reconcile_missing_orders(
             adapter=mock_adapter,
@@ -298,7 +294,6 @@ class TestReconcileMissingOrders:
             symbol="BTC/USDT",
             db_orders=[],
             since=datetime.now(UTC) - timedelta(hours=1),
-
         )
 
         assert report["missing_orders_found"] == 0
@@ -358,7 +353,6 @@ class TestReconcileMissingOrders:
                 symbol="BTC/USDT",
                 db_orders=db_orders,
                 since=datetime.now(UTC) - timedelta(hours=1),
-    
             )
 
         assert report["missing_orders_found"] == 1
@@ -421,7 +415,6 @@ class TestReconcileMissingOrders:
                 symbol="BTC/USDT",
                 db_orders=[],
                 since=datetime.now(UTC) - timedelta(hours=1),
-    
             )
 
         # Order was recovered despite fill fetch failure
@@ -468,7 +461,6 @@ class TestReconcileMissingOrders:
                 symbol="BTC/USDT",
                 db_orders=[],
                 since=datetime.now(UTC) - timedelta(hours=1),
-    
             )
 
         assert report["missing_orders_recovered"] == 1
