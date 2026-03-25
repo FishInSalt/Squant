@@ -389,7 +389,7 @@ class BacktestContext:
         else:
             price_info = "市价"
         short_id = order.id[:8]
-        self.log(f"提交买入 {symbol} {amount} {price_info} #{short_id}")
+        self.log(f"提交买入 {symbol} {amount} {price_info} #{short_id}", category="order")
         return order.id
 
     def sell(
@@ -485,7 +485,7 @@ class BacktestContext:
         else:
             price_info = "市价"
         short_id = order.id[:8]
-        self.log(f"提交卖出 {symbol} {amount} {price_info} #{short_id}")
+        self.log(f"提交卖出 {symbol} {amount} {price_info} #{short_id}", category="order")
         return order.id
 
     def cancel_order(self, order_id: str) -> bool:
@@ -888,7 +888,8 @@ class BacktestContext:
             self.log(
                 f"{side_label} #{short_id} {fill.symbol} "
                 f"{fill.amount}@{fill.price} [开仓] "
-                f"{price_detail}手续费={fill.fee}"
+                f"{price_detail}手续费={fill.fee}",
+                category="fill",
             )
 
         # Position increased
@@ -908,7 +909,8 @@ class BacktestContext:
                     f"{side_label} #{short_id} {fill.symbol} "
                     f"{added_amount}@{fill.price} "
                     f"[加仓→{abs(new_amount)} 均价={avg:.4f}] "
-                    f"{price_detail}手续费={fill.fee}"
+                    f"{price_detail}手续费={fill.fee}",
+                    category="fill",
                 )
 
         # Position decreased or closed
@@ -950,7 +952,8 @@ class BacktestContext:
                     f"{fill_amount}@{fill.price} [平仓] "
                     f"{price_detail}"
                     f"盈亏={pnl_sign}{pnl:.4f}({pnl_sign}{self._open_trade.pnl_pct:.2f}%) "
-                    f"手续费={self._open_trade.fees}"
+                    f"手续费={self._open_trade.fees}",
+                    category="fill",
                 )
 
                 self._trades.append(self._open_trade)
@@ -961,7 +964,8 @@ class BacktestContext:
                 self.log(
                     f"{side_label} #{short_id} {fill.symbol} "
                     f"{fill_amount}@{fill.price} [减仓→{abs(new_amount)}] "
-                    f"{price_detail}手续费={fill.fee}"
+                    f"{price_detail}手续费={fill.fee}",
+                    category="fill",
                 )
 
             # Note: Position reversal (long→short or short→long) is not supported

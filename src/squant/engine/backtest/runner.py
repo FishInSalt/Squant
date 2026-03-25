@@ -289,7 +289,7 @@ class BacktestRunner:
             except ValueError as e:
                 # Order can't be filled (e.g., gap-up made market buy too expensive)
                 # Cancel the order instead of crashing the backtest
-                self._context.log(f"Order {fill.order_id} rejected at fill: {e}")
+                self._context.log(f"Order {fill.order_id} rejected at fill: {e}", level="warning", category="fill")
                 logger.warning(f"Fill rejected for order {fill.order_id}: {e}")
                 for order in self._context._get_pending_orders():
                     if order.id == fill.order_id:
@@ -323,14 +323,14 @@ class BacktestRunner:
             try:
                 self._strategy.on_fill(fill)
             except Exception as e:
-                self._context.log(f"ERROR in on_fill: {e}")
+                self._context.log(f"ERROR in on_fill: {e}", level="error", category="strategy")
                 logger.warning(f"Strategy on_fill error: {e}")
 
         for order in newly_completed:
             try:
                 self._strategy.on_order_done(order)
             except Exception as e:
-                self._context.log(f"ERROR in on_order_done: {e}")
+                self._context.log(f"ERROR in on_order_done: {e}", level="error", category="strategy")
                 logger.warning(f"Strategy on_order_done error: {e}")
 
         # 7. Call strategy with resource limits (STR-013)
@@ -346,11 +346,11 @@ class BacktestRunner:
             ):
                 self._strategy.on_bar(bar)
         except ResourceLimitExceededError as e:
-            self._context.log(f"RESOURCE LIMIT EXCEEDED: {e}")
+            self._context.log(f"RESOURCE LIMIT EXCEEDED: {e}", level="error", category="strategy")
             logger.error(f"Strategy resource limit exceeded: {e}")
             raise BacktestError(f"Strategy resource limit exceeded: {e}") from e
         except Exception as e:
-            self._context.log(f"ERROR in on_bar: {e}")
+            self._context.log(f"ERROR in on_bar: {e}", level="error", category="strategy")
             logger.warning(f"Strategy on_bar error: {e}")
 
     def _expire_stale_orders(self) -> None:
@@ -382,7 +382,9 @@ class BacktestRunner:
                     stop_info = f"止损@{order.stop_price}" if order.stop_price else ""
                     self._context.log(
                         f"订单过期: {order.side.value} {order.symbol} "
-                        f"{order.amount}{stop_info}{price_info}"
+                        f"{order.amount}{stop_info}{price_info}",
+                        level="info",
+                        category="order",
                     )
                     expired.append(order)
                     continue

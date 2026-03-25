@@ -1153,7 +1153,7 @@ class LiveTradingEngine:
                         f"unrealized {self._risk_manager.state.unrealized_pnl:.2f})"
                     )
                     logger.warning(f"Live engine {self._run_id}: {msg}")
-                    self._context.log(msg)
+                    self._context.log(msg, level="error", category="risk")
 
                     # Notification: total loss limit (LIVE-011)
                     _fire_notification(
@@ -1199,7 +1199,7 @@ class LiveTradingEngine:
                         try:
                             self._strategy.on_fill(fill)
                         except Exception as e:
-                            self._context.log(f"ERROR in on_fill: {e}")
+                            self._context.log(f"ERROR in on_fill: {e}", level="error", category="strategy")
                             logger.warning(f"Strategy on_fill error: {e}")
                 self._last_callback_fill_total = self._context._total_fills_added
 
@@ -1212,7 +1212,7 @@ class LiveTradingEngine:
                         try:
                             self._strategy.on_order_done(order)
                         except Exception as e:
-                            self._context.log(f"ERROR in on_order_done: {e}")
+                            self._context.log(f"ERROR in on_order_done: {e}", level="error", category="strategy")
                             logger.warning(f"Strategy on_order_done error: {e}")
                 self._last_callback_completed_total = self._context._total_completed_added
 
@@ -1246,7 +1246,7 @@ class LiveTradingEngine:
                     # — consistent with paper engine and backtest runner behavior.
                     # Only system-level errors (exchange, data integrity) should stop the engine.
                     logger.warning(f"Strategy on_bar error in live engine {self._run_id}: {e}")
-                    self._context.log(f"ERROR in on_bar: {e}")
+                    self._context.log(f"ERROR in on_bar: {e}", level="error", category="strategy")
 
                 # Process pending order requests from strategy
                 await self._process_order_requests()
