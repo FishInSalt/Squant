@@ -445,18 +445,49 @@ class CCXTRestAdapter(ExchangeAdapter):
                 )
             )
 
-        # Priority 1: OKX native totalEq
+        # Priority 1: OKX native per-currency equity from details[]
+        # Uses each currency's `eq` field (denominated in its own currency),
+        # which is more accurate than `totalEq` (USD-denominated).
+        quote_upper = quote_currency.upper()
         try:
-            info_data = raw_balance.get("info", {}).get("data", [])
+            info = raw_balance.get("info", {})
+            info_data = info.get("data", []) if isinstance(info, dict) else []
             if info_data and isinstance(info_data, list) and len(info_data) > 0:
-                total_eq_str = info_data[0].get("totalEq")
-                if total_eq_str:
-                    return Decimal(total_eq_str), balances
-        except (KeyError, IndexError, TypeError):
+                details = info_data[0].get("details", [])
+                if details and isinstance(details, list):
+                    total_value = Decimal("0")
+                    used_native = False
+                    for detail in details:
+                        ccy = (detail.get("ccy") or "").upper()
+                        eq_str = detail.get("eq")
+                        if not ccy or not eq_str:
+                            continue
+                        eq_val = Decimal(eq_str)
+                        if eq_val == 0:
+                            continue
+                        if ccy == quote_upper:
+                            total_value += eq_val
+                            used_native = True
+                        else:
+                            # Convert non-quote currency via ticker
+                            try:
+                                ticker = await self._exchange.fetch_ticker(
+                                    f"{ccy}/{quote_upper}"
+                                )
+                                price = Decimal(str(ticker["last"]))
+                                total_value += eq_val * price
+                                used_native = True
+                            except Exception:
+                                logger.warning(
+                                    f"Failed to fetch ticker for {ccy}/{quote_upper}, "
+                                    f"skipping {eq_val} {ccy} in total value calculation"
+                                )
+                    if used_native:
+                        return total_value, balances
+        except (KeyError, IndexError, TypeError, ArithmeticError):
             pass
 
-        # Priority 2: Manual conversion
-        quote_upper = quote_currency.upper()
+        # Priority 2: Manual conversion from CCXT structured balances
         total_value = Decimal("0")
 
         for bal in balances:

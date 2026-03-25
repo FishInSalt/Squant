@@ -63,22 +63,43 @@ class TestGetAccountTotalValue:
         assert len(balances) == 2
         adapter._exchange.fetch_ticker.assert_called_once_with("BTC/USDT")
 
-    async def test_okx_total_eq_priority(self, adapter):
-        """OKX returns totalEq in raw info -- use it directly instead of manual calc."""
+    async def test_okx_details_eq_priority(self, adapter):
+        """OKX returns per-currency eq in details[] -- use it for accurate quote-denominated total."""
         adapter._exchange_id = "okx"
         adapter._exchange.fetch_balance.return_value = {
             "free": {"USDT": 1000.0, "BTC": 0.5},
             "used": {"USDT": 0, "BTC": 0},
-            "info": {"data": [{"totalEq": "42000.55"}]},
+            "info": {"data": [{"totalEq": "42000.55", "details": [
+                {"ccy": "USDT", "eq": "1000.0"},
+                {"ccy": "BTC", "eq": "0.5"},
+            ]}]},
         }
+        adapter._exchange.fetch_ticker.return_value = {"last": 60000.0}
 
         total, balances = await adapter.get_account_total_value("USDT")
 
-        # Should use totalEq directly
-        assert total == Decimal("42000.55")
+        # Should use details[].eq: 1000 + 0.5 * 60000 = 31000
+        assert total == Decimal("31000.0")
         assert len(balances) == 2
-        # Should NOT have called fetch_ticker since we used totalEq
-        adapter._exchange.fetch_ticker.assert_not_called()
+        adapter._exchange.fetch_ticker.assert_called_once_with("BTC/USDT")
+
+    async def test_okx_details_quote_only(self, adapter):
+        """OKX details with only quote currency -- no ticker needed."""
+        adapter._exchange.fetch_balance.return_value = {
+            "free": {"USDT": 86412.55},
+            "used": {"USDT": 0},
+            "info": {"data": [{"totalEq": "86390.95", "details": [
+                {"ccy": "USDT", "eq": "86412.55"},
+                {"ccy": "BTC", "eq": "0.00000000009"},
+            ]}]},
+        }
+        adapter._exchange.fetch_ticker.return_value = {"last": 87000.0}
+
+        total, balances = await adapter.get_account_total_value("USDT")
+
+        # USDT eq directly + BTC eq * price (negligible)
+        assert total > Decimal("86412")
+        assert total < Decimal("86413")
 
     async def test_ticker_failure_skips_currency(self, adapter):
         """When ticker fetch fails for a currency, skip it with warning log."""
