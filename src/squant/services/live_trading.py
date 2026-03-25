@@ -1525,9 +1525,9 @@ class LiveTradingService:
                     # Also try to fetch and persist individual fills
                     try:
                         trades = await adapter.get_order_trades(symbol, order.exchange_oid)
-                        from squant.infra.repository import BaseRepository
+                        from squant.services.order import TradeRepository
 
-                        trade_repo = BaseRepository[Trade](self.session, Trade)
+                        trade_repo = TradeRepository(self.session)
                         for t in trades:
                             existing = await self.session.execute(
                                 select(Trade).where(Trade.exchange_tid == t.trade_id)
