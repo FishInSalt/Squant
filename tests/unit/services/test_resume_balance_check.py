@@ -1,4 +1,4 @@
-"""Tests for _check_resume_balance in LiveTradingService (B1+).
+"""Tests for _check_balance_sufficiency in LiveTradingService (B1+).
 
 Validates that resume checks account balance sufficiency before
 proceeding, raises ValueError when insufficient, and logs warnings
@@ -39,7 +39,7 @@ def mock_adapter():
 
 
 class TestCheckResumeBalance:
-    """Tests for _check_resume_balance method."""
+    """Tests for _check_balance_sufficiency method."""
 
     async def test_sufficient_balance_passes(self, service, mock_adapter):
         """When available balance >= session equity, no exception is raised."""
@@ -47,10 +47,10 @@ class TestCheckResumeBalance:
         service.run_repo.list_running_by_account = AsyncMock(return_value=[])
 
         with patch("squant.services.live_trading.get_live_session_manager"):
-            await service._check_resume_balance(
+            await service._check_balance_sufficiency(
                 adapter=mock_adapter,
                 account_id="acc-123",
-                session_equity=Decimal("10000"),
+                required_equity=Decimal("10000"),
                 quote_currency="USDT",
             )
 
@@ -60,10 +60,10 @@ class TestCheckResumeBalance:
         service.run_repo.list_running_by_account = AsyncMock(return_value=[])
 
         with patch("squant.services.live_trading.get_live_session_manager"):
-            await service._check_resume_balance(
+            await service._check_balance_sufficiency(
                 adapter=mock_adapter,
                 account_id="acc-123",
-                session_equity=Decimal("10000"),
+                required_equity=Decimal("10000"),
                 quote_currency="USDT",
             )
 
@@ -73,11 +73,11 @@ class TestCheckResumeBalance:
         service.run_repo.list_running_by_account = AsyncMock(return_value=[])
 
         with patch("squant.services.live_trading.get_live_session_manager"):
-            with pytest.raises(ValueError, match="Insufficient balance to resume session"):
-                await service._check_resume_balance(
+            with pytest.raises(ValueError, match="账户可用余额不足"):
+                await service._check_balance_sufficiency(
                     adapter=mock_adapter,
                     account_id="acc-123",
-                    session_equity=Decimal("10000"),
+                    required_equity=Decimal("10000"),
                     quote_currency="USDT",
                 )
 
@@ -96,11 +96,11 @@ class TestCheckResumeBalance:
 
         with patch("squant.services.live_trading.get_live_session_manager", return_value=mock_manager):
             # available = 15000 - 8000 = 7000, session_equity = 10000 > 7000
-            with pytest.raises(ValueError, match="Insufficient balance"):
-                await service._check_resume_balance(
+            with pytest.raises(ValueError, match="账户可用余额不足"):
+                await service._check_balance_sufficiency(
                     adapter=mock_adapter,
                     account_id="acc-123",
-                    session_equity=Decimal("10000"),
+                    required_equity=Decimal("10000"),
                     quote_currency="USDT",
                 )
 
@@ -109,10 +109,10 @@ class TestCheckResumeBalance:
         mock_adapter.get_account_total_value.side_effect = RuntimeError("Exchange connection failed")
 
         with caplog.at_level(logging.WARNING, logger="squant.services.live_trading"):
-            await service._check_resume_balance(
+            await service._check_balance_sufficiency(
                 adapter=mock_adapter,
                 account_id="acc-123",
-                session_equity=Decimal("10000"),
+                required_equity=Decimal("10000"),
                 quote_currency="USDT",
             )
 

@@ -570,6 +570,11 @@ async function handleSubmit() {
   const valid = await formRef.value?.validate()
   if (!valid) return
 
+  if (balanceData.value && form.initial_capital > balanceData.value.available) {
+    toastError(`投入资金 (${form.initial_capital}) 超过可用余额 (${formatNumber(balanceData.value.available, 2)} ${balanceData.value.quote_currency})`)
+    return
+  }
+
   const confirmed = await confirmDanger(
     '您即将启动实盘交易，这将使用真实资金进行交易。请确认您已了解所有风险。'
   )

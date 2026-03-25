@@ -426,10 +426,10 @@ class LiveTradingService:
 
         # Validate initial equity does not exceed available balance (B1 check)
         try:
-            await self._check_resume_balance(
+            await self._check_balance_sufficiency(
                 adapter=adapter,
                 account_id=exchange_account_id,
-                session_equity=initial_equity,
+                required_equity=initial_equity,
                 quote_currency=quote_currency,
             )
         except ValueError as e:
@@ -1896,10 +1896,10 @@ class LiveTradingService:
         # Reuses the adapter from step 6 to avoid extra connect() overhead
         session_equity = Decimal(str(run.result.get("equity", 0)))
         quote_currency = run.symbol.split("/")[1] if "/" in run.symbol else "USDT"
-        await self._check_resume_balance(
+        await self._check_balance_sufficiency(
             adapter=adapter,
             account_id=str(run.account_id),
-            session_equity=session_equity,
+            required_equity=session_equity,
             quote_currency=quote_currency,
         )
 
@@ -2159,14 +2159,14 @@ class LiveTradingService:
             available=available,
         )
 
-    async def _check_resume_balance(
+    async def _check_balance_sufficiency(
         self,
         adapter: "ExchangeAdapter",
         account_id: str,
-        session_equity: Decimal,
+        required_equity: Decimal,
         quote_currency: str,
     ) -> None:
-        """Check if account has sufficient balance to resume a session.
+        """Check if account has sufficient balance for required equity.
 
         Reuses an existing adapter connection to avoid extra connect() overhead.
         Raises ValueError if insufficient. Logs warning and continues
@@ -2189,18 +2189,18 @@ class LiveTradingService:
                     total_running_equity += r.initial_capital or Decimal("0")
 
             available = total_value - total_running_equity
-            if session_equity > available:
+            if required_equity > available:
                 raise ValueError(
-                    f"Insufficient balance to resume session. "
-                    f"Session equity: {session_equity}, "
-                    f"Available: {available} {quote_currency}"
+                    f"账户可用余额不足。"
+                    f"需要: {required_equity:.2f} {quote_currency}, "
+                    f"可用: {available:.2f} {quote_currency}"
                 )
         except ValueError:
             raise  # Re-raise insufficient balance
         except Exception as e:
             logger.warning(
                 f"Balance check failed for account {account_id}, "
-                f"proceeding with resume: {e}"
+                f"proceeding: {e}"
             )
 
     @staticmethod

@@ -3394,7 +3394,7 @@ class TestResumeSuccessPath:
             ),
             patch.object(
                 LiveTradingService,
-                "_check_resume_balance",
+                "_check_balance_sufficiency",
                 new_callable=AsyncMock,
             ) as mock_balance_check,
         ):
