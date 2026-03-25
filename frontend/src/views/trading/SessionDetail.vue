@@ -1284,8 +1284,8 @@ async function handleResume() {
     await loadStatus()
     subscribeTradingChannel()
     startPolling()
-  } catch (error: any) {
-    toastError(error?.response?.data?.message || '恢复失败')
+  } catch {
+    // Error already shown by Axios response interceptor
   } finally {
     resuming.value = false
   }

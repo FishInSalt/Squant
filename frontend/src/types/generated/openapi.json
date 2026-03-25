@@ -3049,6 +3049,60 @@
         }
       }
     },
+    "/api/v1/live/account-balance/{account_id}": {
+      "get": {
+        "tags": [
+          "Live Trading"
+        ],
+        "summary": "Get Account Balance",
+        "description": "Get account balance with available capital for live trading.\n\nCalculates the total account value on the exchange, subtracts equity\nallocated to running live trading sessions, and returns the available\ncapital for new sessions.\n\nArgs:\n    account_id: Exchange account ID.\n    quote_currency: Quote currency for balance (default: USDT).\n    session: Database session.\n\nReturns:\n    Account balance breakdown with available capital.\n\nRaises:\n    HTTPException:\n        - 404 if exchange account not found\n        - 503 if exchange connection fails\n        - 400 for other live trading errors",
+        "operationId": "get_account_balance_api_v1_live_account_balance__account_id__get",
+        "parameters": [
+          {
+            "name": "account_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Account Id"
+            }
+          },
+          {
+            "name": "quote_currency",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "USDT",
+              "title": "Quote Currency"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_AccountBalanceResponse_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/live/{run_id}/orders": {
       "get": {
         "tags": [
@@ -4670,6 +4724,42 @@
   },
   "components": {
     "schemas": {
+      "AccountBalanceResponse": {
+        "properties": {
+          "account_total_value": {
+            "type": "number",
+            "title": "Account Total Value"
+          },
+          "quote_currency": {
+            "type": "string",
+            "title": "Quote Currency"
+          },
+          "running_sessions": {
+            "items": {
+              "$ref": "#/components/schemas/RunningSessionEquity"
+            },
+            "type": "array",
+            "title": "Running Sessions"
+          },
+          "sessions_total_equity": {
+            "type": "number",
+            "title": "Sessions Total Equity",
+            "default": 0.0
+          },
+          "available": {
+            "type": "number",
+            "title": "Available",
+            "default": 0.0
+          }
+        },
+        "type": "object",
+        "required": [
+          "account_total_value",
+          "quote_currency"
+        ],
+        "title": "AccountBalanceResponse",
+        "description": "Account balance with available capital calculation."
+      },
       "AddToWatchlistRequest": {
         "properties": {
           "symbol": {
@@ -4694,6 +4784,28 @@
         ],
         "title": "AddToWatchlistRequest",
         "description": "Request to add a symbol to the watchlist."
+      },
+      "ApiResponse_AccountBalanceResponse_": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "default": 0
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "success"
+          },
+          "data": {
+            "$ref": "#/components/schemas/AccountBalanceResponse"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "title": "ApiResponse[AccountBalanceResponse]"
       },
       "ApiResponse_BacktestDetailResponse_": {
         "properties": {
@@ -10802,6 +10914,42 @@
         ],
         "title": "RunBacktestRequest",
         "description": "Request to create and run a backtest."
+      },
+      "RunningSessionEquity": {
+        "properties": {
+          "run_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Run Id"
+          },
+          "strategy_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Strategy Name"
+          },
+          "symbol": {
+            "type": "string",
+            "title": "Symbol"
+          },
+          "equity": {
+            "type": "number",
+            "title": "Equity"
+          }
+        },
+        "type": "object",
+        "required": [
+          "run_id",
+          "symbol",
+          "equity"
+        ],
+        "title": "RunningSessionEquity",
+        "description": "Equity info for a running session."
       },
       "StartLiveTradingRequest": {
         "properties": {

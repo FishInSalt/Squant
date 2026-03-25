@@ -54,3 +54,21 @@ export const resumeLiveTrading = (id: string, warmup_bars?: number) =>
 // 获取会话历史订单（审计表）
 export const getLiveSessionOrders = (id: string, params?: { page?: number; page_size?: number }) =>
   get<PaginatedData<LiveSessionOrder>>(`/live/${id}/orders`, params)
+
+// 查询账户可用余额
+export const getAccountBalance = (accountId: string, quoteCurrency?: string) =>
+  get<{
+    account_total_value: number
+    quote_currency: string
+    running_sessions: Array<{
+      run_id: string
+      strategy_name: string | null
+      symbol: string
+      equity: number
+    }>
+    sessions_total_equity: number
+    available: number
+  }>(
+    `/live/account-balance/${accountId}`,
+    quoteCurrency ? { quote_currency: quoteCurrency } : undefined,
+  )

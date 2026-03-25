@@ -1557,6 +1557,44 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/live/account-balance/{account_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Account Balance
+         * @description Get account balance with available capital for live trading.
+         *
+         *     Calculates the total account value on the exchange, subtracts equity
+         *     allocated to running live trading sessions, and returns the available
+         *     capital for new sessions.
+         *
+         *     Args:
+         *         account_id: Exchange account ID.
+         *         quote_currency: Quote currency for balance (default: USDT).
+         *         session: Database session.
+         *
+         *     Returns:
+         *         Account balance breakdown with available capital.
+         *
+         *     Raises:
+         *         HTTPException:
+         *             - 404 if exchange account not found
+         *             - 503 if exchange connection fails
+         *             - 400 for other live trading errors
+         */
+        get: operations["get_account_balance_api_v1_live_account_balance__account_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/live/{run_id}/orders": {
         parameters: {
             query?: never;
@@ -2335,6 +2373,28 @@ export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
         /**
+         * AccountBalanceResponse
+         * @description Account balance with available capital calculation.
+         */
+        AccountBalanceResponse: {
+            /** Account Total Value */
+            account_total_value: number;
+            /** Quote Currency */
+            quote_currency: string;
+            /** Running Sessions */
+            running_sessions?: components["schemas"]["RunningSessionEquity"][];
+            /**
+             * Sessions Total Equity
+             * @default 0
+             */
+            sessions_total_equity: number;
+            /**
+             * Available
+             * @default 0
+             */
+            available: number;
+        };
+        /**
          * AddToWatchlistRequest
          * @description Request to add a symbol to the watchlist.
          */
@@ -2349,6 +2409,20 @@ export interface components {
              * @description Exchange identifier
              */
             exchange: string;
+        };
+        /** ApiResponse[AccountBalanceResponse] */
+        ApiResponse_AccountBalanceResponse_: {
+            /**
+             * Code
+             * @default 0
+             */
+            code: number;
+            /**
+             * Message
+             * @default success
+             */
+            message: string;
+            data: components["schemas"]["AccountBalanceResponse"];
         };
         /** ApiResponse[BacktestDetailResponse] */
         ApiResponse_BacktestDetailResponse_: {
@@ -5453,6 +5527,23 @@ export interface components {
             } | null;
         };
         /**
+         * RunningSessionEquity
+         * @description Equity info for a running session.
+         */
+        RunningSessionEquity: {
+            /**
+             * Run Id
+             * Format: uuid
+             */
+            run_id: string;
+            /** Strategy Name */
+            strategy_name?: string | null;
+            /** Symbol */
+            symbol: string;
+            /** Equity */
+            equity: number;
+        };
+        /**
          * StartLiveTradingRequest
          * @description Request to start a live trading session.
          */
@@ -7968,6 +8059,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ApiResponse_PaginatedData_LiveTradingRunResponse__"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_account_balance_api_v1_live_account_balance__account_id__get: {
+        parameters: {
+            query?: {
+                quote_currency?: string;
+            };
+            header?: never;
+            path: {
+                account_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_AccountBalanceResponse_"];
                 };
             };
             /** @description Validation Error */
