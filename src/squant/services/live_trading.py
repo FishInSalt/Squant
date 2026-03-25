@@ -2162,7 +2162,7 @@ class LiveTradingService:
 
     async def _check_balance_sufficiency(
         self,
-        adapter: "ExchangeAdapter",
+        adapter: ExchangeAdapter,
         account_id: str,
         required_equity: Decimal,
         quote_currency: str,
