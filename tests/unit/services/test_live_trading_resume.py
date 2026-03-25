@@ -554,6 +554,8 @@ class TestReconcileOrders:
         engine._live_orders = {"ord-1": lo}
         engine._exchange_order_map = {"ex-1": "ord-1"}
         engine._record_fill = MagicMock()
+        engine._context = MagicMock()
+        engine._context._restored_completed_orders_count = 0
 
         adapter = AsyncMock()
         # Not in open orders
@@ -579,6 +581,8 @@ class TestReconcileOrders:
         assert report["fills_processed"] == 1
         # Order should be removed from tracking
         assert "ord-1" not in engine._live_orders
+        # Completed count should be incremented
+        assert engine._context._restored_completed_orders_count == 1
 
     async def test_exchange_query_failure_marks_cancelled(self, service):
         """When can't query order, conservatively mark cancelled."""
@@ -594,6 +598,8 @@ class TestReconcileOrders:
         engine = MagicMock(spec=LiveTradingEngine)
         engine._live_orders = {"ord-1": lo}
         engine._exchange_order_map = {"ex-1": "ord-1"}
+        engine._context = MagicMock()
+        engine._context._restored_completed_orders_count = 0
 
         adapter = AsyncMock()
         adapter.get_open_orders = AsyncMock(return_value=[])

@@ -2932,7 +2932,8 @@ class LiveTradingEngine:
             "unrealized_pnl": str(ctx._get_unrealized_pnl()),
             "realized_pnl": str(ctx._cumulative_realized_pnl),
             "total_fees": str(ctx._total_fees),
-            "completed_orders_count": len(ctx._completed_orders),
+            "completed_orders_count": ctx._restored_completed_orders_count
+            + len(ctx._completed_orders),
             "trades_count": len(ctx._trades),
             "positions": {
                 sym: {

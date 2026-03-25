@@ -1460,11 +1460,14 @@ class LiveTradingService:
                     orders_to_remove.append(internal_id)
                     report["orders_cancelled"] += 1
 
-        # Clean up completed orders from tracking
+        # Clean up completed orders from tracking and update context count
         for internal_id in orders_to_remove:
             order = engine._live_orders.pop(internal_id, None)
             if order and order.exchange_order_id:
                 engine._exchange_order_map.pop(order.exchange_order_id, None)
+            # Increment completed count — SimulatedOrders aren't restored on resume,
+            # so we bump the base count directly for the UI to reflect the update.
+            engine._context._restored_completed_orders_count += 1
 
         # Check for untracked exchange orders
         tracked_exchange_ids = set(engine._exchange_order_map.keys())
