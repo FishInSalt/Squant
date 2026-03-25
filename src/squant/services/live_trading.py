@@ -429,7 +429,7 @@ class LiveTradingService:
         try:
             await self._check_balance_sufficiency(
                 adapter=adapter,
-                account_id=exchange_account_id,
+                account_id=str(exchange_account_id),
                 required_equity=initial_equity,
                 quote_currency=quote_currency,
             )
@@ -1921,7 +1921,6 @@ class LiveTradingService:
             symbol=run.symbol,
             db_orders=existing_orders,  # from step 10b
             since=recovery_since,
-            order_id_map=seed_map,
         )
         logger.info(f"Recovery reconciliation for {run_id}: {recovery_report}")
 
@@ -2170,7 +2169,7 @@ class LiveTradingService:
         """Check if account has sufficient balance for required equity.
 
         Reuses an existing adapter connection to avoid extra connect() overhead.
-        Raises ValueError if insufficient. Logs warning and continues
+        Raises LiveTradingError if insufficient. Logs warning and continues
         if the balance check itself fails (non-blocking).
         """
         try:
@@ -2257,7 +2256,6 @@ class LiveTradingService:
         symbol: str,
         db_orders: list,
         since: datetime,
-        order_id_map: dict[str, str],
     ) -> dict[str, Any]:
         """Find and recover orders on exchange that are missing from DB.
 
@@ -2267,6 +2265,9 @@ class LiveTradingService:
         compares against existing DB orders by exchange_order_id, and
         creates Order + Trade records for any missing ones.
 
+        Uses an independent DB session (get_session_context) to isolate
+        IntegrityError rollbacks from the main resume transaction.
+
         Args:
             adapter: Exchange adapter for querying orders/trades.
             run_id: Strategy run ID.
@@ -2275,7 +2276,6 @@ class LiveTradingService:
             symbol: Trading symbol (e.g. "BTC/USDT").
             db_orders: Existing DB order records for this run.
             since: How far back to look for orders on the exchange.
-            order_id_map: Existing internal_id -> DB order UUID mapping.
 
         Returns:
             Dict with keys: missing_orders_found, missing_orders_recovered, errors.

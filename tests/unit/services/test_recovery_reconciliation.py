@@ -211,7 +211,7 @@ class TestReconcileMissingOrders:
             symbol="BTC/USDT",
             db_orders=db_orders,
             since=datetime.now(UTC) - timedelta(hours=1),
-            order_id_map={},
+
         )
 
         assert report["missing_orders_found"] == 0
@@ -256,7 +256,7 @@ class TestReconcileMissingOrders:
                 symbol="BTC/USDT",
                 db_orders=db_orders,
                 since=datetime.now(UTC) - timedelta(hours=1),
-                order_id_map={},
+    
             )
 
         assert report["missing_orders_found"] == 1
@@ -298,7 +298,7 @@ class TestReconcileMissingOrders:
             symbol="BTC/USDT",
             db_orders=[],
             since=datetime.now(UTC) - timedelta(hours=1),
-            order_id_map={},
+
         )
 
         assert report["missing_orders_found"] == 0
@@ -358,7 +358,7 @@ class TestReconcileMissingOrders:
                 symbol="BTC/USDT",
                 db_orders=db_orders,
                 since=datetime.now(UTC) - timedelta(hours=1),
-                order_id_map={},
+    
             )
 
         assert report["missing_orders_found"] == 1
@@ -421,7 +421,7 @@ class TestReconcileMissingOrders:
                 symbol="BTC/USDT",
                 db_orders=[],
                 since=datetime.now(UTC) - timedelta(hours=1),
-                order_id_map={},
+    
             )
 
         # Order was recovered despite fill fetch failure
@@ -468,7 +468,7 @@ class TestReconcileMissingOrders:
                 symbol="BTC/USDT",
                 db_orders=[],
                 since=datetime.now(UTC) - timedelta(hours=1),
-                order_id_map={},
+    
             )
 
         assert report["missing_orders_recovered"] == 1
