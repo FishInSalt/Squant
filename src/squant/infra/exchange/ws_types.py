@@ -122,7 +122,7 @@ class WSTradeExecution(BaseModel):
     order_id: str
     client_order_id: str | None = None
     symbol: str
-    side: str
+    side: str | None = None
     price: Decimal
     amount: Decimal
     fee: Decimal = Decimal("0")

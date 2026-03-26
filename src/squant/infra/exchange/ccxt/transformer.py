@@ -318,7 +318,7 @@ class CCXTDataTransformer:
             order_id=str(trade.get("order", "")),
             client_order_id=trade.get("clientOrderId"),
             symbol=trade.get("symbol", ""),
-            side=trade.get("side", ""),
+            side=trade.get("side") or None,
             price=Decimal(str(trade.get("price") or 0)),
             amount=Decimal(str(trade.get("amount") or 0)),
             fee=Decimal(str(fee_info.get("cost") or 0)),
