@@ -1450,7 +1450,7 @@ class LiveTradingEngine:
                 # to populate exchange_tid, exact per-fill prices, taker_or_maker
                 self._orders_needing_reconciliation.add(internal_id)
 
-        # Log order status change to trading log for user visibility
+        # Log + audit event when order reaches terminal status without new fills
         if new_status != old_status and live_order.is_complete and not has_new_fills:
             short_id = internal_id[:8]
             if new_status == OrderStatus.CANCELLED:
@@ -1469,9 +1469,6 @@ class LiveTradingEngine:
                     category="order",
                 )
 
-        # Emit "status_change" audit event when order reaches terminal status
-        # without new fill data (fills already processed or no fills at all).
-        if new_status != old_status and live_order.is_complete and not has_new_fills:
             self._pending_order_events.append(
                 {
                     "type": "status_change",
@@ -2331,7 +2328,7 @@ class LiveTradingEngine:
         if response.status == OrderStatus.FILLED and live_order.filled_amount < live_order.amount:
             self._orders_needing_reconciliation.add(live_order.internal_id)
 
-        # Log order status change to trading log for user visibility
+        # Log + audit event when polling detects terminal status without new fills
         if response.status != old_status and live_order.is_complete and not has_new_fills:
             short_id = live_order.internal_id[:8]
             if response.status == OrderStatus.CANCELLED:
@@ -2350,9 +2347,6 @@ class LiveTradingEngine:
                     category="order",
                 )
 
-        # Emit "status_change" audit event when polling detects terminal status
-        # without new fill data.
-        if response.status != old_status and live_order.is_complete and not has_new_fills:
             self._pending_order_events.append(
                 {
                     "type": "status_change",
