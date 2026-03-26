@@ -257,6 +257,8 @@ async def get_paper_trading_status(
             equity=Decimal(status["equity"]),
             initial_capital=Decimal(status["initial_capital"]),
             total_fees=Decimal(status["total_fees"]),
+            fees_by_currency=status.get("fees_by_currency", {}),
+            fees_usdt_equivalent=status.get("fees_usdt_equivalent"),
             unrealized_pnl=Decimal(status["unrealized_pnl"]),
             realized_pnl=Decimal(status["realized_pnl"]),
             positions=positions,

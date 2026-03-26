@@ -4546,6 +4546,12 @@ export interface components {
             initial_capital: number;
             /** Total Fees */
             total_fees: number;
+            /** Fees By Currency */
+            fees_by_currency?: {
+                [key: string]: unknown;
+            };
+            /** Fees Usdt Equivalent */
+            fees_usdt_equivalent?: number | null;
             /**
              * Unrealized Pnl
              * @default 0
@@ -5202,6 +5208,12 @@ export interface components {
             initial_capital: number;
             /** Total Fees */
             total_fees: number;
+            /** Fees By Currency */
+            fees_by_currency?: {
+                [key: string]: unknown;
+            };
+            /** Fees Usdt Equivalent */
+            fees_usdt_equivalent?: number | null;
             /**
              * Unrealized Pnl
              * @default 0

@@ -2998,6 +2998,8 @@ class LiveTradingEngine:
             "unrealized_pnl": str(ctx._get_unrealized_pnl()),
             "realized_pnl": str(ctx._cumulative_realized_pnl),
             "total_fees": str(ctx._total_fees),
+            "fees_by_currency": {k: str(v) for k, v in ctx._fees_by_currency.items()},
+            "fees_usdt_equivalent": str(usdt_equiv) if (usdt_equiv := ctx.get_fees_usdt_equivalent()) is not None else None,
             "completed_orders_count": ctx._restored_completed_orders_count
             + len(ctx._completed_orders),
             "trades_count": len(ctx._trades),
