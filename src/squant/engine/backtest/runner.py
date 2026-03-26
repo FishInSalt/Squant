@@ -293,6 +293,9 @@ class BacktestRunner:
                 logger.warning(f"Fill rejected for order {fill.order_id}: {e}")
                 for order in self._context._get_pending_orders():
                     if order.id == fill.order_id:
+                        # Status stays CANCELLED (not REJECTED): fill rejection
+                        # happens after order acceptance, during execution — semantically
+                        # a cancellation. reject_reason still set for strategy visibility.
                         order.reject_reason = f"fill_rejected: {e}"
                         self._context.cancel_order(order.id)
                         break

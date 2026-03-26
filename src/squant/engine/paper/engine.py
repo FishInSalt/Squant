@@ -902,6 +902,9 @@ class PaperTradingEngine:
             logger.warning(f"Fill rejected in engine {self._run_id}: {e}")
             self._context.log(f"Order fill rejected: {e}", level="warning", category="fill")
             # Cancel the order to prevent infinite retry (consistent with backtest runner)
+            # Status stays CANCELLED (not REJECTED): fill rejection happens after
+            # order acceptance — semantically a cancellation, not a submission rejection.
+            # reject_reason still set for strategy visibility via on_order_done.
             for order in self._context._pending_orders:
                 if order.id == fill.order_id:
                     order.reject_reason = f"fill_rejected: {e}"
