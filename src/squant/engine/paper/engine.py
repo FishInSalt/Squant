@@ -836,8 +836,9 @@ class PaperTradingEngine:
         if not result.passed:
             from squant.engine.backtest.types import OrderStatus
 
-            order.status = OrderStatus.CANCELLED
             reason = result.reason or "Risk check failed"
+            order.status = OrderStatus.REJECTED
+            order.reject_reason = f"risk_rejected: {reason}"
             logger.warning(f"Order rejected by risk manager in {self._run_id}: {reason}")
             self._context.log(f"Order rejected (risk): {reason}", level="warning", category="risk")
             return False
@@ -901,6 +902,13 @@ class PaperTradingEngine:
             logger.warning(f"Fill rejected in engine {self._run_id}: {e}")
             self._context.log(f"Order fill rejected: {e}", level="warning", category="fill")
             # Cancel the order to prevent infinite retry (consistent with backtest runner)
+            # Status stays CANCELLED (not REJECTED): fill rejection happens after
+            # order acceptance — semantically a cancellation, not a submission rejection.
+            # reject_reason still set for strategy visibility via on_order_done.
+            for order in self._context._pending_orders:
+                if order.id == fill.order_id:
+                    order.reject_reason = f"fill_rejected: {e}"
+                    break
             self._context.cancel_order(fill.order_id)
             return
 
@@ -1145,6 +1153,8 @@ class PaperTradingEngine:
             "unrealized_pnl": str(ctx._get_unrealized_pnl()),
             "realized_pnl": str(self._cached_realized_pnl),
             "total_fees": str(ctx._total_fees),
+            "fees_by_currency": {k: str(v) for k, v in ctx._fees_by_currency.items()},
+            "fees_usdt_equivalent": str(usdt_equiv) if (usdt_equiv := ctx.get_fees_usdt_equivalent()) is not None else None,
             "completed_orders_count": len(ctx._completed_orders),
             "trades_count": len(ctx._trades),
             "positions": {

@@ -8833,6 +8833,22 @@
             "type": "number",
             "title": "Total Fees"
           },
+          "fees_by_currency": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Fees By Currency"
+          },
+          "fees_usdt_equivalent": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fees Usdt Equivalent"
+          },
           "unrealized_pnl": {
             "type": "number",
             "title": "Unrealized Pnl",
@@ -10197,6 +10213,22 @@
           "total_fees": {
             "type": "number",
             "title": "Total Fees"
+          },
+          "fees_by_currency": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Fees By Currency"
+          },
+          "fees_usdt_equivalent": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fees Usdt Equivalent"
           },
           "unrealized_pnl": {
             "type": "number",

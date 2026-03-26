@@ -122,6 +122,7 @@ class BacktestContext:
 
         # Total fees paid
         self._total_fees = Decimal("0")
+        self._fees_by_currency: dict[str, Decimal] = {}
 
         # Cumulative realized PnL (survives deque eviction).
         # _trades deque has a maxlen, so sum(t.pnl for t in _trades) becomes
@@ -215,6 +216,27 @@ class BacktestContext:
     def total_fees(self) -> Decimal:
         """Get total fees paid."""
         return self._total_fees
+
+    def get_fees_usdt_equivalent(self) -> Decimal | None:
+        """Compute USDT equivalent of all fees using current prices.
+
+        Returns:
+            Total fees in USDT, or None if conversion not possible.
+        """
+        if not self._fees_by_currency:
+            return Decimal("0")
+
+        total = Decimal("0")
+        for currency, amount in self._fees_by_currency.items():
+            if currency == "USDT":
+                total += amount
+            else:
+                symbol = f"{currency}/USDT"
+                price = self._last_prices.get(symbol)
+                if price is None:
+                    return None
+                total += amount * price
+        return total
 
     @property
     def unrealized_pnl(self) -> Decimal:
@@ -813,6 +835,15 @@ class BacktestContext:
         self._total_fills_added += 1
         self._total_fees += fill.fee
 
+        # Track fees by currency
+        if fill.fee > 0:
+            fee_currency = fill.fee_currency or (
+                fill.symbol.split("/")[1] if "/" in fill.symbol else "UNKNOWN"
+            )
+            self._fees_by_currency[fee_currency] = (
+                self._fees_by_currency.get(fee_currency, Decimal("0")) + fill.fee
+            )
+
         # Update position (this may also raise if trying to go short)
         position.update(fill.amount, fill.price, fill.side)
 
@@ -821,8 +852,13 @@ class BacktestContext:
         if fee_in_base and fill.fee > 0 and fill.side == OrderSide.BUY:
             position.amount -= fill.fee
 
+        # Convert fee to quote currency for consistent PnL calculation.
+        # Base currency fees (e.g., BTC) are converted at fill price so that
+        # _open_trade.fees is always in quote currency (e.g., USDT).
+        fee_in_quote = fill.fee * fill.price if fee_in_base else fill.fee
+
         # Track trades (entry/exit)
-        self._update_trade_tracking(fill, prev_amount, position.amount)
+        self._update_trade_tracking(fill, prev_amount, position.amount, fee_in_quote)
 
         # Update the order status
         for order in self._pending_orders:
@@ -860,6 +896,7 @@ class BacktestContext:
         fill: Fill,
         prev_amount: Decimal,
         new_amount: Decimal,
+        fee_in_quote: Decimal | None = None,
     ) -> None:
         """Update trade tracking based on position changes.
 
@@ -867,7 +904,10 @@ class BacktestContext:
             fill: The fill that caused the position change.
             prev_amount: Position amount before the fill.
             new_amount: Position amount after the fill.
+            fee_in_quote: Fee converted to quote currency for PnL calculation.
+                If None, uses fill.fee (backward compat for backtest).
         """
+        trade_fee = fee_in_quote if fee_in_quote is not None else fill.fee
         side_label = "买入成交" if fill.side == OrderSide.BUY else "卖出成交"
         short_id = fill.order_id[:8]
         price_detail = self._format_price_detail(fill)
@@ -883,7 +923,7 @@ class BacktestContext:
                 entry_time=fill.timestamp,
                 entry_price=fill.price,
                 amount=abs(new_amount),
-                fees=fill.fee,
+                fees=trade_fee,
             )
             self.log(
                 f"{side_label} #{short_id} {fill.symbol} "
@@ -902,7 +942,7 @@ class BacktestContext:
                 prev_value = self._open_trade.entry_price * abs(prev_amount)
                 new_value = fill.price * added_amount
                 self._open_trade.entry_price = (prev_value + new_value) / abs(new_amount)
-                self._open_trade.fees += fill.fee
+                self._open_trade.fees += trade_fee
                 self._open_trade.amount = abs(new_amount)
                 avg = self._open_trade.entry_price
                 self.log(
@@ -915,7 +955,7 @@ class BacktestContext:
 
         # Position decreased or closed
         elif self._open_trade:
-            self._open_trade.fees += fill.fee
+            self._open_trade.fees += trade_fee
             fill_amount = abs(prev_amount) - abs(new_amount)
 
             # Compute realized PnL for this fill
@@ -1143,6 +1183,8 @@ class BacktestContext:
             "cash": str(self._cash),
             "equity": str(self.equity),
             "total_fees": str(self._total_fees),
+            "fees_by_currency": {k: str(v) for k, v in self._fees_by_currency.items()},
+            "fees_usdt_equivalent": str(usdt_equiv) if (usdt_equiv := self.get_fees_usdt_equivalent()) is not None else None,
             "unrealized_pnl": str(unrealized_pnl_total),
             "realized_pnl": str(realized_pnl),
             "positions": positions,
@@ -1176,6 +1218,12 @@ class BacktestContext:
         # Restore total fees
         if "total_fees" in state:
             self._total_fees = Decimal(str(state["total_fees"]))
+
+        # Restore per-currency fees
+        if state.get("fees_by_currency"):
+            self._fees_by_currency = {
+                k: Decimal(str(v)) for k, v in state["fees_by_currency"].items()
+            }
 
         # Restore cumulative realized PnL (survives deque eviction)
         if "realized_pnl" in state:

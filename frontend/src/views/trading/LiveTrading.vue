@@ -192,7 +192,13 @@
 
           <el-row :gutter="16">
             <el-col :span="12">
-              <el-form-item label="最大持仓比例">
+              <el-form-item>
+                <template #label>
+                  <span>最大持仓比例</span>
+                  <el-tooltip content="单个交易对的持仓价值不超过账户总资金的该比例" placement="top">
+                    <el-icon class="form-tip-icon"><QuestionFilled /></el-icon>
+                  </el-tooltip>
+                </template>
                 <el-input-number
                   v-model="form.risk_config.max_position_size"
                   :min="0.01"
@@ -204,7 +210,13 @@
               </el-form-item>
             </el-col>
             <el-col :span="12">
-              <el-form-item label="最大单笔下单比例">
+              <el-form-item>
+                <template #label>
+                  <span>最大单笔下单比例</span>
+                  <el-tooltip content="单笔订单金额不超过账户总资金的该比例" placement="top">
+                    <el-icon class="form-tip-icon"><QuestionFilled /></el-icon>
+                  </el-tooltip>
+                </template>
                 <el-input-number
                   v-model="form.risk_config.max_order_size"
                   :min="0.01"
@@ -219,7 +231,13 @@
 
           <el-row :gutter="16">
             <el-col :span="12">
-              <el-form-item label="每日交易限制">
+              <el-form-item>
+                <template #label>
+                  <span>每日交易限制</span>
+                  <el-tooltip content="每日（UTC 0 点重置）最多成交笔数，超过后拒绝新订单" placement="top">
+                    <el-icon class="form-tip-icon"><QuestionFilled /></el-icon>
+                  </el-tooltip>
+                </template>
                 <el-input-number
                   v-model="form.risk_config.daily_trade_limit"
                   :min="1"
@@ -229,7 +247,13 @@
               </el-form-item>
             </el-col>
             <el-col :span="12">
-              <el-form-item label="日最大亏损比例">
+              <el-form-item>
+                <template #label>
+                  <span>日最大亏损比例</span>
+                  <el-tooltip content="当日已实现亏损达到初始资金的该比例时，拒绝新订单" placement="top">
+                    <el-icon class="form-tip-icon"><QuestionFilled /></el-icon>
+                  </el-tooltip>
+                </template>
                 <el-input-number
                   v-model="form.risk_config.daily_loss_limit"
                   :min="0.01"
@@ -244,7 +268,13 @@
 
           <el-row :gutter="16">
             <el-col :span="12">
-              <el-form-item label="价格偏离限制">
+              <el-form-item>
+                <template #label>
+                  <span>价格偏离限制</span>
+                  <el-tooltip content="下单价格偏离当前市价超过该比例时拒绝，防止滑点过大" placement="top">
+                    <el-icon class="form-tip-icon"><QuestionFilled /></el-icon>
+                  </el-tooltip>
+                </template>
                 <el-input-number
                   v-model="form.risk_config.price_deviation_limit"
                   :min="0.001"
@@ -256,7 +286,13 @@
               </el-form-item>
             </el-col>
             <el-col :span="12">
-              <el-form-item label="熔断触发次数">
+              <el-form-item>
+                <template #label>
+                  <span>熔断触发次数</span>
+                  <el-tooltip content="连续亏损达到该次数时自动停止交易 30 分钟" placement="top">
+                    <el-icon class="form-tip-icon"><QuestionFilled /></el-icon>
+                  </el-tooltip>
+                </template>
                 <el-input-number
                   v-model="form.risk_config.circuit_breaker_threshold"
                   :min="1"
@@ -269,7 +305,13 @@
 
           <el-row :gutter="16">
             <el-col :span="12">
-              <el-form-item label="最小下单金额 (USDT)">
+              <el-form-item>
+                <template #label>
+                  <span>最小下单金额 (USDT)</span>
+                  <el-tooltip content="订单金额低于该值时静默忽略，避免产生过小订单" placement="top">
+                    <el-icon class="form-tip-icon"><QuestionFilled /></el-icon>
+                  </el-tooltip>
+                </template>
                 <el-input-number
                   v-model="form.risk_config.min_order_value"
                   :min="1"
@@ -765,6 +807,14 @@ onMounted(async () => {
       justify-content: flex-end;
       gap: 8px;
     }
+  }
+
+  .form-tip-icon {
+    margin-left: 4px;
+    color: var(--el-text-color-secondary);
+    cursor: help;
+    font-size: 14px;
+    vertical-align: middle;
   }
 
   .empty-state {

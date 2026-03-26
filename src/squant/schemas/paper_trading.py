@@ -153,6 +153,8 @@ class PaperTradingStatusResponse(BaseModel):
     equity: NumberDecimal
     initial_capital: NumberDecimal
     total_fees: NumberDecimal
+    fees_by_currency: dict[str, Any] = Field(default_factory=dict)
+    fees_usdt_equivalent: NumberDecimal | None = None
     unrealized_pnl: NumberDecimal = Field(default=Decimal("0"))
     realized_pnl: NumberDecimal = Field(default=Decimal("0"))
     positions: dict[str, PositionInfo]
