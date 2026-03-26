@@ -852,8 +852,13 @@ class BacktestContext:
         if fee_in_base and fill.fee > 0 and fill.side == OrderSide.BUY:
             position.amount -= fill.fee
 
+        # Convert fee to quote currency for consistent PnL calculation.
+        # Base currency fees (e.g., BTC) are converted at fill price so that
+        # _open_trade.fees is always in quote currency (e.g., USDT).
+        fee_in_quote = fill.fee * fill.price if fee_in_base else fill.fee
+
         # Track trades (entry/exit)
-        self._update_trade_tracking(fill, prev_amount, position.amount)
+        self._update_trade_tracking(fill, prev_amount, position.amount, fee_in_quote)
 
         # Update the order status
         for order in self._pending_orders:
@@ -891,6 +896,7 @@ class BacktestContext:
         fill: Fill,
         prev_amount: Decimal,
         new_amount: Decimal,
+        fee_in_quote: Decimal | None = None,
     ) -> None:
         """Update trade tracking based on position changes.
 
@@ -898,7 +904,10 @@ class BacktestContext:
             fill: The fill that caused the position change.
             prev_amount: Position amount before the fill.
             new_amount: Position amount after the fill.
+            fee_in_quote: Fee converted to quote currency for PnL calculation.
+                If None, uses fill.fee (backward compat for backtest).
         """
+        trade_fee = fee_in_quote if fee_in_quote is not None else fill.fee
         side_label = "买入成交" if fill.side == OrderSide.BUY else "卖出成交"
         short_id = fill.order_id[:8]
         price_detail = self._format_price_detail(fill)
@@ -914,7 +923,7 @@ class BacktestContext:
                 entry_time=fill.timestamp,
                 entry_price=fill.price,
                 amount=abs(new_amount),
-                fees=fill.fee,
+                fees=trade_fee,
             )
             self.log(
                 f"{side_label} #{short_id} {fill.symbol} "
@@ -933,7 +942,7 @@ class BacktestContext:
                 prev_value = self._open_trade.entry_price * abs(prev_amount)
                 new_value = fill.price * added_amount
                 self._open_trade.entry_price = (prev_value + new_value) / abs(new_amount)
-                self._open_trade.fees += fill.fee
+                self._open_trade.fees += trade_fee
                 self._open_trade.amount = abs(new_amount)
                 avg = self._open_trade.entry_price
                 self.log(
@@ -946,7 +955,7 @@ class BacktestContext:
 
         # Position decreased or closed
         elif self._open_trade:
-            self._open_trade.fees += fill.fee
+            self._open_trade.fees += trade_fee
             fill_amount = abs(prev_amount) - abs(new_amount)
 
             # Compute realized PnL for this fill
