@@ -82,6 +82,13 @@ async def _event_loop(self) -> None:
         async with self._processing_lock:
             if not self._is_running:
                 break
+            # Guard: skip WS events if emergency close is in progress (P0-2 safety).
+            # Events queued before the flag was set must not modify positions/cash
+            # after emergency close has executed.
+            if self._emergency_close_in_progress and event.type in (
+                EngineEventType.WS_FILL, EngineEventType.WS_ORDER
+            ):
+                continue
             try:
                 match event.type:
                     case EngineEventType.WS_FILL:
@@ -221,7 +228,12 @@ These are bar-level operations that should not run on every WS event.
     "open_trade": null,
     "completed_orders_count": 0,
     "trades_count": 0,
-    "risk_state": {}
+    "risk_state": {
+      "equity": "99550.00",
+      "unrealized_pnl": "50.00",
+      "total_pnl": "0",
+      "circuit_breaker_triggered": false
+    }
   },
   "new_fills": [],
   "new_trades": [],
@@ -234,6 +246,21 @@ These are bar-level operations that should not run on every WS event.
 - `trigger` + `trigger_detail`: For toast notifications.
 - `new_fills`/`new_trades`/`new_logs`: Incremental append data.
 - **All numeric values are serialized as strings** (Decimal → str), consistent with existing `bar_update` serialization. `trigger_detail` follows the same convention.
+- **`risk_state` staleness:** In `state_update`, `risk_state` reflects the last bar's values (risk manager is only updated in `_handle_bar_close`). This is not data loss — `get_state_summary()` always returns a populated dict — but the values may not reflect the impact of the just-processed fill on equity. The next `bar_close` will push fully updated risk_state.
+- **`trigger_detail` for `order_update`:** When `trigger` is `"order_update"`, `trigger_detail` contains: `{"order_id": "...", "status": "cancelled", "side": "buy", "amount": "0.01", "filled_amount": "0.005"}`.
+
+### Incremental Data (Delta) Tracking
+
+`state_update` and `bar_close` both include `new_fills`, `new_trades`, `new_logs`. Delta tracking uses the same counter mechanism as the current `_build_bar_update_event()`:
+
+- Counters: `_last_emitted_fill_total`, `_last_emitted_trade_total`, `_last_emitted_log_total`.
+- Each push (whether `state_update` or `bar_close`) extracts items added since the last emission and updates the counters.
+- **Push failure behavior:** If a push fails (fire-and-forget), the counters have already been updated, so the failed push's incremental data is "consumed" but not delivered. This is acceptable because: (a) the `state` full snapshot in the next successful push ensures frontend state is correct, and (b) `bar_close` as a guaranteed sync point (via `await put()`) ensures periodic correction.
+- A single WS_FILL event typically produces exactly 1 new fill in the delta.
+
+### Per-Event Flush Trade-off
+
+`_flush_order_events()` (DB persistence of audit trail) is called after every WS_FILL and WS_ORDER event. This increases DB write frequency compared to the current design (2-3 flushes per bar). This is an **intentional trade-off**: lower data loss window on crash (sub-second vs up to 60s) at the cost of more frequent DB writes. For a personal trading system with low fill frequency (a few fills per minute at most), this is acceptable. If burst writes become a concern (e.g., rapid partial fills), a batched flush with time/count threshold can be introduced later.
 
 ### `bar_close` Event Format
 
@@ -300,7 +327,7 @@ Changes:
 2. **Replace `_build_bar_update_event()`** with `_build_bar_close_event()` — bar-end event uses new format with `equity_point` and `bar` fields.
 3. Delete: `_build_fill_event()`, `_build_bar_update_event()`.
 
-Effect: Fill visibility latency drops from up to 60s (waiting for bar close to emit event) to the WS candle update interval (typically ~1s, varies by exchange). Paper engine calls `_fill_new_orders()` on every WS candle tick (both closed and unclosed). The `state_update` push happens immediately after the fill logic within any candle tick, not at the next bar close.
+Effect: Paper engine already pushes fill events with sub-second latency via `_build_fill_event()`. This change **unifies the event format** to match the new `state_update` / `bar_close` protocol, enabling the frontend to use a single handler for both Paper and Live sessions. No latency improvement — latency was already sub-second.
 
 ---
 
@@ -337,7 +364,11 @@ function handleTradingEvent(data: Record<string, unknown>) {
 
 ### State Application
 
-`applyStateSnapshot()` replaces ~50 lines of per-field parsing with ~15 lines of direct assignment. No Paper/Live branching — unified handler.
+`applyStateSnapshot(data.state)` performs a **shallow merge** of `data.state` into `status.value`: each top-level field in `state` fully replaces the corresponding field in `status.value` (e.g., `positions` is replaced entirely, so closed positions disappear; `pending_orders` is replaced entirely). Fields NOT in `state` (like `live_orders`, `initial_capital`) are untouched.
+
+`appendIncrementalData(data)` handles fields OUTSIDE `state`: appends `data.new_fills` to the fills list, `data.new_trades` to trades, `data.new_logs` to logs. These are never merged into `state`.
+
+No Paper/Live branching — unified handler for both.
 
 ### TypeScript Types
 
@@ -427,19 +458,25 @@ New interfaces: `TradingStateSnapshot`, `StateUpdateEvent`, `BarCloseEvent`.
 
 ## Testing Strategy
 
-| Level | Test |
-|-------|------|
-| Unit | Event loop processes 3 event types correctly |
-| Unit | Queue overflow handling (drop + log) |
-| Unit | Event loop error recovery (WS event skip, BAR_CLOSE stop) |
-| Unit | `_build_state_update_event()` output format |
-| Unit | `_build_bar_close_event()` output format |
-| Unit | `process_candle()` routes to Queue correctly |
-| Unit | Paper engine pushes `state_update` after fill |
-| Frontend | `applyStateSnapshot()` overwrites state correctly |
-| Frontend | `bar_close` appends equity point |
-| E2E | Live session: order → <1s state_update visible in frontend |
-| E2E | Paper session: candle → fill + state_update pushed together |
+| Level | Test | Priority |
+|-------|------|----------|
+| Unit | Event loop processes 3 event types correctly | High |
+| Unit | Queue overflow handling (drop + log for WS, block for BAR_CLOSE) | High |
+| Unit | Event loop error recovery (WS event skip, BAR_CLOSE stop) | High |
+| Unit | **Emergency close skips queued WS events** — enqueue WS_FILL, set flag, verify event loop skips it | Critical |
+| Unit | **stop() from _handle_bar_close** — verify no deadlock, event loop exits cleanly | Critical |
+| Unit | **Fill-before-status relaxation** — WS_ORDER arrives before WS_FILL, verify fallback fill path produces correct state | High |
+| Unit | `_build_state_update_event()` output format (all fields, string serialization) | High |
+| Unit | `_build_bar_close_event()` output format (equity_point with full fields) | High |
+| Unit | `process_candle()` routes to Queue correctly | Medium |
+| Unit | Paper engine pushes `state_update` (replacing old `fill` event) | High |
+| Unit | **Delta tracking across multiple WS events** — 3 consecutive fills, verify each state_update has exactly 1 new_fill | High |
+| Unit | **state_update loss → bar_close correction** — skip a state_update push, verify bar_close state is complete | Medium |
+| Unit | **REST timeout in _handle_bar_close** — verify event loop resumes after timeout, queued WS events still processed | Medium |
+| Frontend | `applyStateSnapshot()` overwrites state correctly (shallow merge) | High |
+| Frontend | `bar_close` appends equity point with full fields | High |
+| E2E | Live session: order → <1s state_update visible in frontend | High |
+| E2E | Paper session: candle → fill + state_update pushed together | High |
 
 ---
 
