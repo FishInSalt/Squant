@@ -122,6 +122,7 @@ class BacktestContext:
 
         # Total fees paid
         self._total_fees = Decimal("0")
+        self._fees_by_currency: dict[str, Decimal] = {}
 
         # Cumulative realized PnL (survives deque eviction).
         # _trades deque has a maxlen, so sum(t.pnl for t in _trades) becomes
@@ -215,6 +216,27 @@ class BacktestContext:
     def total_fees(self) -> Decimal:
         """Get total fees paid."""
         return self._total_fees
+
+    def get_fees_usdt_equivalent(self) -> Decimal | None:
+        """Compute USDT equivalent of all fees using current prices.
+
+        Returns:
+            Total fees in USDT, or None if conversion not possible.
+        """
+        if not self._fees_by_currency:
+            return Decimal("0")
+
+        total = Decimal("0")
+        for currency, amount in self._fees_by_currency.items():
+            if currency == "USDT":
+                total += amount
+            else:
+                symbol = f"{currency}/USDT"
+                price = self._last_prices.get(symbol)
+                if price is None:
+                    return None
+                total += amount * price
+        return total
 
     @property
     def unrealized_pnl(self) -> Decimal:
@@ -813,6 +835,15 @@ class BacktestContext:
         self._total_fills_added += 1
         self._total_fees += fill.fee
 
+        # Track fees by currency
+        if fill.fee > 0:
+            fee_currency = fill.fee_currency or (
+                fill.symbol.split("/")[1] if "/" in fill.symbol else "UNKNOWN"
+            )
+            self._fees_by_currency[fee_currency] = (
+                self._fees_by_currency.get(fee_currency, Decimal("0")) + fill.fee
+            )
+
         # Update position (this may also raise if trying to go short)
         position.update(fill.amount, fill.price, fill.side)
 
@@ -1143,6 +1174,8 @@ class BacktestContext:
             "cash": str(self._cash),
             "equity": str(self.equity),
             "total_fees": str(self._total_fees),
+            "fees_by_currency": {k: str(v) for k, v in self._fees_by_currency.items()},
+            "fees_usdt_equivalent": str(usdt_equiv) if (usdt_equiv := self.get_fees_usdt_equivalent()) is not None else None,
             "unrealized_pnl": str(unrealized_pnl_total),
             "realized_pnl": str(realized_pnl),
             "positions": positions,
@@ -1176,6 +1209,12 @@ class BacktestContext:
         # Restore total fees
         if "total_fees" in state:
             self._total_fees = Decimal(str(state["total_fees"]))
+
+        # Restore per-currency fees
+        if state.get("fees_by_currency"):
+            self._fees_by_currency = {
+                k: Decimal(str(v)) for k, v in state["fees_by_currency"].items()
+            }
 
         # Restore cumulative realized PnL (survives deque eviction)
         if "realized_pnl" in state:
