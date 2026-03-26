@@ -459,16 +459,12 @@ class LiveTradingService:
         await self.session.commit()
 
         engine = None
-        file_logger = None
         subscribed = False
         session_manager = get_live_session_manager()
 
         try:
             # Instantiate strategy
             strategy_instance = self._instantiate_strategy(strategy.code)
-
-            # Create per-session file logger
-            file_logger = create_trading_logger(str(run.id))
 
             # Create engine with synchronous persistence callbacks
             engine = LiveTradingEngine(
@@ -489,7 +485,6 @@ class LiveTradingService:
                 ),
                 credentials=ws_credentials,
                 exchange_id=exchange_account.exchange.lower(),
-                file_logger=file_logger,
             )
 
             # Register with session manager
@@ -506,18 +501,14 @@ class LiveTradingService:
             # Start engine
             await engine.start()
 
+            # Create per-session file logger after successful start
+            engine._context._file_logger = create_trading_logger(str(run.id))
+
             logger.info(f"Started live trading session {run.id} for strategy {strategy_id}")
 
             return run
 
         except Exception as e:
-            # Cleanup: close file logger to prevent file handle leak
-            if file_logger is not None:
-                try:
-                    close_trading_logger(file_logger)
-                except Exception:
-                    pass
-
             # Cleanup: unregister engine if it was registered
             if engine is not None:
                 try:
@@ -1854,9 +1845,6 @@ class LiveTradingService:
             raise SessionNotResumableError(run_id, "no risk config in saved state")
 
         # 8. Create engine (on_order_persist wired after step 10 with seed map)
-        # Create per-session file logger
-        file_logger = create_trading_logger(str(run.id))
-
         engine = LiveTradingEngine(
             run_id=UUID(run.id),
             strategy=strategy_instance,
@@ -1871,7 +1859,6 @@ class LiveTradingService:
             on_event=self._create_event_callback(UUID(run.id)),
             credentials=ws_credentials,
             exchange_id=exchange_account.exchange.lower(),
-            file_logger=file_logger,
         )
 
         # 9. Restore trading state
@@ -1997,6 +1984,9 @@ class LiveTradingService:
                     await self._warmup_strategy(engine, run, warmup_bars)
                 finally:
                     engine._warming_up = False
+
+            # Create per-session file logger after successful start+warmup
+            engine._context._file_logger = create_trading_logger(str(run.id))
 
             # 17. Update DB status
             run = await self.run_repo.update(

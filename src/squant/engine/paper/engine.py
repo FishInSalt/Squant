@@ -106,7 +106,6 @@ class PaperTradingEngine:
         risk_config: RiskConfig | None = None,
         max_volume_participation: Decimal | None = None,
         on_event: EventCallback | None = None,
-        file_logger: logging.Logger | None = None,
     ):
         """Initialize paper trading engine.
 
@@ -155,7 +154,6 @@ class PaperTradingEngine:
             max_trades=settings.paper_max_trades,
             max_logs=settings.paper_max_logs,
             min_order_value=risk_config.min_order_value if risk_config else Decimal("5"),
-            file_logger=file_logger,
             use_real_time=True,
         )
 

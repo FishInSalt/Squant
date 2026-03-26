@@ -222,7 +222,6 @@ class LiveTradingEngine:
         on_order_persist: OrderPersistCallback | None = None,
         credentials: ExchangeCredentials | None = None,
         exchange_id: str = "okx",
-        file_logger: logging.Logger | None = None,
     ):
         """Initialize live trading engine.
 
@@ -272,7 +271,6 @@ class LiveTradingEngine:
             max_trades=settings.paper_max_trades,
             max_logs=settings.paper_max_logs,
             min_order_value=risk_config.min_order_value,
-            file_logger=file_logger,
             use_real_time=True,
         )
 

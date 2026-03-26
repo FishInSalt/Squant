@@ -336,7 +336,6 @@ class PaperTradingService:
         await self.session.commit()
 
         engine = None
-        file_logger = None
         subscribed = False
         session_manager = get_session_manager()
 
@@ -359,9 +358,6 @@ class PaperTradingService:
                     min_order_value=risk_config.min_order_value,
                 )
 
-            # Create per-session file logger
-            file_logger = create_trading_logger(str(run.id))
-
             # Create engine with synchronous persistence callbacks
             engine = PaperTradingEngine(
                 run_id=UUID(run.id),
@@ -376,7 +372,6 @@ class PaperTradingService:
                 on_result=self._create_result_callback(),
                 risk_config=engine_risk_config,
                 on_event=self._create_event_callback(UUID(run.id)),
-                file_logger=file_logger,
             )
 
             # Register with session manager
@@ -391,18 +386,15 @@ class PaperTradingService:
             # Start engine
             await engine.start()
 
+            # Create per-session file logger after successful start
+            # (avoids creating empty log directories for failed sessions)
+            engine._context._file_logger = create_trading_logger(str(run.id))
+
             logger.info(f"Started paper trading session {run.id} for strategy {strategy_id}")
 
             return run
 
         except Exception as e:
-            # Cleanup: close file logger to prevent file handle leak
-            if file_logger is not None:
-                try:
-                    close_trading_logger(file_logger)
-                except Exception:
-                    pass
-
             # Cleanup: stop engine if it was started (Issue 020 fix)
             if engine is not None and engine.is_running:
                 try:
@@ -959,9 +951,6 @@ class PaperTradingService:
 
             engine_risk_config = RiskConfig(**run.result["risk_config"])
 
-        # Create per-session file logger
-        file_logger = create_trading_logger(str(run.id))
-
         # Create engine with same parameters
         engine = PaperTradingEngine(
             run_id=UUID(run.id),
@@ -976,7 +965,6 @@ class PaperTradingService:
             on_result=self._create_result_callback(),
             risk_config=engine_risk_config,
             on_event=self._create_event_callback(UUID(run.id)),
-            file_logger=file_logger,
         )
 
         # Restore trading state from result JSONB
@@ -1032,6 +1020,9 @@ class PaperTradingService:
                     await self._warmup_strategy(engine, run, warmup_bars)
                 finally:
                     engine._warming_up = False
+
+            # Create per-session file logger after successful start+warmup
+            engine._context._file_logger = create_trading_logger(str(run.id))
 
             # Update DB status to RUNNING
             run = await self.run_repo.update(
