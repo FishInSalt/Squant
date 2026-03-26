@@ -93,7 +93,6 @@ const mockPaperStatus: PaperTradingStatus = {
       timestamp: '2024-01-16T10:00:00Z',
     },
   ],
-  logs: ['[2024-01-15 10:00:00] Strategy started', '[2024-01-15 10:05:00] Buy signal detected'],
 }
 
 const mockLiveStatus: LiveTradingStatus = {
