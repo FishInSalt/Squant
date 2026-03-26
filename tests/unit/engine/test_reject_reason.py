@@ -2,8 +2,6 @@
 
 from decimal import Decimal
 
-import pytest
-
 from squant.engine.backtest.types import OrderStatus, SimulatedOrder
 
 
