@@ -77,7 +77,7 @@
           <div class="metric-card card">
             <span class="label">总手续费</span>
             <span v-if="feeBreakdown.length <= 1" class="value secondary-value">
-              {{ formatNumber(Math.abs(status.total_fees), 4) }}
+              {{ formatNumber(Math.abs(status.total_fees), feeBreakdown.length === 1 && feeBreakdown[0].currency !== 'USDT' ? 8 : 4) }}
               {{ feeBreakdown.length === 1 ? feeBreakdown[0].currency : '' }}
             </span>
             <template v-else>
@@ -266,7 +266,7 @@
               </el-table-column>
               <el-table-column prop="amount" label="数量" min-width="100" align="right">
                 <template #default="{ row }">
-                  {{ formatNumber(row.amount, 4) }}
+                  {{ formatNumber(row.amount, 8) }}
                 </template>
               </el-table-column>
               <el-table-column prop="price" label="价格" min-width="120" align="right">
@@ -310,12 +310,12 @@
               </el-table-column>
               <el-table-column prop="amount" label="数量" min-width="100" align="right">
                 <template #default="{ row }">
-                  {{ formatNumber(row.amount, 4) }}
+                  {{ formatNumber(row.amount, 8) }}
                 </template>
               </el-table-column>
               <el-table-column prop="filled_amount" label="已成交" min-width="100" align="right">
                 <template #default="{ row }">
-                  {{ formatNumber(row.filled_amount, 4) }}
+                  {{ formatNumber(row.filled_amount, 8) }}
                 </template>
               </el-table-column>
               <el-table-column prop="price" label="价格" min-width="120" align="right">
@@ -375,7 +375,7 @@
               </el-table-column>
               <el-table-column prop="amount" label="数量" min-width="100" align="right">
                 <template #default="{ row }">
-                  {{ formatNumber(row.amount, 4) }}
+                  {{ formatNumber(row.amount, 8) }}
                 </template>
               </el-table-column>
               <el-table-column prop="pnl" label="盈亏" min-width="110" align="right">
@@ -399,7 +399,7 @@
               </el-table-column>
               <el-table-column prop="fees" label="手续费" min-width="90" align="right">
                 <template #default="{ row }">
-                  {{ formatNumber(row.fees, 4) }}
+                  {{ formatNumber(row.fees, 8) }}
                 </template>
               </el-table-column>
             </el-table>
@@ -574,12 +574,12 @@
               </el-table-column>
               <el-table-column prop="amount" label="委托量" min-width="100" align="right">
                 <template #default="{ row }">
-                  {{ formatNumber(row.amount, 4) }}
+                  {{ formatNumber(row.amount, 8) }}
                 </template>
               </el-table-column>
               <el-table-column prop="filled" label="已成交" min-width="100" align="right">
                 <template #default="{ row }">
-                  {{ formatNumber(row.filled, 4) }}
+                  {{ formatNumber(row.filled, 8) }}
                 </template>
               </el-table-column>
               <el-table-column prop="price" label="委托价" min-width="120" align="right">
