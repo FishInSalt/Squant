@@ -911,6 +911,9 @@ class BacktestContext:
         side_label = "买入成交" if fill.side == OrderSide.BUY else "卖出成交"
         short_id = fill.order_id[:8]
         price_detail = self._format_price_detail(fill)
+        fee_label = f"{fill.fee}"
+        if fill.fee_currency:
+            fee_label += f" {fill.fee_currency}"
 
         # Position opened
         if prev_amount == Decimal("0") and new_amount != Decimal("0"):
@@ -928,7 +931,7 @@ class BacktestContext:
             self.log(
                 f"{side_label} #{short_id} {fill.symbol} "
                 f"{fill.amount}@{fill.price} [开仓] "
-                f"{price_detail}手续费={fill.fee}",
+                f"{price_detail}手续费={fee_label}",
                 category="fill",
             )
 
@@ -949,7 +952,7 @@ class BacktestContext:
                     f"{side_label} #{short_id} {fill.symbol} "
                     f"{added_amount}@{fill.price} "
                     f"[加仓→{abs(new_amount)} 均价={avg:.4f}] "
-                    f"{price_detail}手续费={fill.fee}",
+                    f"{price_detail}手续费={fee_label}",
                     category="fill",
                 )
 
@@ -992,7 +995,7 @@ class BacktestContext:
                     f"{fill_amount}@{fill.price} [平仓] "
                     f"{price_detail}"
                     f"盈亏={pnl_sign}{pnl:.4f}({pnl_sign}{self._open_trade.pnl_pct:.2f}%) "
-                    f"手续费={self._open_trade.fees}",
+                    f"累计手续费≈{self._open_trade.fees:.4f} USDT",
                     category="fill",
                 )
 
@@ -1004,7 +1007,7 @@ class BacktestContext:
                 self.log(
                     f"{side_label} #{short_id} {fill.symbol} "
                     f"{fill_amount}@{fill.price} [减仓→{abs(new_amount)}] "
-                    f"{price_detail}手续费={fill.fee}",
+                    f"{price_detail}手续费={fee_label}",
                     category="fill",
                 )
 
