@@ -55,6 +55,10 @@ export const resumeLiveTrading = (id: string, warmup_bars?: number) =>
 export const getLiveSessionOrders = (id: string, params?: { page?: number; page_size?: number }) =>
   get<PaginatedData<LiveSessionOrder>>(`/live/${id}/orders`, params)
 
+// 获取交易日志
+export const getLiveLogs = (runId: string, tail = 500) =>
+  get<{ logs: string[] }>(`/live/${runId}/logs`, { tail })
+
 // 查询账户可用余额
 export const getAccountBalance = (accountId: string, quoteCurrency?: string) =>
   get<{

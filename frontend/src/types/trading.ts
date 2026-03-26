@@ -248,7 +248,6 @@ export interface PaperTradingStatus {
   trades: Trade[]
   fills: Fill[]
   open_trade?: OpenTrade
-  logs: string[]
 }
 
 // 实盘订单信息（匹配后端 LiveOrderInfo）

@@ -3,6 +3,7 @@
 import logging
 from datetime import datetime
 from decimal import Decimal
+from pathlib import Path
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -11,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from squant.api.utils import ApiResponse, PaginatedData
 from squant.engine.risk import RiskConfig
 from squant.infra.database import get_session
+from squant.infra.trading_logger import DEFAULT_LOG_BASE
 from squant.models.enums import RunStatus
 from squant.schemas.backtest import EquityCurvePoint
 from squant.schemas.live_trading import (
@@ -41,6 +43,8 @@ from squant.services.live_trading import (
 from squant.services.strategy import StrategyNotFoundError
 
 logger = logging.getLogger(__name__)
+
+TRADING_LOG_BASE = DEFAULT_LOG_BASE
 
 router = APIRouter()
 
@@ -532,6 +536,30 @@ async def get_session_orders(
             page_size=page_size,
         )
     )
+
+
+@router.get("/{run_id}/logs")
+async def get_trading_logs(
+    run_id: UUID,
+    tail: int = Query(default=500, ge=1, le=5000),
+) -> ApiResponse:
+    """Get trading logs for a session.
+
+    Reads the current log file for the given run_id.
+    Returns the last `tail` lines.
+    """
+    import asyncio
+
+    def _read_tail() -> list[str]:
+        log_file = Path(TRADING_LOG_BASE) / str(run_id) / "trading.log"
+        if not log_file.exists():
+            return []
+        with open(log_file, encoding="utf-8") as f:
+            lines = f.readlines()
+        return [line.rstrip("\n") for line in lines[-tail:]]
+
+    logs = await asyncio.to_thread(_read_tail)
+    return ApiResponse(code=0, data={"logs": logs})
 
 
 @router.get("/{run_id}", response_model=ApiResponse[LiveTradingRunResponse])

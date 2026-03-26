@@ -24,6 +24,7 @@ from squant.engine.paper.manager import get_session_manager
 from squant.engine.resource_limits import resource_limiter
 from squant.engine.sandbox import compile_strategy
 from squant.infra.repository import BaseRepository
+from squant.infra.trading_logger import close_trading_logger, create_trading_logger
 from squant.models.enums import RunMode, RunStatus
 from squant.models.metrics import EquityCurve
 from squant.models.strategy import StrategyRun
@@ -385,6 +386,10 @@ class PaperTradingService:
             # Start engine
             await engine.start()
 
+            # Create per-session file logger after successful start
+            # (avoids creating empty log directories for failed sessions)
+            engine._context._file_logger = create_trading_logger(str(run.id))
+
             logger.info(f"Started paper trading session {run.id} for strategy {strategy_id}")
 
             return run
@@ -644,6 +649,10 @@ class PaperTradingService:
             await engine.stop()
             error_message = engine.error_message
 
+            # Close file logger
+            if engine._context._file_logger:
+                close_trading_logger(engine._context._file_logger)
+
             # NOW capture result and snapshots (engine state is stable)
             result_data = engine.build_result_for_persistence()
             await self._persist_snapshots(str(run_id), engine.get_pending_snapshots())
@@ -745,7 +754,6 @@ class PaperTradingService:
                     "trades": run.result.get("trades", []),
                     "fills": run.result.get("fills", []),
                     "open_trade": run.result.get("open_trade"),
-                    "logs": run.result.get("logs", []),
                     "risk_state": run.result.get("risk_state"),
                 }
             )
@@ -765,7 +773,6 @@ class PaperTradingService:
                     "trades_count": 0,
                     "trades": [],
                     "fills": [],
-                    "logs": [],
                 }
             )
 
@@ -1013,6 +1020,9 @@ class PaperTradingService:
                     await self._warmup_strategy(engine, run, warmup_bars)
                 finally:
                     engine._warming_up = False
+
+            # Create per-session file logger after successful start+warmup
+            engine._context._file_logger = create_trading_logger(str(run.id))
 
             # Update DB status to RUNNING
             run = await self.run_repo.update(

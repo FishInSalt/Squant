@@ -1502,7 +1502,6 @@ class TestBuildResultSnapshot:
         assert result["trades"] == []
         assert result["open_trade"] is None
         assert result["trades_count"] == 0
-        assert result["logs"] == []
 
     def test_with_position(self, context: BacktestContext, sample_bar: Bar) -> None:
         """Test snapshot includes open positions with unrealized PnL."""
@@ -1607,7 +1606,6 @@ class TestBuildResultSnapshot:
         # Verify top-level aggregates in snapshot
         assert Decimal(snapshot["realized_pnl"]) == Decimal("100")
         assert Decimal(snapshot["unrealized_pnl"]) == Decimal("200")  # (46000-45000)*0.2
-        assert len(snapshot["logs"]) == 2
 
         new_ctx = BacktestContext(
             initial_capital=Decimal("100000"),
@@ -1627,9 +1625,6 @@ class TestBuildResultSnapshot:
         assert new_ctx._open_trade.entry_time == datetime(2024, 6, 1, 10, 0, 0, tzinfo=UTC)
         assert new_ctx._open_trade.fees == Decimal("9.0")
         assert new_ctx._partial_exit_pnl == Decimal("150.5")
-        # Logs restored
-        assert len(new_ctx.logs) == 2
-        assert "Test trade executed" in new_ctx.logs[0]
 
 
 class TestWeightedExitPrice:

@@ -8,6 +8,7 @@ The BacktestContext is injected into user strategies and provides:
 - Logging
 """
 
+import logging
 from collections import deque
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -52,6 +53,8 @@ class BacktestContext:
         max_trades: int | None = None,
         max_logs: int = 1000,
         min_order_value: Decimal = Decimal("5"),
+        file_logger: logging.Logger | None = None,
+        use_real_time: bool = False,
     ):
         """Initialize backtest context.
 
@@ -106,6 +109,8 @@ class BacktestContext:
 
         # Logging
         self._logs: deque[str] = deque(maxlen=max_logs)
+        self._file_logger = file_logger
+        self._use_real_time = use_real_time
 
         # Cumulative counters for incremental WebSocket tracking and callback delivery.
         # Deque maxlen causes old items to be evicted, so len(deque) plateaus.
@@ -384,7 +389,7 @@ class BacktestContext:
         else:
             price_info = "市价"
         short_id = order.id[:8]
-        self.log(f"提交买入 {symbol} {amount} {price_info} #{short_id}")
+        self.log(f"提交买入 {symbol} {amount} {price_info} #{short_id}", category="order")
         return order.id
 
     def sell(
@@ -480,7 +485,7 @@ class BacktestContext:
         else:
             price_info = "市价"
         short_id = order.id[:8]
-        self.log(f"提交卖出 {symbol} {amount} {price_info} #{short_id}")
+        self.log(f"提交卖出 {symbol} {amount} {price_info} #{short_id}", category="order")
         return order.id
 
     def cancel_order(self, order_id: str) -> bool:
@@ -714,15 +719,23 @@ class BacktestContext:
     # Logging
     # =========================================================================
 
-    def log(self, message: str) -> None:
-        """Log a message.
+    def log(self, message: str, level: str = "info", category: str = "strategy") -> None:
+        """Log a message with level and category.
 
         Args:
             message: Message to log.
+            level: Log level (info, warning, error).
+            category: Log category (strategy, order, fill, risk, system).
         """
-        timestamp = self._current_bar.time if self._current_bar else datetime.now(UTC)
-        self._logs.append(f"[{timestamp}] {message}")
+        if self._use_real_time:
+            timestamp = datetime.now(UTC)
+        else:
+            timestamp = self._current_bar.time if self._current_bar else datetime.now(UTC)
+        entry = f"[{timestamp:%Y-%m-%d %H:%M:%S}] [{level.upper()}] [{category}] {message}"
+        self._logs.append(entry)
         self._total_logs_added += 1
+        if self._file_logger:
+            self._file_logger.info(entry)
 
     # =========================================================================
     # Internal Methods (called by BacktestRunner)
@@ -875,7 +888,8 @@ class BacktestContext:
             self.log(
                 f"{side_label} #{short_id} {fill.symbol} "
                 f"{fill.amount}@{fill.price} [开仓] "
-                f"{price_detail}手续费={fill.fee}"
+                f"{price_detail}手续费={fill.fee}",
+                category="fill",
             )
 
         # Position increased
@@ -895,7 +909,8 @@ class BacktestContext:
                     f"{side_label} #{short_id} {fill.symbol} "
                     f"{added_amount}@{fill.price} "
                     f"[加仓→{abs(new_amount)} 均价={avg:.4f}] "
-                    f"{price_detail}手续费={fill.fee}"
+                    f"{price_detail}手续费={fill.fee}",
+                    category="fill",
                 )
 
         # Position decreased or closed
@@ -937,7 +952,8 @@ class BacktestContext:
                     f"{fill_amount}@{fill.price} [平仓] "
                     f"{price_detail}"
                     f"盈亏={pnl_sign}{pnl:.4f}({pnl_sign}{self._open_trade.pnl_pct:.2f}%) "
-                    f"手续费={self._open_trade.fees}"
+                    f"手续费={self._open_trade.fees}",
+                    category="fill",
                 )
 
                 self._trades.append(self._open_trade)
@@ -948,7 +964,8 @@ class BacktestContext:
                 self.log(
                     f"{side_label} #{short_id} {fill.symbol} "
                     f"{fill_amount}@{fill.price} [减仓→{abs(new_amount)}] "
-                    f"{price_detail}手续费={fill.fee}"
+                    f"{price_detail}手续费={fill.fee}",
+                    category="fill",
                 )
 
             # Note: Position reversal (long→short or short→long) is not supported
@@ -1135,7 +1152,6 @@ class BacktestContext:
             "trades_count": len(self._trades),
             "completed_orders_count": self._restored_completed_orders_count
             + len(self._completed_orders),
-            "logs": list(self._logs),
             "benchmark_initial_price": (
                 str(self._benchmark_initial_price)
                 if self._benchmark_initial_price is not None
@@ -1221,13 +1237,6 @@ class BacktestContext:
         # Restore completed orders count (content not serialized, only count)
         self._restored_completed_orders_count = state.get("completed_orders_count", 0)
         self._total_completed_added = self._restored_completed_orders_count
-
-        # Restore logs
-        if state.get("logs") is not None:
-            self._logs.clear()
-            for log_entry in state["logs"]:
-                self._logs.append(log_entry)
-            self._total_logs_added = len(self._logs)
 
         # Restore benchmark initial price for buy-and-hold comparison
         bip = state.get("benchmark_initial_price")

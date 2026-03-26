@@ -792,10 +792,6 @@ class TestStatusTradesAndLogs:
                     "fees": "8.50",
                 }
             ],
-            "logs": [
-                "[2024-01-15 10:00:00] Strategy initialized",
-                "[2024-01-15 10:00:01] Buy signal: BTC/USDT",
-            ],
         }
 
         with patch(
@@ -823,17 +819,12 @@ class TestStatusTradesAndLogs:
         assert float(trade["pnl_pct"]) == 3.57
         assert float(trade["fees"]) == 8.5
 
-        # Verify logs pass through
-        assert len(result["logs"]) == 2
-        assert "Strategy initialized" in result["logs"][0]
-        assert "Buy signal" in result["logs"][1]
-
     @pytest.mark.asyncio
-    async def test_status_defaults_trades_and_logs_when_missing(self, client):
-        """Test that status endpoint defaults trades=[] and logs=[] when not in mock status."""
+    async def test_status_defaults_trades_when_missing(self, client):
+        """Test that status endpoint defaults trades=[] when not in mock status."""
         run_id = uuid4()
 
-        # Status dict without trades/logs keys (as returned by inactive session from DB)
+        # Status dict without trades key (as returned by inactive session from DB)
         mock_status = {
             "run_id": str(run_id),
             "symbol": "ETH/USDT",
@@ -867,7 +858,6 @@ class TestStatusTradesAndLogs:
 
         result = data["data"]
         assert result["trades"] == []
-        assert result["logs"] == []
 
 
 class TestStopAllPaperTrading:

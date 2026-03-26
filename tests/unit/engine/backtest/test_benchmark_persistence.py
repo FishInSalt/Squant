@@ -46,7 +46,6 @@ class TestBenchmarkPersistence:
             "total_fees": "0",
             "positions": {},
             "trades": [],
-            "logs": [],
             "benchmark_initial_price": "45000",
         }
         ctx.restore_state(state)
@@ -69,7 +68,6 @@ class TestBenchmarkPersistence:
             "total_fees": "0",
             "positions": {},
             "trades": [],
-            "logs": [],
             "benchmark_initial_price": None,
         }
         ctx.restore_state(state)
@@ -85,7 +83,6 @@ class TestBenchmarkPersistence:
             "total_fees": "0",
             "positions": {},
             "trades": [],
-            "logs": [],
         }
         ctx.restore_state(state)
 

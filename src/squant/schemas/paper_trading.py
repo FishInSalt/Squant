@@ -162,7 +162,6 @@ class PaperTradingStatusResponse(BaseModel):
     trades: list[TradeRecordResponse] = Field(default_factory=list)
     fills: list[FillRecordResponse] = Field(default_factory=list)
     open_trade: OpenTradeInfo | None = None
-    logs: list[str] = Field(default_factory=list)
     risk_state: dict[str, Any] | None = None
 
 

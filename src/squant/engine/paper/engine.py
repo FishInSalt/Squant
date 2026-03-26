@@ -154,6 +154,7 @@ class PaperTradingEngine:
             max_trades=settings.paper_max_trades,
             max_logs=settings.paper_max_logs,
             min_order_value=risk_config.min_order_value if risk_config else Decimal("5"),
+            use_real_time=True,
         )
 
         # Tick-level matching engine (paper-specific, not bar-level backtest engine)
@@ -518,7 +519,7 @@ class PaperTradingEngine:
                             f"unrealized {self._risk_manager.state.unrealized_pnl:.2f})"
                         )
                         logger.warning(f"Engine {self._run_id}: {msg}")
-                        self._context.log(msg)
+                        self._context.log(msg, level="error", category="risk")
                         self._error_message = msg
                         self._stop_impl()
                         # Persist final state before returning — steps 6 & 8
@@ -554,7 +555,7 @@ class PaperTradingEngine:
                         try:
                             self._strategy.on_fill(fill)
                         except Exception as e:
-                            self._context.log(f"ERROR in on_fill: {e}")
+                            self._context.log(f"ERROR in on_fill: {e}", level="error", category="strategy")
                             logger.warning(f"Strategy on_fill error: {e}")
                 self._last_callback_fill_total = self._context._total_fills_added
 
@@ -567,7 +568,7 @@ class PaperTradingEngine:
                         try:
                             self._strategy.on_order_done(order)
                         except Exception as e:
-                            self._context.log(f"ERROR in on_order_done: {e}")
+                            self._context.log(f"ERROR in on_order_done: {e}", level="error", category="strategy")
                             logger.warning(f"Strategy on_order_done error: {e}")
                 self._last_callback_completed_total = self._context._total_completed_added
 
@@ -591,7 +592,7 @@ class PaperTradingEngine:
                     # TRD-025#3: strategy errors (e.g., insufficient cash) should
                     # be logged but not crash the engine — consistent with backtest runner
                     logger.warning(f"Strategy on_bar error in engine {self._run_id}: {e}")
-                    self._context.log(f"ERROR in on_bar: {e}")
+                    self._context.log(f"ERROR in on_bar: {e}", level="error", category="strategy")
 
                 self._bar_count += 1
 
@@ -723,11 +724,13 @@ class PaperTradingEngine:
                     short_id = order.id[:8]
                     self._context.log(
                         f"止损单 #{short_id} 因风控被取消 "
-                        f"(触发价={order.stop_price}, 当前价={current_price})"
+                        f"(触发价={order.stop_price}, 当前价={current_price})",
+                        level="warning",
+                        category="risk",
                     )
                     continue
                 short_id = order.id[:8]
-                self._context.log(f"止损触发 #{short_id} 触发价={order.stop_price}")
+                self._context.log(f"止损触发 #{short_id} 触发价={order.stop_price}", level="info", category="order")
                 self._process_fill_safe(fill)
                 filled_this_update += fill.amount
                 if volume_budget is not None:
@@ -750,7 +753,7 @@ class PaperTradingEngine:
             # Log trigger event (whether or not limit is reachable)
             if not was_triggered and order.triggered:
                 short_id = order.id[:8]
-                self._context.log(f"止损触发 #{short_id} 触发价={order.stop_price}")
+                self._context.log(f"止损触发 #{short_id} 触发价={order.stop_price}", level="info", category="order")
             if not fills:
                 # Order may still have been triggered but limit not reachable yet.
                 # It will be picked up as a limit order on the next update.
@@ -836,7 +839,7 @@ class PaperTradingEngine:
             order.status = OrderStatus.CANCELLED
             reason = result.reason or "Risk check failed"
             logger.warning(f"Order rejected by risk manager in {self._run_id}: {reason}")
-            self._context.log(f"Order rejected (risk): {reason}")
+            self._context.log(f"Order rejected (risk): {reason}", level="warning", category="risk")
             return False
 
         return True
@@ -867,7 +870,9 @@ class PaperTradingEngine:
                     stop_info = f"止损@{order.stop_price}" if order.stop_price else ""
                     self._context.log(
                         f"订单过期 #{short_id} {order.side.value} {order.symbol} "
-                        f"{order.amount}{stop_info}{price_info}"
+                        f"{order.amount}{stop_info}{price_info}",
+                        level="info",
+                        category="order",
                     )
                     expired.append(order)
                     continue
@@ -894,7 +899,7 @@ class PaperTradingEngine:
             self._context._process_fill(fill)
         except ValueError as e:
             logger.warning(f"Fill rejected in engine {self._run_id}: {e}")
-            self._context.log(f"Order fill rejected: {e}")
+            self._context.log(f"Order fill rejected: {e}", level="warning", category="fill")
             # Cancel the order to prevent infinite retry (consistent with backtest runner)
             self._context.cancel_order(fill.order_id)
             return

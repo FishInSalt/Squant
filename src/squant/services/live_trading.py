@@ -28,6 +28,7 @@ from squant.engine.risk import RiskConfig
 from squant.engine.sandbox import compile_strategy
 from squant.infra.exchange.ccxt import CCXTRestAdapter, ExchangeCredentials
 from squant.infra.repository import BaseRepository
+from squant.infra.trading_logger import close_trading_logger, create_trading_logger
 from squant.models.enums import OrderSide, OrderStatus, OrderType, RunMode, RunStatus
 from squant.models.exchange import ExchangeAccount
 from squant.models.metrics import EquityCurve
@@ -499,6 +500,9 @@ class LiveTradingService:
 
             # Start engine
             await engine.start()
+
+            # Create per-session file logger after successful start
+            engine._context._file_logger = create_trading_logger(str(run.id))
 
             logger.info(f"Started live trading session {run.id} for strategy {strategy_id}")
 
@@ -1038,6 +1042,10 @@ class LiveTradingService:
             # Stop engine (may trigger final fills from cancel responses)
             await engine.stop(cancel_orders=cancel_orders)
 
+            # Close file logger
+            if engine._context._file_logger:
+                close_trading_logger(engine._context._file_logger)
+
             # Flush any order events generated during stop (M-6: cancel fills)
             # process_candle() no longer runs after stop, so events from
             # _cancel_all_orders() would otherwise be lost.
@@ -1245,7 +1253,6 @@ class LiveTradingService:
                     "trades_count": run.result.get("trades_count", 0),
                     "trades": run.result.get("trades", []),
                     "open_trade": run.result.get("open_trade"),
-                    "logs": run.result.get("logs", []),
                     "risk_state": run.result.get("risk_state"),
                 }
             )
@@ -1977,6 +1984,9 @@ class LiveTradingService:
                     await self._warmup_strategy(engine, run, warmup_bars)
                 finally:
                     engine._warming_up = False
+
+            # Create per-session file logger after successful start+warmup
+            engine._context._file_logger = create_trading_logger(str(run.id))
 
             # 17. Update DB status
             run = await self.run_repo.update(
