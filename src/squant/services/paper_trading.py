@@ -336,6 +336,7 @@ class PaperTradingService:
         await self.session.commit()
 
         engine = None
+        file_logger = None
         subscribed = False
         session_manager = get_session_manager()
 
@@ -395,6 +396,13 @@ class PaperTradingService:
             return run
 
         except Exception as e:
+            # Cleanup: close file logger to prevent file handle leak
+            if file_logger is not None:
+                try:
+                    close_trading_logger(file_logger)
+                except Exception:
+                    pass
+
             # Cleanup: stop engine if it was started (Issue 020 fix)
             if engine is not None and engine.is_running:
                 try:
@@ -650,7 +658,7 @@ class PaperTradingService:
             error_message = engine.error_message
 
             # Close file logger
-            if hasattr(engine._context, "_file_logger") and engine._context._file_logger:
+            if engine._context._file_logger:
                 close_trading_logger(engine._context._file_logger)
 
             # NOW capture result and snapshots (engine state is stable)

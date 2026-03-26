@@ -836,8 +836,8 @@ async function loadTradingLogs() {
       ? await getPaperLogs(props.id)
       : await getLiveLogs(props.id)
     tradingLogs.value = resp.data.logs || []
-  } catch {
-    // ignore
+  } catch (e) {
+    console.warn('Failed to load trading logs:', e)
   }
 }
 
@@ -1022,6 +1022,10 @@ function handleTradingEvent(data: Record<string, unknown>) {
     const newLogs = data.new_logs as string[] | undefined
     if (Array.isArray(newLogs) && newLogs.length) {
       tradingLogs.value.push(...newLogs)
+      // Cap to prevent unbounded growth in long-running sessions
+      if (tradingLogs.value.length > 2000) {
+        tradingLogs.value = tradingLogs.value.slice(-2000)
+      }
     }
 
     if (data.risk_state) {
@@ -1111,8 +1115,8 @@ watch(() => tradingLogs.value.length, () => {
 })
 
 function logLevelClass(entry: string): string {
-  if (entry.includes('[ERROR]')) return 'log-error'
-  if (entry.includes('[WARNING]')) return 'log-warning'
+  if (/^\[.*?\] \[ERROR\]/.test(entry)) return 'log-error'
+  if (/^\[.*?\] \[WARNING\]/.test(entry)) return 'log-warning'
   return 'log-info'
 }
 

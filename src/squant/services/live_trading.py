@@ -459,6 +459,7 @@ class LiveTradingService:
         await self.session.commit()
 
         engine = None
+        file_logger = None
         subscribed = False
         session_manager = get_live_session_manager()
 
@@ -510,6 +511,13 @@ class LiveTradingService:
             return run
 
         except Exception as e:
+            # Cleanup: close file logger to prevent file handle leak
+            if file_logger is not None:
+                try:
+                    close_trading_logger(file_logger)
+                except Exception:
+                    pass
+
             # Cleanup: unregister engine if it was registered
             if engine is not None:
                 try:
@@ -1044,7 +1052,7 @@ class LiveTradingService:
             await engine.stop(cancel_orders=cancel_orders)
 
             # Close file logger
-            if hasattr(engine._context, "_file_logger") and engine._context._file_logger:
+            if engine._context._file_logger:
                 close_trading_logger(engine._context._file_logger)
 
             # Flush any order events generated during stop (M-6: cancel fills)

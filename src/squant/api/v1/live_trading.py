@@ -548,12 +548,17 @@ async def get_trading_logs(
     Reads the current log file for the given run_id.
     Returns the last `tail` lines.
     """
-    log_file = Path(TRADING_LOG_BASE) / str(run_id) / "trading.log"
-    if not log_file.exists():
-        return ApiResponse(code=0, data={"logs": []})
-    with open(log_file, encoding="utf-8") as f:
-        lines = f.readlines()
-    logs = [line.rstrip("\n") for line in lines[-tail:]]
+    import asyncio
+
+    def _read_tail() -> list[str]:
+        log_file = Path(TRADING_LOG_BASE) / str(run_id) / "trading.log"
+        if not log_file.exists():
+            return []
+        with open(log_file, encoding="utf-8") as f:
+            lines = f.readlines()
+        return [line.rstrip("\n") for line in lines[-tail:]]
+
+    logs = await asyncio.to_thread(_read_tail)
     return ApiResponse(code=0, data={"logs": logs})
 
 
