@@ -836,8 +836,9 @@ class PaperTradingEngine:
         if not result.passed:
             from squant.engine.backtest.types import OrderStatus
 
-            order.status = OrderStatus.CANCELLED
             reason = result.reason or "Risk check failed"
+            order.status = OrderStatus.REJECTED
+            order.reject_reason = f"risk_rejected: {reason}"
             logger.warning(f"Order rejected by risk manager in {self._run_id}: {reason}")
             self._context.log(f"Order rejected (risk): {reason}", level="warning", category="risk")
             return False
@@ -901,6 +902,10 @@ class PaperTradingEngine:
             logger.warning(f"Fill rejected in engine {self._run_id}: {e}")
             self._context.log(f"Order fill rejected: {e}", level="warning", category="fill")
             # Cancel the order to prevent infinite retry (consistent with backtest runner)
+            for order in self._context._pending_orders:
+                if order.id == fill.order_id:
+                    order.reject_reason = f"fill_rejected: {e}"
+                    break
             self._context.cancel_order(fill.order_id)
             return
 

@@ -2724,6 +2724,12 @@ class LiveTradingEngine:
                     category="order",
                 )
                 # Mark as rejected
+                if is_insufficient:
+                    order.reject_reason = "insufficient_funds"
+                elif "unavailable" in err_msg or "maintenance" in err_msg:
+                    order.reject_reason = "exchange_unavailable"
+                else:
+                    order.reject_reason = f"exchange_error: {e}"
                 order.status = OrderStatus.REJECTED
                 self._context._completed_orders.append(order)
                 self._context._total_completed_added += 1
