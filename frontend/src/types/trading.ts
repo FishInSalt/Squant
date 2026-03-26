@@ -239,6 +239,8 @@ export interface PaperTradingStatus {
   equity: number
   initial_capital: number
   total_fees: number
+  fees_by_currency?: Record<string, number>
+  fees_usdt_equivalent?: number | null
   unrealized_pnl: number
   realized_pnl: number
   positions: Record<string, Position>
@@ -292,6 +294,8 @@ export interface LiveTradingStatus {
   equity: number
   initial_capital: number
   total_fees: number
+  fees_by_currency?: Record<string, number>
+  fees_usdt_equivalent?: number | null
   unrealized_pnl: number
   realized_pnl: number
   positions: Record<string, Position>
@@ -312,6 +316,8 @@ export interface TradingBarUpdate {
   unrealized_pnl: string
   realized_pnl: string
   total_fees: string
+  fees_by_currency?: Record<string, number>
+  fees_usdt_equivalent?: number | null
   completed_orders_count: number
   trades_count: number
   positions: Record<string, { amount: string; avg_entry_price: string }>

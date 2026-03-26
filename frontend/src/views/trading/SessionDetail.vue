@@ -76,7 +76,18 @@
           </div>
           <div class="metric-card card">
             <span class="label">总手续费</span>
-            <span class="value secondary-value">{{ formatNumber(Math.abs(status.total_fees), 2) }}</span>
+            <span v-if="feeBreakdown.length <= 1" class="value secondary-value">
+              {{ formatNumber(Math.abs(status.total_fees), 4) }}
+              {{ feeBreakdown.length === 1 ? feeBreakdown[0].currency : '' }}
+            </span>
+            <template v-else>
+              <span class="value secondary-value" v-for="item in feeBreakdown" :key="item.currency">
+                {{ formatNumber(item.amount, item.currency === 'USDT' ? 4 : 8) }} {{ item.currency }}
+              </span>
+              <span v-if="status.fees_usdt_equivalent != null" class="value secondary-value fee-equivalent">
+                ≈ {{ formatNumber(status.fees_usdt_equivalent, 4) }} USDT
+              </span>
+            </template>
           </div>
           <div class="metric-card card">
             <span class="label">最大回撤</span>
@@ -766,6 +777,14 @@ const maxDrawdownPct = computed<number | null>(() => {
   return -maxDd
 })
 
+const feeBreakdown = computed(() => {
+  const raw = status.value?.fees_by_currency || {}
+  return Object.entries(raw)
+    .map(([currency, amount]) => ({ currency, amount: Math.abs(Number(amount)) }))
+    .filter(item => item.amount > 0)
+    .sort((a, b) => b.amount - a.amount)
+})
+
 const runningDuration = computed(() => {
   if (!session.value?.started_at) return ''
   const start = new Date(session.value.started_at).getTime()
@@ -967,6 +986,14 @@ function handleTradingEvent(data: Record<string, unknown>) {
     status.value.unrealized_pnl = parseFloat(data.unrealized_pnl as string)
     status.value.realized_pnl = parseFloat(data.realized_pnl as string)
     status.value.total_fees = parseFloat(data.total_fees as string)
+    if (data.fees_by_currency) {
+      (status.value as any).fees_by_currency = data.fees_by_currency as Record<string, number>
+    }
+    if (data.fees_usdt_equivalent != null) {
+      (status.value as any).fees_usdt_equivalent = parseFloat(
+        data.fees_usdt_equivalent as string,
+      )
+    }
     status.value.completed_orders_count = data.completed_orders_count as number
     status.value.trades_count = data.trades_count as number
 
@@ -1631,6 +1658,11 @@ onUnmounted(() => {
     font-size: 11px;
     color: #909399;
     margin-left: 2px;
+  }
+
+  .fee-equivalent {
+    font-size: 12px;
+    color: var(--el-text-color-secondary);
   }
 
   .pagination-wrapper {
