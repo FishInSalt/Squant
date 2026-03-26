@@ -24,7 +24,7 @@ Replace the dual-path processing model (WS events buffered in deques + drained i
 
 - **Live engine:** Full event-driven refactor with unified event loop.
 - **Paper engine:** Lightweight optimization — push `state_update` immediately after fills, no event loop refactor (local matching has no async WS events).
-- **Frontend:** Handle two event types (`state_update` + `bar_close`), simplified state management via full snapshots.
+- **Frontend:** Handle new event types (`state_update` + `bar_close`; existing `engine_stopped` unchanged), simplified state management via full snapshots.
 
 ---
 
@@ -75,6 +75,10 @@ async def _event_loop(self) -> None:
         except asyncio.TimeoutError:
             continue
 
+        # Update activity timestamp on every event (for health check)
+        self._last_active_at = datetime.now(UTC)
+
+        push_event = None  # Built inside lock, pushed outside (fire-and-forget)
         async with self._processing_lock:
             if not self._is_running:
                 break
@@ -83,21 +87,34 @@ async def _event_loop(self) -> None:
                     case EngineEventType.WS_FILL:
                         self._process_trade_execution(event.data)
                         await self._flush_order_events()
-                        await self._push_state_update("fill", event.data)
+                        push_event = self._build_state_update_event("fill", event.data)
 
                     case EngineEventType.WS_ORDER:
                         self._process_single_ws_update(event.data)
                         await self._flush_order_events()
-                        await self._push_state_update("order_update", event.data)
+                        push_event = self._build_state_update_event("order_update", event.data)
 
                     case EngineEventType.BAR_CLOSE:
                         await self._handle_bar_close(event.data)
+                        # _handle_bar_close builds and fires its own bar_close event
             except Exception as e:
                 logger.exception(f"Event loop error for {self._run_id}: {e}")
                 if event.type == EngineEventType.BAR_CLOSE:
                     await self.stop(error=f"Bar processing error: {e}")
                     return
+
+        # Fire-and-forget push OUTSIDE the lock (non-blocking)
+        if push_event and self._on_event:
+            try:
+                loop = asyncio.get_running_loop()
+                task = loop.create_task(self._on_event(push_event))
+                self._background_tasks.add(task)
+                task.add_done_callback(self._background_tasks.discard)
+            except Exception as e:
+                logger.debug(f"State update push failed: {e}")
 ```
+
+**Key design: build inside lock, push outside.** The event dict is constructed while the lock is held (state is consistent), but the Redis publish happens after releasing the lock. This matches the existing fire-and-forget pattern and prevents push I/O from blocking subsequent event processing.
 
 ### WS Callback Changes
 
@@ -105,11 +122,19 @@ async def _event_loop(self) -> None:
 # Before: append to deque
 self._pending_ws_updates.append(update)
 
-# After: put to Queue
+# After: put to Queue (with existing guards preserved)
+# on_order_update(): keep _emergency_close_in_progress check before enqueue
+# _handle_private_ws_message(): keep existing routing logic
+if self._emergency_close_in_progress:
+    return
 self._event_queue.put_nowait(
     EngineEvent(EngineEventType.WS_ORDER, update, datetime.now(UTC))
 )
 ```
+
+**Guards preserved at enqueue site:**
+- `_emergency_close_in_progress` check in `on_order_update()` — prevents fill processing from modifying positions/cash during emergency close.
+- `_handle_private_ws_message()` type routing — unchanged, just replaces deque append with Queue put.
 
 ### process_candle() Thinning
 
@@ -121,7 +146,22 @@ await self._event_queue.put(
 )
 ```
 
-The processing body moves to `_handle_bar_close(candle)` — same logic, minus the deleted `_drain_ws_updates()` call. All bar-interval operations remain inside `_handle_bar_close`: `_reconcile_pending_orders()`, `_sync_balance()`, `_sync_pending_orders()`, `_expire_ttl_orders()`, strategy execution, order request processing, equity snapshot recording, and result persistence. These are bar-level operations that should not run on every WS event.
+The processing body moves to `_handle_bar_close(candle)` — same logic, minus the deleted `_drain_ws_updates()` call. All bar-interval operations remain inside `_handle_bar_close`:
+
+- `_reconcile_pending_orders()` — fill recovery after WS reconnect
+- `_sync_balance()`, `_sync_pending_orders()` — exchange REST polling
+- `_expire_ttl_orders()` — order TTL expiry
+- Risk manager updates (`update_equity`, `update_unrealized_pnl`, `update_position_value`, `check_total_loss_limit`, `check_daily_reset`)
+- Equity snapshot recording + persistence
+- Strategy callbacks (`on_fill`, `on_order_done`) + `strategy.on_bar()` with resource limits
+- Order request processing (`_process_order_requests`)
+- Result state persistence for crash recovery
+- Dead Man's Switch refresh (`_refresh_dead_man_switch`)
+- `bar_close` event build + fire-and-forget push
+
+These are bar-level operations that should not run on every WS event.
+
+**Strategy notification timing:** `on_fill()` and `on_order_done()` callbacks remain in `_handle_bar_close` at bar boundary, not in the event loop's WS handlers. Rationale: strategies expect fills to be notified in the context of a bar (with current bar data set), and moving them to event loop would change the strategy execution contract. Fills are processed immediately for state correctness (positions, cash), but strategy is notified at the next bar close.
 
 ### Lifecycle
 
@@ -135,6 +175,12 @@ The processing body moves to `_handle_bar_close(candle)` — same logic, minus t
 - `_pending_ws_trade_executions` deque
 - `_build_bar_update_event()` (replaced by `_build_state_update_event` + `_build_bar_close_event`)
 - Lock acquisition in `process_candle()` (moved to event loop)
+
+### Unchanged Internal State
+
+- `_processed_trade_ids` OrderedDict (trade execution dedup) — internal to `_process_trade_execution()`, unaffected by Queue refactor.
+- `_exchange_order_map`, `_live_orders`, `_orders_needing_reconciliation` — unchanged.
+- `_background_tasks` set — continues to track fire-and-forget push tasks.
 
 ---
 
@@ -206,7 +252,10 @@ The processing body moves to `_handle_bar_close(candle)` — same logic, minus t
   },
   "equity_point": {
     "time": "2026-03-26T10:05:00Z",
-    "equity": "99550.00"
+    "equity": "99550.00",
+    "cash": "99500.00",
+    "position_value": "50.00",
+    "unrealized_pnl": "50.00"
   },
   "state": { "..." },
   "new_fills": [],
@@ -215,9 +264,9 @@ The processing body moves to `_handle_bar_close(candle)` — same logic, minus t
 }
 ```
 
-- `bar`: K-line data for chart.
-- `equity_point`: Equity curve sample point.
-- `state`: Full snapshot as sync point (corrects any drift from missed `state_update`).
+- `bar`: K-line data. Note: K-line data is also pushed via the market data WS channel independently. The `bar` field here is intentionally redundant — it allows the trading session view to be self-contained without subscribing to the market data channel, and provides a consistent timestamp anchor for the equity curve point.
+- `equity_point`: Equity curve sample point. Matches backend `EquityCurvePoint` schema: `{time, equity, cash, position_value, unrealized_pnl}`. This replaces the `loadEquityCurve(true)` REST call — all fields the frontend chart needs are included.
+- `state`: Same structure as `state_update`'s `state` field — identical fields, same shallow merge semantics. The `bar_close` state serves as a periodic sync point: if a `state_update` push was lost, the next `bar_close` corrects the drift. "Sync point" means "same data, guaranteed delivery", not a different field set.
 
 ### Design Rationale
 
@@ -231,7 +280,7 @@ The current `_drain_ws_updates()` enforces fills-first ordering by processing al
 
 This is a relaxation of the strict ordering guarantee, but is **safe** because:
 
-1. `_process_single_ws_update()` already has a fallback fill path (lines 1414-1447 in current code): when it sees `fill_delta > 0`, it computes incremental fill from blended averages. This handles the case where `WS_ORDER` (status=filled) arrives before `WS_FILL`.
+1. `_process_single_ws_update()` already has a fallback fill path (the `fill_delta > 0` branch within the method): when it sees new fills in the aggregated data, it computes incremental fill from blended averages. This handles the case where `WS_ORDER` (status=filled) arrives before `WS_FILL`.
 2. If `WS_FILL` arrives later, it finds `old_filled` already reflects the fill from fallback, so `fill_delta = 0` — no duplicate.
 3. The fallback path uses blended avg prices (less precise than per-fill prices), but subsequent REST enrichment recovers exact per-fill data.
 
@@ -241,14 +290,17 @@ This is the same safety mechanism that handles OKX demo environments where `watc
 
 ## Paper Engine (Lightweight)
 
-No event loop refactor. Changes:
+No event loop refactor. This is a **replacement** of the existing immediate `fill` event with `state_update`, and the existing `bar_update` with `bar_close`.
 
-1. After `_fill_new_orders()`, check for new fills and push `state_update` immediately.
-2. Bar-end event changes from `bar_update` to `bar_close` format.
-3. New methods: `_build_state_update_event()`, `_build_bar_close_event()`.
-4. Delete: `_build_bar_update_event()`.
+The paper engine already pushes a `fill` event immediately from `_process_fill_safe()` via `_build_fill_event()` (fire-and-forget `create_task`). This existing event contains scalar state (cash, equity, positions, pending_orders, open_trade) but uses the `"fill"` event type with a different format than the new `state_update`.
 
-Effect: Fill visibility latency drops from up to 60s (waiting for bar close to emit event) to <1s. Paper engine calls `_fill_new_orders()` on every WS candle tick (both closed and unclosed), and OKX sends candle updates roughly every second. The `state_update` push happens immediately after the fill logic within any candle tick, not at the next bar close.
+Changes:
+
+1. **Replace `_build_fill_event()`** with `_build_state_update_event()` — same trigger point (`_process_fill_safe`), but uses the new unified `state_update` format (adds `trigger`, `trigger_detail`, `state` snapshot with all fields, `new_fills`/`new_trades`/`new_logs` incremental data).
+2. **Replace `_build_bar_update_event()`** with `_build_bar_close_event()` — bar-end event uses new format with `equity_point` and `bar` fields.
+3. Delete: `_build_fill_event()`, `_build_bar_update_event()`.
+
+Effect: Fill visibility latency drops from up to 60s (waiting for bar close to emit event) to the WS candle update interval (typically ~1s, varies by exchange). Paper engine calls `_fill_new_orders()` on every WS candle tick (both closed and unclosed). The `state_update` push happens immediately after the fill logic within any candle tick, not at the next bar close.
 
 ---
 
@@ -261,8 +313,15 @@ function handleTradingEvent(data: Record<string, unknown>) {
   const eventType = data.event as string
 
   if (eventType === 'state_update' || eventType === 'bar_close') {
+    const prevCompletedCount = status.value?.completed_orders_count ?? 0
     applyStateSnapshot(data.state)
     appendIncrementalData(data)
+
+    // Auto-refresh audit orders when completed_orders_count increases (existing behavior)
+    if (isLive.value && status.value.completed_orders_count > prevCompletedCount) {
+      loadLiveAuditOrders()
+      loadAllLiveOrders()
+    }
 
     if (eventType === 'state_update' && data.trigger) {
       showTradeNotification(data.trigger, data.trigger_detail)
@@ -312,6 +371,8 @@ New interfaces: `TradingStateSnapshot`, `StateUpdateEvent`, `BarCloseEvent`.
 - **WS events** (WS_FILL, WS_ORDER): `put_nowait` raises `QueueFull` → log warning, drop event. Recoverable — next REST sync or next event's full snapshot corrects state.
 - **BAR_CLOSE events**: Use `await queue.put()` (blocking) to guarantee delivery. Dropping a bar close would skip strategy execution and equity snapshot — unacceptable data loss. If the queue is full when a bar close arrives, the candle callback blocks until space is available (this implies the event loop is stuck, which will eventually trigger timeout/stop).
 
+**Queue vs Deque overflow behavior change:** The old `deque(maxlen=N)` silently evicts the oldest event on overflow, preserving the newest. The new `Queue(maxsize=N)` with `put_nowait` drops the newest event. This is a behavioral difference, but the practical impact is minimal: the old deques were only consumed at bar close (up to 60s accumulation), while the new Queue has a continuously running consumer draining events in <1ms. Queue overflow would only occur if the event loop is stuck (e.g., awaiting a hung REST call inside `_handle_bar_close`), which is a pathological case regardless of the eviction strategy.
+
 ### Push Failure
 
 - Silent skip. Full snapshot on next push auto-corrects.
@@ -330,8 +391,10 @@ New interfaces: `TradingStateSnapshot`, `StateUpdateEvent`, `BarCloseEvent`.
 ### Graceful Shutdown
 
 - `stop()` sets `_is_running = False`.
-- Event loop exits after current event completes (timeout check via `wait_for`).
+- Event loop's `wait_for(..., timeout=1.0)` detects `_is_running == False` on next timeout cycle and exits.
+- `stop()` then `await asyncio.wait_for(self._event_loop_task, timeout=5.0)` to wait for the loop to finish its current event.
 - Fallback: cancel task after 5s timeout.
+- **stop() from within event loop:** When `_handle_bar_close` calls `self.stop()` (e.g., on risk limit trigger), `stop()` does NOT acquire `_processing_lock` (consistent with current design — `stop()` may be called from within locked context). It only sets `_is_running = False`; the event loop checks this flag at the top of each iteration and exits. The event loop task await in `stop()` is skipped when called from within the loop itself (detected via `self._event_loop_task == asyncio.current_task()`).
 
 ---
 
