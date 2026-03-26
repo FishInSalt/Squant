@@ -885,12 +885,13 @@ const liveFills = computed<Fill[]>(() => {
       })
     }
   }
-  // Merge with WebSocket fills, deduplicating by order_id+price+amount+side
-  // (timestamp differs between audit and WS fills — local vs exchange time)
-  const seen = new Set(auditFills.map(f => `${f.order_id}|${f.price}|${f.amount}|${f.side}`))
+  // Merge with WebSocket fills, dedup by order_id+price+amount+side+fee
+  // (fee added to distinguish partial fills at same price/amount;
+  //  timestamp not used because audit vs WS timestamps differ)
+  const seen = new Set(auditFills.map(f => `${f.order_id}|${f.price}|${f.amount}|${f.side}|${f.fee}`))
   const merged = [...auditFills]
   for (const f of liveWsFills.value) {
-    const key = `${f.order_id}|${f.price}|${f.amount}|${f.side}`
+    const key = `${f.order_id}|${f.price}|${f.amount}|${f.side}|${f.fee}`
     if (!seen.has(key)) {
       merged.push(f)
       seen.add(key)
