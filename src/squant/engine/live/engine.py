@@ -10,8 +10,10 @@ import json
 import logging
 from collections import OrderedDict, deque
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal
+from enum import Enum
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
@@ -49,6 +51,24 @@ EventCallback = Callable[[dict[str, Any]], Awaitable[None]]
 OrderPersistCallback = Callable[[str, list[dict[str, Any]]], Awaitable[None]]
 
 logger = logging.getLogger(__name__)
+
+
+class EngineEventType(str, Enum):
+    """Event types processed by the unified event loop."""
+
+    WS_FILL = "ws_fill"
+    WS_ORDER = "ws_order"
+    BAR_CLOSE = "bar_close"
+
+
+@dataclass(frozen=True)
+class EngineEvent:
+    """Immutable event wrapper for the engine queue."""
+
+    type: EngineEventType
+    data: Any  # WSTradeExecution | WSOrderUpdate | WSCandle
+    received_at: datetime
+
 
 # WebSocket order status mapping (internal string -> OrderStatus enum).
 # Both CCXT transformer and native OKX StreamManager mapper normalize to
@@ -2973,8 +2993,19 @@ class LiveTradingEngine:
             )
         )
 
-    def _build_bar_update_event(self) -> dict[str, Any]:
-        """Build incremental bar update event for WebSocket push."""
+    def _build_state_snapshot(
+        self,
+    ) -> tuple[dict[str, Any], list[dict[str, Any]], list[dict[str, Any]], list[Any]]:
+        """Build a state snapshot of the engine for WebSocket push.
+
+        Returns a 4-tuple of:
+        - state_dict: all current state fields (cash, equity, positions, etc.)
+        - new_fills_serialized: incremental fills since last emission
+        - new_trades_serialized: incremental trades since last emission
+        - new_logs: incremental log entries since last emission
+
+        The delta counters (_last_emitted_*) are updated as a side effect.
+        """
         ctx = self._context
 
         fill_delta = ctx._total_fills_added - self._last_emitted_fill_total
@@ -2989,17 +3020,18 @@ class LiveTradingEngine:
         self._last_emitted_trade_total = ctx._total_trades_added
         self._last_emitted_log_total = ctx._total_logs_added
 
-        return {
-            "event": "bar_update",
-            "run_id": str(self._run_id),
-            "bar_count": self._bar_count,
+        state: dict[str, Any] = {
             "cash": str(ctx._cash),
             "equity": str(ctx.equity),
             "unrealized_pnl": str(ctx._get_unrealized_pnl()),
             "realized_pnl": str(ctx._cumulative_realized_pnl),
             "total_fees": str(ctx._total_fees),
             "fees_by_currency": {k: str(v) for k, v in ctx._fees_by_currency.items()},
-            "fees_usdt_equivalent": str(usdt_equiv) if (usdt_equiv := ctx.get_fees_usdt_equivalent()) is not None else None,
+            "fees_usdt_equivalent": (
+                str(usdt_equiv)
+                if (usdt_equiv := ctx.get_fees_usdt_equivalent()) is not None
+                else None
+            ),
             "completed_orders_count": ctx._restored_completed_orders_count
             + len(ctx._completed_orders),
             "trades_count": len(ctx._trades),
@@ -3025,8 +3057,23 @@ class LiveTradingEngine:
                 for o in ctx._pending_orders
             ],
             "open_trade": _serialize_open_trade(ctx._open_trade),
-            "new_fills": [_serialize_fill(f) for f in new_fills],
-            "new_trades": [_serialize_trade(t) for t in new_trades],
-            "new_logs": new_logs,
             "risk_state": self._risk_manager.get_state_summary(),
+        }
+
+        new_fills_serialized = [_serialize_fill(f) for f in new_fills]
+        new_trades_serialized = [_serialize_trade(t) for t in new_trades]
+
+        return state, new_fills_serialized, new_trades_serialized, new_logs
+
+    def _build_bar_update_event(self) -> dict[str, Any]:
+        """Build incremental bar update event for WebSocket push."""
+        state, new_fills, new_trades, new_logs = self._build_state_snapshot()
+        return {
+            "event": "bar_update",
+            "run_id": str(self._run_id),
+            "bar_count": self._bar_count,
+            **state,  # Flatten state into top-level for backward compat
+            "new_fills": new_fills,
+            "new_trades": new_trades,
+            "new_logs": new_logs,
         }
