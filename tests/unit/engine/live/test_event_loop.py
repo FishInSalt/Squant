@@ -443,3 +443,43 @@ class TestOnEventLoopDone:
         await asyncio.sleep(0.1)
 
         engine.stop.assert_not_called()
+
+
+class TestQueueOverflow:
+    async def test_queue_overflow_ws_event_dropped(self, engine):
+        """WS_FILL event is silently dropped when the event queue is full.
+
+        Verifies that put_nowait raises QueueFull internally but does not
+        propagate to the caller, and that the event is not added to the queue.
+        """
+        # Replace engine's event queue with a tiny maxsize=2 queue
+        engine._event_queue = asyncio.Queue(maxsize=2)
+
+        # Fill the queue to capacity
+        dummy_event = _make_event(EngineEventType.WS_FILL, {"trade_id": "dummy"})
+        engine._event_queue.put_nowait(dummy_event)
+        engine._event_queue.put_nowait(dummy_event)
+        assert engine._event_queue.full()
+
+        # Simulate a WS trade_execution message arriving when queue is full
+        from squant.infra.exchange.ws_types import WSTradeExecution
+
+        fill_data = WSTradeExecution(
+            trade_id="t-overflow",
+            order_id="o-overflow",
+            symbol="BTC/USDT",
+            side="buy",
+            price=Decimal("50000"),
+            amount=Decimal("0.01"),
+            fee=Decimal("0"),
+            fee_currency="USDT",
+            timestamp=datetime.now(UTC),
+        )
+
+        # Should not raise — the QueueFull exception is caught internally
+        msg = {"type": "trade_execution", "data": fill_data}
+        await engine._handle_private_ws_message(msg)
+
+        # Queue should still be exactly at capacity (no new item added)
+        assert engine._event_queue.full()
+        assert engine._event_queue.qsize() == 2

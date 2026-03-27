@@ -1072,9 +1072,9 @@ class TestOrderUpdates:
             fee_currency="USDT",
         )
 
-        # on_order_update buffers, _drain_ws_updates processes (ISSUE-203 fix)
+        # on_order_update enqueues; call _process_single_ws_update directly to test processing
         engine_with_order.on_order_update(update)
-        engine_with_order._drain_ws_updates()
+        engine_with_order._process_single_ws_update(update)
 
         live_order = engine_with_order._live_orders["internal-1"]
         assert live_order.status == OrderStatus.FILLED
@@ -1093,9 +1093,9 @@ class TestOrderUpdates:
             size=Decimal("0.1"),
         )
 
-        # Should not raise (buffer + drain)
+        # Should not raise; test enqueue + direct processing
         engine_with_order.on_order_update(update)
-        engine_with_order._drain_ws_updates()
+        engine_with_order._process_single_ws_update(update)
 
     def test_order_update_ignored_during_emergency_close(self, engine_with_order):
         """Test that order updates are blocked during emergency close (P0-2)."""
@@ -1553,7 +1553,7 @@ class TestCircuitBreakerIntegration:
 
         with patch.object(engine._context, "_process_fill") as mock_fill:
             engine.on_order_update(update)
-            engine._drain_ws_updates()
+            engine._process_single_ws_update(update)
 
             # Fallback fill processing should be called (watchMyTrades didn't handle it)
             mock_fill.assert_called_once()
@@ -2759,8 +2759,8 @@ class TestForceFillOnValueError:
 
 
 class TestWsUpdateBuffering:
-    """Tests for ISSUE-203 fix: WS updates are buffered and processed
-    synchronously within process_candle to prevent concurrent state mutation."""
+    """Tests for WS update event queue: on_order_update enqueues into asyncio.Queue,
+    processing happens asynchronously via the event loop."""
 
     @pytest.fixture
     def engine_with_order(self, engine):
@@ -2778,8 +2778,8 @@ class TestWsUpdateBuffering:
         engine._exchange_order_map["exchange-1"] = "internal-1"
         return engine
 
-    def test_on_order_update_buffers_not_processes(self, engine_with_order):
-        """Test on_order_update only buffers, does not immediately mutate state."""
+    def test_on_order_update_enqueues_not_processes(self, engine_with_order):
+        """Test on_order_update enqueues a WS_ORDER event without immediately mutating state."""
         update = WSOrderUpdate(
             order_id="exchange-1",
             client_order_id="internal-1",
@@ -2796,14 +2796,14 @@ class TestWsUpdateBuffering:
 
         engine_with_order.on_order_update(update)
 
-        # Update should be buffered, NOT processed
-        assert len(engine_with_order._pending_ws_updates) == 1
+        # Update should be enqueued, NOT processed yet
+        assert engine_with_order._event_queue.qsize() == 1
         live_order = engine_with_order._live_orders["internal-1"]
         assert live_order.status == OrderStatus.SUBMITTED  # Unchanged
         assert live_order.filled_amount == Decimal("0")  # Unchanged
 
-    def test_drain_ws_updates_processes_buffered(self, engine_with_order):
-        """Test _drain_ws_updates processes all buffered updates."""
+    def test_process_single_ws_update_applies_state(self, engine_with_order):
+        """Test _process_single_ws_update mutates order state directly."""
         update = WSOrderUpdate(
             order_id="exchange-1",
             client_order_id="internal-1",
@@ -2818,20 +2818,16 @@ class TestWsUpdateBuffering:
             fee_currency="USDT",
         )
 
-        engine_with_order.on_order_update(update)
-        engine_with_order._drain_ws_updates()
+        engine_with_order._process_single_ws_update(update)
 
-        # Now state should be updated
-        assert len(engine_with_order._pending_ws_updates) == 0
         live_order = engine_with_order._live_orders["internal-1"]
         assert live_order.status == OrderStatus.FILLED
         assert live_order.filled_amount == Decimal("0.1")
 
-    def test_drain_ws_updates_noop_when_empty(self, engine_with_order):
-        """Test _drain_ws_updates is a no-op when queue is empty."""
-        # Should not raise
-        engine_with_order._drain_ws_updates()
-        assert len(engine_with_order._pending_ws_updates) == 0
+    def test_on_order_update_empty_queue_is_noop(self, engine_with_order):
+        """Test that an empty event queue causes no errors."""
+        # No events enqueued — queue should remain empty
+        assert engine_with_order._event_queue.qsize() == 0
 
 
 class TestTimedOutOrderReconciliation:

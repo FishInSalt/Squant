@@ -8,7 +8,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from collections import OrderedDict, deque
+from collections import OrderedDict
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -348,15 +348,6 @@ class LiveTradingEngine:
         # Processing lock to prevent stop()/process_candle() race conditions (R3-002)
         self._processing_lock = asyncio.Lock()
 
-        # Buffered WebSocket order updates (ISSUE-203 fix)
-        # Updates are queued here and drained synchronously within process_candle
-        # to prevent concurrent state mutation between WS callbacks and polling.
-        # Uses deque(maxlen=) for O(1) append/eviction (DESIGN-1).
-        self._pending_ws_updates: deque[WSOrderUpdate] = deque(maxlen=self._MAX_PENDING_WS_UPDATES)
-
-        # Buffered per-fill data from watchMyTrades
-        self._pending_ws_trade_executions: deque[WSTradeExecution] = deque(maxlen=1000)
-
         # Unified event queue and loop task (Task 2: event-loop lifecycle)
         self._event_queue: asyncio.Queue[EngineEvent] = asyncio.Queue(maxsize=1000)
         self._event_loop_task: asyncio.Task | None = None
@@ -543,9 +534,6 @@ class LiveTradingEngine:
 
     # Maximum pending order events to prevent unbounded growth on persist failure (M-8)
     _MAX_PENDING_ORDER_EVENTS: int = 1000
-
-    # Maximum buffered WS order updates to prevent unbounded memory growth (M-1/DESIGN-1)
-    _MAX_PENDING_WS_UPDATES: int = 1000
 
     # Maximum tracked trade IDs for dedup (LRU eviction at 50% when cap exceeded)
     _MAX_PROCESSED_TRADE_IDS: int = 10000
@@ -785,8 +773,8 @@ class LiveTradingEngine:
     async def _handle_private_ws_message(self, msg: dict[str, Any]) -> None:
         """Handle messages from private WS provider.
 
-        Routes order updates and trade executions into their respective buffers,
-        which are drained synchronously within process_candle.
+        Routes order updates and trade executions into the unified event queue
+        for processing by the event loop.
         """
         msg_type = msg.get("type")
         data = msg.get("data")
@@ -797,7 +785,12 @@ class LiveTradingEngine:
             self.on_order_update(data)
         elif msg_type == "trade_execution":
             if isinstance(data, WSTradeExecution):
-                self._pending_ws_trade_executions.append(data)
+                try:
+                    self._event_queue.put_nowait(
+                        EngineEvent(EngineEventType.WS_FILL, data, datetime.now(UTC))
+                    )
+                except asyncio.QueueFull:
+                    logger.warning(f"Event queue full, dropping WS_FILL for {self._run_id}")
 
     async def _activate_dead_man_switch(self) -> None:
         """Activate Dead Man's Switch on exchange (F-2).
@@ -1149,11 +1142,10 @@ class LiveTradingEngine:
         )
 
     def on_order_update(self, update: WSOrderUpdate) -> None:
-        """Handle WebSocket order update by buffering it for later processing.
+        """Handle WebSocket order update by enqueuing it for event loop processing.
 
-        Called when exchange pushes order status updates. Updates are queued
-        and processed synchronously within process_candle via _drain_ws_updates()
-        to prevent concurrent state mutation (ISSUE-203 fix).
+        Called when exchange pushes order status updates. Updates are placed on
+        the unified event queue and processed by the event loop.
 
         Args:
             update: Order update from WebSocket.
@@ -1164,8 +1156,12 @@ class LiveTradingEngine:
             logger.debug(f"Ignoring order update during emergency close: {update.order_id}")
             return
 
-        # deque(maxlen=) auto-evicts oldest on overflow (DESIGN-1)
-        self._pending_ws_updates.append(update)
+        try:
+            self._event_queue.put_nowait(
+                EngineEvent(EngineEventType.WS_ORDER, update, datetime.now(UTC))
+            )
+        except asyncio.QueueFull:
+            logger.warning(f"Event queue full, dropping WS_ORDER for {self._run_id}")
 
     async def _flush_order_events(self) -> None:
         """Flush pending order/trade audit events to persistence.
@@ -1193,26 +1189,6 @@ class LiveTradingEngine:
                     f"Dropped {discarded} oldest pending order events "
                     f"(limit={self._MAX_PENDING_ORDER_EVENTS}) for {self._run_id}"
                 )
-
-    def _drain_ws_updates(self) -> None:
-        """Process all buffered WebSocket updates.
-
-        Order: fills first (from watchMyTrades), then status changes (from watchOrders).
-        This ensures fill records exist before evaluating terminal status.
-        """
-        # 1. Process per-fill data first
-        if self._pending_ws_trade_executions:
-            executions = list(self._pending_ws_trade_executions)
-            self._pending_ws_trade_executions.clear()
-            for exec_data in executions:
-                self._process_trade_execution(exec_data)
-
-        # 2. Then process order status changes
-        if self._pending_ws_updates:
-            updates = list(self._pending_ws_updates)
-            self._pending_ws_updates.clear()
-            for update in updates:
-                self._process_single_ws_update(update)
 
     def _process_single_ws_update(self, update: WSOrderUpdate) -> None:
         """Process a single WebSocket order update.
@@ -1263,7 +1239,7 @@ class LiveTradingEngine:
         )
 
         # Fallback fill processing from watchOrders aggregated data.
-        # If watchMyTrades already processed the fills (drained first in _drain_ws_updates),
+        # If watchMyTrades already processed the fills via a WS_FILL event processed first,
         # old_filled will already reflect them and fill_delta will be 0 — no duplicate.
         # If watchMyTrades is unavailable (e.g., OKX demo), this is the primary fill path.
         fill_delta = update.filled_size - old_filled
