@@ -357,6 +357,10 @@ class LiveTradingEngine:
         # Buffered per-fill data from watchMyTrades
         self._pending_ws_trade_executions: deque[WSTradeExecution] = deque(maxlen=1000)
 
+        # Unified event queue and loop task (Task 2: event-loop lifecycle)
+        self._event_queue: asyncio.Queue[EngineEvent] = asyncio.Queue(maxsize=1000)
+        self._event_loop_task: asyncio.Task | None = None
+
         # Dedup set for processed trade IDs (LRU eviction when cap exceeded)
         self._processed_trade_ids: OrderedDict[str, bool] = OrderedDict()
 
@@ -626,6 +630,10 @@ class LiveTradingEngine:
             self._strategy.on_init()
             logger.info(f"Strategy initialized for live run {self._run_id}")
 
+            # Start unified event loop
+            self._event_loop_task = asyncio.create_task(self._event_loop())
+            self._event_loop_task.add_done_callback(self._on_event_loop_done)
+
         except Exception as e:
             logger.exception(f"Error starting live trading engine: {e}")
             self._error_message = f"Startup failed: {e}"
@@ -655,6 +663,14 @@ class LiveTradingEngine:
 
         if error:
             self._error_message = error
+
+        # Shut down event loop
+        if self._event_loop_task and not self._event_loop_task.done():
+            if self._event_loop_task != asyncio.current_task():
+                try:
+                    await asyncio.wait_for(self._event_loop_task, timeout=5.0)
+                except (TimeoutError, asyncio.CancelledError):
+                    self._event_loop_task.cancel()
 
         # Close private WS provider (LIVE-CN-001)
         await self._stop_private_ws()
@@ -1225,7 +1241,9 @@ class LiveTradingEngine:
                         try:
                             self._strategy.on_fill(fill)
                         except Exception as e:
-                            self._context.log(f"ERROR in on_fill: {e}", level="error", category="strategy")
+                            self._context.log(
+                                f"ERROR in on_fill: {e}", level="error", category="strategy"
+                            )
                             logger.warning(f"Strategy on_fill error: {e}")
                 self._last_callback_fill_total = self._context._total_fills_added
 
@@ -1238,7 +1256,9 @@ class LiveTradingEngine:
                         try:
                             self._strategy.on_order_done(order)
                         except Exception as e:
-                            self._context.log(f"ERROR in on_order_done: {e}", level="error", category="strategy")
+                            self._context.log(
+                                f"ERROR in on_order_done: {e}", level="error", category="strategy"
+                            )
                             logger.warning(f"Strategy on_order_done error: {e}")
                 self._last_callback_completed_total = self._context._total_completed_added
 
@@ -3064,6 +3084,87 @@ class LiveTradingEngine:
         new_trades_serialized = [_serialize_trade(t) for t in new_trades]
 
         return state, new_fills_serialized, new_trades_serialized, new_logs
+
+    # ------------------------------------------------------------------
+    # Unified event loop (Task 2)
+    # ------------------------------------------------------------------
+
+    async def _event_loop(self) -> None:
+        """Unified event processor. Single consumer, single lock.
+
+        Processes WS fills, WS order updates, and bar closes from a single
+        queue. Events are built inside the lock (state consistent) but
+        pushed outside (non-blocking).
+        """
+        while self._is_running:
+            try:
+                event = await asyncio.wait_for(self._event_queue.get(), timeout=1.0)
+            except TimeoutError:
+                continue
+
+            self._last_active_at = datetime.now(UTC)
+
+            push_event = None
+            async with self._processing_lock:
+                if not self._is_running:
+                    break
+                # Skip WS events during emergency close
+                if self._emergency_close_in_progress and event.type in (
+                    EngineEventType.WS_FILL,
+                    EngineEventType.WS_ORDER,
+                ):
+                    continue
+                try:
+                    match event.type:
+                        case EngineEventType.WS_FILL:
+                            self._process_trade_execution(event.data)
+                            await self._flush_order_events()
+                            push_event = self._build_state_update_event("fill", event.data)
+                        case EngineEventType.WS_ORDER:
+                            self._process_single_ws_update(event.data)
+                            await self._flush_order_events()
+                            push_event = self._build_state_update_event("order_update", event.data)
+                        case EngineEventType.BAR_CLOSE:
+                            await self._handle_bar_close(event.data)
+                except Exception as e:
+                    logger.exception(f"Event loop error for {self._run_id}: {e}")
+                    if event.type == EngineEventType.BAR_CLOSE:
+                        await self.stop(error=f"Bar processing error: {e}")
+                        return
+
+            # Fire-and-forget push OUTSIDE the lock
+            if push_event and self._on_event:
+                try:
+                    loop = asyncio.get_running_loop()
+                    task = loop.create_task(self._on_event(push_event))
+                    self._background_tasks.add(task)
+                    task.add_done_callback(self._background_tasks.discard)
+                except Exception as e:
+                    logger.debug(f"State update push failed for {self._run_id}: {e}")
+
+    def _on_event_loop_done(self, task: asyncio.Task) -> None:
+        """Detect unexpected event loop exit."""
+        if not task.cancelled() and task.exception() and self._is_running:
+            logger.error(f"Event loop crashed for {self._run_id}: {task.exception()}")
+            asyncio.create_task(self.stop(error=f"Event loop crashed: {task.exception()}"))
+
+    def _build_state_update_event(self, trigger: str, event_data: Any) -> dict[str, Any]:
+        """Stub -- full implementation in Task 5."""
+        state, new_fills, new_trades, new_logs = self._build_state_snapshot()
+        return {
+            "event": "state_update",
+            "run_id": str(self._run_id),
+            "trigger": trigger,
+            "trigger_detail": {},
+            "state": state,
+            "new_fills": new_fills,
+            "new_trades": new_trades,
+            "new_logs": new_logs,
+        }
+
+    async def _handle_bar_close(self, candle: Any) -> None:
+        """Stub -- full implementation in Task 3."""
+        pass
 
     def _build_bar_update_event(self) -> dict[str, Any]:
         """Build incremental bar update event for WebSocket push."""
