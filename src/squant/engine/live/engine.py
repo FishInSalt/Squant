@@ -2980,9 +2980,6 @@ class LiveTradingEngine:
         Args:
             candle: WebSocket candle data (must be a closed candle).
         """
-        # Update last activity timestamp
-        self._last_active_at = datetime.now(UTC)
-
         # Update current price
         self._current_price = candle.close
 
