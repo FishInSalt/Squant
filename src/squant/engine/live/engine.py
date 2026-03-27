@@ -2936,13 +2936,35 @@ class LiveTradingEngine:
             asyncio.create_task(self.stop(error=f"Event loop crashed: {task.exception()}"))
 
     def _build_state_update_event(self, trigger: str, event_data: Any) -> dict[str, Any]:
-        """Stub -- full implementation in Task 5."""
+        """Build state_update event for immediate push after WS event processing."""
         state, new_fills, new_trades, new_logs = self._build_state_snapshot()
+
+        trigger_detail: dict[str, Any] = {}
+        if trigger == "fill" and hasattr(event_data, "price"):
+            trigger_detail = {
+                "order_id": getattr(event_data, "order_id", ""),
+                "side": getattr(event_data, "side", None) or "",
+                "price": str(event_data.price),
+                "amount": str(event_data.amount),
+                "fee": str(getattr(event_data, "fee", "0")),
+                "fee_currency": getattr(event_data, "fee_currency", ""),
+            }
+        elif trigger == "order_update" and hasattr(event_data, "order_id"):
+            internal_id = self._exchange_order_map.get(event_data.order_id)
+            live_order = self._live_orders.get(internal_id) if internal_id else None
+            trigger_detail = {
+                "order_id": event_data.order_id,
+                "status": getattr(event_data, "status", ""),
+                "side": live_order.side.value if live_order else "",
+                "amount": str(live_order.amount) if live_order else "0",
+                "filled_amount": str(getattr(event_data, "filled_size", "0")),
+            }
+
         return {
             "event": "state_update",
             "run_id": str(self._run_id),
             "trigger": trigger,
-            "trigger_detail": {},
+            "trigger_detail": trigger_detail,
             "state": state,
             "new_fills": new_fills,
             "new_trades": new_trades,
@@ -3115,10 +3137,10 @@ class LiveTradingEngine:
         # Final flush for any remaining events (e.g., from strategy callbacks)
         await self._flush_order_events()
 
-        # Emit bar update event via WebSocket
+        # Emit bar close event via WebSocket
         if self._on_event:
             try:
-                event = self._build_bar_update_event()
+                event = self._build_bar_close_event(bar)
                 loop = asyncio.get_running_loop()
                 task = loop.create_task(self._on_event(event))
                 self._background_tasks.add(task)
@@ -3133,14 +3155,33 @@ class LiveTradingEngine:
             f"Processed bar {self._bar_count} at {bar.time}, equity={self._context.equity}"
         )
 
-    def _build_bar_update_event(self) -> dict[str, Any]:
-        """Build incremental bar update event for WebSocket push."""
+    def _build_bar_close_event(self, bar: Bar) -> dict[str, Any]:
+        """Build bar_close event with equity point and full state snapshot."""
         state, new_fills, new_trades, new_logs = self._build_state_snapshot()
+        ctx = self._context
+
+        equity_point = {
+            "time": bar.time.isoformat(),
+            "equity": str(ctx.equity),
+            "cash": str(ctx._cash),
+            "position_value": str(ctx._get_position_value()),
+            "unrealized_pnl": str(ctx._get_unrealized_pnl()),
+        }
+
         return {
-            "event": "bar_update",
+            "event": "bar_close",
             "run_id": str(self._run_id),
             "bar_count": self._bar_count,
-            **state,  # Flatten state into top-level for backward compat
+            "bar": {
+                "time": bar.time.isoformat(),
+                "open": str(bar.open),
+                "high": str(bar.high),
+                "low": str(bar.low),
+                "close": str(bar.close),
+                "volume": str(bar.volume),
+            },
+            "equity_point": equity_point,
+            "state": state,
             "new_fills": new_fills,
             "new_trades": new_trades,
             "new_logs": new_logs,

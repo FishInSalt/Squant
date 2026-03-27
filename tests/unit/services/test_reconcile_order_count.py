@@ -2,7 +2,7 @@
 
 After _reconcile_orders removes completed orders from _live_orders,
 the context's completed_orders_count should increase so the UI
-shows the correct total. Also verifies that _build_bar_update_event
+shows the correct total. Also verifies that _build_state_snapshot
 includes _restored_completed_orders_count after resume.
 """
 
@@ -136,11 +136,11 @@ class TestReconcileOrderCount:
         assert ctx._restored_completed_orders_count == 3
 
 
-class TestBarUpdateEventCount:
-    """_build_bar_update_event should include restored count."""
+class TestStateSnapshotCount:
+    """_build_state_snapshot should include restored count."""
 
     def test_includes_restored_count(self):
-        """Verify the source code uses _restored_completed_orders_count in bar update.
+        """Verify the source code uses _restored_completed_orders_count in state snapshot.
 
         Rather than constructing a full LiveTradingEngine (which needs many
         dependencies), we verify the fix by checking the context snapshot
@@ -160,11 +160,11 @@ class TestBarUpdateEventCount:
         # Should be restored_count + len(_completed_orders) = 5 + 0 = 5
         assert snapshot["completed_orders_count"] == 5
 
-    def test_source_code_uses_restored_count_in_bar_update(self):
-        """Verify engine bar update event includes restored count (source check)."""
+    def test_source_code_uses_restored_count_in_state_snapshot(self):
+        """Verify engine state snapshot includes restored count (source check)."""
         import inspect
 
         from squant.engine.live.engine import LiveTradingEngine
 
-        source = inspect.getsource(LiveTradingEngine._build_bar_update_event)
+        source = inspect.getsource(LiveTradingEngine._build_state_snapshot)
         assert "_restored_completed_orders_count" in source

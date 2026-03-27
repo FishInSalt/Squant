@@ -3824,15 +3824,15 @@ class TestRealizedPnlNoneProtection:
     """Tests for C-6: realized_pnl sum with None pnl values."""
 
     @pytest.mark.asyncio
-    async def test_bar_update_event_handles_none_pnl(self, engine):
-        """Test C-6: _build_bar_update_event handles trades with pnl=None.
+    async def test_bar_close_event_handles_none_pnl(self, engine):
+        """Test C-6: _build_bar_close_event handles trades with pnl=None.
 
         If a trade's pnl is None (e.g., from a partially deserialized trade),
         the sum operation should not raise TypeError.
         """
         await engine.start()
 
-        from squant.engine.backtest.types import TradeRecord
+        from squant.engine.backtest.types import Bar, TradeRecord
 
         # Create trades with mixed pnl values (some None)
         trade_ok = TradeRecord(
@@ -3861,10 +3861,19 @@ class TestRealizedPnlNoneProtection:
         engine._context._cumulative_realized_pnl = Decimal("100")
 
         # This should NOT raise TypeError
-        event = engine._build_bar_update_event()
+        bar = Bar(
+            time=datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC),
+            symbol="BTC/USDT",
+            open=Decimal("49900"),
+            high=Decimal("50100"),
+            low=Decimal("49800"),
+            close=Decimal("50000"),
+            volume=Decimal("100"),
+        )
+        event = engine._build_bar_close_event(bar)
 
         # realized_pnl should reflect cumulative counter
-        assert Decimal(event["realized_pnl"]) == Decimal("100")
+        assert Decimal(event["state"]["realized_pnl"]) == Decimal("100")
 
 
 class TestPrivateWebSocket:
