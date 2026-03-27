@@ -604,10 +604,10 @@ class PaperTradingEngine:
                     except Exception as e:
                         logger.warning(f"Result persist callback failed for {self._run_id}: {e}")
 
-                # 9. Emit bar update event via WebSocket
+                # 9. Emit bar_close event via WebSocket
                 if self._on_event:
                     try:
-                        event = self._build_bar_update_event()
+                        event = self._build_bar_close_event(bar)
                         loop = asyncio.get_running_loop()
                         loop.create_task(self._on_event(event))
                     except Exception as e:
@@ -924,32 +924,40 @@ class PaperTradingEngine:
             if self._risk_manager:
                 self._risk_manager.record_trade_result(completed_trade.pnl)
 
-        # Emit real-time fill event via WebSocket (best-effort, never block engine)
+        # Emit real-time state_update event via WebSocket (best-effort, never block engine)
         if self._on_event and not self._warming_up:
             try:
-                event = self._build_fill_event(fill)
+                event = self._build_state_update_event("fill", fill)
                 loop = asyncio.get_running_loop()
                 loop.create_task(self._on_event(event))
             except Exception:
                 pass
 
-    def _build_fill_event(self, fill: Any) -> dict[str, Any]:
-        """Build a real-time fill event for immediate WebSocket push.
-
-        Emitted from _process_fill_safe() on every successful fill, allowing
-        the frontend to update scalar state (cash, equity, positions) immediately
-        instead of waiting for bar close. The fill detail is included for toast
-        notifications; the authoritative fills list is still delivered via
-        bar_update's new_fills at bar close.
-        """
+    def _build_state_snapshot(self) -> tuple[dict[str, Any], list, list, list]:
+        """Build state snapshot + incremental data."""
         ctx = self._context
-        return {
-            "event": "fill",
-            "run_id": str(self._run_id),
-            "fill": _serialize_fill(fill),
+
+        fill_delta = ctx._total_fills_added - self._last_emitted_fill_total
+        trade_delta = ctx._total_trades_added - self._last_emitted_trade_total
+        log_delta = ctx._total_logs_added - self._last_emitted_log_total
+
+        new_fills = list(ctx._fills)[-fill_delta:] if fill_delta > 0 else []
+        new_trades = list(ctx._trades)[-trade_delta:] if trade_delta > 0 else []
+        new_logs = list(ctx._logs)[-log_delta:] if log_delta > 0 else []
+
+        self._last_emitted_fill_total = ctx._total_fills_added
+        self._last_emitted_trade_total = ctx._total_trades_added
+        self._last_emitted_log_total = ctx._total_logs_added
+
+        usdt_equiv = ctx.get_fees_usdt_equivalent()
+        state = {
             "cash": str(ctx._cash),
             "equity": str(ctx.equity),
             "unrealized_pnl": str(ctx._get_unrealized_pnl()),
+            "realized_pnl": str(self._cached_realized_pnl),  # Paper uses cached
+            "total_fees": str(ctx._total_fees),
+            "fees_by_currency": {k: str(v) for k, v in ctx._fees_by_currency.items()},
+            "fees_usdt_equivalent": str(usdt_equiv) if usdt_equiv is not None else None,
             "positions": {
                 sym: {
                     "amount": str(pos.amount),
@@ -967,10 +975,56 @@ class PaperTradingEngine:
                     "amount": str(o.amount),
                     "price": str(o.price) if o.price else None,
                     "status": o.status.value,
+                    "created_at": o.created_at.isoformat() if o.created_at else None,
                 }
                 for o in ctx._pending_orders
             ],
             "open_trade": _serialize_open_trade(ctx._open_trade),
+            "completed_orders_count": len(ctx._completed_orders),
+            "trades_count": len(ctx._trades),
+            "risk_state": (
+                self._risk_manager.get_state_summary() if self._risk_manager else None
+            ),
+        }
+
+        return (
+            state,
+            [_serialize_fill(f) for f in new_fills],
+            [_serialize_trade(t) for t in new_trades],
+            new_logs,
+        )
+
+    def _build_state_update_event(
+        self, trigger: str, fill: Any = None
+    ) -> dict[str, Any]:
+        """Build state_update event for immediate push.
+
+        Emitted from _process_fill_safe() on every successful fill, allowing
+        the frontend to update scalar state (cash, equity, positions) immediately
+        instead of waiting for bar close.
+        """
+        state, new_fills, new_trades, new_logs = self._build_state_snapshot()
+
+        trigger_detail: dict[str, Any] = {}
+        if trigger == "fill" and fill is not None:
+            trigger_detail = {
+                "order_id": fill.order_id,
+                "side": fill.side.value if hasattr(fill.side, "value") else str(fill.side),
+                "price": str(fill.price),
+                "amount": str(fill.amount),
+                "fee": str(fill.fee),
+                "fee_currency": getattr(fill, "fee_currency", None) or "",
+            }
+
+        return {
+            "event": "state_update",
+            "run_id": str(self._run_id),
+            "trigger": trigger,
+            "trigger_detail": trigger_detail,
+            "state": state,
+            "new_fills": new_fills,
+            "new_trades": new_trades,
+            "new_logs": new_logs,
         }
 
     def _append_pending_snapshot(self, snapshot: EquitySnapshot) -> None:
@@ -1128,59 +1182,34 @@ class PaperTradingEngine:
             result["risk_config"] = self._risk_manager.config.model_dump(mode="json")
         return result
 
-    def _build_bar_update_event(self) -> dict[str, Any]:
-        """Build incremental bar update event for WebSocket push."""
+    def _build_bar_close_event(self, bar: Any) -> dict[str, Any]:
+        """Build bar_close event with equity point for WebSocket push."""
+        state, new_fills, new_trades, new_logs = self._build_state_snapshot()
         ctx = self._context
 
-        fill_delta = ctx._total_fills_added - self._last_emitted_fill_total
-        trade_delta = ctx._total_trades_added - self._last_emitted_trade_total
-        log_delta = ctx._total_logs_added - self._last_emitted_log_total
-
-        new_fills = list(ctx._fills)[-fill_delta:] if fill_delta > 0 else []
-        new_trades = list(ctx._trades)[-trade_delta:] if trade_delta > 0 else []
-        new_logs = list(ctx._logs)[-log_delta:] if log_delta > 0 else []
-
-        self._last_emitted_fill_total = ctx._total_fills_added
-        self._last_emitted_trade_total = ctx._total_trades_added
-        self._last_emitted_log_total = ctx._total_logs_added
+        equity_point = {
+            "time": bar.time.isoformat(),
+            "equity": str(ctx.equity),
+            "cash": str(ctx._cash),
+            "position_value": str(ctx._get_position_value()),
+            "unrealized_pnl": str(ctx._get_unrealized_pnl()),
+        }
 
         return {
-            "event": "bar_update",
+            "event": "bar_close",
             "run_id": str(self._run_id),
             "bar_count": self._bar_count,
-            "cash": str(ctx._cash),
-            "equity": str(ctx.equity),
-            "unrealized_pnl": str(ctx._get_unrealized_pnl()),
-            "realized_pnl": str(self._cached_realized_pnl),
-            "total_fees": str(ctx._total_fees),
-            "fees_by_currency": {k: str(v) for k, v in ctx._fees_by_currency.items()},
-            "fees_usdt_equivalent": str(usdt_equiv) if (usdt_equiv := ctx.get_fees_usdt_equivalent()) is not None else None,
-            "completed_orders_count": len(ctx._completed_orders),
-            "trades_count": len(ctx._trades),
-            "positions": {
-                sym: {
-                    "amount": str(pos.amount),
-                    "avg_entry_price": str(pos.avg_entry_price),
-                }
-                for sym, pos in ctx._positions.items()
-                if pos.amount != 0
+            "bar": {
+                "time": bar.time.isoformat(),
+                "open": str(bar.open),
+                "high": str(bar.high),
+                "low": str(bar.low),
+                "close": str(bar.close),
+                "volume": str(bar.volume),
             },
-            "pending_orders": [
-                {
-                    "id": o.id,
-                    "symbol": o.symbol,
-                    "side": o.side.value,
-                    "type": o.type.value,
-                    "amount": str(o.amount),
-                    "price": str(o.price) if o.price else None,
-                    "status": o.status.value,
-                    "created_at": o.created_at.isoformat() if o.created_at else None,
-                }
-                for o in ctx._pending_orders
-            ],
-            "open_trade": _serialize_open_trade(ctx._open_trade),
-            "new_fills": [_serialize_fill(f) for f in new_fills],
-            "new_trades": [_serialize_trade(t) for t in new_trades],
+            "equity_point": equity_point,
+            "state": state,
+            "new_fills": new_fills,
+            "new_trades": new_trades,
             "new_logs": new_logs,
-            "risk_state": (self._risk_manager.get_state_summary() if self._risk_manager else None),
         }

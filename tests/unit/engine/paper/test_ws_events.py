@@ -91,10 +91,10 @@ def make_candle(
     )
 
 
-class TestBarUpdateEvent:
-    """Tests for bar_update event emission."""
+class TestBarCloseEvent:
+    """Tests for bar_close event emission."""
 
-    async def test_bar_update_emitted_on_closed_candle(self, engine, on_event_mock, run_id):
+    async def test_bar_close_emitted_on_closed_candle(self, engine, on_event_mock, run_id):
         """Test that on_event is called after processing a closed candle."""
         await engine.start()
 
@@ -104,11 +104,11 @@ class TestBarUpdateEvent:
         # on_event is called via create_task, so check the mock was called
         assert on_event_mock.call_count == 1
         event = on_event_mock.call_args[0][0]
-        assert event["event"] == "bar_update"
+        assert event["event"] == "bar_close"
         assert event["run_id"] == str(run_id)
         assert event["bar_count"] == 1
 
-    async def test_bar_update_not_emitted_on_unclosed_candle(self, engine, on_event_mock):
+    async def test_bar_close_not_emitted_on_unclosed_candle(self, engine, on_event_mock):
         """Test that on_event is NOT called for unclosed candles."""
         await engine.start()
 
@@ -117,28 +117,32 @@ class TestBarUpdateEvent:
 
         on_event_mock.assert_not_called()
 
-    async def test_bar_update_contains_correct_fields(self, engine, on_event_mock):
-        """Test that bar_update event contains all required fields."""
+    async def test_bar_close_contains_correct_fields(self, engine, on_event_mock):
+        """Test that bar_close event contains all required fields."""
         await engine.start()
 
         candle = make_candle(close=Decimal("50000"))
         await engine.process_candle(candle)
 
         event = on_event_mock.call_args[0][0]
-        assert event["event"] == "bar_update"
-        assert "cash" in event
-        assert "equity" in event
-        assert "unrealized_pnl" in event
-        assert "realized_pnl" in event
-        assert "total_fees" in event
-        assert "completed_orders_count" in event
-        assert "trades_count" in event
-        assert "positions" in event
-        assert "pending_orders" in event
+        assert event["event"] == "bar_close"
+        assert "bar" in event
+        assert "equity_point" in event
+        assert "state" in event
+        state = event["state"]
+        assert "cash" in state
+        assert "equity" in state
+        assert "unrealized_pnl" in state
+        assert "realized_pnl" in state
+        assert "total_fees" in state
+        assert "completed_orders_count" in state
+        assert "trades_count" in state
+        assert "positions" in state
+        assert "pending_orders" in state
         assert "new_fills" in event
         assert "new_trades" in event
         assert "new_logs" in event
-        assert "risk_state" in event
+        assert "risk_state" in state
 
     async def test_incremental_tracking(self, engine, on_event_mock):
         """Test that incremental fields only contain new items."""
@@ -168,7 +172,13 @@ class TestBarUpdateEvent:
         assert event2["new_logs"] == []
 
     async def test_incremental_with_trading(self, run_id, on_event_mock):
-        """Test that incremental tracking captures new fills/trades from trading."""
+        """Test that incremental tracking captures new fills/trades from trading.
+
+        When a fill occurs on a closed candle, _process_fill_safe emits a
+        state_update event that consumes the fill delta first. The subsequent
+        bar_close event therefore sees new_fills == [] (already delivered).
+        The fill still appears in the state_update event for that candle.
+        """
         strategy = SimpleStrategy()
         engine = PaperTradingEngine(
             run_id=run_id,
@@ -189,28 +199,44 @@ class TestBarUpdateEvent:
         candle1 = make_candle(timestamp=t1, close=Decimal("50000"))
         await engine.process_candle(candle1)
 
-        event1 = on_event_mock.call_args[0][0]
+        bar_close_event1 = on_event_mock.call_args[0][0]
         # No fills yet - order was placed but not filled until next candle
-        assert event1["new_fills"] == []
+        assert bar_close_event1["new_fills"] == []
 
         # Second candle - the pending buy order gets filled at steps 1-2
+        # fill → state_update event (consumes delta), then bar_close event (empty delta)
         t2 = t1 + timedelta(minutes=1)
         candle2 = make_candle(timestamp=t2, close=Decimal("50100"))
+        on_event_mock.reset_mock()
         await engine.process_candle(candle2)
 
-        event2 = on_event_mock.call_args[0][0]
-        # Now the buy fill should appear
-        assert len(event2["new_fills"]) > 0
-        assert event2["new_fills"][0]["side"] == "buy"
+        # The fill appears in the state_update event, not bar_close
+        all_events2 = [call.args[0] for call in on_event_mock.call_args_list]
+        fill_state_updates = [
+            e for e in all_events2
+            if e.get("event") == "state_update" and e.get("trigger") == "fill"
+        ]
+        assert len(fill_state_updates) >= 1
+        assert fill_state_updates[0]["new_fills"][0]["side"] == "buy"
 
-        # Third candle - no new buy (already has position), no new fills
+        # The bar_close event for candle2 should NOT re-emit the same fill
+        bar_close_events2 = [e for e in all_events2 if e.get("event") == "bar_close"]
+        assert len(bar_close_events2) == 1
+        assert bar_close_events2[0]["new_fills"] == []
+
+        # Third candle - no new buy (already has position), no new fills anywhere
         t3 = t2 + timedelta(minutes=1)
         candle3 = make_candle(timestamp=t3, close=Decimal("50200"))
+        on_event_mock.reset_mock()
         await engine.process_candle(candle3)
 
-        event3 = on_event_mock.call_args[0][0]
+        bar_close_event3 = [
+            call.args[0]
+            for call in on_event_mock.call_args_list
+            if call.args[0].get("event") == "bar_close"
+        ][0]
         # No new fills this time (incremental)
-        assert event3["new_fills"] == []
+        assert bar_close_event3["new_fills"] == []
 
 
 class TestEngineStoppedEvent:
@@ -247,10 +273,10 @@ class TestEngineStoppedEvent:
 
 
 class TestFillEvent:
-    """Tests for real-time fill event emission."""
+    """Tests for real-time state_update fill event emission."""
 
     async def test_fill_event_emitted_on_intrabar_fill(self, run_id, on_event_mock):
-        """Test that fill event is emitted when an order fills on an unclosed candle."""
+        """Test that state_update event is emitted when an order fills on an unclosed candle."""
         strategy = SimpleStrategy()
         engine = PaperTradingEngine(
             run_id=run_id,
@@ -270,7 +296,7 @@ class TestFillEvent:
         candle1 = make_candle(timestamp=t1, close=Decimal("50000"))
         await engine.process_candle(candle1)
 
-        # bar_update emitted, reset mock to isolate fill events
+        # bar_close emitted, reset mock to isolate fill events
         on_event_mock.reset_mock()
 
         # Second candle, UNCLOSED — pending buy order gets filled intrabar
@@ -278,26 +304,28 @@ class TestFillEvent:
         candle2 = make_candle(timestamp=t2, close=Decimal("50100"), is_closed=False)
         await engine.process_candle(candle2)
 
-        # A fill event should have been emitted (not bar_update, since candle is unclosed)
+        # A state_update event should have been emitted (not bar_close, since candle is unclosed)
         assert on_event_mock.call_count >= 1
         fill_events = [
             call.args[0]
             for call in on_event_mock.call_args_list
-            if call.args[0].get("event") == "fill"
+            if call.args[0].get("event") == "state_update"
+            and call.args[0].get("trigger") == "fill"
         ]
         assert len(fill_events) == 1
         event = fill_events[0]
         assert event["run_id"] == str(run_id)
-        assert event["fill"]["side"] == "buy"
-        assert "cash" in event
-        assert "equity" in event
-        assert "unrealized_pnl" in event
-        assert "positions" in event
-        assert "pending_orders" in event
-        assert "open_trade" in event
+        assert event["trigger_detail"]["side"] == "buy"
+        state = event["state"]
+        assert "cash" in state
+        assert "equity" in state
+        assert "unrealized_pnl" in state
+        assert "positions" in state
+        assert "pending_orders" in state
+        assert "open_trade" in state
 
     async def test_fill_event_contains_correct_scalar_state(self, run_id, on_event_mock):
-        """Test that fill event scalar state reflects post-fill values."""
+        """Test that state_update fill event scalar state reflects post-fill values."""
         strategy = SimpleStrategy()
         engine = PaperTradingEngine(
             run_id=run_id,
@@ -326,18 +354,20 @@ class TestFillEvent:
         fill_events = [
             call.args[0]
             for call in on_event_mock.call_args_list
-            if call.args[0].get("event") == "fill"
+            if call.args[0].get("event") == "state_update"
+            and call.args[0].get("trigger") == "fill"
         ]
         assert len(fill_events) == 1
         event = fill_events[0]
+        state = event["state"]
 
         # Cash should have decreased (bought 0.1 BTC)
-        cash = Decimal(event["cash"])
+        cash = Decimal(state["cash"])
         assert cash < Decimal("10000")
 
         # Should have a position
-        assert "BTC/USDT" in event["positions"]
-        assert Decimal(event["positions"]["BTC/USDT"]["amount"]) == Decimal("0.1")
+        assert "BTC/USDT" in state["positions"]
+        assert Decimal(state["positions"]["BTC/USDT"]["amount"]) == Decimal("0.1")
 
     async def test_fill_event_not_emitted_during_warmup(self, run_id, on_event_mock):
         """Test that fill events are suppressed during warmup phase."""
