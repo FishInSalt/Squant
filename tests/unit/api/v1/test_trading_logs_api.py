@@ -1,4 +1,5 @@
 """Tests for trading log API endpoints."""
+
 from unittest.mock import patch
 
 import pytest
@@ -64,9 +65,7 @@ class TestPaperLogsEndpoint:
         log_dir = tmp_path / run_id
         log_dir.mkdir(parents=True)
         log_file = log_dir / "trading.log"
-        log_file.write_text(
-            "[2026-03-25 16:49:04] [INFO] [strategy] test paper log\n"
-        )
+        log_file.write_text("[2026-03-25 16:49:04] [INFO] [strategy] test paper log\n")
         with patch("squant.api.v1.paper_trading.TRADING_LOG_BASE", str(tmp_path)):
             async with AsyncClient(
                 transport=ASGITransport(app=app), base_url="http://test"

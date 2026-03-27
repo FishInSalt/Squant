@@ -16,23 +16,32 @@ class TestOrderStatusRejected:
 class TestSimulatedOrderRejectReason:
     def test_default_reject_reason_is_none(self):
         order = SimulatedOrder(
-            id="test-1", symbol="BTC/USDT",
-            side="buy", type="market", amount=Decimal("0.01"),
+            id="test-1",
+            symbol="BTC/USDT",
+            side="buy",
+            type="market",
+            amount=Decimal("0.01"),
         )
         assert order.reject_reason is None
 
     def test_reject_reason_can_be_set(self):
         order = SimulatedOrder(
-            id="test-1", symbol="BTC/USDT",
-            side="buy", type="market", amount=Decimal("0.01"),
+            id="test-1",
+            symbol="BTC/USDT",
+            side="buy",
+            type="market",
+            amount=Decimal("0.01"),
         )
         order.reject_reason = "insufficient_funds"
         assert order.reject_reason == "insufficient_funds"
 
     def test_reject_reason_with_rejected_status(self):
         order = SimulatedOrder(
-            id="test-1", symbol="BTC/USDT",
-            side="buy", type="market", amount=Decimal("0.01"),
+            id="test-1",
+            symbol="BTC/USDT",
+            side="buy",
+            type="market",
+            amount=Decimal("0.01"),
             status=OrderStatus.REJECTED,
             reject_reason="exchange_unavailable",
         )
@@ -41,8 +50,11 @@ class TestSimulatedOrderRejectReason:
 
     def test_is_complete_includes_rejected(self):
         order = SimulatedOrder(
-            id="test-1", symbol="BTC/USDT",
-            side="buy", type="market", amount=Decimal("0.01"),
+            id="test-1",
+            symbol="BTC/USDT",
+            side="buy",
+            type="market",
+            amount=Decimal("0.01"),
             status=OrderStatus.REJECTED,
         )
         assert order.is_complete is True

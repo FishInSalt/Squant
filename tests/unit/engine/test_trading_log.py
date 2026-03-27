@@ -62,11 +62,14 @@ class TestLogMethod:
     def test_backtest_uses_bar_time(self, ctx):
         """Backtest (use_real_time=False) should use bar time."""
         from squant.engine.backtest.types import Bar
+
         bar = Bar(
             symbol="BTC/USDT",
             time=datetime(2026, 1, 15, 12, 0, 0, tzinfo=UTC),
-            open=Decimal("50000"), high=Decimal("50100"),
-            low=Decimal("49900"), close=Decimal("50050"),
+            open=Decimal("50000"),
+            high=Decimal("50100"),
+            low=Decimal("49900"),
+            close=Decimal("50050"),
             volume=Decimal("100"),
         )
         ctx._set_current_bar(bar)
@@ -75,9 +78,7 @@ class TestLogMethod:
 
     def test_live_uses_real_time(self):
         """Paper/Live (use_real_time=True) should use datetime.now."""
-        ctx = BacktestContext(
-            initial_capital=Decimal("10000"), use_real_time=True
-        )
+        ctx = BacktestContext(initial_capital=Decimal("10000"), use_real_time=True)
         ctx.log("test")
         # Should be close to current time
         now_str = datetime.now(UTC).strftime("%Y-%m-%d %H:")

@@ -213,7 +213,8 @@ class TestBarCloseEvent:
         # The fill appears in the state_update event, not bar_close
         all_events2 = [call.args[0] for call in on_event_mock.call_args_list]
         fill_state_updates = [
-            e for e in all_events2
+            e
+            for e in all_events2
             if e.get("event") == "state_update" and e.get("trigger") == "fill"
         ]
         assert len(fill_state_updates) >= 1
@@ -309,8 +310,7 @@ class TestFillEvent:
         fill_events = [
             call.args[0]
             for call in on_event_mock.call_args_list
-            if call.args[0].get("event") == "state_update"
-            and call.args[0].get("trigger") == "fill"
+            if call.args[0].get("event") == "state_update" and call.args[0].get("trigger") == "fill"
         ]
         assert len(fill_events) == 1
         event = fill_events[0]
@@ -354,8 +354,7 @@ class TestFillEvent:
         fill_events = [
             call.args[0]
             for call in on_event_mock.call_args_list
-            if call.args[0].get("event") == "state_update"
-            and call.args[0].get("trigger") == "fill"
+            if call.args[0].get("event") == "state_update" and call.args[0].get("trigger") == "fill"
         ]
         assert len(fill_events) == 1
         event = fill_events[0]

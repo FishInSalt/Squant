@@ -9,13 +9,10 @@ from decimal import Decimal
 from unittest.mock import AsyncMock
 from uuid import uuid4
 
-import pytest
-
 from squant.engine.backtest.strategy_base import Strategy
 from squant.engine.backtest.types import Bar
 from squant.engine.paper.engine import PaperTradingEngine
 from squant.infra.exchange.ws_types import WSCandle
-
 
 # ---------------------------------------------------------------------------
 # Minimal strategies
@@ -303,8 +300,7 @@ class TestDeltaTracking:
         fill_events = [
             call.args[0]
             for call in on_event_mock.call_args_list
-            if call.args[0].get("event") == "state_update"
-            and call.args[0].get("trigger") == "fill"
+            if call.args[0].get("event") == "state_update" and call.args[0].get("trigger") == "fill"
         ]
         assert len(fill_events) == 1
         assert len(fill_events[0]["new_fills"]) == 1
@@ -359,8 +355,7 @@ class TestDeltaTracking:
 
         all_events = [call.args[0] for call in on_event_mock.call_args_list]
         fill_su_events = [
-            e for e in all_events
-            if e.get("event") == "state_update" and e.get("trigger") == "fill"
+            e for e in all_events if e.get("event") == "state_update" and e.get("trigger") == "fill"
         ]
         bar_close_events = [e for e in all_events if e.get("event") == "bar_close"]
 

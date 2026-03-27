@@ -555,7 +555,9 @@ class PaperTradingEngine:
                         try:
                             self._strategy.on_fill(fill)
                         except Exception as e:
-                            self._context.log(f"ERROR in on_fill: {e}", level="error", category="strategy")
+                            self._context.log(
+                                f"ERROR in on_fill: {e}", level="error", category="strategy"
+                            )
                             logger.warning(f"Strategy on_fill error: {e}")
                 self._last_callback_fill_total = self._context._total_fills_added
 
@@ -568,7 +570,9 @@ class PaperTradingEngine:
                         try:
                             self._strategy.on_order_done(order)
                         except Exception as e:
-                            self._context.log(f"ERROR in on_order_done: {e}", level="error", category="strategy")
+                            self._context.log(
+                                f"ERROR in on_order_done: {e}", level="error", category="strategy"
+                            )
                             logger.warning(f"Strategy on_order_done error: {e}")
                 self._last_callback_completed_total = self._context._total_completed_added
 
@@ -730,7 +734,11 @@ class PaperTradingEngine:
                     )
                     continue
                 short_id = order.id[:8]
-                self._context.log(f"止损触发 #{short_id} 触发价={order.stop_price}", level="info", category="order")
+                self._context.log(
+                    f"止损触发 #{short_id} 触发价={order.stop_price}",
+                    level="info",
+                    category="order",
+                )
                 self._process_fill_safe(fill)
                 filled_this_update += fill.amount
                 if volume_budget is not None:
@@ -753,7 +761,11 @@ class PaperTradingEngine:
             # Log trigger event (whether or not limit is reachable)
             if not was_triggered and order.triggered:
                 short_id = order.id[:8]
-                self._context.log(f"止损触发 #{short_id} 触发价={order.stop_price}", level="info", category="order")
+                self._context.log(
+                    f"止损触发 #{short_id} 触发价={order.stop_price}",
+                    level="info",
+                    category="order",
+                )
             if not fills:
                 # Order may still have been triggered but limit not reachable yet.
                 # It will be picked up as a limit order on the next update.
@@ -982,9 +994,7 @@ class PaperTradingEngine:
             "open_trade": _serialize_open_trade(ctx._open_trade),
             "completed_orders_count": len(ctx._completed_orders),
             "trades_count": len(ctx._trades),
-            "risk_state": (
-                self._risk_manager.get_state_summary() if self._risk_manager else None
-            ),
+            "risk_state": (self._risk_manager.get_state_summary() if self._risk_manager else None),
         }
 
         return (
@@ -994,9 +1004,7 @@ class PaperTradingEngine:
             new_logs,
         )
 
-    def _build_state_update_event(
-        self, trigger: str, fill: Any = None
-    ) -> dict[str, Any]:
+    def _build_state_update_event(self, trigger: str, fill: Any = None) -> dict[str, Any]:
         """Build state_update event for immediate push.
 
         Emitted from _process_fill_safe() on every successful fill, allowing

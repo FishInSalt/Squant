@@ -842,9 +842,7 @@ class TestDesign1EventQueueBounded:
         """Event queue should have a bounded maxsize to prevent unbounded growth."""
         engine = _make_engine(DoNothingStrategy())
 
-        assert engine._event_queue.maxsize > 0, (
-            "_event_queue should have a positive maxsize"
-        )
+        assert engine._event_queue.maxsize > 0, "_event_queue should have a positive maxsize"
         assert engine._event_queue.maxsize <= 1000
 
 

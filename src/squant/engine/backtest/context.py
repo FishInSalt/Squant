@@ -1187,7 +1187,9 @@ class BacktestContext:
             "equity": str(self.equity),
             "total_fees": str(self._total_fees),
             "fees_by_currency": {k: str(v) for k, v in self._fees_by_currency.items()},
-            "fees_usdt_equivalent": str(usdt_equiv) if (usdt_equiv := self.get_fees_usdt_equivalent()) is not None else None,
+            "fees_usdt_equivalent": str(usdt_equiv)
+            if (usdt_equiv := self.get_fees_usdt_equivalent()) is not None
+            else None,
             "unrealized_pnl": str(unrealized_pnl_total),
             "realized_pnl": str(realized_pnl),
             "positions": positions,
