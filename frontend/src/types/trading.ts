@@ -307,26 +307,57 @@ export interface LiveTradingStatus {
 }
 
 // WebSocket 交易状态事件类型
-export interface TradingBarUpdate {
-  event: 'bar_update'
-  run_id: string
-  bar_count: number
+
+export interface TradingStateSnapshot {
   cash: string
   equity: string
   unrealized_pnl: string
   realized_pnl: string
   total_fees: string
-  fees_by_currency?: Record<string, number>
-  fees_usdt_equivalent?: number | null
-  completed_orders_count: number
-  trades_count: number
+  fees_by_currency: Record<string, string>
+  fees_usdt_equivalent: string | null
   positions: Record<string, { amount: string; avg_entry_price: string }>
   pending_orders: PendingOrderInfo[]
   open_trade?: OpenTrade
+  completed_orders_count: number
+  trades_count: number
+  risk_state: Record<string, unknown>
+}
+
+export interface StateUpdateEvent {
+  event: 'state_update'
+  run_id: string
+  trigger: 'fill' | 'order_update'
+  trigger_detail: Record<string, string>
+  state: TradingStateSnapshot
   new_fills: Fill[]
   new_trades: Trade[]
   new_logs: string[]
-  risk_state?: Record<string, unknown>
+}
+
+export interface BarCloseEvent {
+  event: 'bar_close'
+  run_id: string
+  bar_count: number
+  bar: {
+    time: string
+    open: string
+    high: string
+    low: string
+    close: string
+    volume: string
+  }
+  equity_point: {
+    time: string
+    equity: string
+    cash: string
+    position_value: string
+    unrealized_pnl: string
+  } | null
+  state: TradingStateSnapshot
+  new_fills: Fill[]
+  new_trades: Trade[]
+  new_logs: string[]
 }
 
 export interface TradingEngineStopped {
@@ -336,27 +367,7 @@ export interface TradingEngineStopped {
   stopped_at?: string
 }
 
-export interface TradingFillEvent {
-  event: 'fill'
-  run_id: string
-  fill: {
-    order_id: string
-    symbol: string
-    side: string
-    price: string
-    amount: string
-    fee: string
-    timestamp: string | null
-  }
-  cash: string
-  equity: string
-  unrealized_pnl: string
-  positions: Record<string, { amount: string; avg_entry_price: string }>
-  pending_orders: PendingOrderInfo[]
-  open_trade?: OpenTrade
-}
-
-export type TradingStatusEvent = TradingBarUpdate | TradingEngineStopped | TradingFillEvent
+export type TradingStatusEvent = StateUpdateEvent | BarCloseEvent | TradingEngineStopped
 
 // 实盘会话成交记录（匹配后端 LiveSessionTradeResponse）
 export interface LiveSessionTrade {

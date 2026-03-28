@@ -1,5 +1,6 @@
 """Tests for LIVE-013: order/trade audit persistence."""
 
+import asyncio
 from datetime import UTC, datetime
 from decimal import Decimal
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -286,6 +287,8 @@ class TestOrderEventBuffering:
                 strategy=MagicMock(cpu_limit_seconds=5, memory_limit_mb=256),
             )
             await engine.process_candle(candle)
+            # Allow the event loop task to dequeue and process the BAR_CLOSE event
+            await asyncio.sleep(0.05)
 
         # Callback should have been called with the 2 events
         persist_cb.assert_called_once()

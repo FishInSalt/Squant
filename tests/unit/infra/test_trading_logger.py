@@ -57,6 +57,7 @@ class TestCreateTradingLogger:
         run_id = "test-run-004"
         logger = create_trading_logger(run_id, base_dir=str(tmp_path / "logs" / "trading"))
         from squant.infra.trading_logger import close_trading_logger
+
         close_trading_logger(logger)
         assert len(logger.handlers) == 0
 

@@ -8,10 +8,12 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from collections import OrderedDict, deque
+from collections import OrderedDict
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal
+from enum import Enum
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
@@ -49,6 +51,24 @@ EventCallback = Callable[[dict[str, Any]], Awaitable[None]]
 OrderPersistCallback = Callable[[str, list[dict[str, Any]]], Awaitable[None]]
 
 logger = logging.getLogger(__name__)
+
+
+class EngineEventType(str, Enum):
+    """Event types processed by the unified event loop."""
+
+    WS_FILL = "ws_fill"
+    WS_ORDER = "ws_order"
+    BAR_CLOSE = "bar_close"
+
+
+@dataclass(frozen=True)
+class EngineEvent:
+    """Immutable event wrapper for the engine queue."""
+
+    type: EngineEventType
+    data: Any  # WSTradeExecution | WSOrderUpdate | WSCandle
+    received_at: datetime
+
 
 # WebSocket order status mapping (internal string -> OrderStatus enum).
 # Both CCXT transformer and native OKX StreamManager mapper normalize to
@@ -328,14 +348,9 @@ class LiveTradingEngine:
         # Processing lock to prevent stop()/process_candle() race conditions (R3-002)
         self._processing_lock = asyncio.Lock()
 
-        # Buffered WebSocket order updates (ISSUE-203 fix)
-        # Updates are queued here and drained synchronously within process_candle
-        # to prevent concurrent state mutation between WS callbacks and polling.
-        # Uses deque(maxlen=) for O(1) append/eviction (DESIGN-1).
-        self._pending_ws_updates: deque[WSOrderUpdate] = deque(maxlen=self._MAX_PENDING_WS_UPDATES)
-
-        # Buffered per-fill data from watchMyTrades
-        self._pending_ws_trade_executions: deque[WSTradeExecution] = deque(maxlen=1000)
+        # Unified event queue and loop task (Task 2: event-loop lifecycle)
+        self._event_queue: asyncio.Queue[EngineEvent] = asyncio.Queue(maxsize=1000)
+        self._event_loop_task: asyncio.Task | None = None
 
         # Dedup set for processed trade IDs (LRU eviction when cap exceeded)
         self._processed_trade_ids: OrderedDict[str, bool] = OrderedDict()
@@ -520,9 +535,6 @@ class LiveTradingEngine:
     # Maximum pending order events to prevent unbounded growth on persist failure (M-8)
     _MAX_PENDING_ORDER_EVENTS: int = 1000
 
-    # Maximum buffered WS order updates to prevent unbounded memory growth (M-1/DESIGN-1)
-    _MAX_PENDING_WS_UPDATES: int = 1000
-
     # Maximum tracked trade IDs for dedup (LRU eviction at 50% when cap exceeded)
     _MAX_PROCESSED_TRADE_IDS: int = 10000
 
@@ -606,6 +618,10 @@ class LiveTradingEngine:
             self._strategy.on_init()
             logger.info(f"Strategy initialized for live run {self._run_id}")
 
+            # Start unified event loop
+            self._event_loop_task = asyncio.create_task(self._event_loop())
+            self._event_loop_task.add_done_callback(self._on_event_loop_done)
+
         except Exception as e:
             logger.exception(f"Error starting live trading engine: {e}")
             self._error_message = f"Startup failed: {e}"
@@ -635,6 +651,14 @@ class LiveTradingEngine:
 
         if error:
             self._error_message = error
+
+        # Shut down event loop
+        if self._event_loop_task and not self._event_loop_task.done():
+            if self._event_loop_task != asyncio.current_task():
+                try:
+                    await asyncio.wait_for(self._event_loop_task, timeout=5.0)
+                except (TimeoutError, asyncio.CancelledError):
+                    self._event_loop_task.cancel()
 
         # Close private WS provider (LIVE-CN-001)
         await self._stop_private_ws()
@@ -749,8 +773,8 @@ class LiveTradingEngine:
     async def _handle_private_ws_message(self, msg: dict[str, Any]) -> None:
         """Handle messages from private WS provider.
 
-        Routes order updates and trade executions into their respective buffers,
-        which are drained synchronously within process_candle.
+        Routes order updates and trade executions into the unified event queue
+        for processing by the event loop.
         """
         msg_type = msg.get("type")
         data = msg.get("data")
@@ -761,7 +785,12 @@ class LiveTradingEngine:
             self.on_order_update(data)
         elif msg_type == "trade_execution":
             if isinstance(data, WSTradeExecution):
-                self._pending_ws_trade_executions.append(data)
+                try:
+                    self._event_queue.put_nowait(
+                        EngineEvent(EngineEventType.WS_FILL, data, datetime.now(UTC))
+                    )
+                except asyncio.QueueFull:
+                    logger.warning(f"Event queue full, dropping WS_FILL for {self._run_id}")
 
     async def _activate_dead_man_switch(self) -> None:
         """Activate Dead Man's Switch on exchange (F-2).
@@ -1107,202 +1136,16 @@ class LiveTradingEngine:
             )
             return
 
-        # Acquire processing lock to prevent race with stop() (R3-002)
-        async with self._processing_lock:
-            if not self._is_running:
-                return
-
-            try:
-                # Update last activity timestamp
-                self._last_active_at = datetime.now(UTC)
-
-                # Update current price
-                self._current_price = candle.close
-
-                # Convert WSCandle to Bar
-                bar = self._candle_to_bar(candle)
-
-                # Update context prices first so position valuations use fresh data
-                self._context._set_current_bar(bar)
-                self._context._add_bar_to_history(bar)
-
-                # Drain buffered WebSocket order updates before polling to ensure
-                # consistent state (ISSUE-203 fix: no concurrent mutation)
-                self._drain_ws_updates()
-
-                # Flush fill/order events immediately after WS drain to minimize
-                # data loss window on crash/reload (FIX: event loss on reload)
-                await self._flush_order_events()
-
-                # Reconcile any orders needing fill recovery (WS reconnect, fill mismatch)
-                await self._reconcile_pending_orders()
-
-                # Validate exchange balance (monitoring only, no cash overwrite).
-                # Cash tracked incrementally via fill processing (LIVE-012).
-                await self._sync_balance()
-                await self._sync_pending_orders()
-                await self._expire_ttl_orders()
-
-                # Check daily risk stats reset on each bar (LIVE-RM-005)
-                self._risk_manager.check_daily_reset()
-
-                # Update risk manager with equity computed from consistent state
-                self._risk_manager.update_equity(self._context.equity)
-                self._risk_manager.update_unrealized_pnl(self._context._get_unrealized_pnl())
-                self._risk_manager.update_position_value(self._context._get_position_value())
-
-                # Auto-stop if total loss limit triggered (IMP-005)
-                if self._risk_manager.check_total_loss_limit():
-                    msg = (
-                        f"Risk auto-stop: total loss limit triggered "
-                        f"(loss {-self._risk_manager.state.total_pnl:.2f}, "
-                        f"unrealized {self._risk_manager.state.unrealized_pnl:.2f})"
-                    )
-                    logger.warning(f"Live engine {self._run_id}: {msg}")
-                    self._context.log(msg, level="error", category="risk")
-
-                    # Notification: total loss limit (LIVE-011)
-                    _fire_notification(
-                        self._run_id,
-                        level="critical",
-                        event_type="total_loss_limit",
-                        title="总亏损限额触发",
-                        message=f"实盘会话 {self._symbol} 已触发总亏损限额自动停止",
-                        details={
-                            "symbol": self._symbol,
-                            "total_pnl": float(self._risk_manager.state.total_pnl),
-                            "unrealized_pnl": float(self._risk_manager.state.unrealized_pnl),
-                        },
-                    )
-
-                    await self.stop(error=msg)
-                    return
-
-                # Record equity snapshot BEFORE strategy execution to capture
-                # the portfolio state at bar close (C-DEFER-8)
-                self._context._record_equity_snapshot(bar.time)
-
-                # Persist snapshot: try synchronous callback first, fall back to batch
-                if self._context.equity_curve:
-                    latest_snapshot = self._context.equity_curve[-1]
-                    persisted = False
-                    if self._on_snapshot:
-                        try:
-                            await self._on_snapshot(str(self._run_id), latest_snapshot)
-                            persisted = True
-                        except Exception as e:
-                            logger.warning(
-                                f"Snapshot persist callback failed for {self._run_id}: {e}"
-                            )
-                    if not persisted:
-                        self._pending_snapshots.append(latest_snapshot)
-
-                # Notify strategy of fills and completed orders (before on_bar)
-                fill_delta = self._context._total_fills_added - self._last_callback_fill_total
-                if fill_delta > 0:
-                    recent_fills = list(self._context._fills)[-fill_delta:]
-                    for fill in recent_fills:
-                        try:
-                            self._strategy.on_fill(fill)
-                        except Exception as e:
-                            self._context.log(f"ERROR in on_fill: {e}", level="error", category="strategy")
-                            logger.warning(f"Strategy on_fill error: {e}")
-                self._last_callback_fill_total = self._context._total_fills_added
-
-                completed_delta = (
-                    self._context._total_completed_added - self._last_callback_completed_total
-                )
-                if completed_delta > 0:
-                    recent_completed = list(self._context._completed_orders)[-completed_delta:]
-                    for order in recent_completed:
-                        try:
-                            self._strategy.on_order_done(order)
-                        except Exception as e:
-                            self._context.log(f"ERROR in on_order_done: {e}", level="error", category="strategy")
-                            logger.warning(f"Strategy on_order_done error: {e}")
-                self._last_callback_completed_total = self._context._total_completed_added
-
-                # Call strategy on_bar with resource limits (STR-013)
-                from squant.config import get_settings
-
-                settings = get_settings()
-                try:
-                    with resource_limiter(
-                        cpu_seconds=settings.strategy.cpu_limit_seconds,
-                        memory_mb=settings.strategy.memory_limit_mb,
-                    ):
-                        self._strategy.on_bar(bar)
-                except ResourceLimitExceededError as e:
-                    logger.error(f"Strategy resource limit exceeded: {e}")
-
-                    # Notification: resource limit (LIVE-011)
-                    _fire_notification(
-                        self._run_id,
-                        level="critical",
-                        event_type="strategy_resource_exceeded",
-                        title="策略资源超限",
-                        message=f"实盘会话 {self._symbol} 策略资源超限: {e}",
-                        details={"symbol": self._symbol, "error": str(e)},
-                    )
-
-                    await self.stop(error=f"Strategy resource limit exceeded: {e}")
-                    raise
-                except Exception as e:
-                    # Strategy errors (KeyError, IndexError, etc.) should be isolated
-                    # — consistent with paper engine and backtest runner behavior.
-                    # Only system-level errors (exchange, data integrity) should stop the engine.
-                    logger.warning(f"Strategy on_bar error in live engine {self._run_id}: {e}")
-                    self._context.log(f"ERROR in on_bar: {e}", level="error", category="strategy")
-
-                # Process pending order requests from strategy
-                await self._process_order_requests()
-
-                # Flush order events again after order submission
-                await self._flush_order_events()
-
-                self._bar_count += 1
-                self._last_bar_time = bar.time  # Dedup tracking (fix #5)
-
-                # Persist result state for crash recovery
-                if self._on_result:
-                    try:
-                        result_data = self.build_result_for_persistence()
-                        await self._on_result(str(self._run_id), result_data)
-                    except Exception as e:
-                        logger.warning(f"Result persist callback failed for {self._run_id}: {e}")
-
-                # Final flush for any remaining events (e.g., from strategy callbacks)
-                await self._flush_order_events()
-
-                # Emit bar update event via WebSocket
-                if self._on_event:
-                    try:
-                        event = self._build_bar_update_event()
-                        loop = asyncio.get_running_loop()
-                        task = loop.create_task(self._on_event(event))
-                        self._background_tasks.add(task)
-                        task.add_done_callback(self._background_tasks.discard)
-                    except Exception as e:
-                        logger.debug(f"Event emit failed for {self._run_id}: {e}")
-
-                # Refresh Dead Man's Switch heartbeat (F-2)
-                await self._refresh_dead_man_switch()
-
-                logger.debug(
-                    f"Processed bar {self._bar_count} at {bar.time}, equity={self._context.equity}"
-                )
-
-            except Exception as e:
-                logger.exception(f"Error processing candle in live engine {self._run_id}: {e}")
-                await self.stop(error=f"Error processing candle: {e}")
-                raise
+        # Route to event loop — await guarantees delivery
+        await self._event_queue.put(
+            EngineEvent(EngineEventType.BAR_CLOSE, candle, datetime.now(UTC))
+        )
 
     def on_order_update(self, update: WSOrderUpdate) -> None:
-        """Handle WebSocket order update by buffering it for later processing.
+        """Handle WebSocket order update by enqueuing it for event loop processing.
 
-        Called when exchange pushes order status updates. Updates are queued
-        and processed synchronously within process_candle via _drain_ws_updates()
-        to prevent concurrent state mutation (ISSUE-203 fix).
+        Called when exchange pushes order status updates. Updates are placed on
+        the unified event queue and processed by the event loop.
 
         Args:
             update: Order update from WebSocket.
@@ -1313,8 +1156,12 @@ class LiveTradingEngine:
             logger.debug(f"Ignoring order update during emergency close: {update.order_id}")
             return
 
-        # deque(maxlen=) auto-evicts oldest on overflow (DESIGN-1)
-        self._pending_ws_updates.append(update)
+        try:
+            self._event_queue.put_nowait(
+                EngineEvent(EngineEventType.WS_ORDER, update, datetime.now(UTC))
+            )
+        except asyncio.QueueFull:
+            logger.warning(f"Event queue full, dropping WS_ORDER for {self._run_id}")
 
     async def _flush_order_events(self) -> None:
         """Flush pending order/trade audit events to persistence.
@@ -1342,26 +1189,6 @@ class LiveTradingEngine:
                     f"Dropped {discarded} oldest pending order events "
                     f"(limit={self._MAX_PENDING_ORDER_EVENTS}) for {self._run_id}"
                 )
-
-    def _drain_ws_updates(self) -> None:
-        """Process all buffered WebSocket updates.
-
-        Order: fills first (from watchMyTrades), then status changes (from watchOrders).
-        This ensures fill records exist before evaluating terminal status.
-        """
-        # 1. Process per-fill data first
-        if self._pending_ws_trade_executions:
-            executions = list(self._pending_ws_trade_executions)
-            self._pending_ws_trade_executions.clear()
-            for exec_data in executions:
-                self._process_trade_execution(exec_data)
-
-        # 2. Then process order status changes
-        if self._pending_ws_updates:
-            updates = list(self._pending_ws_updates)
-            self._pending_ws_updates.clear()
-            for update in updates:
-                self._process_single_ws_update(update)
 
     def _process_single_ws_update(self, update: WSOrderUpdate) -> None:
         """Process a single WebSocket order update.
@@ -1412,7 +1239,7 @@ class LiveTradingEngine:
         )
 
         # Fallback fill processing from watchOrders aggregated data.
-        # If watchMyTrades already processed the fills (drained first in _drain_ws_updates),
+        # If watchMyTrades already processed the fills via a WS_FILL event processed first,
         # old_filled will already reflect them and fill_delta will be 0 — no duplicate.
         # If watchMyTrades is unavailable (e.g., OKX demo), this is the primary fill path.
         fill_delta = update.filled_size - old_filled
@@ -2973,8 +2800,19 @@ class LiveTradingEngine:
             )
         )
 
-    def _build_bar_update_event(self) -> dict[str, Any]:
-        """Build incremental bar update event for WebSocket push."""
+    def _build_state_snapshot(
+        self,
+    ) -> tuple[dict[str, Any], list[dict[str, Any]], list[dict[str, Any]], list[Any]]:
+        """Build a state snapshot of the engine for WebSocket push.
+
+        Returns a 4-tuple of:
+        - state_dict: all current state fields (cash, equity, positions, etc.)
+        - new_fills_serialized: incremental fills since last emission
+        - new_trades_serialized: incremental trades since last emission
+        - new_logs: incremental log entries since last emission
+
+        The delta counters (_last_emitted_*) are updated as a side effect.
+        """
         ctx = self._context
 
         fill_delta = ctx._total_fills_added - self._last_emitted_fill_total
@@ -2989,17 +2827,18 @@ class LiveTradingEngine:
         self._last_emitted_trade_total = ctx._total_trades_added
         self._last_emitted_log_total = ctx._total_logs_added
 
-        return {
-            "event": "bar_update",
-            "run_id": str(self._run_id),
-            "bar_count": self._bar_count,
+        state: dict[str, Any] = {
             "cash": str(ctx._cash),
             "equity": str(ctx.equity),
             "unrealized_pnl": str(ctx._get_unrealized_pnl()),
             "realized_pnl": str(ctx._cumulative_realized_pnl),
             "total_fees": str(ctx._total_fees),
             "fees_by_currency": {k: str(v) for k, v in ctx._fees_by_currency.items()},
-            "fees_usdt_equivalent": str(usdt_equiv) if (usdt_equiv := ctx.get_fees_usdt_equivalent()) is not None else None,
+            "fees_usdt_equivalent": (
+                str(usdt_equiv)
+                if (usdt_equiv := ctx.get_fees_usdt_equivalent()) is not None
+                else None
+            ),
             "completed_orders_count": ctx._restored_completed_orders_count
             + len(ctx._completed_orders),
             "trades_count": len(ctx._trades),
@@ -3025,8 +2864,326 @@ class LiveTradingEngine:
                 for o in ctx._pending_orders
             ],
             "open_trade": _serialize_open_trade(ctx._open_trade),
-            "new_fills": [_serialize_fill(f) for f in new_fills],
-            "new_trades": [_serialize_trade(t) for t in new_trades],
-            "new_logs": new_logs,
             "risk_state": self._risk_manager.get_state_summary(),
+        }
+
+        new_fills_serialized = [_serialize_fill(f) for f in new_fills]
+        new_trades_serialized = [_serialize_trade(t) for t in new_trades]
+
+        return state, new_fills_serialized, new_trades_serialized, new_logs
+
+    # ------------------------------------------------------------------
+    # Unified event loop (Task 2)
+    # ------------------------------------------------------------------
+
+    async def _event_loop(self) -> None:
+        """Unified event processor. Single consumer, single lock.
+
+        Processes WS fills, WS order updates, and bar closes from a single
+        queue. Events are built inside the lock (state consistent) but
+        pushed outside (non-blocking).
+        """
+        while self._is_running:
+            try:
+                event = await asyncio.wait_for(self._event_queue.get(), timeout=1.0)
+            except TimeoutError:
+                continue
+
+            self._last_active_at = datetime.now(UTC)
+
+            push_event = None
+            async with self._processing_lock:
+                if not self._is_running:
+                    break
+                # Skip WS events during emergency close
+                if self._emergency_close_in_progress and event.type in (
+                    EngineEventType.WS_FILL,
+                    EngineEventType.WS_ORDER,
+                ):
+                    continue
+                try:
+                    match event.type:
+                        case EngineEventType.WS_FILL:
+                            self._process_trade_execution(event.data)
+                            await self._flush_order_events()
+                            push_event = self._build_state_update_event("fill", event.data)
+                        case EngineEventType.WS_ORDER:
+                            self._process_single_ws_update(event.data)
+                            await self._flush_order_events()
+                            push_event = self._build_state_update_event("order_update", event.data)
+                        case EngineEventType.BAR_CLOSE:
+                            await self._handle_bar_close(event.data)
+                except Exception as e:
+                    logger.exception(f"Event loop error for {self._run_id}: {e}")
+                    if event.type == EngineEventType.BAR_CLOSE:
+                        await self.stop(error=f"Bar processing error: {e}")
+                        return
+
+            # Fire-and-forget push OUTSIDE the lock
+            if push_event and self._on_event:
+                try:
+                    loop = asyncio.get_running_loop()
+                    task = loop.create_task(self._on_event(push_event))
+                    self._background_tasks.add(task)
+                    task.add_done_callback(self._background_tasks.discard)
+                except Exception as e:
+                    logger.debug(f"State update push failed for {self._run_id}: {e}")
+
+    def _on_event_loop_done(self, task: asyncio.Task) -> None:
+        """Detect unexpected event loop exit."""
+        if not task.cancelled() and task.exception() and self._is_running:
+            logger.error(f"Event loop crashed for {self._run_id}: {task.exception()}")
+            stop_task = asyncio.create_task(
+                self.stop(error=f"Event loop crashed: {task.exception()}")
+            )
+            _background_tasks.add(stop_task)
+            stop_task.add_done_callback(_background_tasks.discard)
+
+    def _build_state_update_event(self, trigger: str, event_data: Any) -> dict[str, Any]:
+        """Build state_update event for immediate push after WS event processing."""
+        state, new_fills, new_trades, new_logs = self._build_state_snapshot()
+
+        trigger_detail: dict[str, Any] = {}
+        if trigger == "fill" and hasattr(event_data, "price"):
+            trigger_detail = {
+                "order_id": getattr(event_data, "order_id", ""),
+                "side": getattr(event_data, "side", None) or "",
+                "price": str(event_data.price),
+                "amount": str(event_data.amount),
+                "fee": str(getattr(event_data, "fee", "0")),
+                "fee_currency": getattr(event_data, "fee_currency", ""),
+            }
+        elif trigger == "order_update" and hasattr(event_data, "order_id"):
+            internal_id = self._exchange_order_map.get(event_data.order_id)
+            live_order = self._live_orders.get(internal_id) if internal_id else None
+            trigger_detail = {
+                "order_id": event_data.order_id,
+                "status": getattr(event_data, "status", ""),
+                "side": live_order.side.value if live_order else "",
+                "amount": str(live_order.amount) if live_order else "0",
+                "filled_amount": str(getattr(event_data, "filled_size", "0")),
+            }
+
+        return {
+            "event": "state_update",
+            "run_id": str(self._run_id),
+            "trigger": trigger,
+            "trigger_detail": trigger_detail,
+            "state": state,
+            "new_fills": new_fills,
+            "new_trades": new_trades,
+            "new_logs": new_logs,
+        }
+
+    async def _handle_bar_close(self, candle: WSCandle) -> None:
+        """Process a closed candle bar.
+
+        Called by the event loop with _processing_lock already held.
+        Contains the full bar-processing body formerly in process_candle().
+
+        Args:
+            candle: WebSocket candle data (must be a closed candle).
+        """
+        # Update current price
+        self._current_price = candle.close
+
+        # Convert WSCandle to Bar
+        bar = self._candle_to_bar(candle)
+
+        # Update context prices first so position valuations use fresh data
+        self._context._set_current_bar(bar)
+        self._context._add_bar_to_history(bar)
+
+        # Flush fill/order events immediately to minimize
+        # data loss window on crash/reload (FIX: event loss on reload)
+        await self._flush_order_events()
+
+        # Reconcile any orders needing fill recovery (WS reconnect, fill mismatch)
+        await self._reconcile_pending_orders()
+
+        # Validate exchange balance (monitoring only, no cash overwrite).
+        # Cash tracked incrementally via fill processing (LIVE-012).
+        await self._sync_balance()
+        await self._sync_pending_orders()
+        await self._expire_ttl_orders()
+
+        # Check daily risk stats reset on each bar (LIVE-RM-005)
+        self._risk_manager.check_daily_reset()
+
+        # Update risk manager with equity computed from consistent state
+        self._risk_manager.update_equity(self._context.equity)
+        self._risk_manager.update_unrealized_pnl(self._context._get_unrealized_pnl())
+        self._risk_manager.update_position_value(self._context._get_position_value())
+
+        # Auto-stop if total loss limit triggered (IMP-005)
+        if self._risk_manager.check_total_loss_limit():
+            msg = (
+                f"Risk auto-stop: total loss limit triggered "
+                f"(loss {-self._risk_manager.state.total_pnl:.2f}, "
+                f"unrealized {self._risk_manager.state.unrealized_pnl:.2f})"
+            )
+            logger.warning(f"Live engine {self._run_id}: {msg}")
+            self._context.log(msg, level="error", category="risk")
+
+            # Notification: total loss limit (LIVE-011)
+            _fire_notification(
+                self._run_id,
+                level="critical",
+                event_type="total_loss_limit",
+                title="总亏损限额触发",
+                message=f"实盘会话 {self._symbol} 已触发总亏损限额自动停止",
+                details={
+                    "symbol": self._symbol,
+                    "total_pnl": float(self._risk_manager.state.total_pnl),
+                    "unrealized_pnl": float(self._risk_manager.state.unrealized_pnl),
+                },
+            )
+
+            await self.stop(error=msg)
+            return
+
+        # Record equity snapshot BEFORE strategy execution to capture
+        # the portfolio state at bar close (C-DEFER-8)
+        self._context._record_equity_snapshot(bar.time)
+
+        # Persist snapshot: try synchronous callback first, fall back to batch
+        if self._context.equity_curve:
+            latest_snapshot = self._context.equity_curve[-1]
+            persisted = False
+            if self._on_snapshot:
+                try:
+                    await self._on_snapshot(str(self._run_id), latest_snapshot)
+                    persisted = True
+                except Exception as e:
+                    logger.warning(f"Snapshot persist callback failed for {self._run_id}: {e}")
+            if not persisted:
+                self._pending_snapshots.append(latest_snapshot)
+
+        # Notify strategy of fills and completed orders (before on_bar)
+        fill_delta = self._context._total_fills_added - self._last_callback_fill_total
+        if fill_delta > 0:
+            recent_fills = list(self._context._fills)[-fill_delta:]
+            for fill in recent_fills:
+                try:
+                    self._strategy.on_fill(fill)
+                except Exception as e:
+                    self._context.log(f"ERROR in on_fill: {e}", level="error", category="strategy")
+                    logger.warning(f"Strategy on_fill error: {e}")
+        self._last_callback_fill_total = self._context._total_fills_added
+
+        completed_delta = self._context._total_completed_added - self._last_callback_completed_total
+        if completed_delta > 0:
+            recent_completed = list(self._context._completed_orders)[-completed_delta:]
+            for order in recent_completed:
+                try:
+                    self._strategy.on_order_done(order)
+                except Exception as e:
+                    self._context.log(
+                        f"ERROR in on_order_done: {e}",
+                        level="error",
+                        category="strategy",
+                    )
+                    logger.warning(f"Strategy on_order_done error: {e}")
+        self._last_callback_completed_total = self._context._total_completed_added
+
+        # Call strategy on_bar with resource limits (STR-013)
+        from squant.config import get_settings
+
+        settings = get_settings()
+        try:
+            with resource_limiter(
+                cpu_seconds=settings.strategy.cpu_limit_seconds,
+                memory_mb=settings.strategy.memory_limit_mb,
+            ):
+                self._strategy.on_bar(bar)
+        except ResourceLimitExceededError as e:
+            logger.error(f"Strategy resource limit exceeded: {e}")
+
+            # Notification: resource limit (LIVE-011)
+            _fire_notification(
+                self._run_id,
+                level="critical",
+                event_type="strategy_resource_exceeded",
+                title="策略资源超限",
+                message=f"实盘会话 {self._symbol} 策略资源超限: {e}",
+                details={"symbol": self._symbol, "error": str(e)},
+            )
+
+            await self.stop(error=f"Strategy resource limit exceeded: {e}")
+            raise
+        except Exception as e:
+            # Strategy errors (KeyError, IndexError, etc.) should be isolated
+            # — consistent with paper engine and backtest runner behavior.
+            # Only system-level errors (exchange, data integrity) should stop the engine.
+            logger.warning(f"Strategy on_bar error in live engine {self._run_id}: {e}")
+            self._context.log(f"ERROR in on_bar: {e}", level="error", category="strategy")
+
+        # Process pending order requests from strategy
+        await self._process_order_requests()
+
+        # Flush order events again after order submission
+        await self._flush_order_events()
+
+        self._bar_count += 1
+        self._last_bar_time = bar.time  # Dedup tracking (fix #5)
+
+        # Persist result state for crash recovery
+        if self._on_result:
+            try:
+                result_data = self.build_result_for_persistence()
+                await self._on_result(str(self._run_id), result_data)
+            except Exception as e:
+                logger.warning(f"Result persist callback failed for {self._run_id}: {e}")
+
+        # Final flush for any remaining events (e.g., from strategy callbacks)
+        await self._flush_order_events()
+
+        # Emit bar close event via WebSocket
+        if self._on_event:
+            try:
+                event = self._build_bar_close_event(bar)
+                loop = asyncio.get_running_loop()
+                task = loop.create_task(self._on_event(event))
+                self._background_tasks.add(task)
+                task.add_done_callback(self._background_tasks.discard)
+            except Exception as e:
+                logger.debug(f"Event emit failed for {self._run_id}: {e}")
+
+        # Refresh Dead Man's Switch heartbeat (F-2)
+        await self._refresh_dead_man_switch()
+
+        logger.debug(
+            f"Processed bar {self._bar_count} at {bar.time}, equity={self._context.equity}"
+        )
+
+    def _build_bar_close_event(self, bar: Bar) -> dict[str, Any]:
+        """Build bar_close event with equity point and full state snapshot."""
+        state, new_fills, new_trades, new_logs = self._build_state_snapshot()
+        ctx = self._context
+
+        equity_point = {
+            "time": bar.time.isoformat(),
+            "equity": str(ctx.equity),
+            "cash": str(ctx._cash),
+            "position_value": str(ctx._get_position_value()),
+            "unrealized_pnl": str(ctx._get_unrealized_pnl()),
+        }
+
+        return {
+            "event": "bar_close",
+            "run_id": str(self._run_id),
+            "bar_count": self._bar_count,
+            "bar": {
+                "time": bar.time.isoformat(),
+                "open": str(bar.open),
+                "high": str(bar.high),
+                "low": str(bar.low),
+                "close": str(bar.close),
+                "volume": str(bar.volume),
+            },
+            "equity_point": equity_point,
+            "state": state,
+            "new_fills": new_fills,
+            "new_trades": new_trades,
+            "new_logs": new_logs,
         }

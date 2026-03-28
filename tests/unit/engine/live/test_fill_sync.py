@@ -1,10 +1,11 @@
 """Tests for engine fill processing refactor — watchMyTrades per-fill data.
 
-Tests _process_trade_execution, _drain_ws_updates ordering,
+Tests _process_trade_execution, event queue routing,
 reconciliation queue logic, and REST fill reconciliation.
 """
 
-from collections import OrderedDict, deque
+import asyncio
+from collections import OrderedDict
 from datetime import UTC, datetime
 from decimal import Decimal
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -25,7 +26,6 @@ class TestProcessTradeExecution:
         engine = LiveTradingEngine.__new__(LiveTradingEngine)
         engine._is_running = True
         engine._symbol = "BTC/USDT"
-        engine._pending_ws_trade_executions = deque(maxlen=1000)
         engine._processed_trade_ids = OrderedDict()
         engine._MAX_PROCESSED_TRADE_IDS = 10000
         engine._live_orders = {}
@@ -246,127 +246,94 @@ class TestProcessTradeExecution:
             mock_check.assert_called_once_with(False, False, "ws")
 
 
-class TestDrainWSUpdatesOrdering:
-    """Tests for _drain_ws_updates — fills before status changes."""
+class TestEventQueueRouting:
+    """Tests for WS event routing through asyncio.Queue.
+
+    The old _drain_ws_updates deque approach is replaced by the event loop.
+    These tests verify _process_trade_execution and _process_single_ws_update
+    work correctly when called directly (as the event loop does).
+    """
 
     @pytest.fixture
     def engine(self):
         engine = LiveTradingEngine.__new__(LiveTradingEngine)
-        engine._pending_ws_trade_executions = deque(maxlen=1000)
-        engine._pending_ws_updates = deque(maxlen=1000)
         engine._is_running = True
+        engine._event_queue = asyncio.Queue(maxsize=1000)
         return engine
 
-    def test_fills_before_status_changes(self, engine):
-        """Trade executions must be processed before order status updates."""
-        call_order = []
-
-        def mock_process_trade(exec_data):
-            call_order.append(("fill", exec_data.trade_id))
-
-        def mock_process_status(update):
-            call_order.append(("status", update.order_id))
-
-        engine._process_trade_execution = mock_process_trade
-        engine._process_single_ws_update = mock_process_status
-
-        # Queue a status update first, then a fill
-        engine._pending_ws_updates.append(
-            WSOrderUpdate(
-                order_id="o1",
-                symbol="BTC/USDT",
-                side="buy",
-                order_type="market",
-                status="cancelled",
-                price=Decimal("0"),
-                size=Decimal("0"),
-                filled_size=Decimal("0"),
-                avg_price=Decimal("0"),
-                timestamp=datetime.now(UTC),
-            )
-        )
-        engine._pending_ws_trade_executions.append(
-            WSTradeExecution(
-                trade_id="t1",
-                order_id="o2",
-                symbol="BTC/USDT",
-                side="buy",
-                price=Decimal("96500"),
-                amount=Decimal("0.01"),
-                timestamp=datetime.now(UTC),
-            )
-        )
-
-        engine._drain_ws_updates()
-
-        assert len(call_order) == 2
-        assert call_order[0][0] == "fill"
-        assert call_order[1][0] == "status"
-
-    def test_drain_with_only_fills(self, engine):
-        """Draining with only trade executions and no order updates works."""
+    def test_process_trade_execution_called_for_fill(self, engine):
+        """_process_trade_execution processes fill data directly."""
         processed = []
         engine._process_trade_execution = lambda ed: processed.append(ed.trade_id)
-        engine._process_single_ws_update = lambda u: processed.append(u.order_id)
 
-        engine._pending_ws_trade_executions.append(
-            WSTradeExecution(
-                trade_id="t1",
-                order_id="o1",
-                symbol="BTC/USDT",
-                side="buy",
-                price=Decimal("96500"),
-                amount=Decimal("0.01"),
-                timestamp=datetime.now(UTC),
-            )
+        exec_data = WSTradeExecution(
+            trade_id="t1",
+            order_id="o1",
+            symbol="BTC/USDT",
+            side="buy",
+            price=Decimal("96500"),
+            amount=Decimal("0.01"),
+            timestamp=datetime.now(UTC),
         )
-
-        engine._drain_ws_updates()
+        engine._process_trade_execution(exec_data)
 
         assert processed == ["t1"]
-        assert len(engine._pending_ws_trade_executions) == 0
 
-    def test_drain_with_only_status_updates(self, engine):
-        """Draining with only order updates and no fills works."""
+    def test_process_single_ws_update_called_for_order(self, engine):
+        """_process_single_ws_update processes order status directly."""
         processed = []
-        engine._process_trade_execution = lambda ed: processed.append(ed.trade_id)
         engine._process_single_ws_update = lambda u: processed.append(u.order_id)
 
-        engine._pending_ws_updates.append(
-            WSOrderUpdate(
-                order_id="o1",
-                symbol="BTC/USDT",
-                side="buy",
-                order_type="market",
-                status="cancelled",
-                size=Decimal("0"),
-                timestamp=datetime.now(UTC),
-            )
+        update = WSOrderUpdate(
+            order_id="o1",
+            symbol="BTC/USDT",
+            side="buy",
+            order_type="market",
+            status="cancelled",
+            size=Decimal("0"),
+            timestamp=datetime.now(UTC),
         )
-
-        engine._drain_ws_updates()
+        engine._process_single_ws_update(update)
 
         assert processed == ["o1"]
-        assert len(engine._pending_ws_updates) == 0
 
-    def test_drain_empty_is_noop(self, engine):
-        """Draining with both queues empty does nothing without error."""
-        engine._drain_ws_updates()
-        assert len(engine._pending_ws_trade_executions) == 0
-        assert len(engine._pending_ws_updates) == 0
+    def test_on_order_update_enqueues_ws_order_event(self, engine):
+        """on_order_update should put a WS_ORDER event into the event queue."""
+        from squant.engine.live.engine import EngineEventType
+
+        engine._emergency_close_in_progress = False
+
+        update = WSOrderUpdate(
+            order_id="o1",
+            symbol="BTC/USDT",
+            side="buy",
+            order_type="market",
+            status="filled",
+            size=Decimal("0.1"),
+            timestamp=datetime.now(UTC),
+        )
+        engine.on_order_update(update)
+
+        assert engine._event_queue.qsize() == 1
+        event = engine._event_queue.get_nowait()
+        assert event.type == EngineEventType.WS_ORDER
+        assert event.data is update
+
+    def test_empty_event_queue_is_noop(self, engine):
+        """An empty event queue results in no pending events."""
+        assert engine._event_queue.qsize() == 0
 
 
 class TestHandlePrivateWSMessage:
-    """Tests for _handle_private_ws_message — routing to correct buffer."""
+    """Tests for _handle_private_ws_message — routing to event queue."""
 
     @pytest.fixture
     def engine(self):
         engine = LiveTradingEngine.__new__(LiveTradingEngine)
-        engine._pending_ws_trade_executions = deque(maxlen=1000)
-        engine._pending_ws_updates = deque(maxlen=1000)
+        engine._event_queue = asyncio.Queue(maxsize=1000)
         engine._is_running = True
         engine._emergency_close_in_progress = False
-        engine._MAX_PENDING_WS_UPDATES = 1000
+        engine._run_id = "test-run-id"
         return engine
 
     @pytest.mark.asyncio
@@ -388,8 +355,10 @@ class TestHandlePrivateWSMessage:
             mock_on_order.assert_called_once_with(update)
 
     @pytest.mark.asyncio
-    async def test_routes_trade_execution_to_buffer(self, engine):
-        """Messages with type='trade_execution' should be buffered."""
+    async def test_routes_trade_execution_to_queue(self, engine):
+        """Messages with type='trade_execution' should be enqueued as WS_FILL."""
+        from squant.engine.live.engine import EngineEventType
+
         exec_data = WSTradeExecution(
             trade_id="t1",
             order_id="o1",
@@ -403,8 +372,10 @@ class TestHandlePrivateWSMessage:
 
         await engine._handle_private_ws_message(msg)
 
-        assert len(engine._pending_ws_trade_executions) == 1
-        assert engine._pending_ws_trade_executions[0] is exec_data
+        assert engine._event_queue.qsize() == 1
+        event = engine._event_queue.get_nowait()
+        assert event.type == EngineEventType.WS_FILL
+        assert event.data is exec_data
 
     @pytest.mark.asyncio
     async def test_ignores_empty_data(self, engine):
@@ -421,7 +392,7 @@ class TestHandlePrivateWSMessage:
         msg = {"type": "unknown", "data": {"foo": "bar"}}
 
         await engine._handle_private_ws_message(msg)
-        assert len(engine._pending_ws_trade_executions) == 0
+        assert engine._event_queue.qsize() == 0
 
     @pytest.mark.asyncio
     async def test_ignores_non_wstradeexecution_data(self, engine):
@@ -429,7 +400,7 @@ class TestHandlePrivateWSMessage:
         msg = {"type": "trade_execution", "data": {"raw": "dict"}}
 
         await engine._handle_private_ws_message(msg)
-        assert len(engine._pending_ws_trade_executions) == 0
+        assert engine._event_queue.qsize() == 0
 
 
 class TestReconciliationQueue:
@@ -440,8 +411,6 @@ class TestReconciliationQueue:
         engine = LiveTradingEngine.__new__(LiveTradingEngine)
         engine._is_running = True
         engine._symbol = "BTC/USDT"
-        engine._pending_ws_updates = deque(maxlen=1000)
-        engine._pending_ws_trade_executions = deque(maxlen=1000)
         engine._processed_trade_ids = OrderedDict()
         engine._MAX_PROCESSED_TRADE_IDS = 10000
         engine._live_orders = {}

@@ -108,7 +108,7 @@ class TestOrderLifecycle:
 
     async def test_place_query_cancel_order(self, okx_adapter: CCXTRestAdapter) -> None:
         """Full lifecycle: place limit buy, query, cancel."""
-        client_oid = f"test-{uuid.uuid4().hex[:16]}"
+        client_oid = f"test{uuid.uuid4().hex[:20]}"
 
         # -- 1. Place a limit buy far below market so it stays open ----------
         request = OrderRequest(

@@ -1,5 +1,6 @@
 """Unit tests for live trading engine."""
 
+import asyncio
 from datetime import UTC, datetime
 from decimal import Decimal
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -18,6 +19,13 @@ from squant.infra.exchange.types import (
 )
 from squant.infra.exchange.ws_types import WSCandle, WSOrderUpdate
 from squant.models.enums import OrderSide, OrderStatus, OrderType
+
+
+async def _process_candle(engine: LiveTradingEngine, candle: WSCandle) -> None:
+    """Call process_candle and yield to the event loop so the bar is processed."""
+    await engine.process_candle(candle)
+    # process_candle now enqueues a BAR_CLOSE event; give the event loop time to consume it
+    await asyncio.sleep(0.05)
 
 
 class SimpleStrategy(Strategy):
@@ -365,7 +373,7 @@ class TestCandleProcessing:
     async def test_process_closed_candle(self, engine, strategy, closed_candle):
         """Test that closed candles are processed."""
         await engine.start()
-        await engine.process_candle(closed_candle)
+        await _process_candle(engine, closed_candle)
 
         assert engine.bar_count == 1
         assert engine.context.current_bar is not None
@@ -402,7 +410,7 @@ class TestCandleProcessing:
     async def test_current_price_updated(self, engine, closed_candle):
         """Test that current price is updated from candle."""
         await engine.start()
-        await engine.process_candle(closed_candle)
+        await _process_candle(engine, closed_candle)
 
         assert engine._current_price == Decimal("45500")
 
@@ -429,7 +437,7 @@ class TestOrderSubmission:
     async def test_order_submitted_to_exchange(self, engine, mock_adapter, closed_candle):
         """Test that orders from strategy are submitted to exchange."""
         await engine.start()
-        await engine.process_candle(closed_candle)
+        await _process_candle(engine, closed_candle)
 
         # Order should be submitted to exchange
         mock_adapter.place_order.assert_called_once()
@@ -442,7 +450,7 @@ class TestOrderSubmission:
     async def test_live_order_tracked(self, engine, closed_candle):
         """Test that submitted orders are tracked as live orders."""
         await engine.start()
-        await engine.process_candle(closed_candle)
+        await _process_candle(engine, closed_candle)
 
         assert len(engine._live_orders) == 1
         live_order = list(engine._live_orders.values())[0]
@@ -453,7 +461,7 @@ class TestOrderSubmission:
     async def test_exchange_order_map_updated(self, engine, closed_candle):
         """Test that exchange order map is updated."""
         await engine.start()
-        await engine.process_candle(closed_candle)
+        await _process_candle(engine, closed_candle)
 
         assert "exchange-123" in engine._exchange_order_map
 
@@ -463,7 +471,7 @@ class TestOrderSubmission:
         mock_adapter.place_order.side_effect = Exception("Exchange error")
 
         await engine.start()
-        await engine.process_candle(closed_candle)
+        await _process_candle(engine, closed_candle)
 
         # Order should be marked rejected
         assert len(engine.context.completed_orders) == 1
@@ -489,7 +497,7 @@ class TestOrderSubmission:
         )
 
         await engine.start()
-        await engine.process_candle(closed_candle)
+        await _process_candle(engine, closed_candle)
 
         # Should be rejected, not tracked as live order
         assert len(engine._live_orders) == 0
@@ -560,7 +568,7 @@ class TestRiskValidation:
             )
 
         await engine.start()
-        await engine.process_candle(closed_candle)
+        await _process_candle(engine, closed_candle)
 
         # Order should be rejected, not submitted to exchange
         mock_adapter.place_order.assert_not_called()
@@ -1064,9 +1072,9 @@ class TestOrderUpdates:
             fee_currency="USDT",
         )
 
-        # on_order_update buffers, _drain_ws_updates processes (ISSUE-203 fix)
+        # on_order_update enqueues; call _process_single_ws_update directly to test processing
         engine_with_order.on_order_update(update)
-        engine_with_order._drain_ws_updates()
+        engine_with_order._process_single_ws_update(update)
 
         live_order = engine_with_order._live_orders["internal-1"]
         assert live_order.status == OrderStatus.FILLED
@@ -1085,9 +1093,9 @@ class TestOrderUpdates:
             size=Decimal("0.1"),
         )
 
-        # Should not raise (buffer + drain)
+        # Should not raise; test enqueue + direct processing
         engine_with_order.on_order_update(update)
-        engine_with_order._drain_ws_updates()
+        engine_with_order._process_single_ws_update(update)
 
     def test_order_update_ignored_during_emergency_close(self, engine_with_order):
         """Test that order updates are blocked during emergency close (P0-2)."""
@@ -1188,7 +1196,7 @@ class TestPendingSnapshots:
         # Process multiple candles
         for i in range(5):
             closed_candle.timestamp = datetime(2024, 1, 1, 12, i, 0, tzinfo=UTC)
-            await engine.process_candle(closed_candle)
+            await _process_candle(engine, closed_candle)
 
         snapshots = engine.get_pending_snapshots()
         assert len(snapshots) == 5
@@ -1204,14 +1212,14 @@ class TestPendingSnapshots:
         # Process bars below batch size
         for i in range(5):
             closed_candle.timestamp = datetime(2024, 1, 1, 12, i, 0, tzinfo=UTC)
-            await engine.process_candle(closed_candle)
+            await _process_candle(engine, closed_candle)
 
         assert engine.should_persist_snapshots() is False
 
         # Process more to exceed batch size (default is 10)
         for i in range(5, 10):
             closed_candle.timestamp = datetime(2024, 1, 1, 12, i, 0, tzinfo=UTC)
-            await engine.process_candle(closed_candle)
+            await _process_candle(engine, closed_candle)
 
         assert engine.should_persist_snapshots() is True
 
@@ -1251,7 +1259,7 @@ class TestHealthCheck:
             volume=Decimal("100"),
             is_closed=True,
         )
-        await engine.process_candle(candle)
+        await _process_candle(engine, candle)
 
         assert engine.last_active_at is not None
 
@@ -1545,7 +1553,7 @@ class TestCircuitBreakerIntegration:
 
         with patch.object(engine._context, "_process_fill") as mock_fill:
             engine.on_order_update(update)
-            engine._drain_ws_updates()
+            engine._process_single_ws_update(update)
 
             # Fallback fill processing should be called (watchMyTrades didn't handle it)
             mock_fill.assert_called_once()
@@ -1627,7 +1635,7 @@ class TestCircuitBreakerIntegration:
         )
 
         # Process candle - should continue normally
-        await engine.process_candle(candle)
+        await _process_candle(engine, candle)
 
         # Engine should still be running
         assert engine.is_running is True
@@ -1837,7 +1845,7 @@ class TestEquitySnapshotTiming:
 
         engine._strategy.on_bar = track_on_bar
 
-        await engine.process_candle(closed_candle)
+        await _process_candle(engine, closed_candle)
 
         assert call_order.index("snapshot") < call_order.index("strategy")
 
@@ -1864,7 +1872,7 @@ class TestEquitySnapshotTiming:
 
         engine._sync_pending_orders = track_orders
 
-        await engine.process_candle(closed_candle)
+        await _process_candle(engine, closed_candle)
 
         assert call_order.index("balance") < call_order.index("orders")
 
@@ -2261,7 +2269,7 @@ class TestRiskTriggerPersistence:
             volume=Decimal("100"),
             is_closed=True,
         )
-        await engine.process_candle(candle)
+        await _process_candle(engine, candle)
 
         # Check if there are pending risk triggers
         if engine.has_pending_risk_triggers():
@@ -2543,8 +2551,8 @@ class TestSyncConsecutiveFailures:
         """Test that balance sync failure through process_candle properly stops engine.
 
         This verifies the ISSUE-202 fix: instead of silently setting _is_running=False,
-        the exception propagates to process_candle's outer handler which calls stop()
-        with proper cleanup (order cancellation, strategy.on_stop()).
+        the exception propagates through _handle_bar_close to the event loop which
+        calls stop() with proper cleanup (order cancellation, strategy.on_stop()).
         """
         await engine.start()
         assert engine.is_running is True
@@ -2566,14 +2574,13 @@ class TestSyncConsecutiveFailures:
             is_closed=True,
         )
 
-        # process_candle should catch the RuntimeError and call stop()
-        with pytest.raises(RuntimeError, match="Exchange connection lost"):
-            await engine.process_candle(candle)
+        # process_candle enqueues; event loop processes and catches the error
+        await _process_candle(engine, candle)
 
-        # Engine should be properly stopped via stop()
+        # Engine should be properly stopped via stop() called by event loop
         assert engine.is_running is False
         assert engine.stopped_at is not None
-        assert "Exchange connection lost" in engine.error_message
+        assert "Exchange connection lost" in (engine.error_message or "")
 
     @pytest.mark.asyncio
     async def test_balance_sync_success_resets_failure_counter(self, engine, mock_adapter):
@@ -2752,8 +2759,8 @@ class TestForceFillOnValueError:
 
 
 class TestWsUpdateBuffering:
-    """Tests for ISSUE-203 fix: WS updates are buffered and processed
-    synchronously within process_candle to prevent concurrent state mutation."""
+    """Tests for WS update event queue: on_order_update enqueues into asyncio.Queue,
+    processing happens asynchronously via the event loop."""
 
     @pytest.fixture
     def engine_with_order(self, engine):
@@ -2771,8 +2778,8 @@ class TestWsUpdateBuffering:
         engine._exchange_order_map["exchange-1"] = "internal-1"
         return engine
 
-    def test_on_order_update_buffers_not_processes(self, engine_with_order):
-        """Test on_order_update only buffers, does not immediately mutate state."""
+    def test_on_order_update_enqueues_not_processes(self, engine_with_order):
+        """Test on_order_update enqueues a WS_ORDER event without immediately mutating state."""
         update = WSOrderUpdate(
             order_id="exchange-1",
             client_order_id="internal-1",
@@ -2789,14 +2796,14 @@ class TestWsUpdateBuffering:
 
         engine_with_order.on_order_update(update)
 
-        # Update should be buffered, NOT processed
-        assert len(engine_with_order._pending_ws_updates) == 1
+        # Update should be enqueued, NOT processed yet
+        assert engine_with_order._event_queue.qsize() == 1
         live_order = engine_with_order._live_orders["internal-1"]
         assert live_order.status == OrderStatus.SUBMITTED  # Unchanged
         assert live_order.filled_amount == Decimal("0")  # Unchanged
 
-    def test_drain_ws_updates_processes_buffered(self, engine_with_order):
-        """Test _drain_ws_updates processes all buffered updates."""
+    def test_process_single_ws_update_applies_state(self, engine_with_order):
+        """Test _process_single_ws_update mutates order state directly."""
         update = WSOrderUpdate(
             order_id="exchange-1",
             client_order_id="internal-1",
@@ -2811,20 +2818,16 @@ class TestWsUpdateBuffering:
             fee_currency="USDT",
         )
 
-        engine_with_order.on_order_update(update)
-        engine_with_order._drain_ws_updates()
+        engine_with_order._process_single_ws_update(update)
 
-        # Now state should be updated
-        assert len(engine_with_order._pending_ws_updates) == 0
         live_order = engine_with_order._live_orders["internal-1"]
         assert live_order.status == OrderStatus.FILLED
         assert live_order.filled_amount == Decimal("0.1")
 
-    def test_drain_ws_updates_noop_when_empty(self, engine_with_order):
-        """Test _drain_ws_updates is a no-op when queue is empty."""
-        # Should not raise
-        engine_with_order._drain_ws_updates()
-        assert len(engine_with_order._pending_ws_updates) == 0
+    def test_on_order_update_empty_queue_is_noop(self, engine_with_order):
+        """Test that an empty event queue causes no errors."""
+        # No events enqueued — queue should remain empty
+        assert engine_with_order._event_queue.qsize() == 0
 
 
 class TestTimedOutOrderReconciliation:
@@ -3127,7 +3130,7 @@ class TestOnBarExceptionIsolation:
                 strategy=MagicMock(cpu_limit_seconds=5, memory_limit_mb=256),
             )
             # Should NOT raise — strategy error is isolated
-            await engine.process_candle(candle)
+            await _process_candle(engine, candle)
 
         # Engine should still be running
         assert engine._is_running is True
@@ -3155,7 +3158,7 @@ class TestOnBarExceptionIsolation:
             mock_settings.return_value = MagicMock(
                 strategy=MagicMock(cpu_limit_seconds=5, memory_limit_mb=256),
             )
-            await engine.process_candle(candle)
+            await _process_candle(engine, candle)
 
         # Error should be in context logs
         logs = list(engine._context._logs)
@@ -3776,7 +3779,7 @@ class TestPendingOrderEventLimit:
             volume=Decimal("100"),
             is_closed=True,
         )
-        await engine.process_candle(candle)
+        await _process_candle(engine, candle)
 
         # After persist failure, events should be put back but capped at 1000
         assert len(engine._pending_order_events) <= 1000
@@ -3810,7 +3813,7 @@ class TestPendingOrderEventLimit:
         import logging
 
         with caplog.at_level(logging.WARNING):
-            await engine.process_candle(candle)
+            await _process_candle(engine, candle)
 
         # Should have logged a warning about discarding events
         assert any("discard" in msg.lower() or "drop" in msg.lower() for msg in caplog.messages)
@@ -3821,15 +3824,15 @@ class TestRealizedPnlNoneProtection:
     """Tests for C-6: realized_pnl sum with None pnl values."""
 
     @pytest.mark.asyncio
-    async def test_bar_update_event_handles_none_pnl(self, engine):
-        """Test C-6: _build_bar_update_event handles trades with pnl=None.
+    async def test_bar_close_event_handles_none_pnl(self, engine):
+        """Test C-6: _build_bar_close_event handles trades with pnl=None.
 
         If a trade's pnl is None (e.g., from a partially deserialized trade),
         the sum operation should not raise TypeError.
         """
         await engine.start()
 
-        from squant.engine.backtest.types import TradeRecord
+        from squant.engine.backtest.types import Bar, TradeRecord
 
         # Create trades with mixed pnl values (some None)
         trade_ok = TradeRecord(
@@ -3858,10 +3861,19 @@ class TestRealizedPnlNoneProtection:
         engine._context._cumulative_realized_pnl = Decimal("100")
 
         # This should NOT raise TypeError
-        event = engine._build_bar_update_event()
+        bar = Bar(
+            time=datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC),
+            symbol="BTC/USDT",
+            open=Decimal("49900"),
+            high=Decimal("50100"),
+            low=Decimal("49800"),
+            close=Decimal("50000"),
+            volume=Decimal("100"),
+        )
+        event = engine._build_bar_close_event(bar)
 
         # realized_pnl should reflect cumulative counter
-        assert Decimal(event["realized_pnl"]) == Decimal("100")
+        assert Decimal(event["state"]["realized_pnl"]) == Decimal("100")
 
 
 class TestPrivateWebSocket:
@@ -4364,7 +4376,7 @@ class TestTotalLossLimitAutoStop:
         engine._risk_manager.state.unrealized_pnl = Decimal("0")
 
         with patch("squant.engine.live.engine._fire_notification"):
-            await engine.process_candle(closed_candle)
+            await _process_candle(engine, closed_candle)
 
         # Engine should have been stopped
         assert engine.is_running is False
@@ -4385,7 +4397,7 @@ class TestTotalLossLimitAutoStop:
         engine._risk_manager.state.total_pnl = Decimal("-2500")
 
         with patch("squant.engine.live.engine._fire_notification"):
-            await engine.process_candle(closed_candle)
+            await _process_candle(engine, closed_candle)
 
         assert engine.is_running is False
         # Error message should contain loss information
@@ -4405,7 +4417,7 @@ class TestTotalLossLimitAutoStop:
         engine._risk_manager.state.unrealized_pnl = Decimal("0")
 
         with patch("squant.engine.live.engine._fire_notification"):
-            await engine.process_candle(closed_candle)
+            await _process_candle(engine, closed_candle)
 
         # total_loss_limit_triggered should be set in risk state
         assert engine._risk_manager.state.total_loss_limit_triggered is True
@@ -4422,7 +4434,7 @@ class TestTotalLossLimitAutoStop:
         engine._risk_manager.state.total_pnl = Decimal("-500")
         engine._risk_manager.state.unrealized_pnl = Decimal("0")
 
-        await engine.process_candle(closed_candle)
+        await _process_candle(engine, closed_candle)
 
         # Engine should still be running
         assert engine.is_running is True

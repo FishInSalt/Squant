@@ -289,7 +289,9 @@ class BacktestRunner:
             except ValueError as e:
                 # Order can't be filled (e.g., gap-up made market buy too expensive)
                 # Cancel the order instead of crashing the backtest
-                self._context.log(f"Order {fill.order_id} rejected at fill: {e}", level="warning", category="fill")
+                self._context.log(
+                    f"Order {fill.order_id} rejected at fill: {e}", level="warning", category="fill"
+                )
                 logger.warning(f"Fill rejected for order {fill.order_id}: {e}")
                 for order in self._context._get_pending_orders():
                     if order.id == fill.order_id:
@@ -334,7 +336,9 @@ class BacktestRunner:
             try:
                 self._strategy.on_order_done(order)
             except Exception as e:
-                self._context.log(f"ERROR in on_order_done: {e}", level="error", category="strategy")
+                self._context.log(
+                    f"ERROR in on_order_done: {e}", level="error", category="strategy"
+                )
                 logger.warning(f"Strategy on_order_done error: {e}")
 
         # 7. Call strategy with resource limits (STR-013)

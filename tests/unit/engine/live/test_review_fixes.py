@@ -504,19 +504,28 @@ class TestI10DispatchOrderUpdateLocking:
 # ===========================================================================
 
 
-class TestM1PendingWsUpdatesBound:
-    """M-1: _pending_ws_updates should have an upper bound to prevent
-    unbounded memory growth when the engine is stalled."""
+class TestM1EventQueueBound:
+    """M-1: WS order updates should be bounded by the event queue maxsize.
 
-    def test_pending_ws_updates_bounded(self):
-        """Excess WS updates should be dropped when buffer is full."""
+    The old deque buffer is replaced by asyncio.Queue(maxsize=1000). When
+    the queue is full, put_nowait raises QueueFull which is caught and logged
+    — excess events are dropped rather than silently evicting old ones.
+    """
+
+    def test_ws_order_updates_bounded_by_event_queue(self):
+        """Excess on_order_update calls are silently dropped when queue is full."""
+        import asyncio
+
         adapter = _make_adapter()
         strategy = DoNothingStrategy()
         engine = _make_engine(strategy, adapter=adapter)
         engine._is_running = True
 
-        # Flood with many updates
-        for i in range(2000):
+        # Replace with a tiny queue so we can hit the limit quickly
+        engine._event_queue = asyncio.Queue(maxsize=5)
+
+        # Flood with more updates than queue capacity
+        for i in range(10):
             update = WSOrderUpdate(
                 order_id=f"ex-{i}",
                 symbol="BTC/USDT",
@@ -530,11 +539,12 @@ class TestM1PendingWsUpdatesBound:
                 fee_currency=None,
                 updated_at=datetime.now(UTC),
             )
+            # Must not raise even when queue is full
             engine.on_order_update(update)
 
-        # Should be bounded (not 2000)
-        assert len(engine._pending_ws_updates) <= 1000, (
-            f"_pending_ws_updates grew to {len(engine._pending_ws_updates)}, should be bounded"
+        # Queue should be bounded at maxsize (not 10)
+        assert engine._event_queue.qsize() <= 5, (
+            f"Event queue grew to {engine._event_queue.qsize()}, should be bounded at 5"
         )
 
 
@@ -810,47 +820,47 @@ class TestBug3DmsNotificationOnlyOnce:
 
 
 # ===========================================================================
-# DESIGN-1: _pending_ws_updates should use deque(maxlen=) not list.pop(0)
+# DESIGN-1: WS event buffer uses asyncio.Queue with bounded maxsize
 # ===========================================================================
 
 
-class TestDesign1WsBufferDeque:
-    """DESIGN-1: _pending_ws_updates should be a deque with maxlen for O(1)
-    append/eviction, instead of list with O(n) pop(0)."""
+class TestDesign1EventQueueBounded:
+    """DESIGN-1: WS events go through asyncio.Queue(maxsize=1000) — bounded
+    by construction rather than a deque with maxlen."""
 
-    def test_pending_ws_updates_is_deque(self):
-        """_pending_ws_updates should be a collections.deque."""
-        from collections import deque
+    def test_event_queue_is_asyncio_queue(self):
+        """_event_queue should be an asyncio.Queue instance."""
+        import asyncio
 
         engine = _make_engine(DoNothingStrategy())
 
-        assert isinstance(engine._pending_ws_updates, deque), (
-            f"_pending_ws_updates should be deque, got {type(engine._pending_ws_updates).__name__}"
+        assert isinstance(engine._event_queue, asyncio.Queue), (
+            f"_event_queue should be asyncio.Queue, got {type(engine._event_queue).__name__}"
         )
 
-    def test_deque_has_maxlen(self):
-        """deque should have a maxlen set to prevent unbounded growth."""
+    def test_event_queue_has_maxsize(self):
+        """Event queue should have a bounded maxsize to prevent unbounded growth."""
         engine = _make_engine(DoNothingStrategy())
 
-        assert engine._pending_ws_updates.maxlen is not None, (
-            "_pending_ws_updates deque should have maxlen set"
-        )
-        assert engine._pending_ws_updates.maxlen <= 1000
+        assert engine._event_queue.maxsize > 0, "_event_queue should have a positive maxsize"
+        assert engine._event_queue.maxsize <= 1000
 
 
 # ===========================================================================
-# DESIGN-2: _MAX_PENDING_WS_UPDATES should be class-level constant
+# DESIGN-2: Event queue maxsize is implicit — no separate constant needed
 # ===========================================================================
 
 
 class TestDesign2ConstantLocation:
-    """DESIGN-2: The WS update buffer cap should be a class-level constant,
-    not a local variable recreated on every call."""
+    """DESIGN-2: The event queue capacity is encoded in asyncio.Queue(maxsize=1000)
+    at construction. No separate _MAX_PENDING_WS_UPDATES constant is needed."""
 
-    def test_max_pending_ws_updates_is_class_attribute(self):
-        """_MAX_PENDING_WS_UPDATES should be accessible as a class attribute."""
-        assert hasattr(LiveTradingEngine, "_MAX_PENDING_WS_UPDATES"), (
-            "_MAX_PENDING_WS_UPDATES should be a class-level constant"
+    def test_event_queue_maxsize_is_bounded(self):
+        """Event queue maxsize should be <= 1000 to cap memory usage."""
+        engine = _make_engine(DoNothingStrategy())
+
+        assert engine._event_queue.maxsize <= 1000, (
+            f"_event_queue.maxsize should be <= 1000, got {engine._event_queue.maxsize}"
         )
 
 

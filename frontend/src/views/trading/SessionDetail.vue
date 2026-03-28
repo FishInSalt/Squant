@@ -906,7 +906,6 @@ const liveAuditTotal = ref(0)
 const liveAuditPage = ref(1)
 const liveAuditPageSize = ref(20)
 const liveAuditLoading = ref(false)
-const prevCompletedOrdersCount = ref(0)
 
 async function loadLiveAuditOrders() {
   if (!isLive.value) return
@@ -976,128 +975,137 @@ const equityCurveWithFallback = computed<EquityPoint[]>(() => {
 
 const wsChannel = computed(() => `trading:${props.id}`)
 
+function applyStateSnapshot(state: Record<string, unknown>) {
+  if (!state || !status.value) return
+  status.value.cash = parseFloat(state.cash as string)
+  status.value.equity = parseFloat(state.equity as string)
+  status.value.unrealized_pnl = parseFloat(state.unrealized_pnl as string)
+  status.value.realized_pnl = parseFloat(state.realized_pnl as string)
+  status.value.total_fees = parseFloat(state.total_fees as string)
+  ;(status.value as any).fees_by_currency = state.fees_by_currency
+  ;(status.value as any).fees_usdt_equivalent =
+    state.fees_usdt_equivalent != null
+      ? parseFloat(state.fees_usdt_equivalent as string)
+      : null
+  status.value.completed_orders_count = state.completed_orders_count as number
+  status.value.trades_count = state.trades_count as number
+
+  // Positions: parse string → number
+  const rawPositions = state.positions as
+    | Record<string, { amount: string; avg_entry_price: string }>
+    | undefined
+  if (rawPositions) {
+    const parsed: Record<string, Position> = {}
+    for (const [sym, pos] of Object.entries(rawPositions)) {
+      parsed[sym] = {
+        amount: parseFloat(pos.amount),
+        avg_entry_price: parseFloat(pos.avg_entry_price),
+      }
+    }
+    status.value.positions = parsed
+  }
+
+  status.value.pending_orders = (state.pending_orders as PendingOrderInfo[]) || []
+
+  // Open trade
+  if (isPaper.value) {
+    ;(status.value as PaperTradingStatus).open_trade = state.open_trade as OpenTrade | undefined
+  } else if (isLive.value) {
+    const ot = state.open_trade as OpenTrade | undefined
+    liveOpenTrade.value = ot
+      ? { entry_time: ot.entry_time, entry_price: ot.entry_price, amount: ot.amount }
+      : null
+  }
+
+  // Risk state
+  if (state.risk_state) {
+    ;(status.value as LiveTradingStatus).risk_state = state.risk_state as RiskState
+  }
+}
+
+function appendIncrementalData(data: Record<string, unknown>) {
+  // Fills
+  const newFills = data.new_fills as Fill[] | undefined
+  if (Array.isArray(newFills) && newFills.length) {
+    if (isPaper.value) {
+      const ps = status.value as PaperTradingStatus
+      if (ps.fills) ps.fills.push(...newFills)
+    } else if (isLive.value) {
+      liveWsFills.value.push(...newFills)
+      if (liveWsFills.value.length > 500) {
+        liveWsFills.value = liveWsFills.value.slice(-500)
+      }
+    }
+  }
+
+  // Trades
+  const newTrades = data.new_trades as Trade[] | undefined
+  if (Array.isArray(newTrades) && newTrades.length && isPaper.value) {
+    const ps = status.value as PaperTradingStatus
+    if (ps.trades) ps.trades.push(...newTrades)
+  }
+
+  // Logs
+  const newLogs = data.new_logs as string[] | undefined
+  if (Array.isArray(newLogs) && newLogs.length) {
+    tradingLogs.value.push(...newLogs)
+    if (tradingLogs.value.length > 2000) {
+      tradingLogs.value = tradingLogs.value.slice(-2000)
+    }
+  }
+}
+
+function appendEquityPoint(point: Record<string, string>) {
+  equityCurve.value.push({
+    time: point.time,
+    equity: parseFloat(point.equity),
+    cash: parseFloat(point.cash),
+    position_value: parseFloat(point.position_value),
+    unrealized_pnl: parseFloat(point.unrealized_pnl),
+  } as any)
+}
+
+function showTradeNotification(trigger: string, detail: Record<string, string>) {
+  if (trigger === 'fill') {
+    const side = detail.side === 'buy' ? '买入' : '卖出'
+    ElMessage.success(`${side} ${detail.amount} 成交 @ ${detail.price}`)
+  } else if (trigger === 'order_update' && detail.status === 'cancelled') {
+    ElMessage.warning('订单已取消')
+  } else if (trigger === 'order_update' && detail.status === 'rejected') {
+    ElMessage.error('订单被拒绝')
+  }
+}
+
 function handleTradingEvent(data: Record<string, unknown>) {
   if (!status.value) return
   const eventType = data.event as string
 
-  if (eventType === 'bar_update') {
-    // Replace scalar metrics
-    status.value.bar_count = data.bar_count as number
-    status.value.cash = parseFloat(data.cash as string)
-    status.value.equity = parseFloat(data.equity as string)
-    status.value.unrealized_pnl = parseFloat(data.unrealized_pnl as string)
-    status.value.realized_pnl = parseFloat(data.realized_pnl as string)
-    status.value.total_fees = parseFloat(data.total_fees as string)
-    if (data.fees_by_currency) {
-      (status.value as any).fees_by_currency = data.fees_by_currency as Record<string, number>
-    }
-    if (data.fees_usdt_equivalent != null) {
-      (status.value as any).fees_usdt_equivalent = parseFloat(
-        data.fees_usdt_equivalent as string,
-      )
-    }
-    status.value.completed_orders_count = data.completed_orders_count as number
-    status.value.trades_count = data.trades_count as number
+  if (eventType === 'state_update' || eventType === 'bar_close') {
+    const prevCompletedCount = status.value?.completed_orders_count ?? 0
 
-    // Parse positions: convert string amounts to numbers
-    const rawPositions = data.positions as Record<string, { amount: string; avg_entry_price: string }> | undefined
-    if (rawPositions) {
-      const parsed: Record<string, Position> = {}
-      for (const [sym, pos] of Object.entries(rawPositions)) {
-        parsed[sym] = {
-          amount: parseFloat(pos.amount),
-          avg_entry_price: parseFloat(pos.avg_entry_price),
-        }
-      }
-      status.value.positions = parsed
-    }
-
-    // Replace pending orders
-    status.value.pending_orders = (data.pending_orders as PendingOrderInfo[]) || []
-
-    // Replace open trade
-    if (isPaper.value) {
-      const ps = status.value as PaperTradingStatus
-      ps.open_trade = data.open_trade as OpenTrade | undefined
-    } else if (isLive.value) {
-      const ot = data.open_trade as OpenTrade | undefined
-      liveOpenTrade.value = ot ? { entry_time: ot.entry_time, entry_price: ot.entry_price, amount: ot.amount } : null
-    }
+    // Apply state snapshot (shallow merge)
+    applyStateSnapshot(data.state as Record<string, unknown>)
 
     // Append incremental data
-    if (isPaper.value) {
-      const ps = status.value as PaperTradingStatus
-      const newFills = data.new_fills as Fill[] | undefined
-      if (Array.isArray(newFills) && newFills.length && ps.fills) {
-        ps.fills.push(...newFills)
-      }
-      const newTrades = data.new_trades as Trade[] | undefined
-      if (Array.isArray(newTrades) && newTrades.length && ps.trades) {
-        ps.trades.push(...newTrades)
-      }
-    } else if (isLive.value) {
-      // Accumulate live fills for chart markers
-      const newFills = data.new_fills as Fill[] | undefined
-      if (Array.isArray(newFills) && newFills.length) {
-        liveWsFills.value.push(...newFills)
-        // Cap to prevent unbounded growth in long-running sessions
-        if (liveWsFills.value.length > 500) {
-          liveWsFills.value = liveWsFills.value.slice(-500)
-        }
-      }
-    }
+    appendIncrementalData(data)
 
-    // Append new logs (applies to both paper and live)
-    const newLogs = data.new_logs as string[] | undefined
-    if (Array.isArray(newLogs) && newLogs.length) {
-      tradingLogs.value.push(...newLogs)
-      // Cap to prevent unbounded growth in long-running sessions
-      if (tradingLogs.value.length > 2000) {
-        tradingLogs.value = tradingLogs.value.slice(-2000)
-      }
-    }
-
-    if (data.risk_state) {
-      (status.value as LiveTradingStatus).risk_state = data.risk_state as RiskState
-    }
-
-    // Auto-refresh audit orders when new orders complete
-    const newCount = data.completed_orders_count as number
-    if (isLive.value && newCount > prevCompletedOrdersCount.value) {
+    // Auto-refresh audit orders when completed_orders_count increases
+    if (isLive.value && (status.value.completed_orders_count ?? 0) > prevCompletedCount) {
       loadLiveAuditOrders()
       loadAllLiveOrders()
     }
-    prevCompletedOrdersCount.value = newCount
 
-    // Trigger incremental equity curve load
-    loadEquityCurve(true)
-  } else if (eventType === 'fill') {
-    // Real-time fill event: update scalar state immediately (no fills list append —
-    // authoritative fills list comes via bar_update's new_fills at bar close)
-    status.value.cash = parseFloat(data.cash as string)
-    status.value.equity = parseFloat(data.equity as string)
-    status.value.unrealized_pnl = parseFloat(data.unrealized_pnl as string)
-
-    const rawPositions = data.positions as Record<string, { amount: string; avg_entry_price: string }> | undefined
-    if (rawPositions) {
-      const parsed: Record<string, Position> = {}
-      for (const [sym, pos] of Object.entries(rawPositions)) {
-        parsed[sym] = {
-          amount: parseFloat(pos.amount),
-          avg_entry_price: parseFloat(pos.avg_entry_price),
-        }
-      }
-      status.value.positions = parsed
+    // state_update specific: toast notification
+    if (eventType === 'state_update' && data.trigger) {
+      showTradeNotification(data.trigger as string, data.trigger_detail as Record<string, string>)
     }
 
-    status.value.pending_orders = (data.pending_orders as PendingOrderInfo[]) || []
-
-    if (isPaper.value) {
-      const ps = status.value as PaperTradingStatus
-      ps.open_trade = data.open_trade as OpenTrade | undefined
-    } else if (isLive.value) {
-      const ot = data.open_trade as OpenTrade | undefined
-      liveOpenTrade.value = ot ? { entry_time: ot.entry_time, entry_price: ot.entry_price, amount: ot.amount } : null
+    // bar_close specific: equity curve + bar count
+    if (eventType === 'bar_close') {
+      if (data.equity_point) {
+        appendEquityPoint(data.equity_point as Record<string, string>)
+      }
+      status.value.bar_count = data.bar_count as number
     }
   } else if (eventType === 'engine_stopped') {
     status.value.is_running = false
@@ -1375,8 +1383,6 @@ onMounted(async () => {
   await loadSession()
   // Always load status (backend returns historical data from DB for stopped sessions)
   await loadStatus()
-  // Init counter for auto-refresh tracking
-  prevCompletedOrdersCount.value = status.value?.completed_orders_count ?? 0
   // Load audit orders for live sessions
   if (isLive.value) {
     loadLiveAuditOrders()
