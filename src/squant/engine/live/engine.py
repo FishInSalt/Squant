@@ -2933,7 +2933,11 @@ class LiveTradingEngine:
         """Detect unexpected event loop exit."""
         if not task.cancelled() and task.exception() and self._is_running:
             logger.error(f"Event loop crashed for {self._run_id}: {task.exception()}")
-            asyncio.create_task(self.stop(error=f"Event loop crashed: {task.exception()}"))
+            stop_task = asyncio.create_task(
+                self.stop(error=f"Event loop crashed: {task.exception()}")
+            )
+            _background_tasks.add(stop_task)
+            stop_task.add_done_callback(_background_tasks.discard)
 
     def _build_state_update_event(self, trigger: str, event_data: Any) -> dict[str, Any]:
         """Build state_update event for immediate push after WS event processing."""

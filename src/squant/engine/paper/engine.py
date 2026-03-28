@@ -34,6 +34,9 @@ EventCallback = Callable[[dict[str, Any]], Awaitable[None]]
 
 logger = logging.getLogger(__name__)
 
+# Module-level set to prevent GC of fire-and-forget asyncio tasks (m-2 fix)
+_background_tasks: set[asyncio.Task[Any]] = set()
+
 
 def _serialize_fill(f: Any) -> dict[str, Any]:
     """Serialize a Fill for WebSocket event."""
@@ -391,7 +394,9 @@ class PaperTradingEngine:
                     "stopped_at": self._stopped_at.isoformat() if self._stopped_at else None,
                 }
                 loop = asyncio.get_running_loop()
-                loop.create_task(self._on_event(event))
+                task = loop.create_task(self._on_event(event))
+                _background_tasks.add(task)
+                task.add_done_callback(_background_tasks.discard)
             except Exception:
                 pass
 
@@ -613,7 +618,9 @@ class PaperTradingEngine:
                     try:
                         event = self._build_bar_close_event(bar)
                         loop = asyncio.get_running_loop()
-                        loop.create_task(self._on_event(event))
+                        task = loop.create_task(self._on_event(event))
+                        _background_tasks.add(task)
+                        task.add_done_callback(_background_tasks.discard)
                     except Exception as e:
                         logger.debug(f"Event emit failed for {self._run_id}: {e}")
 
@@ -941,7 +948,9 @@ class PaperTradingEngine:
             try:
                 event = self._build_state_update_event("fill", fill)
                 loop = asyncio.get_running_loop()
-                loop.create_task(self._on_event(event))
+                task = loop.create_task(self._on_event(event))
+                _background_tasks.add(task)
+                task.add_done_callback(_background_tasks.discard)
             except Exception:
                 pass
 
@@ -992,7 +1001,7 @@ class PaperTradingEngine:
                 for o in ctx._pending_orders
             ],
             "open_trade": _serialize_open_trade(ctx._open_trade),
-            "completed_orders_count": len(ctx._completed_orders),
+            "completed_orders_count": ctx._restored_completed_orders_count + len(ctx._completed_orders),
             "trades_count": len(ctx._trades),
             "risk_state": (self._risk_manager.get_state_summary() if self._risk_manager else None),
         }
