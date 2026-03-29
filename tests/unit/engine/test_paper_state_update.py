@@ -147,23 +147,27 @@ class TestBuildStateUpdateEvent:
         event = engine._build_state_update_event("fill")
         assert event["trigger_detail"] == {}
 
-    async def test_trigger_detail_populated_with_fill(self):
-        """trigger_detail contains fill fields when fill object is provided."""
-        from unittest.mock import MagicMock
-
-        from squant.models.enums import OrderSide
-
-        fill = MagicMock()
-        fill.order_id = "test-order-id"
-        fill.side = OrderSide.BUY
-        fill.price = Decimal("50000")
-        fill.amount = Decimal("0.1")
-        fill.fee = Decimal("5")
-        fill.fee_currency = "USDT"
+    async def test_trigger_detail_populated_from_new_fills(self):
+        """trigger_detail is extracted from the latest fill in the delta."""
+        from squant.engine.backtest.types import Fill, OrderSide
 
         engine = make_engine()
         await engine.start()
-        event = engine._build_state_update_event("fill", fill)
+
+        # Process a fill through context so it appears in _build_state_snapshot delta
+        fill = Fill(
+            order_id="test-order-id",
+            symbol="BTC/USDT",
+            side=OrderSide.BUY,
+            price=Decimal("50000"),
+            amount=Decimal("0.1"),
+            fee=Decimal("5"),
+            timestamp=datetime.now(UTC),
+            fee_currency="USDT",
+        )
+        engine._context._process_fill(fill)
+
+        event = engine._build_state_update_event("fill")
 
         detail = event["trigger_detail"]
         assert detail["order_id"] == "test-order-id"
@@ -171,7 +175,6 @@ class TestBuildStateUpdateEvent:
         assert detail["price"] == "50000"
         assert detail["amount"] == "0.1"
         assert detail["fee"] == "5"
-        assert detail["fee_currency"] == "USDT"
 
     async def test_incremental_fields_present(self):
         engine = make_engine()

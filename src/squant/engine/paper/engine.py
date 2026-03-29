@@ -475,6 +475,7 @@ class PaperTradingEngine:
                 # Closed: final bar volume. Unclosed: cumulative volume so far.
                 # Both are valid for volume participation rate enforcement.
                 # Bid/ask from cached ticker data enable spread-based fills.
+                fills_before = self._context._total_fills_added
                 self._fill_new_orders(
                     current_price,
                     timestamp,
@@ -488,6 +489,18 @@ class PaperTradingEngine:
 
                 # 3. Move completed orders
                 self._context._move_completed_orders()
+
+                # Emit state_update if fills occurred (after move so pending_orders is final)
+                has_new_fills = self._context._total_fills_added > fills_before
+                if has_new_fills and self._on_event and not self._warming_up:
+                    try:
+                        event = self._build_state_update_event("fill")
+                        loop = asyncio.get_running_loop()
+                        task = loop.create_task(self._on_event(event))
+                        _background_tasks.add(task)
+                        task.add_done_callback(_background_tasks.discard)
+                    except Exception:
+                        pass
 
                 # Only process bar-level events on closed candles
                 if not candle.is_closed:
@@ -943,16 +956,8 @@ class PaperTradingEngine:
             if self._risk_manager:
                 self._risk_manager.record_trade_result(completed_trade.pnl)
 
-        # Emit real-time state_update event via WebSocket (best-effort, never block engine)
-        if self._on_event and not self._warming_up:
-            try:
-                event = self._build_state_update_event("fill", fill)
-                loop = asyncio.get_running_loop()
-                task = loop.create_task(self._on_event(event))
-                _background_tasks.add(task)
-                task.add_done_callback(_background_tasks.discard)
-            except Exception:
-                pass
+        # NOTE: state_update push moved to process_candle() after _move_completed_orders()
+        # so the pushed state reflects the final order list (filled orders already moved out).
 
     def _build_state_snapshot(self) -> tuple[dict[str, Any], list, list, list]:
         """Build state snapshot + incremental data."""
@@ -1013,24 +1018,25 @@ class PaperTradingEngine:
             new_logs,
         )
 
-    def _build_state_update_event(self, trigger: str, fill: Any = None) -> dict[str, Any]:
+    def _build_state_update_event(self, trigger: str) -> dict[str, Any]:
         """Build state_update event for immediate push.
 
-        Emitted from _process_fill_safe() on every successful fill, allowing
-        the frontend to update scalar state (cash, equity, positions) immediately
-        instead of waiting for bar close.
+        Emitted after _fill_new_orders() + _move_completed_orders() so the
+        pushed state reflects the final order list (filled orders already moved).
         """
         state, new_fills, new_trades, new_logs = self._build_state_snapshot()
 
         trigger_detail: dict[str, Any] = {}
-        if trigger == "fill" and fill is not None:
+        if trigger == "fill" and new_fills:
+            # Extract trigger_detail from the latest fill in the delta
+            latest = new_fills[-1]
             trigger_detail = {
-                "order_id": fill.order_id,
-                "side": fill.side.value if hasattr(fill.side, "value") else str(fill.side),
-                "price": str(fill.price),
-                "amount": str(fill.amount),
-                "fee": str(fill.fee),
-                "fee_currency": getattr(fill, "fee_currency", None) or "",
+                "order_id": latest.get("order_id", ""),
+                "side": latest.get("side", ""),
+                "price": latest.get("price", ""),
+                "amount": latest.get("amount", ""),
+                "fee": latest.get("fee", ""),
+                "fee_currency": latest.get("fee_currency", ""),
             }
 
         return {
