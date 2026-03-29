@@ -852,6 +852,14 @@ class BacktestContext:
         if fee_in_base and fill.fee > 0 and fill.side == OrderSide.BUY:
             position.amount -= fill.fee
 
+        # Dust cleanup: base currency fee deduction can create sub-atom positions
+        # (e.g., 8E-11 BTC) that exchanges cannot trade. If remaining position is
+        # positive but below the minimum tradeable precision (1E-8), treat as zero.
+        # This must happen BEFORE _update_trade_tracking so the trade closes properly.
+        _DUST_THRESHOLD = Decimal("1E-8")
+        if fill.side == OrderSide.SELL and Decimal("0") < position.amount < _DUST_THRESHOLD:
+            position.amount = Decimal("0")
+
         # Convert fee to quote currency for consistent PnL calculation.
         # Base currency fees (e.g., BTC) are converted at fill price so that
         # _open_trade.fees is always in quote currency (e.g., USDT).

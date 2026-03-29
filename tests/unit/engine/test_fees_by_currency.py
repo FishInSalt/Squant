@@ -221,3 +221,71 @@ class TestPnlFeeConversion:
         assert trade.fees == Decimal("10")
         # Price didn't change, so PnL = 0 - 10 fees = -10
         assert trade.pnl == Decimal("-10")
+
+
+class TestDustPositionCleanup:
+    """Verify that sub-atom dust positions from base currency fee deduction are zeroed."""
+
+    def test_dust_after_sell_with_base_fee_buy(self, ctx):
+        """Reproduces the real scenario: buy with BTC fee creates high-precision position,
+        sell with exchange-truncated amount leaves dust that should be cleaned up."""
+        # Buy 0.01 BTC @ 50000, fee = 0.00001 BTC
+        # Position after buy: 0.01 - 0.00001 = 0.00999 (fee deducted from position)
+        ctx._process_fill(Fill(
+            order_id="o1", symbol="BTC/USDT", side=OrderSide.BUY,
+            price=Decimal("50000"), amount=Decimal("0.01"),
+            fee=Decimal("0.00001"), timestamp=datetime.now(UTC),
+            fee_currency="BTC",
+        ))
+        assert ctx._positions["BTC/USDT"].amount == Decimal("0.00999")
+
+        # Sell 0.00998999 BTC (exchange truncated, 1E-8 less than position)
+        # Without dust cleanup: position = 0.00999 - 0.00998999 = 1E-8 (dust)
+        # With cleanup: position = 0 (dust below threshold)
+        ctx._process_fill(Fill(
+            order_id="o2", symbol="BTC/USDT", side=OrderSide.SELL,
+            price=Decimal("51000"), amount=Decimal("0.009989999"),
+            fee=Decimal("0.5"), timestamp=datetime.now(UTC),
+            fee_currency="USDT",
+        ))
+        # Position should be zero (dust cleaned up)
+        assert ctx._positions["BTC/USDT"].amount == Decimal("0")
+        # Trade should be closed (not left open due to dust)
+        assert ctx._open_trade is None
+        assert len(ctx._trades) == 1
+
+    def test_no_cleanup_above_threshold(self, ctx):
+        """Position above dust threshold should NOT be zeroed."""
+        ctx._process_fill(Fill(
+            order_id="o1", symbol="BTC/USDT", side=OrderSide.BUY,
+            price=Decimal("50000"), amount=Decimal("0.01"),
+            fee=Decimal("0"), timestamp=datetime.now(UTC),
+            fee_currency="USDT",
+        ))
+        # Partial sell — remaining position is well above dust
+        ctx._process_fill(Fill(
+            order_id="o2", symbol="BTC/USDT", side=OrderSide.SELL,
+            price=Decimal("50000"), amount=Decimal("0.005"),
+            fee=Decimal("0"), timestamp=datetime.now(UTC),
+            fee_currency="USDT",
+        ))
+        assert ctx._positions["BTC/USDT"].amount == Decimal("0.005")
+        assert ctx._open_trade is not None  # Trade still open
+
+    def test_exact_zero_no_dust(self, ctx):
+        """Exact zero position should work without dust cleanup."""
+        ctx._process_fill(Fill(
+            order_id="o1", symbol="BTC/USDT", side=OrderSide.BUY,
+            price=Decimal("50000"), amount=Decimal("0.01"),
+            fee=Decimal("5"), timestamp=datetime.now(UTC),
+            fee_currency="USDT",
+        ))
+        ctx._process_fill(Fill(
+            order_id="o2", symbol="BTC/USDT", side=OrderSide.SELL,
+            price=Decimal("50000"), amount=Decimal("0.01"),
+            fee=Decimal("5"), timestamp=datetime.now(UTC),
+            fee_currency="USDT",
+        ))
+        assert ctx._positions["BTC/USDT"].amount == Decimal("0")
+        assert ctx._open_trade is None
+        assert len(ctx._trades) == 1
