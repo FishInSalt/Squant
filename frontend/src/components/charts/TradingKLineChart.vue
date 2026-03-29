@@ -731,9 +731,11 @@ watch(() => props.realtime, (newVal) => {
   }
 })
 
-// Watch trades/fills count and open trade to rebuild chart markers
+// Watch trades/fills count, open trade, AND candle data length to rebuild chart markers.
+// candleData.length is needed because new bars may make previously out-of-range fills
+// visible (fill.timestamp > maxTs is skipped in rebuildTradeMarkers).
 watch(
-  () => [props.trades?.length ?? 0, props.fills?.length ?? 0, props.openTrade?.entry_time ?? null] as const,
+  () => [props.trades?.length ?? 0, props.fills?.length ?? 0, props.openTrade?.entry_time ?? null, candleData.value.length] as const,
   () => {
     lastTradesLength = props.trades?.length ?? 0
     if (chart) rebuildTradeMarkers()
