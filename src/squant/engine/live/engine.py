@@ -1357,12 +1357,26 @@ class LiveTradingEngine:
             )
             return
 
+        # Guard: skip if this fill was already accounted for by ws_order fallback.
+        # In the event loop, WS_ORDER may arrive before WS_FILL and record the fill
+        # via the fallback path (_process_single_ws_update). When WS_FILL then arrives,
+        # filled_amount already includes this fill's contribution. Detect by checking
+        # if adding this fill would exceed the order's requested amount.
+        old_filled = live_order.filled_amount
+        if old_filled + exec_data.amount > live_order.amount + Decimal("1E-8"):
+            logger.info(
+                f"Skipping ws_trade fill for {internal_id}: already accounted for "
+                f"(filled={old_filled}, fill_amount={exec_data.amount}, "
+                f"order_amount={live_order.amount})"
+            )
+            self._processed_trade_ids[exec_data.trade_id] = True
+            return
+
         # Capture pre-fill state for risk checks
         had_open_trade = self._context._open_trade is not None
         circuit_breaker_before = self._risk_manager.state.circuit_breaker_triggered
 
         # Update LiveOrder tracking fields
-        old_filled = live_order.filled_amount
         live_order.filled_amount += exec_data.amount
         if old_filled > 0 and live_order.avg_fill_price:
             live_order.avg_fill_price = (
@@ -2882,12 +2896,22 @@ class LiveTradingEngine:
     # Unified event loop (Task 2)
     # ------------------------------------------------------------------
 
+    # Priority for WS event batch sorting: fills before orders before bar close.
+    # This ensures ws_trade (exact per-fill data) is processed before ws_order
+    # (aggregated fallback), preventing duplicate fill recording.
+    _EVENT_PRIORITY = {
+        EngineEventType.WS_FILL: 0,
+        EngineEventType.WS_ORDER: 1,
+        EngineEventType.BAR_CLOSE: 2,
+    }
+
     async def _event_loop(self) -> None:
         """Unified event processor. Single consumer, single lock.
 
         Processes WS fills, WS order updates, and bar closes from a single
-        queue. Events are built inside the lock (state consistent) but
-        pushed outside (non-blocking).
+        queue. When a WS event arrives, all currently queued WS events are
+        drained and sorted (fills before orders) to maintain the ordering
+        guarantee that ws_trade data takes priority over ws_order fallback.
         """
         while self._is_running:
             try:
@@ -2897,39 +2921,62 @@ class LiveTradingEngine:
 
             self._last_active_at = datetime.now(UTC)
 
-            push_event = None
+            # Batch drain: collect all currently queued events for atomic processing.
+            # Sort WS_FILL before WS_ORDER to ensure exact per-fill data (ws_trade)
+            # is processed before aggregated fallback data (ws_order), preventing
+            # duplicate fill recording.
+            batch = [event]
+            while True:
+                try:
+                    more = self._event_queue.get_nowait()
+                    batch.append(more)
+                except asyncio.QueueEmpty:
+                    break
+            batch.sort(key=lambda e: self._EVENT_PRIORITY.get(e.type, 9))
+
+            push_events: list[dict[str, Any]] = []
             async with self._processing_lock:
                 if not self._is_running:
                     break
-                # Skip WS events during emergency close
-                if self._emergency_close_in_progress and event.type in (
-                    EngineEventType.WS_FILL,
-                    EngineEventType.WS_ORDER,
-                ):
-                    continue
-                try:
-                    match event.type:
-                        case EngineEventType.WS_FILL:
-                            self._process_trade_execution(event.data)
-                            await self._flush_order_events()
-                            push_event = self._build_state_update_event("fill", event.data)
-                        case EngineEventType.WS_ORDER:
-                            self._process_single_ws_update(event.data)
-                            await self._flush_order_events()
-                            push_event = self._build_state_update_event("order_update", event.data)
-                        case EngineEventType.BAR_CLOSE:
-                            await self._handle_bar_close(event.data)
-                except Exception as e:
-                    logger.exception(f"Event loop error for {self._run_id}: {e}")
-                    if event.type == EngineEventType.BAR_CLOSE:
-                        await self.stop(error=f"Bar processing error: {e}")
-                        return
+                for ev in batch:
+                    # Skip WS events during emergency close
+                    if self._emergency_close_in_progress and ev.type in (
+                        EngineEventType.WS_FILL,
+                        EngineEventType.WS_ORDER,
+                    ):
+                        continue
+                    try:
+                        match ev.type:
+                            case EngineEventType.WS_FILL:
+                                self._process_trade_execution(ev.data)
+                                await self._flush_order_events()
+                                push_events.append(
+                                    self._build_state_update_event("fill", ev.data)
+                                )
+                            case EngineEventType.WS_ORDER:
+                                self._process_single_ws_update(ev.data)
+                                await self._flush_order_events()
+                                push_events.append(
+                                    self._build_state_update_event(
+                                        "order_update", ev.data
+                                    )
+                                )
+                            case EngineEventType.BAR_CLOSE:
+                                await self._handle_bar_close(ev.data)
+                    except Exception as e:
+                        logger.exception(f"Event loop error for {self._run_id}: {e}")
+                        if ev.type == EngineEventType.BAR_CLOSE:
+                            await self.stop(error=f"Bar processing error: {e}")
+                            return
 
             # Fire-and-forget push OUTSIDE the lock
-            if push_event and self._on_event:
+            if push_events and self._on_event:
+                # Push only the LAST state_update — it contains the most current
+                # state snapshot. Earlier ones in the batch are superseded.
+                last_event = push_events[-1]
                 try:
                     loop = asyncio.get_running_loop()
-                    task = loop.create_task(self._on_event(push_event))
+                    task = loop.create_task(self._on_event(last_event))
                     self._background_tasks.add(task)
                     task.add_done_callback(self._background_tasks.discard)
                 except Exception as e:
