@@ -536,6 +536,14 @@ function rebuildTradeMarkers() {
 
   const minTs = data[0].timestamp
   const maxTs = data[data.length - 1].timestamp
+  // Bar duration in ms for upper bound relaxation — fills within the current
+  // (possibly unclosed) bar should not be filtered out.
+  const tfMap: Record<string, number> = {
+    '1m': 60_000, '3m': 180_000, '5m': 300_000, '15m': 900_000,
+    '30m': 1_800_000, '1h': 3_600_000, '4h': 14_400_000, '1d': 86_400_000,
+  }
+  const barDurationMs = tfMap[props.timeframe] ?? 60_000
+  const maxTsUpper = maxTs + barDurationMs
   const sortedTs = data.map(c => c.timestamp)
 
   function findClosestTs(ts: number): number {
@@ -571,7 +579,7 @@ function rebuildTradeMarkers() {
     const agg = new Map<string, { side: 'buy' | 'sell'; snapped: number; totalAmount: number; totalNotional: number; time: string }>()
     for (const fill of props.fills!) {
       const ts = new Date(fill.timestamp).getTime()
-      if (ts < minTs || ts > maxTs) continue
+      if (ts < minTs || ts > maxTsUpper) continue
       const snapped = snapTs(ts)
       const key = `${snapped}|${fill.side}`
       const existing = agg.get(key)
@@ -731,11 +739,12 @@ watch(() => props.realtime, (newVal) => {
   }
 })
 
-// Watch trades/fills count, open trade, AND candle data length to rebuild chart markers.
-// candleData.length is needed because new bars may make previously out-of-range fills
-// visible (fill.timestamp > maxTs is skipped in rebuildTradeMarkers).
+// Watch trades/fills count and open trade to rebuild chart markers.
+// The upper bound in rebuildTradeMarkers uses maxTs + barDuration, so fills
+// within the current (unclosed) bar are rendered immediately without needing
+// to watch candleData.length.
 watch(
-  () => [props.trades?.length ?? 0, props.fills?.length ?? 0, props.openTrade?.entry_time ?? null, candleData.value.length] as const,
+  () => [props.trades?.length ?? 0, props.fills?.length ?? 0, props.openTrade?.entry_time ?? null] as const,
   () => {
     lastTradesLength = props.trades?.length ?? 0
     if (chart) rebuildTradeMarkers()
