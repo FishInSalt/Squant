@@ -55,6 +55,7 @@ class BacktestContext:
         min_order_value: Decimal = Decimal("5"),
         file_logger: logging.Logger | None = None,
         use_real_time: bool = False,
+        amount_precision: int | None = None,
     ):
         """Initialize backtest context.
 
@@ -71,12 +72,16 @@ class BacktestContext:
             max_logs: Maximum log entries to keep.
             min_order_value: Minimum order notional value in quote currency.
                 Orders below this value are silently rejected (returns None).
+            amount_precision: Exchange's decimal places for amount (e.g., 8 for BTC).
+                When set, position amounts are truncated after base currency fee
+                deduction to stay within exchange precision.
         """
         self._initial_capital = initial_capital
         self._cash = initial_capital
         self._commission_rate = commission_rate
         self._slippage = slippage
         self._min_order_value = min_order_value
+        self._amount_precision = amount_precision
         self._params = params or {}
         self._max_bar_history = max_bar_history
 
@@ -851,8 +856,17 @@ class BacktestContext:
         # SELL + base fee: no position adjustment (fee already reflected in proceeds)
         if fee_in_base and fill.fee > 0 and fill.side == OrderSide.BUY:
             position.amount -= fill.fee
+            # Truncate to exchange precision to keep position aligned with exchange.
+            # Without this, fee deduction creates sub-atom precision (e.g., 11 dp)
+            # that the exchange cannot trade, causing dust on close.
+            if self._amount_precision is not None:
+                from decimal import ROUND_DOWN
 
-        # Dust cleanup: base currency fee deduction can create sub-atom positions
+                step = Decimal(10) ** -self._amount_precision
+                position.amount = position.amount.quantize(step, rounding=ROUND_DOWN)
+
+        # Dust cleanup (safety net): even with precision truncation above, edge cases
+        # like partial fill rounding can leave sub-atom dust. Zero it out.
         # (e.g., 8E-11 BTC) that exchanges cannot trade. If remaining position is
         # positive but below the minimum tradeable precision (1E-8), treat as zero.
         # This must happen BEFORE _update_trade_tracking so the trade closes properly.

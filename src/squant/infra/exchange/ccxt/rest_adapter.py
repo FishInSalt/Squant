@@ -102,6 +102,31 @@ class CCXTRestAdapter(ExchangeAdapter):
             return sorted(self._exchange.markets.keys())
         return []
 
+    def get_amount_precision(self, symbol: str) -> int | None:
+        """Return the number of decimal places for amount on a given symbol.
+
+        Must be called after connect() / load_markets().
+
+        Returns:
+            Number of decimal places (e.g., 8 for BTC/USDT), or None if unavailable.
+        """
+        if not self._exchange or not self._exchange.markets:
+            return None
+        market = self._exchange.markets.get(symbol)
+        if not market:
+            return None
+        precision = market.get("precision", {}).get("amount")
+        if precision is None:
+            return None
+        # CCXT precision can be int (decimal places) or float (tick size like 0.00000001)
+        if isinstance(precision, (int,)) and precision > 0:
+            return precision
+        if isinstance(precision, (float,)):
+            # Convert tick size to decimal places: 0.00000001 → 8
+            import math
+            return max(0, -int(math.floor(math.log10(precision))))
+        return None
+
     async def connect(self) -> None:
         """Establish connection to the exchange."""
         if self._connected:

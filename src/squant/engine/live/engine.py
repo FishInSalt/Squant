@@ -278,6 +278,11 @@ class LiveTradingEngine:
 
         settings = get_settings()
 
+        # Get exchange amount precision to keep positions aligned with exchange
+        amount_precision = None
+        if hasattr(adapter, "get_amount_precision"):
+            amount_precision = adapter.get_amount_precision(symbol)
+
         # Initialize context with in-memory tracking (no simulated matching)
         self._context = BacktestContext(
             initial_capital=initial_equity,
@@ -292,6 +297,7 @@ class LiveTradingEngine:
             max_logs=settings.paper_max_logs,
             min_order_value=risk_config.min_order_value,
             use_real_time=True,
+            amount_precision=amount_precision,
         )
 
         # Risk manager

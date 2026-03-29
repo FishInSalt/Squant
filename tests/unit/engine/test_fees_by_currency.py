@@ -272,6 +272,31 @@ class TestDustPositionCleanup:
         assert ctx._positions["BTC/USDT"].amount == Decimal("0.005")
         assert ctx._open_trade is not None  # Trade still open
 
+    def test_precision_truncation_prevents_dust(self):
+        """With amount_precision set, position is truncated after fee deduction."""
+        ctx = BacktestContext(initial_capital=Decimal("100000"), amount_precision=8)
+        # Buy 0.01 BTC @ 50000, fee = 0.000012345 BTC (creates 9+ dp without truncation)
+        ctx._process_fill(Fill(
+            order_id="o1", symbol="BTC/USDT", side=OrderSide.BUY,
+            price=Decimal("50000"), amount=Decimal("0.01"),
+            fee=Decimal("0.000012345"), timestamp=datetime.now(UTC),
+            fee_currency="BTC",
+        ))
+        # Without truncation: 0.01 - 0.000012345 = 0.009987655 (9 dp)
+        # With truncation to 8 dp: 0.00998765 (rounded down)
+        assert ctx._positions["BTC/USDT"].amount == Decimal("0.00998765")
+
+    def test_no_truncation_without_precision(self, ctx):
+        """Without amount_precision, position keeps full Decimal precision."""
+        ctx._process_fill(Fill(
+            order_id="o1", symbol="BTC/USDT", side=OrderSide.BUY,
+            price=Decimal("50000"), amount=Decimal("0.01"),
+            fee=Decimal("0.000012345"), timestamp=datetime.now(UTC),
+            fee_currency="BTC",
+        ))
+        # Full precision preserved
+        assert ctx._positions["BTC/USDT"].amount == Decimal("0.009987655")
+
     def test_exact_zero_no_dust(self, ctx):
         """Exact zero position should work without dust cleanup."""
         ctx._process_fill(Fill(
