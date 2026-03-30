@@ -240,6 +240,7 @@ class LiveTradingEngine:
         on_result: ResultPersistCallback | None = None,
         on_event: EventCallback | None = None,
         on_order_persist: OrderPersistCallback | None = None,
+        on_stop: Callable[[], Awaitable[None]] | None = None,
         credentials: ExchangeCredentials | None = None,
         exchange_id: str = "okx",
     ):
@@ -385,6 +386,7 @@ class LiveTradingEngine:
 
         # Order/trade audit persistence (LIVE-013)
         self._on_order_persist = on_order_persist
+        self._on_stop = on_stop
         self._pending_order_events: list[dict[str, Any]] = []
 
         # Balance sync rate limiting (R5-F5): avoid excessive API calls
@@ -689,11 +691,40 @@ class LiveTradingEngine:
 
         self._stopped_at = datetime.now(UTC)
 
+        # Persist final state BEFORE closing adapter — captures all fills
+        # including those from order cancellation. This fixes the issue where
+        # self-stop (circuit breaker, risk limit) didn't persist final state
+        # because only _handle_bar_close and service.stop() called persist.
+        if self._on_result:
+            try:
+                result_data = self.build_result_for_persistence()
+                await self._on_result(str(self._run_id), result_data)
+            except Exception as e:
+                logger.warning(f"Failed to persist final state on stop: {e}")
+
+        # Flush any remaining order events
+        if self._on_order_persist and self._pending_order_events:
+            try:
+                events = list(self._pending_order_events)
+                self._pending_order_events.clear()
+                await self._on_order_persist(str(self._run_id), events)
+            except Exception as e:
+                logger.warning(f"Failed to flush order events on stop: {e}")
+
         # Close REST adapter connection to release aiohttp resources (M-2)
         try:
             await self._adapter.close()
         except Exception as e:
             logger.debug(f"Error closing adapter for {self._run_id}: {e}")
+
+        # Notify service layer to update DB status (circuit breaker, risk limit,
+        # or any self-initiated stop). Without this, DB stays RUNNING while engine
+        # is dead — "zombie session" bug.
+        if self._on_stop:
+            try:
+                await self._on_stop()
+            except Exception as e:
+                logger.warning(f"on_stop callback failed for {self._run_id}: {e}")
 
         # Notification: engine stopped (LIVE-011)
         _fire_notification(

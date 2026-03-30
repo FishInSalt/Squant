@@ -483,6 +483,7 @@ class LiveTradingService:
                     account_id=str(exchange_account_id),
                     exchange=exchange_account.exchange,
                 ),
+                on_stop=self._create_stop_callback(UUID(run.id)),
                 credentials=ws_credentials,
                 exchange_id=exchange_account.exchange.lower(),
             )
@@ -992,6 +993,56 @@ class LiveTradingService:
                 logger.debug(f"Failed to publish trading event: {e}")
 
         return _publish
+
+    @staticmethod
+    def _create_stop_callback(run_id: UUID) -> Any:
+        """Create callback for engine self-stop (circuit breaker, risk limit, etc.).
+
+        Updates the StrategyRun DB record to STOPPED/ERROR status. Without this,
+        the DB stays RUNNING while the engine is dead ("zombie session" bug).
+        """
+
+        async def _on_engine_stop() -> None:
+            from squant.engine.live.manager import get_live_session_manager
+            from squant.infra.database import get_session_context
+            from squant.infra.repository import BaseRepository
+            from squant.models.strategy import StrategyRun
+            from squant.models.enums import RunStatus
+
+            try:
+                session_manager = get_live_session_manager()
+                engine = session_manager.get(run_id)
+
+                # Build final result from engine (if still accessible)
+                result_data = None
+                error_message = None
+                if engine:
+                    result_data = engine.build_result_for_persistence()
+                    error_message = engine.error_message
+
+                # Update DB directly (service.stop() won't run for self-stops)
+                async with get_session_context() as db_session:
+                    repo = BaseRepository[StrategyRun](db_session, StrategyRun)
+                    await repo.update(
+                        run_id,
+                        status=RunStatus.ERROR if error_message else RunStatus.STOPPED,
+                        result=result_data,
+                        stopped_at=datetime.now(UTC),
+                        error_message=error_message,
+                    )
+                    await db_session.commit()
+
+                # Unregister from session manager
+                await session_manager.unregister(run_id)
+
+                logger.info(
+                    f"Engine self-stop: updated DB for {run_id} "
+                    f"(status={'ERROR' if error_message else 'STOPPED'})"
+                )
+            except Exception as e:
+                logger.exception(f"Failed to update DB on engine self-stop: {e}")
+
+        return _on_engine_stop
 
     async def stop(
         self, run_id: UUID, cancel_orders: bool = True, *, for_shutdown: bool = False
@@ -1861,6 +1912,7 @@ class LiveTradingService:
             on_snapshot=self._create_snapshot_callback(),
             on_result=self._create_result_callback(),
             on_event=self._create_event_callback(UUID(run.id)),
+            on_stop=self._create_stop_callback(UUID(run.id)),
             credentials=ws_credentials,
             exchange_id=exchange_account.exchange.lower(),
         )
