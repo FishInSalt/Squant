@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import logging
 import threading
+import time
 from datetime import UTC, datetime
 from decimal import Decimal
 from typing import TYPE_CHECKING
@@ -187,6 +188,28 @@ class RiskManager:
                 logger.info("New trading day detected, resetting daily risk stats")
                 self.state.reset_daily_stats(self._current_equity)
 
+    def check_daily_loss_warning(self) -> bool:
+        """Check if daily loss has reached warning threshold.
+
+        Returns True if warning should be fired (first time only per day).
+        """
+        with self._lock:
+            if self.state.daily_loss_warned:
+                return False
+            if self.state.daily_start_equity <= 0:
+                return False
+
+            effective_daily_pnl = self.state.daily_pnl + (
+                self.state.unrealized_pnl - self.state.daily_start_unrealized_pnl
+            )
+            daily_loss_ratio = -effective_daily_pnl / self.state.daily_start_equity
+            threshold = self.config.daily_loss_limit * self.config.daily_loss_warning_threshold
+
+            if daily_loss_ratio >= threshold:
+                self.state.daily_loss_warned = True
+                return True
+            return False
+
     def validate_order(
         self,
         order: OrderRequest,
@@ -233,15 +256,21 @@ class RiskManager:
         if not result.passed:
             return result
 
+        # Frequency limit (RSK-007)
+        result = self._check_frequency_limit()
+        if not result.passed:
+            return result
+
         # Check daily trade limit (RSK-003)
         result = self._check_daily_trade_limit()
         if not result.passed:
             return result
 
-        # Check daily loss limit (RSK-003)
-        result = self._check_daily_loss_limit()
-        if not result.passed:
-            return result
+        # Check daily loss limit (RSK-003b) — sell orders exempt (allow stop-loss)
+        if order.side != OrderSide.SELL:
+            result = self._check_daily_loss_limit()
+            if not result.passed:
+                return result
 
         # Check total/cumulative loss limit (RSK-004)
         result = self._check_total_loss_limit()
@@ -294,6 +323,28 @@ class RiskManager:
                 cooldown_remaining_minutes=remaining,
             )
 
+        return RiskCheckResult.ok()
+
+    def _check_frequency_limit(self) -> RiskCheckResult:
+        """Check order frequency limit (RSK-007)."""
+        now = time.time()
+        cutoff = now - 60.0
+        # Clean expired timestamps
+        self.state.order_timestamps = [
+            ts for ts in self.state.order_timestamps if ts > cutoff
+        ]
+        if len(self.state.order_timestamps) >= self.config.max_orders_per_minute:
+            return RiskCheckResult.reject(
+                rule_type=RiskRuleType.FREQUENCY_LIMIT,
+                reason=(
+                    f"Order frequency exceeded: "
+                    f"{len(self.state.order_timestamps)}/{self.config.max_orders_per_minute} per minute"
+                ),
+                current_count=len(self.state.order_timestamps),
+                limit=self.config.max_orders_per_minute,
+            )
+        # Record this order attempt
+        self.state.order_timestamps.append(now)
         return RiskCheckResult.ok()
 
     def _check_daily_trade_limit(self) -> RiskCheckResult:

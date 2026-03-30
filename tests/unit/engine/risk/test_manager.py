@@ -1856,3 +1856,121 @@ class TestRecordOrderFill:
 
         # Only record_order_fill increments the count
         assert rm.state.daily_trade_count == 0
+
+
+class TestFrequencyLimit:
+    """Tests for R2: order frequency limit (RSK-007)."""
+
+    def test_orders_within_limit_pass(self):
+        config = RiskConfig(max_orders_per_minute=5)
+        manager = RiskManager(config=config, initial_equity=Decimal("10000"))
+        order = OrderRequest(
+            symbol="BTC/USDT", side=OrderSide.BUY, type=OrderType.MARKET,
+            amount=Decimal("0.001"),
+        )
+        for _ in range(5):
+            result = manager.validate_order(order, Decimal("50000"), Decimal("0"))
+            assert result.passed
+
+    def test_order_exceeding_limit_rejected(self):
+        config = RiskConfig(max_orders_per_minute=3)
+        manager = RiskManager(config=config, initial_equity=Decimal("10000"))
+        order = OrderRequest(
+            symbol="BTC/USDT", side=OrderSide.BUY, type=OrderType.MARKET,
+            amount=Decimal("0.001"),
+        )
+        # First 3 pass
+        for _ in range(3):
+            result = manager.validate_order(order, Decimal("50000"), Decimal("0"))
+            assert result.passed
+        # 4th rejected
+        result = manager.validate_order(order, Decimal("50000"), Decimal("0"))
+        assert not result.passed
+        assert result.rule_type == RiskRuleType.FREQUENCY_LIMIT
+
+    def test_old_timestamps_expire(self):
+        config = RiskConfig(max_orders_per_minute=2)
+        manager = RiskManager(config=config, initial_equity=Decimal("10000"))
+        order = OrderRequest(
+            symbol="BTC/USDT", side=OrderSide.BUY, type=OrderType.MARKET,
+            amount=Decimal("0.001"),
+        )
+        import time
+        # Add old timestamps (> 60s ago)
+        manager.state.order_timestamps = [time.time() - 120, time.time() - 90]
+        # Should pass because old timestamps are cleaned
+        result = manager.validate_order(order, Decimal("50000"), Decimal("0"))
+        assert result.passed
+
+
+class TestDailyLossSellExemption:
+    """Tests for R4: sell orders bypass daily loss limit."""
+
+    def test_buy_order_rejected_when_daily_loss_exceeded(self):
+        config = RiskConfig(daily_loss_limit=Decimal("0.05"))
+        manager = RiskManager(config=config, initial_equity=Decimal("10000"))
+        manager.state.daily_pnl = Decimal("-600")  # 6% loss > 5% limit
+        order = OrderRequest(
+            symbol="BTC/USDT", side=OrderSide.BUY, type=OrderType.MARKET,
+            amount=Decimal("0.001"),
+        )
+        result = manager.validate_order(order, Decimal("50000"), Decimal("0"))
+        assert not result.passed
+        assert result.rule_type == RiskRuleType.DAILY_LOSS_LIMIT
+
+    def test_sell_order_passes_when_daily_loss_exceeded(self):
+        config = RiskConfig(daily_loss_limit=Decimal("0.05"))
+        manager = RiskManager(config=config, initial_equity=Decimal("10000"))
+        manager.state.daily_pnl = Decimal("-600")  # 6% loss > 5% limit
+        order = OrderRequest(
+            symbol="BTC/USDT", side=OrderSide.SELL, type=OrderType.MARKET,
+            amount=Decimal("0.001"),
+        )
+        result = manager.validate_order(order, Decimal("50000"), Decimal("0.01"))
+        assert result.passed
+
+
+class TestDailyLossWarning:
+    """Tests for M5: daily loss 80% warning."""
+
+    def test_warning_triggered_at_threshold(self):
+        config = RiskConfig(
+            daily_loss_limit=Decimal("0.05"),
+            daily_loss_warning_threshold=Decimal("0.8"),
+        )
+        manager = RiskManager(config=config, initial_equity=Decimal("10000"))
+        # Set 4.1% loss (82% of 5% limit)
+        manager.state.daily_pnl = Decimal("-410")
+        warned = manager.check_daily_loss_warning()
+        assert warned is True
+        assert manager.state.daily_loss_warned is True
+
+    def test_warning_not_triggered_below_threshold(self):
+        config = RiskConfig(
+            daily_loss_limit=Decimal("0.05"),
+            daily_loss_warning_threshold=Decimal("0.8"),
+        )
+        manager = RiskManager(config=config, initial_equity=Decimal("10000"))
+        manager.state.daily_pnl = Decimal("-300")  # 60% of limit
+        warned = manager.check_daily_loss_warning()
+        assert warned is False
+
+    def test_warning_fires_only_once(self):
+        config = RiskConfig(
+            daily_loss_limit=Decimal("0.05"),
+            daily_loss_warning_threshold=Decimal("0.8"),
+        )
+        manager = RiskManager(config=config, initial_equity=Decimal("10000"))
+        manager.state.daily_pnl = Decimal("-410")
+        assert manager.check_daily_loss_warning() is True
+        assert manager.check_daily_loss_warning() is False  # second call
+
+    def test_warning_resets_on_daily_reset(self):
+        config = RiskConfig(
+            daily_loss_limit=Decimal("0.05"),
+            daily_loss_warning_threshold=Decimal("0.8"),
+        )
+        manager = RiskManager(config=config, initial_equity=Decimal("10000"))
+        manager.state.daily_loss_warned = True
+        manager.state.reset_daily_stats(Decimal("10000"))
+        assert manager.state.daily_loss_warned is False
