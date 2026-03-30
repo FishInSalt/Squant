@@ -180,6 +180,7 @@ class PaperTradingEngine:
 
         # Engine state
         self._is_running = False
+        self._circuit_breaker_triggered: bool = False
         self._warming_up = False  # True during strategy warmup (IMP-009)
         self._started_at: datetime | None = None
         self._stopped_at: datetime | None = None
@@ -456,6 +457,17 @@ class PaperTradingEngine:
             try:
                 # Update last activity timestamp
                 self._last_active_at = datetime.now(UTC)
+
+                # Check circuit breaker (LCB3 — mirrors live engine pattern)
+                if self._risk_manager and self._circuit_breaker_triggered:
+                    losses = self._risk_manager.state.consecutive_losses
+                    reason = f"连续亏损 {losses} 次，触发熔断"
+                    logger.warning(f"Circuit breaker active for paper session {self._run_id}: {reason}")
+                    self._context.log(f"熔断触发：{reason}，停止交易", level="error", category="risk")
+                    self._error_message = reason
+                    self._stop_impl()
+                    await self._persist_on_early_stop()
+                    return
 
                 current_price = candle.close
                 timestamp = candle.timestamp
@@ -955,6 +967,8 @@ class PaperTradingEngine:
             self._cached_realized_pnl += completed_trade.pnl
             if self._risk_manager:
                 self._risk_manager.record_trade_result(completed_trade.pnl)
+                if self._risk_manager.state.circuit_breaker_triggered:
+                    self._circuit_breaker_triggered = True
 
         # NOTE: state_update push moved to process_candle() after _move_completed_orders()
         # so the pushed state reflects the final order list (filled orders already moved out).
