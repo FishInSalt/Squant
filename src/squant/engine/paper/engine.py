@@ -574,10 +574,7 @@ class PaperTradingEngine:
 
                     # 5e. Daily loss warning (M5)
                     if self._risk_manager.check_daily_loss_warning():
-                        daily_pnl = self._risk_manager.state.daily_pnl
-                        limit = self._risk_manager.config.daily_loss_limit
-                        threshold = self._risk_manager.config.daily_loss_warning_threshold
-                        pct = threshold * 100
+                        pct = self._risk_manager.config.daily_loss_warning_threshold * 100
                         self._context.log(
                             f"日亏损预警：已达限额 {pct:.0f}%",
                             level="warning",

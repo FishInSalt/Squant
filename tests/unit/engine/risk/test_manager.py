@@ -2023,7 +2023,7 @@ class TestPeakEquityPersistence:
         )
         manager.update_equity(Decimal("15000"))
         summary = manager.get_state_summary()
-        assert summary["peak_equity"] == "15000"
+        assert summary["peak_equity"] == 15000.0
 
     def test_peak_equity_restored(self):
         manager = RiskManager(

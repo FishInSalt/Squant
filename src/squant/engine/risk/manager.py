@@ -766,7 +766,7 @@ class RiskManager:
             "current_position_value": float(self.state.current_position_value),
             "max_position_size_pct": float(self.config.max_position_size),
             "max_order_size_pct": float(self.config.max_order_size),
-            "peak_equity": str(self.state.peak_equity),
+            "peak_equity": float(self.state.peak_equity),
             "max_drawdown_pct": float(self.config.max_drawdown),
             "current_drawdown": (
                 float((self.state.peak_equity - self._current_equity) / self.state.peak_equity)
