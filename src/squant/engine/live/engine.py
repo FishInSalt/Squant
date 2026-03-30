@@ -144,6 +144,9 @@ class LiveOrder:
         self.updated_at: datetime | None = None
         self.error_message: str | None = None
         self.bars_remaining: int | None = None  # None = GTC, positive int = expire after N bars
+        # Tracks fill amount recorded via ws_order fallback (not confirmed by trade_id).
+        # Used by _process_trade_execution to skip fills already accounted for.
+        self._fallback_fill_pending = Decimal("0")
 
     @property
     def remaining_amount(self) -> Decimal:
@@ -1311,6 +1314,10 @@ class LiveTradingEngine:
                     update.avg_price, update.filled_size, old_avg, old_filled, fill_delta
                 )
 
+                # Track fallback fill amount so _process_trade_execution can
+                # detect and skip fills already accounted for by this fallback.
+                live_order._fallback_fill_pending += fill_delta
+
                 self._record_fill(
                     live_order,
                     fill_price,
@@ -1401,17 +1408,19 @@ class LiveTradingEngine:
             return
 
         # Guard: skip if this fill was already accounted for by ws_order fallback.
-        # In the event loop, WS_ORDER may arrive before WS_FILL and record the fill
-        # via the fallback path (_process_single_ws_update). When WS_FILL then arrives,
-        # filled_amount already includes this fill's contribution. Detect by checking
-        # if adding this fill would exceed the order's requested amount.
+        # When WS_ORDER arrives before WS_FILL (cross-batch), the fallback path
+        # records fills without trade_ids. Track pending fallback amount on the
+        # LiveOrder and consume it here to prevent double-counting.
         old_filled = live_order.filled_amount
-        if old_filled + exec_data.amount > live_order.amount + Decimal("1E-8"):
+        if live_order._fallback_fill_pending >= exec_data.amount - Decimal("1E-8"):
             logger.info(
-                f"Skipping ws_trade fill for {internal_id}: already accounted for "
-                f"(filled={old_filled}, fill_amount={exec_data.amount}, "
-                f"order_amount={live_order.amount})"
+                f"Skipping ws_trade fill for {internal_id}: covered by ws_order fallback "
+                f"(fallback_pending={live_order._fallback_fill_pending}, "
+                f"fill_amount={exec_data.amount})"
             )
+            live_order._fallback_fill_pending -= exec_data.amount
+            if live_order._fallback_fill_pending < Decimal("0"):
+                live_order._fallback_fill_pending = Decimal("0")
             self._processed_trade_ids[exec_data.trade_id] = True
             return
 
