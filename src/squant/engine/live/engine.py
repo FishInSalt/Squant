@@ -691,25 +691,27 @@ class LiveTradingEngine:
 
         self._stopped_at = datetime.now(UTC)
 
-        # Persist final state BEFORE closing adapter — captures all fills
-        # including those from order cancellation. This fixes the issue where
-        # self-stop (circuit breaker, risk limit) didn't persist final state
-        # because only _handle_bar_close and service.stop() called persist.
-        if self._on_result:
-            try:
-                result_data = self.build_result_for_persistence()
-                await self._on_result(str(self._run_id), result_data)
-            except Exception as e:
-                logger.warning(f"Failed to persist final state on stop: {e}")
+        # Self-stop path (circuit breaker, risk limit, strategy error):
+        # Persist final state and notify service layer to update DB.
+        # Only fires when error_message is set — user-initiated stops go through
+        # service.stop() which handles persistence and DB update itself.
+        if self._error_message:
+            # Persist final result state
+            if self._on_result:
+                try:
+                    result_data = self.build_result_for_persistence()
+                    await self._on_result(str(self._run_id), result_data)
+                except Exception as e:
+                    logger.warning(f"Failed to persist final state on stop: {e}")
 
-        # Flush any remaining order events
-        if self._on_order_persist and self._pending_order_events:
-            try:
-                events = list(self._pending_order_events)
-                self._pending_order_events.clear()
-                await self._on_order_persist(str(self._run_id), events)
-            except Exception as e:
-                logger.warning(f"Failed to flush order events on stop: {e}")
+            # Flush any remaining order events
+            if self._on_order_persist and self._pending_order_events:
+                try:
+                    events = list(self._pending_order_events)
+                    self._pending_order_events.clear()
+                    await self._on_order_persist(str(self._run_id), events)
+                except Exception as e:
+                    logger.warning(f"Failed to flush order events on stop: {e}")
 
         # Close REST adapter connection to release aiohttp resources (M-2)
         try:
@@ -717,10 +719,9 @@ class LiveTradingEngine:
         except Exception as e:
             logger.debug(f"Error closing adapter for {self._run_id}: {e}")
 
-        # Notify service layer to update DB status (circuit breaker, risk limit,
-        # or any self-initiated stop). Without this, DB stays RUNNING while engine
-        # is dead — "zombie session" bug.
-        if self._on_stop:
+        # Notify service layer to update DB status. Only for self-stops
+        # (error_message set) — service.stop() handles its own DB update.
+        if self._on_stop and self._error_message:
             try:
                 await self._on_stop()
             except Exception as e:
