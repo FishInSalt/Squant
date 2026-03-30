@@ -1608,7 +1608,8 @@ class TestCircuitBreakerIntegration:
 
         # Engine should be stopped
         assert engine.is_running is False
-        assert "Circuit breaker triggered" in engine.error_message
+        assert "Circuit breaker" in engine.error_message
+        assert "consecutive losses" in engine.error_message
 
     @pytest.mark.asyncio
     async def test_process_candle_continues_without_circuit_breaker(

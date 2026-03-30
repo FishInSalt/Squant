@@ -1135,7 +1135,15 @@ class LiveTradingEngine:
 
         # Check if circuit breaker was triggered by order update (RSK-012)
         if self._circuit_breaker_triggered:
-            logger.warning(f"Circuit breaker active for session {self._run_id}, stopping trading")
+            losses = self._circuit_breaker_losses or "N/A"
+            reason = f"连续亏损 {losses} 次，触发熔断"
+            logger.warning(f"Circuit breaker active for session {self._run_id}: {reason}")
+
+            self._context.log(
+                f"熔断触发：{reason}，停止交易",
+                level="error",
+                category="risk",
+            )
 
             # Notification: circuit breaker (LIVE-011)
             _fire_notification(
@@ -1143,17 +1151,13 @@ class LiveTradingEngine:
                 level="critical",
                 event_type="circuit_breaker_triggered",
                 title="熔断触发",
-                message=f"实盘会话 {self._symbol} 因连续亏损触发熔断，已停止交易",
-                details={"symbol": self._symbol},
+                message=f"实盘会话 {self._symbol} {reason}，已停止交易",
+                details={"symbol": self._symbol, "consecutive_losses": losses},
             )
 
-            self._context.log(
-                "熔断触发：连续亏损达到阈值，停止交易",
-                level="error",
-                category="risk",
+            await self.stop(
+                error=f"Circuit breaker: {losses} consecutive losses"
             )
-
-            await self.stop(error="Circuit breaker triggered due to consecutive losses")
 
             # Trigger global circuit breaker to stop all sessions (Issue 033 fix)
             # This ensures that when one session triggers circuit breaker due to
