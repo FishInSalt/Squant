@@ -320,13 +320,13 @@ class MyStrategy(Strategy):
 
     def test_strategy_info_has_init(self):
         """Test strategy_info detects __init__ method (ST-003)."""
-        code = '''
+        code = """
 class TestStrat(Strategy):
     def __init__(self):
         self.x = 0
     def on_bar(self, bar):
         pass
-'''
+"""
         result = validate_strategy_code(code)
         assert result.valid is True
         assert result.strategy_info["has_init"] is True

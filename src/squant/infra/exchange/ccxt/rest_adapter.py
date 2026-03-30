@@ -32,6 +32,7 @@ from squant.infra.exchange.types import (
     OrderResponse,
     Ticker,
     TimeFrame,
+    TradeInfo,
 )
 from squant.models.enums import OrderSide, OrderStatus, OrderType
 
@@ -101,6 +102,31 @@ class CCXTRestAdapter(ExchangeAdapter):
             return sorted(self._exchange.markets.keys())
         return []
 
+    def get_amount_precision(self, symbol: str) -> int | None:
+        """Return the number of decimal places for amount on a given symbol.
+
+        Must be called after connect() / load_markets().
+
+        Returns:
+            Number of decimal places (e.g., 8 for BTC/USDT), or None if unavailable.
+        """
+        if not self._exchange or not self._exchange.markets:
+            return None
+        market = self._exchange.markets.get(symbol)
+        if not market:
+            return None
+        precision = market.get("precision", {}).get("amount")
+        if precision is None:
+            return None
+        # CCXT precision can be int (decimal places) or float (tick size like 0.00000001)
+        if isinstance(precision, (int,)) and precision > 0:
+            return precision
+        if isinstance(precision, (float,)):
+            # Convert tick size to decimal places: 0.00000001 → 8
+            import math
+            return max(0, -int(math.floor(math.log10(precision))))
+        return None
+
     async def connect(self) -> None:
         """Establish connection to the exchange."""
         if self._connected:
@@ -113,6 +139,7 @@ class CCXTRestAdapter(ExchangeAdapter):
             # Build exchange configuration
             config: dict[str, Any] = {
                 "enableRateLimit": True,
+                "timeout": 30000,  # 30s timeout for REST requests (default 10s)
                 # Only load spot markets to avoid timeout on OPTION/FUTURES APIs
                 "options": {
                     "defaultType": "spot",
@@ -386,6 +413,128 @@ class CCXTRestAdapter(ExchangeAdapter):
                 exchange=self._exchange_id,
             ) from e
 
+    async def get_account_total_value(self, quote_currency: str) -> tuple[Decimal, list[Balance]]:
+        """Get total account value denominated in quote currency.
+
+        Priority 1: Use OKX native totalEq from raw response info.
+        Priority 2: Manual conversion via ticker lookups for non-quote currencies.
+        """
+        if not self._exchange:
+            raise ExchangeConnectionError(
+                message="Exchange not connected. Call connect() first.",
+                exchange=self._exchange_id,
+            )
+
+        if not self._credentials:
+            raise ExchangeAuthenticationError(
+                message="Credentials required for account total value query",
+                exchange=self._exchange_id,
+            )
+
+        try:
+            raw_balance = await self._exchange.fetch_balance()
+        except ccxt.AuthenticationError as e:
+            raise ExchangeAuthenticationError(
+                message=f"Authentication failed: {e}",
+                exchange=self._exchange_id,
+            ) from e
+        except ccxt.RateLimitExceeded as e:
+            raise ExchangeRateLimitError(
+                message=f"Rate limit exceeded: {e}",
+                exchange=self._exchange_id,
+            ) from e
+        except Exception as e:
+            raise ExchangeAPIError(
+                message=f"Failed to fetch balance: {e}",
+                exchange=self._exchange_id,
+            ) from e
+
+        # Build balance list (non-zero only)
+        free_balances = raw_balance.get("free", {})
+        used_balances = raw_balance.get("used", {})
+        all_currencies = set(free_balances.keys()) | set(used_balances.keys())
+
+        balances: list[Balance] = []
+        for currency in all_currencies:
+            free = free_balances.get(currency, 0)
+            used = used_balances.get(currency, 0)
+            if free == 0 and used == 0:
+                continue
+            balances.append(
+                Balance(
+                    currency=currency,
+                    available=Decimal(str(free)) if free else Decimal("0"),
+                    frozen=Decimal(str(used)) if used else Decimal("0"),
+                )
+            )
+
+        # Priority 1: OKX native per-currency equity from details[]
+        # Uses each currency's `eq` field (denominated in its own currency),
+        # which is more accurate than `totalEq` (USD-denominated).
+        quote_upper = quote_currency.upper()
+        try:
+            info = raw_balance.get("info", {})
+            info_data = info.get("data", []) if isinstance(info, dict) else []
+            if info_data and isinstance(info_data, list) and len(info_data) > 0:
+                details = info_data[0].get("details", [])
+                if details and isinstance(details, list):
+                    total_value = Decimal("0")
+                    used_native = False
+                    for detail in details:
+                        ccy = (detail.get("ccy") or "").upper()
+                        eq_str = detail.get("eq")
+                        if not ccy or not eq_str:
+                            continue
+                        eq_val = Decimal(eq_str)
+                        if eq_val == 0:
+                            continue
+                        if ccy == quote_upper:
+                            total_value += eq_val
+                            used_native = True
+                        else:
+                            # Convert non-quote currency via ticker
+                            try:
+                                ticker = await self._exchange.fetch_ticker(f"{ccy}/{quote_upper}")
+                                price = Decimal(str(ticker["last"]))
+                                total_value += eq_val * price
+                                used_native = True
+                            except Exception:
+                                logger.warning(
+                                    f"Failed to fetch ticker for {ccy}/{quote_upper}, "
+                                    f"skipping {eq_val} {ccy} in total value calculation"
+                                )
+                    if used_native:
+                        return total_value, balances
+        except (KeyError, IndexError, TypeError, ArithmeticError):
+            pass
+
+        # Priority 2: Manual conversion from CCXT structured balances
+        total_value = Decimal("0")
+
+        for bal in balances:
+            if bal.currency.upper() == quote_upper:
+                total_value += bal.total
+            else:
+                # Convert via ticker
+                pair = f"{bal.currency}/{quote_currency}"
+                try:
+                    ticker = await self._exchange.fetch_ticker(pair)
+                    last_price = ticker.get("last")
+                    if last_price is not None:
+                        total_value += bal.total * Decimal(str(last_price))
+                    else:
+                        logger.warning(
+                            f"Ticker {pair} has no last price, "
+                            f"skipping {bal.currency} in total value calculation"
+                        )
+                except Exception as e:
+                    logger.warning(
+                        f"Failed to fetch ticker for {pair}, "
+                        f"skipping {bal.currency} in total value calculation: {e}"
+                    )
+
+        return total_value, balances
+
     # ==================== Order Methods ====================
 
     async def place_order(self, request: OrderRequest) -> OrderResponse:
@@ -406,8 +555,10 @@ class CCXTRestAdapter(ExchangeAdapter):
             )
 
         return await with_retry(
-            self._place_order_impl, request,
-            config=_PLACE_ORDER_RETRY, operation_name="place_order",
+            self._place_order_impl,
+            request,
+            config=_PLACE_ORDER_RETRY,
+            operation_name="place_order",
         )
 
     async def _place_order_impl(self, request: OrderRequest) -> OrderResponse:
@@ -466,8 +617,10 @@ class CCXTRestAdapter(ExchangeAdapter):
     async def cancel_order(self, request: CancelOrderRequest) -> OrderResponse:
         """Cancel an existing order."""
         return await with_retry(
-            self._cancel_order_impl, request,
-            config=_READ_RETRY, operation_name="cancel_order",
+            self._cancel_order_impl,
+            request,
+            config=_READ_RETRY,
+            operation_name="cancel_order",
         )
 
     async def _cancel_order_impl(self, request: CancelOrderRequest) -> OrderResponse:
@@ -516,8 +669,11 @@ class CCXTRestAdapter(ExchangeAdapter):
     async def get_order(self, symbol: str, order_id: str) -> OrderResponse:
         """Get order details by ID."""
         return await with_retry(
-            self._get_order_impl, symbol, order_id,
-            config=_READ_RETRY, operation_name="get_order",
+            self._get_order_impl,
+            symbol,
+            order_id,
+            config=_READ_RETRY,
+            operation_name="get_order",
         )
 
     async def _get_order_impl(self, symbol: str, order_id: str) -> OrderResponse:
@@ -573,8 +729,10 @@ class CCXTRestAdapter(ExchangeAdapter):
             )
 
         return await with_retry(
-            self._get_open_orders_impl, symbol,
-            config=_READ_RETRY, operation_name="get_open_orders",
+            self._get_open_orders_impl,
+            symbol,
+            config=_READ_RETRY,
+            operation_name="get_open_orders",
         )
 
     async def _get_open_orders_impl(self, symbol: str | None = None) -> list[OrderResponse]:
@@ -595,6 +753,168 @@ class CCXTRestAdapter(ExchangeAdapter):
         except Exception as e:
             raise ExchangeAPIError(
                 message=f"Failed to fetch open orders: {e}",
+                exchange=self._exchange_id,
+            ) from e
+
+    async def get_order_trades(self, symbol: str, order_id: str) -> list[TradeInfo]:
+        """Get all individual fills for a specific order via CCXT fetchOrderTrades."""
+        return await with_retry(
+            lambda: self._get_order_trades_impl(symbol, order_id),
+            config=_READ_RETRY,
+            operation_name="get_order_trades",
+        )
+
+    async def _get_order_trades_impl(self, symbol: str, order_id: str) -> list[TradeInfo]:
+        """Internal implementation (retryable)."""
+        if not self._exchange:
+            raise ExchangeConnectionError(
+                message="Exchange not connected. Call connect() first.",
+                exchange=self._exchange_id,
+            )
+        if not self._credentials:
+            raise ExchangeAuthenticationError(
+                message="Credentials required for get_order_trades.",
+                exchange=self._exchange_id,
+            )
+
+        try:
+            raw_trades = await self._exchange.fetch_order_trades(order_id, symbol)
+        except ccxt.AuthenticationError as e:
+            raise ExchangeAuthenticationError(
+                message=f"Authentication failed: {e}",
+                exchange=self._exchange_id,
+            ) from e
+        except ccxt.RateLimitExceeded as e:
+            raise ExchangeRateLimitError(
+                message=f"Rate limit exceeded: {e}",
+                exchange=self._exchange_id,
+            ) from e
+        except ccxt.OrderNotFound as e:
+            raise OrderNotFoundError(
+                message=f"Order not found: {e}",
+                exchange=self._exchange_id,
+            ) from e
+        except Exception as e:
+            raise ExchangeAPIError(
+                message=f"Failed to fetch order trades: {e}",
+                exchange=self._exchange_id,
+            ) from e
+
+        result = []
+        for t in raw_trades:
+            fee_info = t.get("fee") or {}
+            ts = t.get("timestamp")
+            timestamp = (
+                datetime.fromtimestamp(ts / 1000, tz=UTC) if ts is not None else datetime.now(UTC)
+            )
+            result.append(
+                TradeInfo(
+                    trade_id=str(t.get("id", "")),
+                    order_id=str(t.get("order", "")),
+                    symbol=t.get("symbol", symbol),
+                    side=t.get("side", ""),
+                    price=Decimal(str(t.get("price") or 0)),
+                    amount=Decimal(str(t.get("amount") or 0)),
+                    fee=Decimal(str(fee_info.get("cost") or 0)),
+                    fee_currency=fee_info.get("currency") or "",
+                    taker_or_maker=t.get("takerOrMaker"),
+                    timestamp=timestamp,
+                )
+            )
+        result.sort(key=lambda x: x.timestamp)
+        return result
+
+    async def get_orders(
+        self,
+        symbol: str,
+        since: datetime | None = None,
+        until: datetime | None = None,
+    ) -> list[OrderResponse]:
+        """Get all orders (open + closed) for a symbol with pagination.
+
+        Fetches closed orders with automatic pagination (100 per page),
+        then fetches open orders, and deduplicates by order ID.
+        Orders with timestamp after `until` are excluded from results.
+        """
+        if not self._exchange:
+            raise ExchangeConnectionError(
+                message="Exchange not connected. Call connect() first.",
+                exchange=self._exchange_id,
+            )
+
+        if not self._credentials:
+            raise ExchangeAuthenticationError(
+                message="Credentials required for order query",
+                exchange=self._exchange_id,
+            )
+
+        since_ms: int | None = int(since.timestamp() * 1000) if since else None
+        until_ms: int | None = int(until.timestamp() * 1000) if until else None
+
+        try:
+            # Paginate closed orders
+            seen_ids: set[str] = set()
+            all_orders: list[OrderResponse] = []
+            cursor = since_ms
+            page_size = 100
+
+            while True:
+                batch = await self._exchange.fetch_closed_orders(
+                    symbol, since=cursor, limit=page_size
+                )
+
+                reached_until = False
+                for raw_order in batch:
+                    # Stop if order is beyond the until boundary
+                    if until_ms and raw_order.get("timestamp", 0) > until_ms:
+                        reached_until = True
+                        break
+                    oid = str(raw_order.get("id", ""))
+                    if oid and oid not in seen_ids:
+                        seen_ids.add(oid)
+                        all_orders.append(self._transform_order(raw_order))
+
+                # Stop if we've reached the until boundary
+                if reached_until:
+                    break
+
+                # Stop if short page (less than page_size means no more data)
+                if len(batch) < page_size:
+                    break
+
+                # Advance cursor to last order's timestamp + 1ms
+                last_ts = batch[-1].get("timestamp")
+                if last_ts is not None:
+                    cursor = last_ts + 1
+                else:
+                    break
+
+            # Fetch open orders (no pagination needed, typically few)
+            open_orders = await self._exchange.fetch_open_orders(symbol, since=since_ms)
+            for raw_order in open_orders:
+                # Skip if beyond until boundary
+                if until_ms and raw_order.get("timestamp", 0) > until_ms:
+                    continue
+                oid = str(raw_order.get("id", ""))
+                if oid and oid not in seen_ids:
+                    seen_ids.add(oid)
+                    all_orders.append(self._transform_order(raw_order))
+
+            return all_orders
+
+        except ccxt.AuthenticationError as e:
+            raise ExchangeAuthenticationError(
+                message=f"Authentication failed: {e}",
+                exchange=self._exchange_id,
+            ) from e
+        except ccxt.RateLimitExceeded as e:
+            raise ExchangeRateLimitError(
+                message=f"Rate limit exceeded: {e}",
+                exchange=self._exchange_id,
+            ) from e
+        except Exception as e:
+            raise ExchangeAPIError(
+                message=f"Failed to fetch orders for {symbol}: {e}",
                 exchange=self._exchange_id,
             ) from e
 
@@ -636,9 +956,7 @@ class CCXTRestAdapter(ExchangeAdapter):
             ) from e
         except Exception as e:
             # Non-fatal: log and continue — DMS is a safety net, not critical path
-            logger.warning(
-                f"Failed to set dead man's switch on {self._exchange_id}: {e}"
-            )
+            logger.warning(f"Failed to set dead man's switch on {self._exchange_id}: {e}")
 
     # ==================== Transformation Helpers ====================
 
@@ -675,16 +993,32 @@ class CCXTRestAdapter(ExchangeAdapter):
     def _transform_order(self, order: dict[str, Any]) -> OrderResponse:
         """Transform CCXT order to internal OrderResponse type."""
         fee_info = order.get("fee") or {}
-        amount = Decimal(str(order.get("amount", 0)))
-        filled = Decimal(str(order.get("filled", 0)))
+        amount = Decimal(str(order.get("amount") or 0))
+        filled = Decimal(str(order.get("filled") or 0))
+
+        try:
+            side = OrderSide(order.get("side", "buy"))
+        except ValueError as e:
+            raise ExchangeAPIError(
+                f"Unknown order side '{order.get('side')}' for order {order.get('id')} — "
+                f"cannot safely default in live trading"
+            ) from e
+
+        try:
+            order_type = OrderType(order.get("type", "market"))
+        except ValueError as e:
+            raise ExchangeAPIError(
+                f"Unknown order type '{order.get('type')}' for order {order.get('id')} — "
+                f"cannot safely default in live trading"
+            ) from e
 
         return OrderResponse(
             order_id=str(order.get("id", "")),
             client_order_id=order.get("clientOrderId"),
             symbol=order.get("symbol", ""),
-            side=OrderSide(order.get("side", "buy")),
-            type=OrderType(order.get("type", "market")),
-            status=self._map_order_status(order.get("status", ""), filled, amount),
+            side=side,
+            type=order_type,
+            status=self._map_order_status(order.get("status") or "", filled, amount),
             price=Decimal(str(order["price"])) if order.get("price") is not None else None,
             amount=amount,
             filled=filled,

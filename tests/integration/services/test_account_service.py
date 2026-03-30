@@ -351,7 +351,7 @@ class TestAccountConnectionTesting:
         mock_balance = MagicMock()
         mock_balance.balances = {"USDT": 10000.0, "BTC": 0.5}
 
-        with patch("squant.services.account.OKXAdapter") as MockAdapter:
+        with patch("squant.services.account.CCXTRestAdapter") as MockAdapter:
             mock_instance = MagicMock()
             mock_instance.__aenter__ = AsyncMock(return_value=mock_instance)
             mock_instance.__aexit__ = AsyncMock()
@@ -369,7 +369,7 @@ class TestAccountConnectionTesting:
         """Test failed connection test."""
         from squant.infra.exchange.exceptions import ExchangeAuthenticationError
 
-        with patch("squant.services.account.OKXAdapter") as MockAdapter:
+        with patch("squant.services.account.CCXTRestAdapter") as MockAdapter:
             mock_instance = MagicMock()
             mock_instance.__aenter__ = AsyncMock(
                 side_effect=ExchangeAuthenticationError("Invalid API key")
@@ -391,7 +391,7 @@ class TestAccountConnectionTesting:
         mock_balance = MagicMock()
         mock_balance.balances = {"USDT": 5000.0, "BTC": 0.25}
 
-        with patch("squant.services.account.OKXAdapter") as MockAdapter:
+        with patch("squant.services.account.CCXTRestAdapter") as MockAdapter:
             mock_instance = MagicMock()
             mock_instance.__aenter__ = AsyncMock(return_value=mock_instance)
             mock_instance.__aexit__ = AsyncMock()

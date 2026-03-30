@@ -9,13 +9,13 @@
 
     <div class="filter-bar card">
       <el-form :inline="true" :model="filter">
-        <el-form-item label="交易所">
-          <el-select v-model="filter.exchange" placeholder="全部" clearable style="width: 140px">
+        <el-form-item label="账户">
+          <el-select v-model="filter.account_id" placeholder="全部" clearable style="width: 200px">
             <el-option
-              v-for="e in exchanges"
-              :key="e"
-              :label="formatExchangeName(e)"
-              :value="e"
+              v-for="acc in accounts"
+              :key="acc.id"
+              :label="acc.name"
+              :value="acc.id"
             />
           </el-select>
         </el-form-item>
@@ -56,7 +56,7 @@
     </div>
 
     <div class="orders-table card">
-      <el-table :data="orders" v-loading="loading" stripe @row-click="handleRowClick">
+      <el-table :data="orders" v-loading="loading" stripe style="cursor: pointer;" @row-click="handleRowClick">
         <el-table-column prop="symbol" label="交易对" width="130">
           <template #default="{ row }">
             <div class="symbol-cell">
@@ -116,6 +116,12 @@
           </template>
         </el-table-column>
 
+        <el-table-column prop="account_name" label="账户" width="120">
+          <template #default="{ row }">
+            {{ row.account_name || '-' }}
+          </template>
+        </el-table-column>
+
         <el-table-column prop="strategy_name" label="策略" width="120">
           <template #default="{ row }">
             {{ row.strategy_name || '-' }}
@@ -148,41 +154,88 @@
       </div>
     </div>
 
-    <el-dialog v-model="detailVisible" title="订单详情" width="560px">
-      <el-descriptions v-if="selectedOrder" :column="2" border>
-        <el-descriptions-item label="交易对">{{ selectedOrder.symbol }}</el-descriptions-item>
-        <el-descriptions-item label="交易所">{{ formatExchangeName(selectedOrder.exchange) }}</el-descriptions-item>
-        <el-descriptions-item label="方向">
-          <el-tag :type="selectedOrder.side === 'buy' ? 'success' : 'danger'" size="small">
-            {{ formatOrderSide(selectedOrder.side) }}
-          </el-tag>
-        </el-descriptions-item>
-        <el-descriptions-item label="类型">{{ formatOrderType(selectedOrder.type) }}</el-descriptions-item>
-        <el-descriptions-item label="委托价">{{ selectedOrder.price ? formatPrice(selectedOrder.price) : '市价' }}</el-descriptions-item>
-        <el-descriptions-item label="成交均价">{{ selectedOrder.avg_price ? formatPrice(selectedOrder.avg_price) : '-' }}</el-descriptions-item>
-        <el-descriptions-item label="委托数量">{{ formatNumber(selectedOrder.amount, 4) }}</el-descriptions-item>
-        <el-descriptions-item label="成交数量">{{ formatNumber(selectedOrder.filled, 4) }}</el-descriptions-item>
-        <el-descriptions-item label="剩余数量">{{ formatNumber(selectedOrder.remaining_amount, 4) }}</el-descriptions-item>
-        <el-descriptions-item label="手续费">
-          {{ selectedOrder.commission ? `${formatNumber(selectedOrder.commission, 6)} ${selectedOrder.commission_asset || ''}` : '-' }}
-        </el-descriptions-item>
-        <el-descriptions-item label="状态">
-          <StatusBadge :status="selectedOrder.status" context="order" />
-        </el-descriptions-item>
-        <el-descriptions-item label="策略">{{ selectedOrder.strategy_name || '-' }}</el-descriptions-item>
-        <el-descriptions-item label="创建时间" :span="2">{{ formatDateTime(selectedOrder.created_at) }}</el-descriptions-item>
-        <el-descriptions-item label="更新时间" :span="2">{{ formatDateTime(selectedOrder.updated_at) }}</el-descriptions-item>
-        <el-descriptions-item v-if="selectedOrder.reject_reason" label="拒绝原因" :span="2">{{ selectedOrder.reject_reason }}</el-descriptions-item>
-        <el-descriptions-item v-if="selectedOrder.exchange_oid" label="交易所订单ID" :span="2">{{ selectedOrder.exchange_oid }}</el-descriptions-item>
-      </el-descriptions>
+    <el-dialog v-model="detailVisible" title="订单详情" width="750px" destroy-on-close>
+      <template v-if="selectedOrder">
+        <el-descriptions :column="2" border size="small">
+          <el-descriptions-item label="交易对">{{ selectedOrder.symbol }}</el-descriptions-item>
+          <el-descriptions-item label="账户">{{ selectedOrder.account_name || '-' }}</el-descriptions-item>
+          <el-descriptions-item label="交易所">{{ formatExchangeName(selectedOrder.exchange) }}</el-descriptions-item>
+          <el-descriptions-item label="方向">
+            <el-tag :type="selectedOrder.side === 'buy' ? 'success' : 'danger'" size="small">
+              {{ formatOrderSide(selectedOrder.side) }}
+            </el-tag>
+          </el-descriptions-item>
+          <el-descriptions-item label="类型">{{ formatOrderType(selectedOrder.type) }}</el-descriptions-item>
+          <el-descriptions-item label="委托价">{{ selectedOrder.price ? formatPrice(selectedOrder.price) : '市价' }}</el-descriptions-item>
+          <el-descriptions-item label="成交均价">{{ selectedOrder.avg_price ? formatPrice(selectedOrder.avg_price) : '-' }}</el-descriptions-item>
+          <el-descriptions-item label="委托数量">{{ formatNumber(selectedOrder.amount, 4) }}</el-descriptions-item>
+          <el-descriptions-item label="成交数量">{{ formatNumber(selectedOrder.filled, 4) }}</el-descriptions-item>
+          <el-descriptions-item label="剩余数量">{{ formatNumber(selectedOrder.remaining_amount, 4) }}</el-descriptions-item>
+          <el-descriptions-item label="手续费">
+            {{ selectedOrder.commission ? `${formatNumber(selectedOrder.commission, 6)} ${selectedOrder.commission_asset || ''}` : '-' }}
+          </el-descriptions-item>
+          <el-descriptions-item label="状态">
+            <StatusBadge :status="selectedOrder.status" context="order" />
+          </el-descriptions-item>
+          <el-descriptions-item label="策略">{{ selectedOrder.strategy_name || '-' }}</el-descriptions-item>
+          <el-descriptions-item label="创建时间" :span="2">{{ formatDateTime(selectedOrder.created_at) }}</el-descriptions-item>
+          <el-descriptions-item label="更新时间" :span="2">{{ formatDateTime(selectedOrder.updated_at) }}</el-descriptions-item>
+          <el-descriptions-item v-if="selectedOrder.reject_reason" label="拒绝原因" :span="2">{{ selectedOrder.reject_reason }}</el-descriptions-item>
+          <el-descriptions-item v-if="selectedOrder.exchange_oid" label="交易所订单ID" :span="2">{{ selectedOrder.exchange_oid }}</el-descriptions-item>
+        </el-descriptions>
+
+        <template v-if="selectedOrder.trades && selectedOrder.trades.length > 0">
+          <h4 style="margin: 16px 0 8px;">逐笔成交</h4>
+          <el-table :data="selectedOrder.trades" size="small" border>
+            <el-table-column label="成交ID" width="130">
+              <template #default="{ row }">
+                {{ row.exchange_tid ? (row.exchange_tid.length > 12 ? row.exchange_tid.substring(0, 12) + '...' : row.exchange_tid) : '-' }}
+              </template>
+            </el-table-column>
+            <el-table-column prop="price" label="价格" width="120" />
+            <el-table-column label="数量" width="100">
+              <template #default="{ row }">
+                {{ formatNumber(row.amount, 8) }}
+              </template>
+            </el-table-column>
+            <el-table-column label="手续费" width="120">
+              <template #default="{ row }">
+                {{ formatNumber(Math.abs(row.fee), row.fee_currency === 'USDT' ? 4 : 8) }} {{ row.fee_currency || '' }}
+              </template>
+            </el-table-column>
+            <el-table-column prop="taker_or_maker" label="类型" width="80" />
+            <el-table-column label="时间" min-width="170">
+              <template #default="{ row }">
+                {{ new Date(row.timestamp).toLocaleString() }}
+              </template>
+            </el-table-column>
+          </el-table>
+        </template>
+
+        <template v-if="selectedOrder.corrections && selectedOrder.corrections.length > 0">
+          <h4 style="margin: 16px 0 8px;">修正记录</h4>
+          <el-timeline>
+            <el-timeline-item
+              v-for="(c, i) in selectedOrder.corrections"
+              :key="i"
+              :timestamp="new Date(c.timestamp).toLocaleString()"
+              placement="top"
+            >
+              <p style="margin: 0;">{{ c.reason }}</p>
+              <p v-for="(ch, j) in c.changes" :key="j" style="margin: 2px 0; color: #666; font-size: 12px;">
+                {{ ch.field }}: {{ ch.before }} → {{ ch.after }}
+              </p>
+            </el-timeline-item>
+          </el-timeline>
+        </template>
+      </template>
     </el-dialog>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed, onMounted } from 'vue'
+import { ref, reactive, onMounted } from 'vue'
 import { Download } from '@element-plus/icons-vue'
-import { useMarketStore } from '@/stores/market'
 import StatusBadge from '@/components/common/StatusBadge.vue'
 import {
   formatExchangeName,
@@ -194,15 +247,16 @@ import {
   formatDateTime,
 } from '@/utils/format'
 import { ORDER_STATUS_OPTIONS } from '@/utils/constants'
-import { getOrderHistory } from '@/api/order'
+import { getOrderHistory, getOrder } from '@/api/order'
+import { getAccounts } from '@/api/account'
 import { useNotification } from '@/composables/useNotification'
-import type { Order } from '@/types'
+import type { Order, ExchangeAccount } from '@/types'
 
-const marketStore = useMarketStore()
 const { toastError } = useNotification()
 
 const loading = ref(false)
 const orders = ref<Order[]>([])
+const accounts = ref<ExchangeAccount[]>([])
 const pagination = reactive({
   page: 1,
   pageSize: 20,
@@ -210,14 +264,13 @@ const pagination = reactive({
 })
 
 const filter = reactive({
-  exchange: '',
+  account_id: '',
   symbol: '',
   side: '',
   status: '',
   dateRange: [] as string[],
 })
 
-const exchanges = computed(() => marketStore.exchanges)
 const statusOptions = ORDER_STATUS_OPTIONS
 
 async function loadOrders() {
@@ -227,13 +280,13 @@ async function loadOrders() {
       page: pagination.page,
       page_size: pagination.pageSize,
     }
-    if (filter.exchange) params.exchange = filter.exchange
+    if (filter.account_id) params.account_id = filter.account_id
     if (filter.symbol) params.symbol = filter.symbol
     if (filter.side) params.side = filter.side
     if (filter.status) params.status = filter.status
     if (filter.dateRange.length === 2) {
-      params.start_date = filter.dateRange[0]
-      params.end_date = filter.dateRange[1]
+      params.start_time = filter.dateRange[0]
+      params.end_time = filter.dateRange[1]
     }
 
     const response = await getOrderHistory(params as any)
@@ -250,8 +303,13 @@ async function loadOrders() {
 const selectedOrder = ref<Order | null>(null)
 const detailVisible = ref(false)
 
-function handleRowClick(row: Order) {
-  selectedOrder.value = row
+async function handleRowClick(row: Order) {
+  try {
+    const res = await getOrder(row.id)
+    selectedOrder.value = res.data ?? row
+  } catch {
+    selectedOrder.value = row
+  }
   detailVisible.value = true
 }
 
@@ -288,8 +346,17 @@ function exportCSV() {
   URL.revokeObjectURL(url)
 }
 
+async function loadAccounts() {
+  try {
+    const response = await getAccounts()
+    accounts.value = response.data
+  } catch (error) {
+    console.error('Failed to load accounts:', error)
+  }
+}
+
 onMounted(() => {
-  marketStore.loadExchanges()
+  loadAccounts()
   loadOrders()
 })
 </script>

@@ -39,7 +39,6 @@ BINANCE_TESTNET=false
 OKX_API_KEY=
 OKX_API_SECRET=
 OKX_PASSPHRASE=
-OKX_TESTNET=false
 
 # ============ 安全配置 ============
 # API Key 加密密钥 (32 字节 base64 编码)

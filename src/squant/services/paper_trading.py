@@ -24,6 +24,7 @@ from squant.engine.paper.manager import get_session_manager
 from squant.engine.resource_limits import resource_limiter
 from squant.engine.sandbox import compile_strategy
 from squant.infra.repository import BaseRepository
+from squant.infra.trading_logger import close_trading_logger, create_trading_logger
 from squant.models.enums import RunMode, RunStatus
 from squant.models.metrics import EquityCurve
 from squant.models.strategy import StrategyRun
@@ -385,6 +386,10 @@ class PaperTradingService:
             # Start engine
             await engine.start()
 
+            # Create per-session file logger after successful start
+            # (avoids creating empty log directories for failed sessions)
+            engine._context._file_logger = create_trading_logger(str(run.id))
+
             logger.info(f"Started paper trading session {run.id} for strategy {strategy_id}")
 
             return run
@@ -512,8 +517,10 @@ class PaperTradingService:
         import json
         from datetime import UTC, datetime
 
+        from squant.services.circuit_breaker import CIRCUIT_BREAKER_STATE_KEY
+
         try:
-            state_data = await redis.get("squant:circuit_breaker:state")
+            state_data = await redis.get(CIRCUIT_BREAKER_STATE_KEY)
             if state_data:
                 state = json.loads(state_data)
                 if state.get("is_active", False):
@@ -525,7 +532,7 @@ class PaperTradingService:
                             expiry = expiry.replace(tzinfo=UTC)
                         if datetime.now(UTC) >= expiry:
                             # Cooldown expired — auto-clear state
-                            await redis.delete("squant:circuit_breaker:state")
+                            await redis.delete(CIRCUIT_BREAKER_STATE_KEY)
                             logger.info("Circuit breaker cooldown expired, auto-cleared")
                             return
                     raise CircuitBreakerActiveError(state.get("trigger_reason"))
@@ -642,6 +649,10 @@ class PaperTradingService:
             await engine.stop()
             error_message = engine.error_message
 
+            # Close file logger
+            if engine._context._file_logger:
+                close_trading_logger(engine._context._file_logger)
+
             # NOW capture result and snapshots (engine state is stable)
             result_data = engine.build_result_for_persistence()
             await self._persist_snapshots(str(run_id), engine.get_pending_snapshots())
@@ -734,6 +745,8 @@ class PaperTradingService:
                     "cash": run.result.get("cash", initial_capital),
                     "equity": run.result.get("equity", initial_capital),
                     "total_fees": run.result.get("total_fees", "0"),
+                    "fees_by_currency": run.result.get("fees_by_currency", {}),
+                    "fees_usdt_equivalent": run.result.get("fees_usdt_equivalent"),
                     "unrealized_pnl": run.result.get("unrealized_pnl", "0"),
                     "realized_pnl": run.result.get("realized_pnl", "0"),
                     "positions": run.result.get("positions", {}),
@@ -743,7 +756,7 @@ class PaperTradingService:
                     "trades": run.result.get("trades", []),
                     "fills": run.result.get("fills", []),
                     "open_trade": run.result.get("open_trade"),
-                    "logs": run.result.get("logs", []),
+                    "risk_state": run.result.get("risk_state"),
                 }
             )
         else:
@@ -754,6 +767,8 @@ class PaperTradingService:
                     "cash": str(run.initial_capital) if run.initial_capital else "0",
                     "equity": str(run.initial_capital) if run.initial_capital else "0",
                     "total_fees": "0",
+                    "fees_by_currency": {},
+                    "fees_usdt_equivalent": None,
                     "unrealized_pnl": "0",
                     "realized_pnl": "0",
                     "positions": {},
@@ -762,7 +777,6 @@ class PaperTradingService:
                     "trades_count": 0,
                     "trades": [],
                     "fills": [],
-                    "logs": [],
                 }
             )
 
@@ -974,6 +988,13 @@ class PaperTradingService:
         engine._last_emitted_fill_total = ctx._total_fills_added
         engine._last_emitted_trade_total = ctx._total_trades_added
         engine._last_emitted_log_total = ctx._total_logs_added
+        # Restore cached realized PnL from persisted value (not deque sum).
+        # The _trades deque has a maxlen — evicted trades would make a
+        # recomputed sum lower than the true cumulative realized PnL.
+        if run.result and "realized_pnl" in run.result:
+            engine._cached_realized_pnl = Decimal(str(run.result["realized_pnl"]))
+        else:
+            engine._cached_realized_pnl = sum(t.pnl for t in ctx._trades)
 
         # Register with session manager
         await session_manager.register(engine)
@@ -986,17 +1007,26 @@ class PaperTradingService:
             subscribed = True
             await stream_manager.subscribe_ticker(run.symbol)
 
+            # Set _warming_up BEFORE start() to prevent real-time candles from
+            # being processed in the window between start() and warmup begin.
+            # Without this, a candle arriving right after start() but before
+            # _warming_up=True would be processed against restored (not warmed-up)
+            # strategy state.
+            if warmup_bars > 0:
+                engine._warming_up = True
+
             # Start engine (calls strategy.on_init())
             await engine.start()
 
             # Warmup: replay historical bars through strategy to rebuild internal state.
-            # Set _warming_up flag to prevent real-time candles from interleaving (IMP-009).
             if warmup_bars > 0:
-                engine._warming_up = True
                 try:
                     await self._warmup_strategy(engine, run, warmup_bars)
                 finally:
                     engine._warming_up = False
+
+            # Create per-session file logger after successful start+warmup
+            engine._context._file_logger = create_trading_logger(str(run.id))
 
             # Update DB status to RUNNING
             run = await self.run_repo.update(

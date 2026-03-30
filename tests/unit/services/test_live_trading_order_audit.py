@@ -1,5 +1,6 @@
 """Tests for LIVE-013: order/trade audit persistence."""
 
+import asyncio
 from datetime import UTC, datetime
 from decimal import Decimal
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -11,17 +12,18 @@ from squant.engine.backtest.strategy_base import Strategy
 from squant.engine.backtest.types import Bar
 from squant.engine.live.engine import LiveOrder, LiveTradingEngine
 from squant.engine.risk import RiskConfig
-from squant.infra.exchange.okx.ws_types import WSCandle
 from squant.infra.exchange.types import (
     AccountBalance,
     Balance,
     OrderResponse,
 )
+from squant.infra.exchange.ws_types import WSCandle
 from squant.models.enums import OrderSide, OrderStatus, OrderType
 
 # ---------------------------------------------------------------------------
 # Helpers / Fixtures
 # ---------------------------------------------------------------------------
+
 
 class NoOpStrategy(Strategy):
     """Strategy that does nothing — used when we don't need on_bar logic."""
@@ -215,8 +217,12 @@ class TestOrderEventBuffering:
         engine._live_orders[live_order.internal_id] = live_order
 
         engine._record_fill(
-            live_order, Decimal("50000"), Decimal("0.01"),
-            Decimal("0.005"), Decimal("0.005"), source="ws",
+            live_order,
+            Decimal("50000"),
+            Decimal("0.01"),
+            Decimal("0.005"),
+            Decimal("0.005"),
+            source="ws",
         )
 
         assert len(engine._pending_order_events) == 1
@@ -234,8 +240,12 @@ class TestOrderEventBuffering:
         live_order = _make_live_order()
 
         engine._record_fill(
-            live_order, Decimal("49500"), Decimal("0.01"),
-            Decimal("0.004"), Decimal("0.004"), source="poll",
+            live_order,
+            Decimal("49500"),
+            Decimal("0.01"),
+            Decimal("0.004"),
+            Decimal("0.004"),
+            source="poll",
         )
 
         assert len(engine._pending_order_events) == 1
@@ -277,6 +287,8 @@ class TestOrderEventBuffering:
                 strategy=MagicMock(cpu_limit_seconds=5, memory_limit_mb=256),
             )
             await engine.process_candle(candle)
+            # Allow the event loop task to dequeue and process the BAR_CLOSE event
+            await asyncio.sleep(0.05)
 
         # Callback should have been called with the 2 events
         persist_cb.assert_called_once()
@@ -555,9 +567,7 @@ class TestOrderPersistCallback:
 
         mock_order_repo = AsyncMock()
         # First create fails, second succeeds
-        mock_order_repo.create = AsyncMock(
-            side_effect=[Exception("DB error"), mock_order_2]
-        )
+        mock_order_repo.create = AsyncMock(side_effect=[Exception("DB error"), mock_order_2])
 
         mock_trade_repo = AsyncMock()
 

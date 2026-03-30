@@ -82,6 +82,71 @@
             </el-select>
           </el-form-item>
 
+          <!-- Account Balance Display -->
+          <div v-if="form.account_id" class="balance-section">
+            <el-skeleton v-if="balanceLoading" :rows="1" animated />
+            <el-alert
+              v-else-if="balanceError"
+              :title="balanceError"
+              type="warning"
+              :closable="false"
+              show-icon
+            />
+            <div v-else-if="balanceData" class="balance-display">
+              <div class="balance-main">
+                <span class="balance-label">可用余额：</span>
+                <span class="balance-value">
+                  {{ formatNumber(balanceData.available, 2) }}
+                  {{ balanceData.quote_currency }}
+                </span>
+                <el-popover
+                  v-if="balanceData.running_sessions.length > 0"
+                  placement="bottom"
+                  :width="320"
+                  trigger="hover"
+                >
+                  <template #reference>
+                    <span class="balance-formula">
+                      = {{ formatNumber(balanceData.account_total_value, 2) }}
+                      - {{ formatNumber(balanceData.sessions_total_equity, 2) }}
+                      （运行中会话占用）
+                    </span>
+                  </template>
+                  <div class="balance-tooltip">
+                    <div class="tooltip-row">
+                      <span>账户总值</span>
+                      <span>
+                        {{ formatNumber(balanceData.account_total_value, 2) }}
+                        {{ balanceData.quote_currency }}
+                      </span>
+                    </div>
+                    <el-divider style="margin: 8px 0" />
+                    <div class="tooltip-section-title">运行中会话占用：</div>
+                    <div
+                      v-for="s in balanceData.running_sessions"
+                      :key="s.run_id"
+                      class="tooltip-row"
+                    >
+                      <span>{{ s.strategy_name || '未知策略' }} ({{ s.symbol }})</span>
+                      <span>{{ formatNumber(s.equity, 2) }}</span>
+                    </div>
+                    <el-divider style="margin: 8px 0" />
+                    <div class="tooltip-row total">
+                      <span>合计占用</span>
+                      <span>{{ formatNumber(balanceData.sessions_total_equity, 2) }}</span>
+                    </div>
+                    <div class="tooltip-row total">
+                      <span>可用余额</span>
+                      <span>{{ formatNumber(balanceData.available, 2) }}</span>
+                    </div>
+                  </div>
+                </el-popover>
+                <span v-else class="balance-simple">（无运行中会话）</span>
+              </div>
+              <div class="balance-hint">建议预留部分余额用于交易手续费</div>
+            </div>
+          </div>
+
           <el-row :gutter="16">
             <el-col :span="12">
               <el-form-item label="交易对" prop="symbol">
@@ -127,7 +192,13 @@
 
           <el-row :gutter="16">
             <el-col :span="12">
-              <el-form-item label="最大持仓比例">
+              <el-form-item>
+                <template #label>
+                  <span>最大持仓比例</span>
+                  <el-tooltip content="单个交易对的持仓价值不超过账户总资金的该比例" placement="top">
+                    <el-icon class="form-tip-icon"><QuestionFilled /></el-icon>
+                  </el-tooltip>
+                </template>
                 <el-input-number
                   v-model="form.risk_config.max_position_size"
                   :min="0.01"
@@ -139,7 +210,13 @@
               </el-form-item>
             </el-col>
             <el-col :span="12">
-              <el-form-item label="最大单笔下单比例">
+              <el-form-item>
+                <template #label>
+                  <span>最大单笔下单比例</span>
+                  <el-tooltip content="单笔订单金额不超过账户总资金的该比例" placement="top">
+                    <el-icon class="form-tip-icon"><QuestionFilled /></el-icon>
+                  </el-tooltip>
+                </template>
                 <el-input-number
                   v-model="form.risk_config.max_order_size"
                   :min="0.01"
@@ -154,7 +231,13 @@
 
           <el-row :gutter="16">
             <el-col :span="12">
-              <el-form-item label="每日交易限制">
+              <el-form-item>
+                <template #label>
+                  <span>每日交易限制</span>
+                  <el-tooltip content="每日（UTC 0 点重置）最多成交笔数，超过后拒绝新订单" placement="top">
+                    <el-icon class="form-tip-icon"><QuestionFilled /></el-icon>
+                  </el-tooltip>
+                </template>
                 <el-input-number
                   v-model="form.risk_config.daily_trade_limit"
                   :min="1"
@@ -164,7 +247,13 @@
               </el-form-item>
             </el-col>
             <el-col :span="12">
-              <el-form-item label="日最大亏损比例">
+              <el-form-item>
+                <template #label>
+                  <span>日最大亏损比例</span>
+                  <el-tooltip content="当日已实现亏损达到初始资金的该比例时，拒绝新订单" placement="top">
+                    <el-icon class="form-tip-icon"><QuestionFilled /></el-icon>
+                  </el-tooltip>
+                </template>
                 <el-input-number
                   v-model="form.risk_config.daily_loss_limit"
                   :min="0.01"
@@ -179,7 +268,13 @@
 
           <el-row :gutter="16">
             <el-col :span="12">
-              <el-form-item label="价格偏离限制">
+              <el-form-item>
+                <template #label>
+                  <span>价格偏离限制</span>
+                  <el-tooltip content="下单价格偏离当前市价超过该比例时拒绝，防止滑点过大" placement="top">
+                    <el-icon class="form-tip-icon"><QuestionFilled /></el-icon>
+                  </el-tooltip>
+                </template>
                 <el-input-number
                   v-model="form.risk_config.price_deviation_limit"
                   :min="0.001"
@@ -191,7 +286,13 @@
               </el-form-item>
             </el-col>
             <el-col :span="12">
-              <el-form-item label="熔断触发次数">
+              <el-form-item>
+                <template #label>
+                  <span>熔断触发次数</span>
+                  <el-tooltip content="连续亏损达到该次数时自动停止交易 30 分钟" placement="top">
+                    <el-icon class="form-tip-icon"><QuestionFilled /></el-icon>
+                  </el-tooltip>
+                </template>
                 <el-input-number
                   v-model="form.risk_config.circuit_breaker_threshold"
                   :min="1"
@@ -204,7 +305,13 @@
 
           <el-row :gutter="16">
             <el-col :span="12">
-              <el-form-item label="最小下单金额 (USDT)">
+              <el-form-item>
+                <template #label>
+                  <span>最小下单金额 (USDT)</span>
+                  <el-tooltip content="订单金额低于该值时静默忽略，避免产生过小订单" placement="top">
+                    <el-icon class="form-tip-icon"><QuestionFilled /></el-icon>
+                  </el-tooltip>
+                </template>
                 <el-input-number
                   v-model="form.risk_config.min_order_value"
                   :min="1"
@@ -349,7 +456,7 @@ import { formatExchangeName, formatNumber } from '@/utils/format'
 import { TIMEFRAME_OPTIONS } from '@/utils/constants'
 import { getSymbols } from '@/api/market'
 import { getAccounts } from '@/api/account'
-import { startLiveTrading, getLiveSessions, getLiveSessionStatus, stopLiveTrading, emergencyClosePositions } from '@/api/live'
+import { startLiveTrading, getLiveSessions, getLiveSessionStatus, stopLiveTrading, emergencyClosePositions, getAccountBalance } from '@/api/live'
 import { getRiskRules } from '@/api/risk'
 import { useNotification } from '@/composables/useNotification'
 import { confirmStopLive, confirmEmergencyClose, showEmergencyCloseResult, toPositionRows, type PositionRow } from '@/composables/useTradingConfirm'
@@ -367,6 +474,22 @@ const symbols = ref<string[]>([])
 const accounts = ref<ExchangeAccount[]>([])
 const sessions = ref<LiveSession[]>([])
 const hasRiskRules = ref(false) // 是否已配置风控规则（默认 false，加载后更新）
+
+// Balance display state
+const balanceLoading = ref(false)
+const balanceError = ref('')
+const balanceData = ref<{
+  account_total_value: number
+  quote_currency: string
+  running_sessions: Array<{
+    run_id: string
+    strategy_name: string | null
+    symbol: string
+    equity: number
+  }>
+  sessions_total_equity: number
+  available: number
+} | null>(null)
 
 const form = reactive({
   strategy_id: (route.query.strategy_id as string) || '',
@@ -462,14 +585,37 @@ function handleStrategyChange() {
   }
 }
 
-function handleAccountChange() {
+async function handleAccountChange() {
   form.symbol = ''
+  balanceData.value = null
+  balanceError.value = ''
   loadSymbols()
+  await fetchAccountBalance()
+}
+
+async function fetchAccountBalance() {
+  if (!form.account_id) return
+  balanceLoading.value = true
+  balanceError.value = ''
+  try {
+    const response = await getAccountBalance(form.account_id)
+    balanceData.value = response.data
+  } catch (error) {
+    balanceError.value = '余额查询失败，请稍后重试'
+    console.error('Failed to fetch account balance:', error)
+  } finally {
+    balanceLoading.value = false
+  }
 }
 
 async function handleSubmit() {
   const valid = await formRef.value?.validate()
   if (!valid) return
+
+  if (balanceData.value && form.initial_capital > balanceData.value.available) {
+    toastError(`投入资金 (${form.initial_capital}) 超过可用余额 (${formatNumber(balanceData.value.available, 2)} ${balanceData.value.quote_currency})`)
+    return
+  }
 
   const confirmed = await confirmDanger(
     '您即将启动实盘交易，这将使用真实资金进行交易。请确认您已了解所有风险。'
@@ -494,8 +640,8 @@ async function handleSubmit() {
     const response = await startLiveTrading(config)
     toastSuccess('实盘交易已启动')
     router.push(`/trading/monitor/live/${response.data.id}`)
-  } catch (error) {
-    toastError('启动失败')
+  } catch {
+    // Error already shown by Axios response interceptor
   } finally {
     submitting.value = false
   }
@@ -663,10 +809,82 @@ onMounted(async () => {
     }
   }
 
+  .form-tip-icon {
+    margin-left: 4px;
+    color: var(--el-text-color-secondary);
+    cursor: help;
+    font-size: 14px;
+    vertical-align: middle;
+  }
+
   .empty-state {
     text-align: center;
     padding: 40px;
     color: #909399;
+  }
+
+  .balance-section {
+    margin-bottom: 16px;
+  }
+
+  .balance-display {
+    padding: 12px;
+    background: var(--el-fill-color-lighter);
+    border-radius: 6px;
+  }
+
+  .balance-main {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 4px;
+  }
+
+  .balance-label {
+    font-weight: 500;
+  }
+
+  .balance-value {
+    font-weight: 600;
+    font-size: 16px;
+    color: var(--el-color-primary);
+  }
+
+  .balance-formula {
+    color: var(--el-text-color-secondary);
+    font-size: 13px;
+    cursor: help;
+    border-bottom: 1px dashed var(--el-border-color);
+  }
+
+  .balance-simple {
+    color: var(--el-text-color-secondary);
+    font-size: 13px;
+  }
+
+  .balance-hint {
+    margin-top: 6px;
+    font-size: 12px;
+    color: var(--el-text-color-placeholder);
+  }
+
+  .balance-tooltip {
+    .tooltip-row {
+      display: flex;
+      justify-content: space-between;
+      padding: 2px 0;
+      font-size: 13px;
+
+      &.total {
+        font-weight: 600;
+      }
+    }
+
+    .tooltip-section-title {
+      font-size: 12px;
+      color: var(--el-text-color-secondary);
+      margin-bottom: 4px;
+    }
   }
 }
 </style>

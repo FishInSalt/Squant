@@ -70,7 +70,13 @@ class TestProgress:
 
     def test_all_terminal_statuses_return_1(self):
         """Test all terminal statuses return 1.0."""
-        terminal = [RunStatus.COMPLETED, RunStatus.ERROR, RunStatus.INTERRUPTED, RunStatus.CANCELLED, RunStatus.STOPPED]
+        terminal = [
+            RunStatus.COMPLETED,
+            RunStatus.ERROR,
+            RunStatus.INTERRUPTED,
+            RunStatus.CANCELLED,
+            RunStatus.STOPPED,
+        ]
         for status in terminal:
             run = StrategyRun()
             run.status = status

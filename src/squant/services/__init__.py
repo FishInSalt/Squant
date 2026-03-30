@@ -12,6 +12,7 @@ from squant.services.data_loader import (
 )
 from squant.services.live_trading import (
     ExchangeConnectionError,
+    LiveExchangeConnectionError,
     LiveTradingError,
     LiveTradingService,
     RiskConfigurationError,
@@ -72,6 +73,7 @@ __all__ = [
     "LiveTradingService",
     "LiveTradingError",
     "ExchangeConnectionError",
+    "LiveExchangeConnectionError",
     "RiskConfigurationError",
     "SessionAlreadyRunningError",
     "LiveSessionNotFoundError",

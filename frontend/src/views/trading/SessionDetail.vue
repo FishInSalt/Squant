@@ -76,7 +76,18 @@
           </div>
           <div class="metric-card card">
             <span class="label">总手续费</span>
-            <span class="value secondary-value">{{ formatNumber(status.total_fees, 2) }}</span>
+            <span v-if="feeBreakdown.length <= 1" class="value secondary-value">
+              {{ formatNumber(Math.abs(status.total_fees), feeBreakdown.length === 1 && feeBreakdown[0].currency !== 'USDT' ? 8 : 4) }}
+              {{ feeBreakdown.length === 1 ? feeBreakdown[0].currency : '' }}
+            </span>
+            <template v-else>
+              <span class="value secondary-value" v-for="item in feeBreakdown" :key="item.currency">
+                {{ formatNumber(item.amount, item.currency === 'USDT' ? 4 : 8) }} {{ item.currency }}
+              </span>
+              <span v-if="status.fees_usdt_equivalent != null" class="value secondary-value fee-equivalent">
+                ≈ {{ formatNumber(status.fees_usdt_equivalent, 4) }} USDT
+              </span>
+            </template>
           </div>
           <div class="metric-card card">
             <span class="label">最大回撤</span>
@@ -145,8 +156,8 @@
           :symbol="session.symbol"
           :timeframe="session.timeframe"
           :trades="isPaper ? paperTrades : undefined"
-          :fills="isPaper ? paperFills : undefined"
-          :open-trade="isPaper ? paperOpenTrade : undefined"
+          :fills="isPaper ? paperFills : liveFills"
+          :open-trade="isPaper ? paperOpenTrade : liveOpenTrade"
           :realtime="isRunning && !!status?.is_running"
           height="500px"
         />
@@ -182,7 +193,7 @@
               </el-table-column>
               <el-table-column prop="amount" label="数量" min-width="100" align="right">
                 <template #default="{ row }">
-                  {{ formatNumber(row.amount, 4) }}
+                  {{ formatNumber(row.amount, 8) }}
                 </template>
               </el-table-column>
               <el-table-column prop="avg_entry_price" label="均价" min-width="120" align="right">
@@ -255,7 +266,7 @@
               </el-table-column>
               <el-table-column prop="amount" label="数量" min-width="100" align="right">
                 <template #default="{ row }">
-                  {{ formatNumber(row.amount, 4) }}
+                  {{ formatNumber(row.amount, 8) }}
                 </template>
               </el-table-column>
               <el-table-column prop="price" label="价格" min-width="120" align="right">
@@ -299,12 +310,12 @@
               </el-table-column>
               <el-table-column prop="amount" label="数量" min-width="100" align="right">
                 <template #default="{ row }">
-                  {{ formatNumber(row.amount, 4) }}
+                  {{ formatNumber(row.amount, 8) }}
                 </template>
               </el-table-column>
               <el-table-column prop="filled_amount" label="已成交" min-width="100" align="right">
                 <template #default="{ row }">
-                  {{ formatNumber(row.filled_amount, 4) }}
+                  {{ formatNumber(row.filled_amount, 8) }}
                 </template>
               </el-table-column>
               <el-table-column prop="price" label="价格" min-width="120" align="right">
@@ -364,7 +375,7 @@
               </el-table-column>
               <el-table-column prop="amount" label="数量" min-width="100" align="right">
                 <template #default="{ row }">
-                  {{ formatNumber(row.amount, 4) }}
+                  {{ formatNumber(row.amount, 8) }}
                 </template>
               </el-table-column>
               <el-table-column prop="pnl" label="盈亏" min-width="110" align="right">
@@ -388,7 +399,7 @@
               </el-table-column>
               <el-table-column prop="fees" label="手续费" min-width="90" align="right">
                 <template #default="{ row }">
-                  {{ formatNumber(row.fees, 4) }}
+                  {{ formatNumber(row.fees, 8) }}
                 </template>
               </el-table-column>
             </el-table>
@@ -423,7 +434,7 @@
               </el-table-column>
               <el-table-column prop="amount" label="数量" min-width="100" align="right">
                 <template #default="{ row }">
-                  {{ formatNumber(row.amount, 4) }}
+                  {{ formatNumber(row.amount, 8) }}
                 </template>
               </el-table-column>
               <el-table-column label="成交额" min-width="120" align="right">
@@ -433,16 +444,16 @@
               </el-table-column>
               <el-table-column prop="fee" label="手续费" min-width="90" align="right">
                 <template #default="{ row }">
-                  {{ formatNumber(row.fee, 4) }}
+                  {{ formatNumber(Math.abs(row.fee), 8) }}
                 </template>
               </el-table-column>
             </el-table>
           </el-tab-pane>
 
-          <el-tab-pane v-if="isPaper" name="logs">
+          <el-tab-pane name="logs">
             <template #label>
               日志
-              <el-badge v-if="paperLogs.length" :value="paperLogs.length" class="tab-badge" />
+              <el-badge v-if="tradingLogs.length" :value="tradingLogs.length" class="tab-badge" />
             </template>
             <div class="log-controls">
               <el-switch
@@ -452,10 +463,10 @@
               />
             </div>
             <div ref="logContainerRef" class="log-container">
-              <div v-for="(log, index) in paperLogs" :key="index" class="log-entry">
+              <div v-for="(log, index) in tradingLogs" :key="index" :class="['log-entry', logLevelClass(log)]">
                 {{ log }}
               </div>
-              <div v-if="paperLogs.length === 0" class="empty-logs">暂无日志</div>
+              <div v-if="tradingLogs.length === 0" class="empty-logs">暂无日志</div>
             </div>
           </el-tab-pane>
 
@@ -474,10 +485,13 @@
               <el-table-column type="expand">
                 <template #default="{ row }">
                   <div v-if="row.trades && row.trades.length" class="expand-trades">
-                    <el-table :data="row.trades" size="small" :show-header="true">
-                      <el-table-column label="时间" min-width="140">
+                    <el-table :data="row.trades" size="small" :show-header="true" border>
+                      <el-table-column label="成交ID" min-width="130">
                         <template #default="{ row: trade }">
-                          {{ formatTradeTime(trade.timestamp) }}
+                          <span v-if="trade.exchange_tid" :title="trade.exchange_tid">
+                            {{ trade.exchange_tid.length > 12 ? trade.exchange_tid.substring(0, 12) + '...' : trade.exchange_tid }}
+                          </span>
+                          <span v-else>-</span>
                         </template>
                       </el-table-column>
                       <el-table-column label="价格" min-width="110" align="right">
@@ -487,7 +501,7 @@
                       </el-table-column>
                       <el-table-column label="数量" min-width="100" align="right">
                         <template #default="{ row: trade }">
-                          {{ formatNumber(trade.amount, 4) }}
+                          {{ formatNumber(trade.amount, 8) }}
                         </template>
                       </el-table-column>
                       <el-table-column label="成交额" min-width="120" align="right">
@@ -495,15 +509,52 @@
                           {{ formatNumber(trade.price * trade.amount, 2) }}
                         </template>
                       </el-table-column>
-                      <el-table-column label="手续费" min-width="90" align="right">
+                      <el-table-column label="手续费" min-width="120" align="right">
                         <template #default="{ row: trade }">
-                          {{ formatNumber(trade.fee, 4) }}
+                          {{ formatNumber(Math.abs(trade.fee), trade.fee_currency === 'USDT' ? 4 : 8) }}
                           <span v-if="trade.fee_currency" class="fee-currency">{{ trade.fee_currency }}</span>
+                        </template>
+                      </el-table-column>
+                      <el-table-column label="类型" min-width="80" align="center">
+                        <template #default="{ row: trade }">
+                          {{ trade.taker_or_maker || '-' }}
+                        </template>
+                      </el-table-column>
+                      <el-table-column label="来源" min-width="80" align="center">
+                        <template #default="{ row: trade }">
+                          {{ trade.fill_source || '-' }}
+                        </template>
+                      </el-table-column>
+                      <el-table-column label="成交时间" min-width="140">
+                        <template #default="{ row: trade }">
+                          {{ formatTradeTime(trade.timestamp) }}
                         </template>
                       </el-table-column>
                     </el-table>
                   </div>
-                  <div v-else class="expand-empty">暂无成交明细</div>
+                  <div v-if="row.corrections && row.corrections.length" style="padding: 8px 16px;">
+                    <el-alert type="warning" :closable="false">
+                      <template #title>数据修正记录</template>
+                      <div
+                        v-for="(c, i) in row.corrections"
+                        :key="i"
+                        style="margin-top: 4px; font-size: 12px;"
+                      >
+                        <span>[{{ formatTradeTime(c.timestamp) }}] {{ c.reason }}</span>
+                        <ul style="margin: 4px 0; padding-left: 20px;">
+                          <li v-for="(change, j) in c.changes" :key="j">
+                            {{ change.field }}: {{ change.before }} → {{ change.after }}
+                          </li>
+                        </ul>
+                      </div>
+                    </el-alert>
+                  </div>
+                  <div
+                    v-if="(!row.trades || !row.trades.length) && (!row.corrections || !row.corrections.length)"
+                    class="expand-empty"
+                  >
+                    暂无成交明细
+                  </div>
                 </template>
               </el-table-column>
               <el-table-column prop="side" label="方向" min-width="80">
@@ -523,12 +574,12 @@
               </el-table-column>
               <el-table-column prop="amount" label="委托量" min-width="100" align="right">
                 <template #default="{ row }">
-                  {{ formatNumber(row.amount, 4) }}
+                  {{ formatNumber(row.amount, 8) }}
                 </template>
               </el-table-column>
               <el-table-column prop="filled" label="已成交" min-width="100" align="right">
                 <template #default="{ row }">
-                  {{ formatNumber(row.filled, 4) }}
+                  {{ formatNumber(row.filled, 8) }}
                 </template>
               </el-table-column>
               <el-table-column prop="price" label="委托价" min-width="120" align="right">
@@ -629,7 +680,7 @@ import PriceCell from '@/components/common/PriceCell.vue'
 import EquityCurve from '@/components/charts/EquityCurve.vue'
 import TradingKLineChart from '@/components/charts/TradingKLineChart.vue'
 import { formatNumber, formatPrice, formatOrderType, formatExchangeName, formatDuration } from '@/utils/format'
-import { getPaperSession, getPaperSessionStatus, stopPaperTrading, getPaperEquityCurve, resumePaperTrading } from '@/api/paper'
+import { getPaperSession, getPaperSessionStatus, stopPaperTrading, getPaperEquityCurve, resumePaperTrading, getPaperLogs } from '@/api/paper'
 import {
   getLiveSession,
   getLiveSessionStatus,
@@ -638,6 +689,7 @@ import {
   getLiveEquityCurve,
   resumeLiveTrading,
   getLiveSessionOrders,
+  getLiveLogs,
 } from '@/api/live'
 import { useWebSocketStore } from '@/stores/websocket'
 import { useNotification } from '@/composables/useNotification'
@@ -725,6 +777,14 @@ const maxDrawdownPct = computed<number | null>(() => {
   return -maxDd
 })
 
+const feeBreakdown = computed(() => {
+  const raw = status.value?.fees_by_currency || {}
+  return Object.entries(raw)
+    .map(([currency, amount]) => ({ currency, amount: Math.abs(Number(amount)) }))
+    .filter(item => item.amount > 0)
+    .sort((a, b) => b.amount - a.amount)
+})
+
 const runningDuration = computed(() => {
   if (!session.value?.started_at) return ''
   const start = new Date(session.value.started_at).getTime()
@@ -787,9 +847,57 @@ const paperOpenTrade = computed(() => {
   return (status.value as PaperTradingStatus).open_trade ?? null
 })
 
-const paperLogs = computed<string[]>(() => {
-  if (!status.value || !isPaper.value) return []
-  return (status.value as PaperTradingStatus).logs || []
+const tradingLogs = ref<string[]>([])
+
+async function loadTradingLogs() {
+  try {
+    const resp = isPaper.value
+      ? await getPaperLogs(props.id)
+      : await getLiveLogs(props.id)
+    tradingLogs.value = resp.data.logs || []
+  } catch (e) {
+    console.warn('Failed to load trading logs:', e)
+  }
+}
+
+// Live session trade markers: accumulate fills from WebSocket events and audit orders
+const liveWsFills = ref<Fill[]>([])
+const liveOpenTrade = ref<{ entry_time: string; entry_price: number; amount: number } | null>(null)
+
+// Combine fills from audit orders (initial load) with incremental WebSocket fills
+const liveAllOrders = ref<LiveSessionOrder[]>([])
+
+const liveFills = computed<Fill[]>(() => {
+  if (!isLive.value) return []
+  // Build fills from all audit orders (each order has nested trades = fills)
+  const auditFills: Fill[] = []
+  for (const order of liveAllOrders.value) {
+    if (!order.trades || order.trades.length === 0) continue
+    for (const trade of order.trades) {
+      auditFills.push({
+        order_id: order.id,
+        symbol: order.symbol,
+        side: order.side as 'buy' | 'sell',
+        price: trade.price,
+        amount: trade.amount,
+        fee: trade.fee,
+        timestamp: trade.timestamp,
+      })
+    }
+  }
+  // Merge with WebSocket fills, dedup by order_id+price+amount+side+fee
+  // (fee added to distinguish partial fills at same price/amount;
+  //  timestamp not used because audit vs WS timestamps differ)
+  const seen = new Set(auditFills.map(f => `${f.order_id}|${f.price}|${f.amount}|${f.side}|${f.fee}`))
+  const merged = [...auditFills]
+  for (const f of liveWsFills.value) {
+    const key = `${f.order_id}|${f.price}|${f.amount}|${f.side}|${f.fee}`
+    if (!seen.has(key)) {
+      merged.push(f)
+      seen.add(key)
+    }
+  }
+  return merged
 })
 
 // Live audit orders (from DB audit table)
@@ -798,7 +906,6 @@ const liveAuditTotal = ref(0)
 const liveAuditPage = ref(1)
 const liveAuditPageSize = ref(20)
 const liveAuditLoading = ref(false)
-const prevCompletedOrdersCount = ref(0)
 
 async function loadLiveAuditOrders() {
   if (!isLive.value) return
@@ -820,6 +927,17 @@ async function loadLiveAuditOrders() {
 function handleAuditPageChange(page: number) {
   liveAuditPage.value = page
   loadLiveAuditOrders()
+}
+
+// Load recent audit orders for chart fill markers (max 100 per API limit)
+async function loadAllLiveOrders() {
+  if (!isLive.value) return
+  try {
+    const resp = await getLiveSessionOrders(props.id, { page: 1, page_size: 100 })
+    liveAllOrders.value = resp.data.items
+  } catch {
+    // non-critical
+  }
 }
 
 const riskState = computed<RiskState | null>(() => {
@@ -857,97 +975,145 @@ const equityCurveWithFallback = computed<EquityPoint[]>(() => {
 
 const wsChannel = computed(() => `trading:${props.id}`)
 
+function applyStateSnapshot(state: Record<string, unknown>) {
+  if (!state || !status.value) return
+  status.value.cash = parseFloat(state.cash as string)
+  status.value.equity = parseFloat(state.equity as string)
+  status.value.unrealized_pnl = parseFloat(state.unrealized_pnl as string)
+  status.value.realized_pnl = parseFloat(state.realized_pnl as string)
+  status.value.total_fees = parseFloat(state.total_fees as string)
+  ;(status.value as any).fees_by_currency = state.fees_by_currency
+  ;(status.value as any).fees_usdt_equivalent =
+    state.fees_usdt_equivalent != null
+      ? parseFloat(state.fees_usdt_equivalent as string)
+      : null
+  status.value.completed_orders_count = state.completed_orders_count as number
+  status.value.trades_count = state.trades_count as number
+
+  // Positions: parse string → number
+  const rawPositions = state.positions as
+    | Record<string, { amount: string; avg_entry_price: string }>
+    | undefined
+  if (rawPositions) {
+    const parsed: Record<string, Position> = {}
+    for (const [sym, pos] of Object.entries(rawPositions)) {
+      parsed[sym] = {
+        amount: parseFloat(pos.amount),
+        avg_entry_price: parseFloat(pos.avg_entry_price),
+      }
+    }
+    status.value.positions = parsed
+  }
+
+  // Pending orders: parse string → number for amount/price
+  const rawOrders = (state.pending_orders as Array<Record<string, unknown>>) || []
+  status.value.pending_orders = rawOrders.map((o) => ({
+    ...o,
+    amount: typeof o.amount === 'string' ? parseFloat(o.amount) : (o.amount as number),
+    price: o.price != null
+      ? (typeof o.price === 'string' ? parseFloat(o.price as string) : (o.price as number))
+      : undefined,
+  })) as PendingOrderInfo[]
+
+  // Open trade
+  if (isPaper.value) {
+    ;(status.value as PaperTradingStatus).open_trade = state.open_trade as OpenTrade | undefined
+  } else if (isLive.value) {
+    const ot = state.open_trade as OpenTrade | undefined
+    liveOpenTrade.value = ot
+      ? { entry_time: ot.entry_time, entry_price: ot.entry_price, amount: ot.amount }
+      : null
+  }
+
+  // Risk state
+  if (state.risk_state) {
+    ;(status.value as LiveTradingStatus).risk_state = state.risk_state as RiskState
+  }
+}
+
+function appendIncrementalData(data: Record<string, unknown>) {
+  // Fills
+  const newFills = data.new_fills as Fill[] | undefined
+  if (Array.isArray(newFills) && newFills.length) {
+    if (isPaper.value) {
+      const ps = status.value as PaperTradingStatus
+      if (ps.fills) ps.fills.push(...newFills)
+    } else if (isLive.value) {
+      liveWsFills.value.push(...newFills)
+      if (liveWsFills.value.length > 500) {
+        liveWsFills.value = liveWsFills.value.slice(-500)
+      }
+    }
+  }
+
+  // Trades
+  const newTrades = data.new_trades as Trade[] | undefined
+  if (Array.isArray(newTrades) && newTrades.length && isPaper.value) {
+    const ps = status.value as PaperTradingStatus
+    if (ps.trades) ps.trades.push(...newTrades)
+  }
+
+  // Logs
+  const newLogs = data.new_logs as string[] | undefined
+  if (Array.isArray(newLogs) && newLogs.length) {
+    tradingLogs.value.push(...newLogs)
+    if (tradingLogs.value.length > 2000) {
+      tradingLogs.value = tradingLogs.value.slice(-2000)
+    }
+  }
+}
+
+function appendEquityPoint(point: Record<string, string>) {
+  equityCurve.value.push({
+    time: point.time,
+    equity: parseFloat(point.equity),
+    cash: parseFloat(point.cash),
+    position_value: parseFloat(point.position_value),
+    unrealized_pnl: parseFloat(point.unrealized_pnl),
+  } as any)
+}
+
+function showTradeNotification(trigger: string, detail: Record<string, string>) {
+  if (trigger === 'fill') {
+    const side = detail.side === 'buy' ? '买入' : '卖出'
+    ElMessage.success(`${side} ${detail.amount} 成交 @ ${detail.price}`)
+  } else if (trigger === 'order_update' && detail.status === 'cancelled') {
+    ElMessage.warning('订单已取消')
+  } else if (trigger === 'order_update' && detail.status === 'rejected') {
+    ElMessage.error('订单被拒绝')
+  }
+}
+
 function handleTradingEvent(data: Record<string, unknown>) {
   if (!status.value) return
   const eventType = data.event as string
 
-  if (eventType === 'bar_update') {
-    // Replace scalar metrics
-    status.value.bar_count = data.bar_count as number
-    status.value.cash = parseFloat(data.cash as string)
-    status.value.equity = parseFloat(data.equity as string)
-    status.value.unrealized_pnl = parseFloat(data.unrealized_pnl as string)
-    status.value.realized_pnl = parseFloat(data.realized_pnl as string)
-    status.value.total_fees = parseFloat(data.total_fees as string)
-    status.value.completed_orders_count = data.completed_orders_count as number
-    status.value.trades_count = data.trades_count as number
+  if (eventType === 'state_update' || eventType === 'bar_close') {
+    const prevCompletedCount = status.value?.completed_orders_count ?? 0
 
-    // Parse positions: convert string amounts to numbers
-    const rawPositions = data.positions as Record<string, { amount: string; avg_entry_price: string }> | undefined
-    if (rawPositions) {
-      const parsed: Record<string, Position> = {}
-      for (const [sym, pos] of Object.entries(rawPositions)) {
-        parsed[sym] = {
-          amount: parseFloat(pos.amount),
-          avg_entry_price: parseFloat(pos.avg_entry_price),
-        }
-      }
-      status.value.positions = parsed
-    }
-
-    // Replace pending orders
-    status.value.pending_orders = (data.pending_orders as PendingOrderInfo[]) || []
-
-    // Replace open trade
-    if (isPaper.value) {
-      const ps = status.value as PaperTradingStatus
-      ps.open_trade = data.open_trade as OpenTrade | undefined
-    }
+    // Apply state snapshot (shallow merge)
+    applyStateSnapshot(data.state as Record<string, unknown>)
 
     // Append incremental data
-    if (isPaper.value) {
-      const ps = status.value as PaperTradingStatus
-      const newFills = data.new_fills as Fill[] | undefined
-      if (Array.isArray(newFills) && newFills.length && ps.fills) {
-        ps.fills.push(...newFills)
-      }
-      const newTrades = data.new_trades as Trade[] | undefined
-      if (Array.isArray(newTrades) && newTrades.length && ps.trades) {
-        ps.trades.push(...newTrades)
-      }
-      const newLogs = data.new_logs as string[] | undefined
-      if (Array.isArray(newLogs) && newLogs.length && ps.logs) {
-        ps.logs.push(...newLogs)
-      }
-    }
+    appendIncrementalData(data)
 
-    if (data.risk_state) {
-      (status.value as LiveTradingStatus).risk_state = data.risk_state as RiskState
-    }
-
-    // Auto-refresh audit orders when new orders complete
-    const newCount = data.completed_orders_count as number
-    if (isLive.value && newCount > prevCompletedOrdersCount.value) {
+    // Auto-refresh audit orders when completed_orders_count increases
+    if (isLive.value && (status.value.completed_orders_count ?? 0) > prevCompletedCount) {
       loadLiveAuditOrders()
+      loadAllLiveOrders()
     }
-    prevCompletedOrdersCount.value = newCount
 
-    // Trigger incremental equity curve load
-    loadEquityCurve(true)
-  } else if (eventType === 'fill') {
-    // Real-time fill event: update scalar state immediately (no fills list append —
-    // authoritative fills list comes via bar_update's new_fills at bar close)
-    status.value.cash = parseFloat(data.cash as string)
-    status.value.equity = parseFloat(data.equity as string)
-    status.value.unrealized_pnl = parseFloat(data.unrealized_pnl as string)
+    // state_update specific: toast notification
+    if (eventType === 'state_update' && data.trigger) {
+      showTradeNotification(data.trigger as string, data.trigger_detail as Record<string, string>)
+    }
 
-    const rawPositions = data.positions as Record<string, { amount: string; avg_entry_price: string }> | undefined
-    if (rawPositions) {
-      const parsed: Record<string, Position> = {}
-      for (const [sym, pos] of Object.entries(rawPositions)) {
-        parsed[sym] = {
-          amount: parseFloat(pos.amount),
-          avg_entry_price: parseFloat(pos.avg_entry_price),
-        }
+    // bar_close specific: equity curve + bar count
+    if (eventType === 'bar_close') {
+      if (data.equity_point) {
+        appendEquityPoint(data.equity_point as Record<string, string>)
       }
-      status.value.positions = parsed
-    }
-
-    status.value.pending_orders = (data.pending_orders as PendingOrderInfo[]) || []
-
-    if (isPaper.value) {
-      const ps = status.value as PaperTradingStatus
-      ps.open_trade = data.open_trade as OpenTrade | undefined
+      status.value.bar_count = data.bar_count as number
     }
   } else if (eventType === 'engine_stopped') {
     status.value.is_running = false
@@ -985,13 +1151,19 @@ function formatTradeTime(time: string): string {
 }
 
 // Auto-scroll logs only when logs tab is visible
-watch(paperLogs, () => {
+watch(() => tradingLogs.value.length, () => {
   if (autoScrollLogs.value && logContainerRef.value && activeTab.value === 'logs') {
     nextTick(() => {
       logContainerRef.value!.scrollTop = logContainerRef.value!.scrollHeight
     })
   }
 })
+
+function logLevelClass(entry: string): string {
+  if (/^\[.*?\] \[ERROR\]/.test(entry)) return 'log-error'
+  if (/^\[.*?\] \[WARNING\]/.test(entry)) return 'log-warning'
+  return 'log-info'
+}
 
 async function loadSession() {
   try {
@@ -1001,6 +1173,7 @@ async function loadSession() {
       : await getLiveSession(props.id)
     session.value = response.data
     loadEquityCurve()
+    loadTradingLogs()
   } catch (error) {
     console.error('Failed to load session:', error)
     toastError('加载会话失败')
@@ -1176,10 +1349,14 @@ async function handleResume() {
     toastSuccess(resumeMsg)
     await loadSession()
     await loadStatus()
+    if (isLive.value) {
+      loadLiveAuditOrders()
+      loadAllLiveOrders()
+    }
     subscribeTradingChannel()
     startPolling()
-  } catch (error: any) {
-    toastError(error?.response?.data?.message || '恢复失败')
+  } catch {
+    // Error already shown by Axios response interceptor
   } finally {
     resuming.value = false
   }
@@ -1201,8 +1378,10 @@ async function handleEmergencyClose() {
   try {
     const resp = await emergencyClosePositions(props.id)
     showEmergencyCloseResult(resp.data)
+    unsubscribeTradingChannel()
     stopPolling()
     await loadSession()
+    await loadStatus()
   } catch (error) {
     toastError('执行失败')
   }
@@ -1212,11 +1391,10 @@ onMounted(async () => {
   await loadSession()
   // Always load status (backend returns historical data from DB for stopped sessions)
   await loadStatus()
-  // Init counter for auto-refresh tracking
-  prevCompletedOrdersCount.value = status.value?.completed_orders_count ?? 0
   // Load audit orders for live sessions
   if (isLive.value) {
     loadLiveAuditOrders()
+    loadAllLiveOrders()
   }
   if (isRunning.value && status.value?.is_running) {
     // Subscribe to WebSocket for real-time updates + fallback polling (30s)
@@ -1464,6 +1642,18 @@ onUnmounted(() => {
     word-break: break-all;
   }
 
+  .log-error {
+    color: #f56c6c;
+  }
+
+  .log-warning {
+    color: #e6a23c;
+  }
+
+  .log-info {
+    color: inherit;
+  }
+
   .empty-logs {
     color: #c0c4cc;
     text-align: center;
@@ -1484,6 +1674,11 @@ onUnmounted(() => {
     font-size: 11px;
     color: #909399;
     margin-left: 2px;
+  }
+
+  .fee-equivalent {
+    font-size: 12px;
+    color: var(--el-text-color-secondary);
   }
 
   .pagination-wrapper {

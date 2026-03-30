@@ -12,7 +12,7 @@ from uuid import UUID
 
 if TYPE_CHECKING:
     from squant.engine.live.engine import LiveTradingEngine
-    from squant.infra.exchange.okx.ws_types import WSCandle, WSOrderUpdate
+    from squant.infra.exchange.ws_types import WSCandle, WSOrderUpdate
 
 logger = logging.getLogger(__name__)
 
@@ -126,7 +126,11 @@ class LiveSessionManager:
         return [engine.get_state_snapshot() for engine in self._sessions.values()]
 
     async def dispatch_candle(self, candle: WSCandle) -> None:
-        """Dispatch a candle to all subscribed engines.
+        """Dispatch a candle to all subscribed engines concurrently.
+
+        Uses asyncio.gather() so a slow engine (e.g., waiting on exchange API
+        for balance sync or order polling) does not block other engines
+        subscribed to the same symbol/timeframe.
 
         Args:
             candle: WebSocket candle data.
@@ -140,16 +144,39 @@ class LiveSessionManager:
         if not run_ids:
             return
 
-        # Dispatch to each engine
+        # Build list of (run_id, engine) pairs to dispatch to
+        targets: list[tuple[UUID, LiveTradingEngine]] = []
         for run_id in run_ids:
             engine = self._sessions.get(run_id)
             if engine and engine.is_running:
-                try:
-                    await engine.process_candle(candle)
-                except Exception as e:
-                    logger.exception(f"Error dispatching candle to live engine {run_id}: {e}")
+                targets.append((run_id, engine))
 
-    def dispatch_order_update(self, update: WSOrderUpdate) -> None:
+        if not targets:
+            return
+
+        async def _dispatch_one(
+            run_id: UUID, engine: LiveTradingEngine
+        ) -> tuple[UUID, BaseException | None]:
+            """Process a candle for a single engine, returning any error.
+
+            Catches BaseException (not just Exception) so that
+            asyncio.CancelledError from one engine does not cascade-cancel
+            all sibling engines via asyncio.gather().
+            """
+            try:
+                await engine.process_candle(candle)
+                return run_id, None
+            except BaseException as e:
+                logger.exception(f"Error dispatching candle to live engine {run_id}: {e}")
+                return run_id, e
+
+        # Dispatch concurrently
+        await asyncio.gather(
+            *(_dispatch_one(rid, eng) for rid, eng in targets),
+            return_exceptions=False,
+        )
+
+    async def dispatch_order_update(self, update: WSOrderUpdate) -> None:
         """Dispatch an order update to relevant engines.
 
         Args:
@@ -157,8 +184,9 @@ class LiveSessionManager:
         """
         symbol = update.symbol
 
-        # Get subscribed run IDs (copy to avoid modification during iteration)
-        run_ids = self._order_subscriptions.get(symbol, set()).copy()
+        # Get subscribed run IDs (snapshot under lock for consistency with dispatch_candle)
+        async with self._lock:
+            run_ids = self._order_subscriptions.get(symbol, set()).copy()
 
         if not run_ids:
             return
@@ -263,7 +291,10 @@ class LiveSessionManager:
             if engine:
                 logger.warning(f"Cleaning up stale live session {run_id}")
                 key = (engine.symbol, engine.timeframe)
-                await engine.stop(error="Session timeout: no activity detected")
+                try:
+                    await engine.stop(error="Session timeout: no activity detected")
+                except Exception as e:
+                    logger.exception(f"Error stopping stale engine {run_id}: {e}")
                 await self.unregister(run_id)
                 cleaned.append(run_id)
                 # Check if this was the last subscriber for this key

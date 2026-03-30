@@ -117,7 +117,7 @@ class RiskConfig(BaseModel):
         description="Enable circuit breaker on consecutive losses",
     )
     circuit_breaker_loss_count: int = Field(
-        default=5,
+        default=3,  # Aligned with API schema default (schemas/live_trading.py)
         ge=1,
         description="Number of consecutive losses to trigger circuit breaker",
     )
@@ -134,6 +134,28 @@ class RiskConfig(BaseModel):
     confirmation_threshold: Decimal = Field(
         default=Decimal("0.03"),
         description="Order size threshold for confirmation (fraction of equity)",
+    )
+
+    # Polling intervals (m-7: configurable instead of hardcoded)
+    order_poll_interval: float = Field(
+        default=30.0,
+        description="Minimum seconds between polling the same order for status updates",
+    )
+    balance_check_interval: float = Field(
+        default=300.0,
+        description="Seconds between balance sync checks with the exchange",
+    )
+    reconcile_interval_ms: int = Field(
+        default=200,
+        ge=50,
+        le=5000,
+        description="Minimum interval between REST reconciliation queries (milliseconds)",
+    )
+    reconcile_batch_size: int = Field(
+        default=20,
+        ge=1,
+        le=100,
+        description="Maximum orders per reconciliation batch",
     )
 
 
@@ -303,6 +325,6 @@ class RiskState(BaseModel):
         if now >= breaker_time:
             self.circuit_breaker_triggered = False
             self.circuit_breaker_until = None
-            self.consecutive_losses = 0
+            self.consecutive_losses = 0  # Reset so next loss doesn't re-trigger immediately
             return True
         return False

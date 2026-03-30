@@ -214,7 +214,8 @@ export interface paths {
          * Get Balance
          * @description Get account balance for all currencies.
          *
-         *     Returns the available and frozen balance for each currency in the account.
+         *     Returns the available and frozen balance for each currency
+         *     using the first active exchange account.
          */
         get: operations["get_balance_api_v1_account_balance_get"];
         put?: never;
@@ -392,7 +393,7 @@ export interface paths {
          * List Orders
          * @description List orders with optional filters.
          *
-         *     Returns paginated list of orders matching the specified criteria.
+         *     Returns paginated list of orders across all accounts matching the specified criteria.
          */
         get: operations["list_orders_api_v1_orders_get"];
         put?: never;
@@ -424,7 +425,7 @@ export interface paths {
          * Get Open Orders
          * @description Get all open (non-terminal) orders.
          *
-         *     Returns orders with status PENDING, SUBMITTED, or PARTIAL.
+         *     Returns orders with status PENDING, SUBMITTED, or PARTIAL across all accounts.
          */
         get: operations["get_open_orders_api_v1_orders_open_get"];
         put?: never;
@@ -444,7 +445,7 @@ export interface paths {
         };
         /**
          * Get Order Stats
-         * @description Get order statistics by status.
+         * @description Get order statistics by status across all accounts.
          */
         get: operations["get_order_stats_api_v1_orders_stats_get"];
         put?: never;
@@ -1248,6 +1249,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/paper/{run_id}/logs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Trading Logs
+         * @description Get trading logs for a session.
+         *
+         *     Reads the current log file for the given run_id.
+         *     Returns the last `tail` lines.
+         */
+        get: operations["get_trading_logs_api_v1_paper__run_id__logs_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/paper/{run_id}": {
         parameters: {
             query?: never;
@@ -1556,6 +1580,44 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/live/account-balance/{account_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Account Balance
+         * @description Get account balance with available capital for live trading.
+         *
+         *     Calculates the total account value on the exchange, subtracts equity
+         *     allocated to running live trading sessions, and returns the available
+         *     capital for new sessions.
+         *
+         *     Args:
+         *         account_id: Exchange account ID.
+         *         quote_currency: Quote currency for balance (default: USDT).
+         *         session: Database session.
+         *
+         *     Returns:
+         *         Account balance breakdown with available capital.
+         *
+         *     Raises:
+         *         HTTPException:
+         *             - 404 if exchange account not found
+         *             - 503 if exchange connection fails
+         *             - 400 for other live trading errors
+         */
+        get: operations["get_account_balance_api_v1_live_account_balance__account_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/live/{run_id}/orders": {
         parameters: {
             query?: never;
@@ -1579,6 +1641,29 @@ export interface paths {
          *         Paginated list of order records with trades.
          */
         get: operations["get_session_orders_api_v1_live__run_id__orders_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/live/{run_id}/logs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Trading Logs
+         * @description Get trading logs for a session.
+         *
+         *     Reads the current log file for the given run_id.
+         *     Returns the last `tail` lines.
+         */
+        get: operations["get_trading_logs_api_v1_live__run_id__logs_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -2334,6 +2419,28 @@ export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
         /**
+         * AccountBalanceResponse
+         * @description Account balance with available capital calculation.
+         */
+        AccountBalanceResponse: {
+            /** Account Total Value */
+            account_total_value: number;
+            /** Quote Currency */
+            quote_currency: string;
+            /** Running Sessions */
+            running_sessions?: components["schemas"]["RunningSessionEquity"][];
+            /**
+             * Sessions Total Equity
+             * @default 0
+             */
+            sessions_total_equity: number;
+            /**
+             * Available
+             * @default 0
+             */
+            available: number;
+        };
+        /**
          * AddToWatchlistRequest
          * @description Request to add a symbol to the watchlist.
          */
@@ -2348,6 +2455,40 @@ export interface components {
              * @description Exchange identifier
              */
             exchange: string;
+        };
+        /**
+         * ApiResponse
+         * @description Standard API response wrapper.
+         *
+         *     All API responses follow this format per dev-docs/technical/api/01-conventions.md.
+         */
+        ApiResponse: {
+            /**
+             * Code
+             * @default 0
+             */
+            code: number;
+            /**
+             * Message
+             * @default success
+             */
+            message: string;
+            /** Data */
+            data: unknown;
+        };
+        /** ApiResponse[AccountBalanceResponse] */
+        ApiResponse_AccountBalanceResponse_: {
+            /**
+             * Code
+             * @default 0
+             */
+            code: number;
+            /**
+             * Message
+             * @default success
+             */
+            message: string;
+            data: components["schemas"]["AccountBalanceResponse"];
         };
         /** ApiResponse[BacktestDetailResponse] */
         ApiResponse_BacktestDetailResponse_: {
@@ -4229,6 +4370,8 @@ export interface components {
             status: string;
             /** Trades */
             trades?: components["schemas"]["LiveSessionTradeResponse"][];
+            /** Corrections */
+            corrections?: unknown[] | null;
             /**
              * Created At
              * Format: date-time
@@ -4250,6 +4393,8 @@ export interface components {
              * Format: uuid
              */
             id: string;
+            /** Exchange Tid */
+            exchange_tid?: string | null;
             /** Price */
             price: number;
             /** Amount */
@@ -4258,6 +4403,10 @@ export interface components {
             fee: number;
             /** Fee Currency */
             fee_currency?: string | null;
+            /** Fill Source */
+            fill_source?: string | null;
+            /** Taker Or Maker */
+            taker_or_maker?: string | null;
             /**
              * Timestamp
              * Format: date-time
@@ -4397,6 +4546,12 @@ export interface components {
             initial_capital: number;
             /** Total Fees */
             total_fees: number;
+            /** Fees By Currency */
+            fees_by_currency?: {
+                [key: string]: unknown;
+            };
+            /** Fees Usdt Equivalent */
+            fees_usdt_equivalent?: number | null;
             /**
              * Unrealized Pnl
              * @default 0
@@ -4506,6 +4661,11 @@ export interface components {
              */
             account_id: string;
             /**
+             * Account Name
+             * @description Exchange account name
+             */
+            account_name?: string | null;
+            /**
              * Run Id
              * @description Strategy run ID
              */
@@ -4589,6 +4749,11 @@ export interface components {
              * @description Strategy name (from run.strategy)
              */
             strategy_name?: string | null;
+            /**
+             * Corrections
+             * @description Data correction audit log
+             */
+            corrections?: unknown[] | null;
             /**
              * Created At
              * Format: date-time
@@ -4711,6 +4876,11 @@ export interface components {
              */
             account_id: string;
             /**
+             * Account Name
+             * @description Exchange account name
+             */
+            account_name?: string | null;
+            /**
              * Run Id
              * @description Strategy run ID
              */
@@ -4794,6 +4964,11 @@ export interface components {
              * @description Strategy name (from run.strategy)
              */
             strategy_name?: string | null;
+            /**
+             * Corrections
+             * @description Data correction audit log
+             */
+            corrections?: unknown[] | null;
             /**
              * Created At
              * Format: date-time
@@ -5033,6 +5208,12 @@ export interface components {
             initial_capital: number;
             /** Total Fees */
             total_fees: number;
+            /** Fees By Currency */
+            fees_by_currency?: {
+                [key: string]: unknown;
+            };
+            /** Fees Usdt Equivalent */
+            fees_usdt_equivalent?: number | null;
             /**
              * Unrealized Pnl
              * @default 0
@@ -5058,8 +5239,6 @@ export interface components {
             /** Fills */
             fills?: components["schemas"]["FillRecordResponse"][];
             open_trade?: components["schemas"]["OpenTradeInfo"] | null;
-            /** Logs */
-            logs?: string[];
             /** Risk State */
             risk_state?: {
                 [key: string]: unknown;
@@ -5224,6 +5403,18 @@ export interface components {
              * @default 10
              */
             min_order_value: number | string;
+            /**
+             * Order Poll Interval
+             * @description Minimum seconds between order status polls (default 30s)
+             * @default 30
+             */
+            order_poll_interval: number;
+            /**
+             * Balance Check Interval
+             * @description Seconds between balance sync checks (default 300s)
+             * @default 300
+             */
+            balance_check_interval: number;
         };
         /**
          * RiskRuleListItem
@@ -5410,6 +5601,23 @@ export interface components {
             params?: {
                 [key: string]: unknown;
             } | null;
+        };
+        /**
+         * RunningSessionEquity
+         * @description Equity info for a running session.
+         */
+        RunningSessionEquity: {
+            /**
+             * Run Id
+             * Format: uuid
+             */
+            run_id: string;
+            /** Strategy Name */
+            strategy_name?: string | null;
+            /** Symbol */
+            symbol: string;
+            /** Equity */
+            equity: number;
         };
         /**
          * StartLiveTradingRequest
@@ -5752,6 +5960,16 @@ export interface components {
              * @description Execution time
              */
             timestamp: string;
+            /**
+             * Fill Source
+             * @description Fill source: ws, poll, or reconcile
+             */
+            fill_source?: string | null;
+            /**
+             * Taker Or Maker
+             * @description Maker or taker fill
+             */
+            taker_or_maker?: string | null;
         };
         /**
          * TradeRecordResponse
@@ -6523,12 +6741,18 @@ export interface operations {
     list_orders_api_v1_orders_get: {
         parameters: {
             query?: {
+                /** @description Filter by exchange account ID */
+                account_id?: string | null;
                 /** @description Filter by status */
                 status?: components["schemas"]["OrderStatus"][] | null;
                 /** @description Filter by trading pair */
                 symbol?: string | null;
                 /** @description Filter by side */
                 side?: components["schemas"]["OrderSide"] | null;
+                /** @description Filter orders created after this time */
+                start_time?: string | null;
+                /** @description Filter orders created before this time */
+                end_time?: string | null;
                 /** @description Page number (starts from 1) */
                 page?: number;
                 /** @description Items per page */
@@ -7607,6 +7831,39 @@ export interface operations {
             };
         };
     };
+    get_trading_logs_api_v1_paper__run_id__logs_get: {
+        parameters: {
+            query?: {
+                tail?: number;
+            };
+            header?: never;
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_paper_trading_run_api_v1_paper__run_id__get: {
         parameters: {
             query?: never;
@@ -7924,6 +8181,39 @@ export interface operations {
             };
         };
     };
+    get_account_balance_api_v1_live_account_balance__account_id__get: {
+        parameters: {
+            query?: {
+                quote_currency?: string;
+            };
+            header?: never;
+            path: {
+                account_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_AccountBalanceResponse_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_session_orders_api_v1_live__run_id__orders_get: {
         parameters: {
             query?: {
@@ -7947,6 +8237,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ApiResponse_PaginatedData_LiveSessionOrderResponse__"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_trading_logs_api_v1_live__run_id__logs_get: {
+        parameters: {
+            query?: {
+                tail?: number;
+            };
+            header?: never;
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse"];
                 };
             };
             /** @description Validation Error */

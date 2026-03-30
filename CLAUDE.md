@@ -144,14 +144,13 @@ src/squant/
   - `DbSession`, `DbSessionReadonly` — async SQLAlchemy sessions
   - `RedisClient` — Redis connection
   - `Exchange` — CCXT adapter (cached in `_exchange_cache` with `asyncio.Lock`, auto-connected with `load_markets()`)
-  - `OKXExchange` — legacy OKX-specific adapter (async generator with `yield`)
 - **Repository pattern**: `BaseRepository[ModelT: Base]` uses Python 3.12 generic syntax; provides `get`, `get_by`, `list`, `create`, `update`, `delete`, `count`
 - **Model mixins**: `UUIDMixin` (UUID string PK), `TimestampMixin` (created_at/updated_at with timezone)
 - **Manager + Engine pattern**: Both paper and live trading use a `manager.py` (session lifecycle, singleton via `get_*_session_manager()`) and `engine.py` (execution logic)
 - **Process isolation**: Strategy execution in separate processes via `multiprocessing`
 - **Strategy sandbox**: RestrictedPython blocks os/sys/subprocess/network/pickle/threading modules
 - **Circuit breaker**: Automatic trading halt on risk events (max loss, position limits)
-- **Exchange abstraction**: CCXT unified adapter (default) or native OKX adapter; configured via `DEFAULT_EXCHANGE` + `USE_CCXT_PROVIDER`
+- **Exchange abstraction**: CCXT unified adapter for all exchanges; configured via `DEFAULT_EXCHANGE`
 
 ### Exchange Exception Hierarchy
 
@@ -252,7 +251,7 @@ These constructors have been frequent sources of errors in tests and fixtures:
 - `CCXTRestAdapter(exchange_id: str, credentials: ExchangeCredentials | None)` — not a dict
 - `StreamManager()` — takes NO arguments; redis is set internally via `get_settings()`
 - `LiveTradingEngine(run_id, symbol, strategy, adapter, risk_config, ...)` — `adapter` is an `ExchangeAdapter`
-- `RiskManager(config: RiskConfig)` — uses `threading.RLock()` internally for thread safety
+- `RiskManager(config: RiskConfig, initial_equity: Decimal)` — uses `threading.RLock()` internally for thread safety
 
 ### Known Gotchas
 

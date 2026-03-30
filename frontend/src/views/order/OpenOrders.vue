@@ -13,16 +13,6 @@
 
     <div class="filter-bar card">
       <el-form :inline="true" :model="filter">
-        <el-form-item label="交易所">
-          <el-select v-model="filter.exchange" placeholder="全部" clearable style="width: 140px">
-            <el-option
-              v-for="e in exchanges"
-              :key="e"
-              :label="formatExchangeName(e)"
-              :value="e"
-            />
-          </el-select>
-        </el-form-item>
         <el-form-item label="交易对">
           <el-input v-model="filter.symbol" placeholder="搜索交易对" clearable style="width: 140px" />
         </el-form-item>
@@ -122,8 +112,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed, onMounted } from 'vue'
-import { useMarketStore } from '@/stores/market'
+import { ref, reactive, onMounted } from 'vue'
 import StatusBadge from '@/components/common/StatusBadge.vue'
 import {
   formatExchangeName,
@@ -137,25 +126,20 @@ import { getOpenOrders, cancelOrder as apiCancelOrder } from '@/api/order'
 import { useNotification } from '@/composables/useNotification'
 import type { Order } from '@/types'
 
-const marketStore = useMarketStore()
 const { toastSuccess, toastError, confirmDanger } = useNotification()
 
 const loading = ref(false)
 const orders = ref<Order[]>([])
 
 const filter = reactive({
-  exchange: '',
   symbol: '',
   side: '',
 })
-
-const exchanges = computed(() => marketStore.exchanges)
 
 async function loadOrders() {
   loading.value = true
   try {
     const params: Record<string, unknown> = {}
-    if (filter.exchange) params.exchange = filter.exchange
     if (filter.symbol) params.symbol = filter.symbol
     if (filter.side) params.side = filter.side
 
@@ -183,7 +167,6 @@ async function cancelOrder(id: string) {
 }
 
 onMounted(() => {
-  marketStore.loadExchanges()
   loadOrders()
 })
 </script>

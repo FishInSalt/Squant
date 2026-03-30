@@ -1,7 +1,6 @@
 """Exchange adapters for different cryptocurrency exchanges."""
 
 from .base import ExchangeAdapter
-from .binance import BinanceAdapter
 from .exceptions import (
     ExchangeAPIError,
     ExchangeAuthenticationError,
@@ -11,7 +10,6 @@ from .exceptions import (
     InvalidOrderError,
     OrderNotFoundError,
 )
-from .okx import OKXAdapter
 from .types import (
     AccountBalance,
     Balance,
@@ -43,7 +41,4 @@ __all__ = [
     "OrderResponse",
     "CancelOrderRequest",
     "TimeFrame",
-    # Adapters
-    "BinanceAdapter",
-    "OKXAdapter",
 ]

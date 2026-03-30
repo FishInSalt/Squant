@@ -79,6 +79,7 @@ class CircuitBreakerState:
     trigger_type: str | None = None
     trigger_reason: str | None = None
     cooldown_until: datetime | None = None
+    trigger_session_id: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for Redis storage."""
@@ -88,6 +89,7 @@ class CircuitBreakerState:
             "trigger_type": self.trigger_type,
             "trigger_reason": self.trigger_reason,
             "cooldown_until": (self.cooldown_until.isoformat() if self.cooldown_until else None),
+            "trigger_session_id": self.trigger_session_id,
         }
 
     @classmethod
@@ -113,6 +115,7 @@ class CircuitBreakerState:
             trigger_type=data.get("trigger_type"),
             trigger_reason=data.get("trigger_reason"),
             cooldown_until=cooldown_until,
+            trigger_session_id=data.get("trigger_session_id"),
         )
 
 
@@ -196,6 +199,7 @@ class CircuitBreakerService:
         trigger_type: CircuitBreakerTriggerType = CircuitBreakerTriggerType.MANUAL,
         cooldown_minutes: int | None = None,
         trigger_source: str = "api",
+        trigger_session_id: str | None = None,
     ) -> dict[str, Any]:
         """Trigger the circuit breaker to stop all trading.
 
@@ -206,6 +210,7 @@ class CircuitBreakerService:
             trigger_type: Type of trigger (manual/auto).
             cooldown_minutes: Optional cooldown period.
             trigger_source: Source of the trigger (api/rule:xxx).
+            trigger_session_id: Session that triggered the breaker (for auto triggers).
 
         Returns:
             Dict with trigger results.
@@ -268,6 +273,7 @@ class CircuitBreakerService:
                 trigger_type=trigger_type.value,
                 trigger_reason=reason,
                 cooldown_until=cooldown_until,
+                trigger_session_id=trigger_session_id,
             )
             await self._save_state(new_state)
 

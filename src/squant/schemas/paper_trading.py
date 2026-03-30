@@ -5,7 +5,7 @@ from decimal import Decimal
 from typing import Any
 from uuid import UUID
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, ValidationError, model_validator
 
 from squant.schemas.backtest import FillRecordResponse, TradeRecordResponse
 from squant.schemas.live_trading import RiskConfigRequest
@@ -91,7 +91,7 @@ class PaperTradingRunResponse(BaseModel):
         """
         try:
             return handler(data)
-        except Exception:
+        except (ValidationError, AttributeError, TypeError):
             if isinstance(data, dict):
                 raise
             # ORM object: build dict manually, excluding result-only fields
@@ -153,6 +153,8 @@ class PaperTradingStatusResponse(BaseModel):
     equity: NumberDecimal
     initial_capital: NumberDecimal
     total_fees: NumberDecimal
+    fees_by_currency: dict[str, Any] = Field(default_factory=dict)
+    fees_usdt_equivalent: NumberDecimal | None = None
     unrealized_pnl: NumberDecimal = Field(default=Decimal("0"))
     realized_pnl: NumberDecimal = Field(default=Decimal("0"))
     positions: dict[str, PositionInfo]
@@ -162,7 +164,6 @@ class PaperTradingStatusResponse(BaseModel):
     trades: list[TradeRecordResponse] = Field(default_factory=list)
     fills: list[FillRecordResponse] = Field(default_factory=list)
     open_trade: OpenTradeInfo | None = None
-    logs: list[str] = Field(default_factory=list)
     risk_state: dict[str, Any] | None = None
 
 

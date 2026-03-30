@@ -21,13 +21,14 @@ from squant.infra.exchange.exceptions import (
     ExchangeAuthenticationError,
     ExchangeConnectionError,
 )
-from squant.infra.exchange.okx.ws_types import (
+from squant.infra.exchange.ws_types import (
     WSAccountUpdate,
     WSCandle,
     WSOrderBook,
     WSOrderUpdate,
     WSTicker,
     WSTrade,
+    WSTradeExecution,
 )
 
 logger = logging.getLogger(__name__)
@@ -86,6 +87,9 @@ class CCXTStreamProvider:
         # Active subscription tasks
         self._subscription_tasks: dict[str, asyncio.Task[None]] = {}
 
+        # Reconnect handlers — invoked after successful WebSocket reconnection
+        self._reconnect_handlers: list[Callable[..., Any]] = []
+
         # Transformer for data conversion
         self._transformer = CCXTDataTransformer()
 
@@ -99,6 +103,13 @@ class CCXTStreamProvider:
         self._reconnect_base_delay = 1.0  # Base delay in seconds
         self._reconnect_max_delay = 60.0  # Maximum delay in seconds
         self._reconnect_attempt: int = 0  # Current reconnect attempt counter
+
+        # Fast retry: use short fixed delay for the first N reconnect attempts
+        # per subscription to give WebSocket connections a chance to establish
+        # without long exponential backoff delays on startup.
+        self._fast_retry_max_attempts = 3  # Number of reconnects that use fast retry
+        self._fast_retry_delay = 2.0  # Fixed delay in seconds for fast retries
+        self._subscription_reconnect_count: dict[str, int] = {}  # per-subscription counter
 
         # Candle close detection: track last timestamp to detect when a new candle starts
         # (meaning the previous one closed). CCXT doesn't provide is_closed natively.
@@ -334,6 +345,14 @@ class CCXTStreamProvider:
                     logger.info("Restarted batch tickers loop after reconnect")
 
                 logger.info(f"Successfully reconnected to {self._exchange_id}")
+
+                # Notify reconnect handlers
+                for handler in self._reconnect_handlers:
+                    try:
+                        await handler()
+                    except Exception as e:
+                        logger.error(f"Reconnect handler error: {e}")
+
                 return True
 
             except ExchangeConnectionError as e:
@@ -349,7 +368,10 @@ class CCXTStreamProvider:
         """Handle an error in a watch loop with exponential backoff.
 
         Tracks consecutive errors and triggers reconnection with exponential
-        backoff delays when threshold is reached.
+        backoff delays when threshold is reached. For the first few reconnect
+        attempts per subscription, uses a short fixed delay ("fast retry") to
+        give the WebSocket connection a chance to establish without long delays
+        on startup.
 
         Args:
             key: Subscription key (e.g., "ticker:BTC/USDT").
@@ -367,14 +389,28 @@ class CCXTStreamProvider:
 
         if error_count >= self._max_consecutive_errors:
             self._reconnect_attempt += 1
-            delay = self._get_reconnect_delay(self._reconnect_attempt)
 
-            logger.warning(
-                f"Too many consecutive errors for {key}, "
-                f"reconnecting in {delay:.1f}s (attempt {self._reconnect_attempt})"
-            )
+            # Track per-subscription reconnect count for fast retry logic
+            sub_reconnects = self._subscription_reconnect_count.get(key, 0) + 1
+            self._subscription_reconnect_count[key] = sub_reconnects
 
-            # Wait with exponential backoff before reconnecting
+            # Use fast retry (short fixed delay) for the first N reconnect
+            # attempts per subscription — gives WebSocket connections a chance
+            # to establish without long exponential backoff delays on startup.
+            if sub_reconnects <= self._fast_retry_max_attempts:
+                delay = self._fast_retry_delay
+                logger.info(
+                    f"Fast retry {sub_reconnects}/{self._fast_retry_max_attempts} for {key}, "
+                    f"reconnecting in {delay:.1f}s"
+                )
+            else:
+                delay = self._get_reconnect_delay(self._reconnect_attempt)
+                logger.warning(
+                    f"Too many consecutive errors for {key}, "
+                    f"reconnecting in {delay:.1f}s (attempt {self._reconnect_attempt})"
+                )
+
+            # Wait before reconnecting
             await asyncio.sleep(delay)
 
             # Try to reconnect
@@ -420,6 +456,9 @@ class CCXTStreamProvider:
         """
         self._last_successful_message = time.time()
         self._consecutive_errors[key] = 0
+        # Reset per-subscription reconnect counter on success so that
+        # future disconnections get fast retry again.
+        self._subscription_reconnect_count.pop(key, None)
 
     async def close(self) -> None:
         """Close connection and cleanup resources."""
@@ -442,7 +481,7 @@ class CCXTStreamProvider:
                 task.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
                     await task
-            del self._subscription_tasks[key]
+            self._subscription_tasks.pop(key, None)
 
         # Close exchange connection
         if self._exchange:
@@ -472,6 +511,16 @@ class CCXTStreamProvider:
         """
         if handler in self._handlers:
             self._handlers.remove(handler)
+
+    def add_reconnect_handler(self, handler: Callable[..., Any]) -> None:
+        """Register a callback invoked after successful WS reconnection."""
+        if handler not in self._reconnect_handlers:
+            self._reconnect_handlers.append(handler)
+
+    def remove_reconnect_handler(self, handler: Callable[..., Any]) -> None:
+        """Remove a reconnect callback."""
+        if handler in self._reconnect_handlers:
+            self._reconnect_handlers.remove(handler)
 
     # ==================== Public Channel Subscriptions ====================
 
@@ -616,6 +665,29 @@ class CCXTStreamProvider:
         self._subscription_tasks[key] = task
         logger.info("Started watching balance")
 
+    async def watch_my_trades(self, symbol: str) -> None:
+        """Subscribe to user trade execution feed (private channel).
+
+        Args:
+            symbol: Trading symbol (required -- Binance/Bybit require it;
+                    OKX supports None but we use symbol for consistency).
+        """
+        if not self._credentials:
+            raise ExchangeAuthenticationError(
+                message="Credentials required for private channels",
+                exchange=self._exchange_id,
+            )
+        key = f"my_trades:{symbol}"
+        if key in self._subscription_tasks:
+            if not self._subscription_tasks[key].done():
+                logger.debug(f"Already watching my trades: {symbol}")
+                return
+            logger.warning(f"Restarting dead my_trades task for {symbol}")
+            del self._subscription_tasks[key]
+        task = asyncio.create_task(self._my_trades_loop(symbol))
+        self._subscription_tasks[key] = task
+        logger.info(f"Started watching my trades: {symbol}")
+
     # ==================== Unsubscribe ====================
 
     async def unwatch(self, subscription_key: str) -> None:
@@ -681,10 +753,12 @@ class CCXTStreamProvider:
         Uses watch_tickers (plural) to batch multiple symbols into a single
         WebSocket connection, which is much more efficient than individual
         watch_ticker calls.
-        """
-        consecutive_errors = 0
-        max_errors = 10
 
+        Error handling delegates to _handle_loop_error() for consistent
+        reconnection behavior with other loops (same threshold, shared
+        error counters, exponential backoff).
+        """
+        key = "batch_tickers"
         logger.info("Batch tickers loop started")
 
         while self._running:
@@ -706,8 +780,7 @@ class CCXTStreamProvider:
                 tickers = await self._exchange.watch_tickers(symbols)
 
                 # Reset error count on success
-                consecutive_errors = 0
-                self._last_successful_message = time.time()
+                self._mark_success(key)
 
                 # Process all received tickers
                 for symbol, ticker in tickers.items():
@@ -738,40 +811,9 @@ class CCXTStreamProvider:
                         # Don't count this as a consecutive error, just continue
                         continue
 
-                consecutive_errors += 1
-                logger.warning(
-                    f"Error in batch tickers loop (attempt {consecutive_errors}/{max_errors}): {e}"
-                )
-
-                if consecutive_errors >= max_errors:
-                    self._reconnect_attempt += 1
-                    delay = self._get_reconnect_delay(self._reconnect_attempt)
-
-                    logger.warning(
-                        f"Too many consecutive errors in batch tickers loop, "
-                        f"reconnecting in {delay:.1f}s (attempt {self._reconnect_attempt})"
-                    )
-
-                    # Wait with exponential backoff before reconnecting
-                    await asyncio.sleep(delay)
-
-                    # Try to reconnect
-                    if await self.reconnect():
-                        consecutive_errors = 0
-                        self._reconnect_attempt = 0  # Reset on success
-                    else:
-                        # Check if we've exceeded max reconnect attempts
-                        if self._reconnect_attempt >= 10:
-                            logger.error(
-                                f"Max reconnection attempts ({self._reconnect_attempt}) reached, "
-                                "stopping batch tickers loop"
-                            )
-                            # Fire critical alert (LIVE-CN-002)
-                            self._fire_reconnect_exhausted_alert("batch_tickers")
-                            break
-                        # Otherwise keep trying with backoff
-                else:
-                    await asyncio.sleep(1)
+                if not await self._handle_loop_error(key, e):
+                    break
+                await asyncio.sleep(1)
 
         logger.info("Batch tickers loop stopped")
 
@@ -988,12 +1030,49 @@ class CCXTStreamProvider:
             self._subscription_tasks.pop(key, None)
             logger.info("Balance loop exited")
 
+    async def _my_trades_loop(self, symbol: str) -> None:
+        """Background loop for user trade execution updates."""
+        key = f"my_trades:{symbol}"
+        try:
+            if not await self._wait_until_ready(key):
+                return
+            while self._running:
+                try:
+                    if not self._exchange:
+                        await asyncio.sleep(1)
+                        continue
+                    logger.debug(f"Calling watch_my_trades for {symbol}")
+                    trades = await self._exchange.watch_my_trades(symbol)
+                    self._mark_success(key)
+                    logger.info(
+                        f"Received {len(trades)} my_trades for {symbol}: "
+                        f"{[t.get('id', 'no-id') for t in trades]}"
+                    )
+                    for trade in trades:
+                        ws_trade = self._transformer.trade_to_ws_trade_execution(trade)
+                        await self._dispatch("trade_execution", ws_trade)
+                except asyncio.CancelledError:
+                    break
+                except Exception as e:
+                    if not await self._handle_loop_error(key, e):
+                        break
+                    await asyncio.sleep(1)
+        finally:
+            self._subscription_tasks.pop(key, None)
+            logger.info(f"My trades loop exited for {symbol}")
+
     # ==================== Dispatch ====================
 
     async def _dispatch(
         self,
         data_type: str,
-        data: WSTicker | WSCandle | WSTrade | WSOrderBook | WSOrderUpdate | WSAccountUpdate,
+        data: WSTicker
+        | WSCandle
+        | WSTrade
+        | WSOrderBook
+        | WSOrderUpdate
+        | WSAccountUpdate
+        | WSTradeExecution,
     ) -> None:
         """Dispatch data to all registered handlers.
 

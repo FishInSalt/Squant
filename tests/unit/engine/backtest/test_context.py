@@ -1502,7 +1502,6 @@ class TestBuildResultSnapshot:
         assert result["trades"] == []
         assert result["open_trade"] is None
         assert result["trades_count"] == 0
-        assert result["logs"] == []
 
     def test_with_position(self, context: BacktestContext, sample_bar: Bar) -> None:
         """Test snapshot includes open positions with unrealized PnL."""
@@ -1545,6 +1544,8 @@ class TestBuildResultSnapshot:
                 fees=Decimal("8"),
             )
         )
+        # Set cumulative counter (realized_pnl now uses cumulative tracking)
+        context._cumulative_realized_pnl = Decimal("100")
 
         result = context.build_result_snapshot()
 
@@ -1596,6 +1597,8 @@ class TestBuildResultSnapshot:
         )
         context.log("Test trade executed")
         context.log("Position opened")
+        # Set cumulative counter (realized_pnl now uses cumulative tracking)
+        context._cumulative_realized_pnl = Decimal("100")
 
         # Snapshot → restore into a fresh context
         snapshot = context.build_result_snapshot()
@@ -1603,7 +1606,6 @@ class TestBuildResultSnapshot:
         # Verify top-level aggregates in snapshot
         assert Decimal(snapshot["realized_pnl"]) == Decimal("100")
         assert Decimal(snapshot["unrealized_pnl"]) == Decimal("200")  # (46000-45000)*0.2
-        assert len(snapshot["logs"]) == 2
 
         new_ctx = BacktestContext(
             initial_capital=Decimal("100000"),
@@ -1623,9 +1625,6 @@ class TestBuildResultSnapshot:
         assert new_ctx._open_trade.entry_time == datetime(2024, 6, 1, 10, 0, 0, tzinfo=UTC)
         assert new_ctx._open_trade.fees == Decimal("9.0")
         assert new_ctx._partial_exit_pnl == Decimal("150.5")
-        # Logs restored
-        assert len(new_ctx.logs) == 2
-        assert "Test trade executed" in new_ctx.logs[0]
 
 
 class TestWeightedExitPrice:
@@ -1975,8 +1974,10 @@ class TestStopOrderContextAPI:
         context._set_current_bar(bar)
 
         order_id = context.buy(
-            "BTC/USDT", Decimal("0.1"),
-            price=Decimal("43500"), stop_price=Decimal("43000"),
+            "BTC/USDT",
+            Decimal("0.1"),
+            price=Decimal("43500"),
+            stop_price=Decimal("43000"),
         )
 
         orders = context.pending_orders
@@ -2004,15 +2005,17 @@ class TestStopOrderContextAPI:
         from squant.engine.backtest.types import Fill
         from squant.engine.backtest.types import OrderSide as Side
 
-        context._process_fill(Fill(
-            order_id="fake",
-            symbol="BTC/USDT",
-            side=Side.BUY,
-            price=Decimal("42000"),
-            amount=Decimal("1"),
-            fee=Decimal("42"),
-            timestamp=datetime(2024, 1, 1, tzinfo=UTC),
-        ))
+        context._process_fill(
+            Fill(
+                order_id="fake",
+                symbol="BTC/USDT",
+                side=Side.BUY,
+                price=Decimal("42000"),
+                amount=Decimal("1"),
+                fee=Decimal("42"),
+                timestamp=datetime(2024, 1, 1, tzinfo=UTC),
+            )
+        )
 
         order_id = context.sell("BTC/USDT", Decimal("0.5"), stop_price=Decimal("41000"))
 
@@ -2296,9 +2299,7 @@ class TestAccountMetrics:
         """unrealized_pnl returns 0 with no position."""
         assert context.unrealized_pnl == Decimal("0")
 
-    def test_unrealized_pnl_with_profit(
-        self, context: BacktestContext, sample_bar: Bar
-    ) -> None:
+    def test_unrealized_pnl_with_profit(self, context: BacktestContext, sample_bar: Bar) -> None:
         """unrealized_pnl reflects paper profit."""
         context._set_current_bar(sample_bar)
         # Simulate a buy fill
@@ -2330,9 +2331,7 @@ class TestAccountMetrics:
         """realized_pnl returns 0 with no completed trades."""
         assert context.realized_pnl == Decimal("0")
 
-    def test_realized_pnl_after_round_trip(
-        self, context: BacktestContext, sample_bar: Bar
-    ) -> None:
+    def test_realized_pnl_after_round_trip(self, context: BacktestContext, sample_bar: Bar) -> None:
         """realized_pnl reflects closed trade PnL."""
         context._set_current_bar(sample_bar)
         # Buy fill
@@ -2365,9 +2364,7 @@ class TestAccountMetrics:
         """return_pct is 0 at start."""
         assert context.return_pct == Decimal("0")
 
-    def test_return_pct_after_profit(
-        self, context: BacktestContext, sample_bar: Bar
-    ) -> None:
+    def test_return_pct_after_profit(self, context: BacktestContext, sample_bar: Bar) -> None:
         """return_pct reflects equity change."""
         context._set_current_bar(sample_bar)
         # Buy 1 BTC at 50000

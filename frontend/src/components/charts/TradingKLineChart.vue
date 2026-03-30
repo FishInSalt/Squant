@@ -536,6 +536,14 @@ function rebuildTradeMarkers() {
 
   const minTs = data[0].timestamp
   const maxTs = data[data.length - 1].timestamp
+  // Bar duration in ms for upper bound relaxation — fills within the current
+  // (possibly unclosed) bar should not be filtered out.
+  const tfMap: Record<string, number> = {
+    '1m': 60_000, '3m': 180_000, '5m': 300_000, '15m': 900_000,
+    '30m': 1_800_000, '1h': 3_600_000, '4h': 14_400_000, '1d': 86_400_000,
+  }
+  const barDurationMs = tfMap[props.timeframe] ?? 60_000
+  const maxTsUpper = maxTs + barDurationMs
   const sortedTs = data.map(c => c.timestamp)
 
   function findClosestTs(ts: number): number {
@@ -565,24 +573,42 @@ function rebuildTradeMarkers() {
     newTradeMap.get(candleTs)!.push(info)
   }
 
-  // Use fills as marker source when available (shows every individual fill);
-  // otherwise fall back to trades (entry/exit only)
+  // Aggregate fills per bar per side — one marker per bar+direction
+  // Shows total amount and volume-weighted average price
   if (hasFills) {
+    const agg = new Map<string, { side: 'buy' | 'sell'; snapped: number; totalAmount: number; totalNotional: number; time: string }>()
     for (const fill of props.fills!) {
       const ts = new Date(fill.timestamp).getTime()
-      if (ts < minTs || ts > maxTs) continue
+      if (ts < minTs || ts > maxTsUpper) continue
       const snapped = snapTs(ts)
-      const isBuy = fill.side === 'buy'
+      const key = `${snapped}|${fill.side}`
+      const existing = agg.get(key)
+      if (existing) {
+        existing.totalAmount += fill.amount
+        existing.totalNotional += fill.price * fill.amount
+      } else {
+        agg.set(key, {
+          side: fill.side as 'buy' | 'sell',
+          snapped,
+          totalAmount: fill.amount,
+          totalNotional: fill.price * fill.amount,
+          time: fill.timestamp,
+        })
+      }
+    }
+    for (const item of agg.values()) {
+      const isBuy = item.side === 'buy'
+      const avgPrice = item.totalNotional / item.totalAmount
       overlays.push({
         name: isBuy ? 'buyMarker' : 'sellMarker',
         lock: true,
-        points: [{ timestamp: ts, value: isBuy ? (lowMap.get(snapped) ?? 0) : (highMap.get(snapped) ?? 0) }],
+        points: [{ timestamp: item.snapped, value: isBuy ? (lowMap.get(item.snapped) ?? 0) : (highMap.get(item.snapped) ?? 0) }],
       })
-      addToMap(snapped, {
-        type: fill.side as 'buy' | 'sell',
-        price: fill.price,
-        amount: fill.amount,
-        time: fill.timestamp,
+      addToMap(item.snapped, {
+        type: item.side,
+        price: Math.round(avgPrice * 100) / 100,
+        amount: Math.round(item.totalAmount * 1e8) / 1e8,
+        time: item.time,
       })
     }
   } else {
@@ -713,7 +739,10 @@ watch(() => props.realtime, (newVal) => {
   }
 })
 
-// Watch trades/fills count and open trade to rebuild chart markers
+// Watch trades/fills count and open trade to rebuild chart markers.
+// The upper bound in rebuildTradeMarkers uses maxTs + barDuration, so fills
+// within the current (unclosed) bar are rendered immediately without needing
+// to watch candleData.length.
 watch(
   () => [props.trades?.length ?? 0, props.fills?.length ?? 0, props.openTrade?.entry_time ?? null] as const,
   () => {

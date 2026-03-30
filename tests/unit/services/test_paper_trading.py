@@ -127,7 +127,6 @@ def mock_engine():
         },
         "completed_orders_count": 5,
         "trades_count": 3,
-        "logs": ["Log entry 1", "Log entry 2"],
     }
     engine.build_result_for_persistence = MagicMock(return_value=result_data)
     # API response snapshot (superset of result_data with extra fields)
@@ -708,7 +707,6 @@ class TestPaperTradingService:
             assert result_data["trades_count"] == 3
             assert result_data["completed_orders_count"] == 5
             assert len(result_data["trades"]) == 1
-            assert len(result_data["logs"]) == 2
             # Verify open_trade is preserved in result snapshot
             assert result_data["open_trade"] is not None
             assert result_data["open_trade"]["entry_time"] == "2024-06-01T10:00:00+00:00"
@@ -738,7 +736,6 @@ class TestPaperTradingService:
                     "trades_count": 0,
                     "completed_orders_count": 0,
                     "trades": [],
-                    "logs": [],
                     "open_trade": None,
                     "total_fees": "0",
                     "bar_count": 0,
@@ -810,7 +807,6 @@ class TestPaperTradingService:
             "completed_orders_count": 4,
             "trades_count": 2,
             "trades": [{"symbol": "BTC/USDT", "pnl": "350"}],
-            "logs": ["trade executed"],
         }
 
         with (
@@ -835,7 +831,6 @@ class TestPaperTradingService:
             assert status["trades_count"] == 2
             assert status["completed_orders_count"] == 4
             assert len(status["trades"]) == 1
-            assert len(status["logs"]) == 1
 
     @pytest.mark.asyncio
     async def test_get_status_fallback_without_result(self, mock_session, mock_run):
@@ -878,7 +873,6 @@ class TestPaperTradingService:
             "realized_pnl": "300",
             "positions": {"BTC/USDT": {"amount": "0.1", "avg_entry_price": "50000"}},
             "trades": [{"symbol": "BTC/USDT", "pnl": "300"}],
-            "logs": ["[10:00] Buy BTC"],
         }
 
         with (
@@ -903,7 +897,6 @@ class TestPaperTradingService:
             update_kwargs = mock_update.call_args.kwargs
             assert update_kwargs["result"]["realized_pnl"] == "300"
             assert update_kwargs["result"]["trades"] == [{"symbol": "BTC/USDT", "pnl": "300"}]
-            assert update_kwargs["result"]["logs"] == ["[10:00] Buy BTC"]
             assert update_kwargs["status"] == RunStatus.INTERRUPTED
 
     @pytest.mark.asyncio

@@ -20,8 +20,8 @@ from squant.engine.paper.matching import PaperMatchingEngine
 from squant.engine.resource_limits import ResourceLimitExceededError, resource_limiter
 from squant.engine.risk.manager import RiskManager
 from squant.engine.risk.models import RiskConfig
-from squant.infra.exchange.okx.ws_types import WSCandle, WSTicker
 from squant.infra.exchange.types import OrderRequest
+from squant.infra.exchange.ws_types import WSCandle, WSTicker
 from squant.models.enums import OrderSide as ExchangeOrderSide
 from squant.models.enums import OrderType as ExchangeOrderType
 
@@ -33,6 +33,9 @@ ResultPersistCallback = Callable[[str, dict[str, Any]], Awaitable[None]]
 EventCallback = Callable[[dict[str, Any]], Awaitable[None]]
 
 logger = logging.getLogger(__name__)
+
+# Module-level set to prevent GC of fire-and-forget asyncio tasks (m-2 fix)
+_background_tasks: set[asyncio.Task[Any]] = set()
 
 
 def _serialize_fill(f: Any) -> dict[str, Any]:
@@ -154,6 +157,7 @@ class PaperTradingEngine:
             max_trades=settings.paper_max_trades,
             max_logs=settings.paper_max_logs,
             min_order_value=risk_config.min_order_value if risk_config else Decimal("5"),
+            use_real_time=True,
         )
 
         # Tick-level matching engine (paper-specific, not bar-level backtest engine)
@@ -201,6 +205,7 @@ class PaperTradingEngine:
         # Pending equity snapshots for batch persistence (fallback when callback fails)
         self._pending_snapshots: list[EquitySnapshot] = []
         self._snapshot_batch_size = 10  # Persist every N bars
+        self._max_pending_snapshots = 1000  # Cap to prevent unbounded memory growth
 
         # Lock to ensure stop() waits for in-progress candle processing (PP-C05)
         self._processing_lock = asyncio.Lock()
@@ -215,6 +220,10 @@ class PaperTradingEngine:
         # Strategy callback tracking (on_fill / on_order_done)
         self._last_callback_fill_total = 0
         self._last_callback_completed_total = 0
+
+        # Incremental realized PnL cache — updated in _process_fill_safe()
+        # on trade completion, avoids O(n) sum over all trades each bar.
+        self._cached_realized_pnl = Decimal("0")
 
     @property
     def run_id(self) -> UUID:
@@ -290,7 +299,12 @@ class PaperTradingEngine:
         if not self._is_running:
             return False
         if self._last_active_at is None:
-            return True  # Just started, no candles processed yet
+            # No candles processed yet — healthy if started recently,
+            # stale if no candle ever arrived within timeout period.
+            if self._started_at is None:
+                return True
+            startup_elapsed = (datetime.now(UTC) - self._started_at).total_seconds()
+            return startup_elapsed < timeout_seconds
         tf_seconds = self._TIMEFRAME_SECONDS.get(self._timeframe, 300)
         effective_timeout = max(timeout_seconds, tf_seconds * 3)
         elapsed = (datetime.now(UTC) - self._last_active_at).total_seconds()
@@ -313,7 +327,9 @@ class PaperTradingEngine:
         logger.info(f"Starting paper trading engine {self._run_id}")
         self._is_running = True
         self._started_at = datetime.now(UTC)
-        self._last_active_at = datetime.now(UTC)
+        # NOTE: Do NOT set _last_active_at here. It stays None until the first
+        # candle arrives, so is_healthy() returns True for a just-started engine
+        # that hasn't received data yet (prevents premature health-check timeout).
 
         try:
             # Call strategy initialization
@@ -328,27 +344,34 @@ class PaperTradingEngine:
     async def stop(self, error: str | None = None) -> None:
         """Stop the paper trading engine.
 
-        Waits for any in-progress candle processing to complete,
-        then calls strategy.on_stop() and marks the engine as stopped.
+        Always acquires _processing_lock before checking state (PP-C05).
+        This guarantees that any in-progress process_candle() — including
+        its _persist_on_early_stop() — has completed before this method
+        returns, so callers can safely read engine state afterward.
 
         Args:
             error: Optional error message if stopping due to error.
         """
-        if not self._is_running:
-            logger.warning(f"Engine {self._run_id} not running")
-            return
-
-        logger.info(f"Stopping paper trading engine {self._run_id}")
-
         if error:
             self._error_message = error
 
-        # Wait for any in-progress candle processing to finish (PP-C05)
+        # Always acquire the lock so callers are guaranteed that
+        # process_candle() has finished when stop() returns.
+        # _stop_impl() handles the already-stopped case internally.
         async with self._processing_lock:
             self._stop_impl()
 
     def _stop_impl(self) -> None:
-        """Internal stop logic (must be called with _processing_lock held or from within it)."""
+        """Internal stop logic (must be called with _processing_lock held or from within it).
+
+        Guarded against double invocation: if the engine is already stopped
+        (e.g., risk auto-stop in process_candle followed by service.stop()),
+        this method returns immediately to avoid calling on_stop() twice and
+        emitting duplicate WebSocket events.
+        """
+        if not self._is_running:
+            return
+
         try:
             # Call strategy cleanup
             self._strategy.on_stop()
@@ -371,7 +394,9 @@ class PaperTradingEngine:
                     "stopped_at": self._stopped_at.isoformat() if self._stopped_at else None,
                 }
                 loop = asyncio.get_running_loop()
-                loop.create_task(self._on_event(event))
+                task = loop.create_task(self._on_event(event))
+                _background_tasks.add(task)
+                task.add_done_callback(_background_tasks.discard)
             except Exception:
                 pass
 
@@ -450,6 +475,7 @@ class PaperTradingEngine:
                 # Closed: final bar volume. Unclosed: cumulative volume so far.
                 # Both are valid for volume participation rate enforcement.
                 # Bid/ask from cached ticker data enable spread-based fills.
+                fills_before = self._context._total_fills_added
                 self._fill_new_orders(
                     current_price,
                     timestamp,
@@ -463,6 +489,18 @@ class PaperTradingEngine:
 
                 # 3. Move completed orders
                 self._context._move_completed_orders()
+
+                # Emit state_update if fills occurred (after move so pending_orders is final)
+                has_new_fills = self._context._total_fills_added > fills_before
+                if has_new_fills and self._on_event and not self._warming_up:
+                    try:
+                        event = self._build_state_update_event("fill")
+                        loop = asyncio.get_running_loop()
+                        task = loop.create_task(self._on_event(event))
+                        _background_tasks.add(task)
+                        task.add_done_callback(_background_tasks.discard)
+                    except Exception:
+                        pass
 
                 # Only process bar-level events on closed candles
                 if not candle.is_closed:
@@ -489,9 +527,7 @@ class PaperTradingEngine:
                     self._risk_manager.update_equity(self._context.equity)
                     # 5b. Update unrealized PnL so daily loss limit includes open positions
                     self._risk_manager.update_unrealized_pnl(self._context._get_unrealized_pnl())
-                    self._risk_manager.update_position_value(
-                        self._context._get_position_value()
-                    )
+                    self._risk_manager.update_position_value(self._context._get_position_value())
 
                     # 5c. Auto-stop if total loss limit triggered (IMP-005)
                     if self._risk_manager.check_total_loss_limit():
@@ -501,9 +537,12 @@ class PaperTradingEngine:
                             f"unrealized {self._risk_manager.state.unrealized_pnl:.2f})"
                         )
                         logger.warning(f"Engine {self._run_id}: {msg}")
-                        self._context.log(msg)
+                        self._context.log(msg, level="error", category="risk")
                         self._error_message = msg
                         self._stop_impl()
+                        # Persist final state before returning — steps 6 & 8
+                        # would otherwise be skipped by the early return.
+                        await self._persist_on_early_stop()
                         return
 
                 # 6. Persist snapshot: try synchronous callback first, fall back to batch
@@ -519,7 +558,7 @@ class PaperTradingEngine:
                                 f"Snapshot persist callback failed for {self._run_id}: {e}"
                             )
                     if not persisted:
-                        self._pending_snapshots.append(latest_snapshot)
+                        self._append_pending_snapshot(latest_snapshot)
 
                 # 6b. Sync ticker ask to context for accurate market order cost
                 # estimation in strategy.buy() — prevents underestimating cost
@@ -527,36 +566,33 @@ class PaperTradingEngine:
                 self._context._ref_ask = self._latest_ask
 
                 # 6c. Notify strategy of fills and completed orders (before on_bar)
-                fill_delta = (
-                    self._context._total_fills_added - self._last_callback_fill_total
-                )
+                fill_delta = self._context._total_fills_added - self._last_callback_fill_total
                 if fill_delta > 0:
                     recent_fills = list(self._context._fills)[-fill_delta:]
                     for fill in recent_fills:
                         try:
                             self._strategy.on_fill(fill)
                         except Exception as e:
-                            self._context.log(f"ERROR in on_fill: {e}")
+                            self._context.log(
+                                f"ERROR in on_fill: {e}", level="error", category="strategy"
+                            )
                             logger.warning(f"Strategy on_fill error: {e}")
                 self._last_callback_fill_total = self._context._total_fills_added
 
                 completed_delta = (
-                    self._context._total_completed_added
-                    - self._last_callback_completed_total
+                    self._context._total_completed_added - self._last_callback_completed_total
                 )
                 if completed_delta > 0:
-                    recent_completed = list(self._context._completed_orders)[
-                        -completed_delta:
-                    ]
+                    recent_completed = list(self._context._completed_orders)[-completed_delta:]
                     for order in recent_completed:
                         try:
                             self._strategy.on_order_done(order)
                         except Exception as e:
-                            self._context.log(f"ERROR in on_order_done: {e}")
+                            self._context.log(
+                                f"ERROR in on_order_done: {e}", level="error", category="strategy"
+                            )
                             logger.warning(f"Strategy on_order_done error: {e}")
-                self._last_callback_completed_total = (
-                    self._context._total_completed_added
-                )
+                self._last_callback_completed_total = self._context._total_completed_added
 
                 # 7. Call strategy on_bar with resource limits (STR-013)
                 from squant.config import get_settings
@@ -572,12 +608,13 @@ class PaperTradingEngine:
                     logger.error(f"Strategy resource limit exceeded: {e}")
                     self._error_message = f"Strategy resource limit exceeded: {e}"
                     self._stop_impl()
+                    await self._persist_on_early_stop()
                     raise
                 except Exception as e:
                     # TRD-025#3: strategy errors (e.g., insufficient cash) should
                     # be logged but not crash the engine — consistent with backtest runner
                     logger.warning(f"Strategy on_bar error in engine {self._run_id}: {e}")
-                    self._context.log(f"ERROR in on_bar: {e}")
+                    self._context.log(f"ERROR in on_bar: {e}", level="error", category="strategy")
 
                 self._bar_count += 1
 
@@ -589,12 +626,14 @@ class PaperTradingEngine:
                     except Exception as e:
                         logger.warning(f"Result persist callback failed for {self._run_id}: {e}")
 
-                # 9. Emit bar update event via WebSocket
+                # 9. Emit bar_close event via WebSocket
                 if self._on_event:
                     try:
-                        event = self._build_bar_update_event()
+                        event = self._build_bar_close_event(bar)
                         loop = asyncio.get_running_loop()
-                        loop.create_task(self._on_event(event))
+                        task = loop.create_task(self._on_event(event))
+                        _background_tasks.add(task)
+                        task.add_done_callback(_background_tasks.discard)
                     except Exception as e:
                         logger.debug(f"Event emit failed for {self._run_id}: {e}")
 
@@ -666,9 +705,14 @@ class PaperTradingEngine:
                 if not self._validate_order_risk(order, current_price):
                     continue
                 fill = self._matching_engine.fill_market_order(
-                    order, current_price, timestamp,
-                    volume_budget=volume_budget, high=high, low=low,
-                    bid=bid, ask=ask,
+                    order,
+                    current_price,
+                    timestamp,
+                    volume_budget=volume_budget,
+                    high=high,
+                    low=low,
+                    bid=bid,
+                    ask=ask,
                 )
                 if fill:
                     self._process_fill_safe(fill)
@@ -688,15 +732,33 @@ class PaperTradingEngine:
         # Process STOP orders: check trigger → fill as market
         for order in stop_orders:
             fill = self._matching_engine.fill_stop_order(
-                order, current_price, timestamp,
-                high=high, low=low, volume_budget=volume_budget,
-                bid=bid, ask=ask,
+                order,
+                current_price,
+                timestamp,
+                high=high,
+                low=low,
+                volume_budget=volume_budget,
+                bid=bid,
+                ask=ask,
             )
             if fill:
                 if not self._validate_order_risk(order, current_price):
+                    # Log explicitly that a stop order was cancelled by risk rules,
+                    # since this permanently removes the user's stop protection.
+                    short_id = order.id[:8]
+                    self._context.log(
+                        f"止损单 #{short_id} 因风控被取消 "
+                        f"(触发价={order.stop_price}, 当前价={current_price})",
+                        level="warning",
+                        category="risk",
+                    )
                     continue
                 short_id = order.id[:8]
-                self._context.log(f"止损触发 #{short_id} 触发价={order.stop_price}")
+                self._context.log(
+                    f"止损触发 #{short_id} 触发价={order.stop_price}",
+                    level="info",
+                    category="order",
+                )
                 self._process_fill_safe(fill)
                 filled_this_update += fill.amount
                 if volume_budget is not None:
@@ -708,14 +770,22 @@ class PaperTradingEngine:
         for order in stop_limit_orders:
             was_triggered = order.triggered
             fills = self._matching_engine.match_pending_stop_limits(
-                [order], current_price, timestamp,
-                high=high, low=low, open_price=open_price,
+                [order],
+                current_price,
+                timestamp,
+                high=high,
+                low=low,
+                open_price=open_price,
                 volume_budget=volume_budget,
             )
             # Log trigger event (whether or not limit is reachable)
             if not was_triggered and order.triggered:
                 short_id = order.id[:8]
-                self._context.log(f"止损触发 #{short_id} 触发价={order.stop_price}")
+                self._context.log(
+                    f"止损触发 #{short_id} 触发价={order.stop_price}",
+                    level="info",
+                    category="order",
+                )
             if not fills:
                 # Order may still have been triggered but limit not reachable yet.
                 # It will be picked up as a limit order on the next update.
@@ -798,10 +868,11 @@ class PaperTradingEngine:
         if not result.passed:
             from squant.engine.backtest.types import OrderStatus
 
-            order.status = OrderStatus.CANCELLED
             reason = result.reason or "Risk check failed"
+            order.status = OrderStatus.REJECTED
+            order.reject_reason = f"risk_rejected: {reason}"
             logger.warning(f"Order rejected by risk manager in {self._run_id}: {reason}")
-            self._context.log(f"Order rejected (risk): {reason}")
+            self._context.log(f"Order rejected (risk): {reason}", level="warning", category="risk")
             return False
 
         return True
@@ -832,7 +903,9 @@ class PaperTradingEngine:
                     stop_info = f"止损@{order.stop_price}" if order.stop_price else ""
                     self._context.log(
                         f"订单过期 #{short_id} {order.side.value} {order.symbol} "
-                        f"{order.amount}{stop_info}{price_info}"
+                        f"{order.amount}{stop_info}{price_info}",
+                        level="info",
+                        category="order",
                     )
                     expired.append(order)
                     continue
@@ -859,8 +932,15 @@ class PaperTradingEngine:
             self._context._process_fill(fill)
         except ValueError as e:
             logger.warning(f"Fill rejected in engine {self._run_id}: {e}")
-            self._context.log(f"Order fill rejected: {e}")
+            self._context.log(f"Order fill rejected: {e}", level="warning", category="fill")
             # Cancel the order to prevent infinite retry (consistent with backtest runner)
+            # Status stays CANCELLED (not REJECTED): fill rejection happens after
+            # order acceptance — semantically a cancellation, not a submission rejection.
+            # reject_reason still set for strategy visibility via on_order_done.
+            for order in self._context._pending_orders:
+                if order.id == fill.order_id:
+                    order.reject_reason = f"fill_rejected: {e}"
+                    break
             self._context.cancel_order(fill.order_id)
             return
 
@@ -869,37 +949,41 @@ class PaperTradingEngine:
             self._risk_manager.record_order_fill()
 
         # Check if a trade was completed (closed) by this fill
-        if self._risk_manager and had_open_trade and self._context._open_trade is None:
+        if had_open_trade and self._context._open_trade is None:
             # _open_trade went from non-None to None — a trade just closed
             completed_trade = self._context._trades[-1]
-            self._risk_manager.record_trade_result(completed_trade.pnl)
+            self._cached_realized_pnl += completed_trade.pnl
+            if self._risk_manager:
+                self._risk_manager.record_trade_result(completed_trade.pnl)
 
-        # Emit real-time fill event via WebSocket (best-effort, never block engine)
-        if self._on_event and not self._warming_up:
-            try:
-                event = self._build_fill_event(fill)
-                loop = asyncio.get_running_loop()
-                loop.create_task(self._on_event(event))
-            except Exception:
-                pass
+        # NOTE: state_update push moved to process_candle() after _move_completed_orders()
+        # so the pushed state reflects the final order list (filled orders already moved out).
 
-    def _build_fill_event(self, fill: Any) -> dict[str, Any]:
-        """Build a real-time fill event for immediate WebSocket push.
-
-        Emitted from _process_fill_safe() on every successful fill, allowing
-        the frontend to update scalar state (cash, equity, positions) immediately
-        instead of waiting for bar close. The fill detail is included for toast
-        notifications; the authoritative fills list is still delivered via
-        bar_update's new_fills at bar close.
-        """
+    def _build_state_snapshot(self) -> tuple[dict[str, Any], list, list, list]:
+        """Build state snapshot + incremental data."""
         ctx = self._context
-        return {
-            "event": "fill",
-            "run_id": str(self._run_id),
-            "fill": _serialize_fill(fill),
+
+        fill_delta = ctx._total_fills_added - self._last_emitted_fill_total
+        trade_delta = ctx._total_trades_added - self._last_emitted_trade_total
+        log_delta = ctx._total_logs_added - self._last_emitted_log_total
+
+        new_fills = list(ctx._fills)[-fill_delta:] if fill_delta > 0 else []
+        new_trades = list(ctx._trades)[-trade_delta:] if trade_delta > 0 else []
+        new_logs = list(ctx._logs)[-log_delta:] if log_delta > 0 else []
+
+        self._last_emitted_fill_total = ctx._total_fills_added
+        self._last_emitted_trade_total = ctx._total_trades_added
+        self._last_emitted_log_total = ctx._total_logs_added
+
+        usdt_equiv = ctx.get_fees_usdt_equivalent()
+        state = {
             "cash": str(ctx._cash),
             "equity": str(ctx.equity),
             "unrealized_pnl": str(ctx._get_unrealized_pnl()),
+            "realized_pnl": str(self._cached_realized_pnl),  # Paper uses cached
+            "total_fees": str(ctx._total_fees),
+            "fees_by_currency": {k: str(v) for k, v in ctx._fees_by_currency.items()},
+            "fees_usdt_equivalent": str(usdt_equiv) if usdt_equiv is not None else None,
             "positions": {
                 sym: {
                     "amount": str(pos.amount),
@@ -917,11 +1001,98 @@ class PaperTradingEngine:
                     "amount": str(o.amount),
                     "price": str(o.price) if o.price else None,
                     "status": o.status.value,
+                    "created_at": o.created_at.isoformat() if o.created_at else None,
                 }
                 for o in ctx._pending_orders
             ],
             "open_trade": _serialize_open_trade(ctx._open_trade),
+            "completed_orders_count": ctx._restored_completed_orders_count + len(ctx._completed_orders),
+            "trades_count": len(ctx._trades),
+            "risk_state": (self._risk_manager.get_state_summary() if self._risk_manager else None),
         }
+
+        return (
+            state,
+            [_serialize_fill(f) for f in new_fills],
+            [_serialize_trade(t) for t in new_trades],
+            new_logs,
+        )
+
+    def _build_state_update_event(self, trigger: str) -> dict[str, Any]:
+        """Build state_update event for immediate push.
+
+        Emitted after _fill_new_orders() + _move_completed_orders() so the
+        pushed state reflects the final order list (filled orders already moved).
+        """
+        state, new_fills, new_trades, new_logs = self._build_state_snapshot()
+
+        trigger_detail: dict[str, Any] = {}
+        if trigger == "fill" and new_fills:
+            # Extract trigger_detail from the latest fill in the delta
+            latest = new_fills[-1]
+            trigger_detail = {
+                "order_id": latest.get("order_id", ""),
+                "side": latest.get("side", ""),
+                "price": latest.get("price", ""),
+                "amount": latest.get("amount", ""),
+                "fee": latest.get("fee", ""),
+                "fee_currency": latest.get("fee_currency", ""),
+            }
+
+        return {
+            "event": "state_update",
+            "run_id": str(self._run_id),
+            "trigger": trigger,
+            "trigger_detail": trigger_detail,
+            "state": state,
+            "new_fills": new_fills,
+            "new_trades": new_trades,
+            "new_logs": new_logs,
+        }
+
+    def _append_pending_snapshot(self, snapshot: EquitySnapshot) -> None:
+        """Add a snapshot to the pending list with overflow protection.
+
+        If the pending list exceeds _max_pending_snapshots, the oldest half
+        is dropped. This prevents unbounded memory growth when both the
+        per-bar callback and background batch persistence are failing.
+        """
+        self._pending_snapshots.append(snapshot)
+        if len(self._pending_snapshots) > self._max_pending_snapshots:
+            drop_count = self._max_pending_snapshots // 2
+            logger.warning(
+                f"Pending snapshots for {self._run_id} exceeded {self._max_pending_snapshots}, "
+                f"dropping oldest {drop_count} (persistence may be failing)"
+            )
+            self._pending_snapshots = self._pending_snapshots[drop_count:]
+
+    async def _persist_on_early_stop(self) -> None:
+        """Persist snapshot and result state when process_candle exits early.
+
+        Called after _stop_impl() for risk auto-stop or resource limit exceeded,
+        which would otherwise skip the normal persistence steps (6 and 8).
+        Best-effort: failures are logged but do not propagate.
+        """
+        # Step 6: persist latest equity snapshot
+        if self._context.equity_curve:
+            latest_snapshot = self._context.equity_curve[-1]
+            persisted = False
+            if self._on_snapshot:
+                try:
+                    await self._on_snapshot(str(self._run_id), latest_snapshot)
+                    persisted = True
+                except Exception as e:
+                    logger.warning(f"Snapshot persist on early stop failed for {self._run_id}: {e}")
+            if not persisted:
+                self._append_pending_snapshot(latest_snapshot)
+
+        # Step 8: persist result state for crash recovery
+        if self._on_result:
+            try:
+                result_data = self.build_result_for_persistence()
+                await self._on_result(str(self._run_id), result_data)
+            except Exception as e:
+                logger.warning(f"Result persist on early stop failed for {self._run_id}: {e}")
 
     def _candle_to_bar(self, candle: WSCandle) -> Bar:
         """Convert WSCandle to Bar.
@@ -1024,64 +1195,44 @@ class PaperTradingEngine:
         """
         result = self._context.build_result_snapshot()
         result["bar_count"] = self._bar_count
+        # Override context's deque-based realized_pnl with the incremental
+        # cache.  The deque has a maxlen and evicts old trades, causing the
+        # sum to undercount once the cap is reached.  The cache is always
+        # correct because it accumulates on each trade close.
+        result["realized_pnl"] = str(self._cached_realized_pnl)
         if self._risk_manager:
             result["risk_state"] = self._risk_manager.get_state_summary()
             result["risk_config"] = self._risk_manager.config.model_dump(mode="json")
         return result
 
-    def _build_bar_update_event(self) -> dict[str, Any]:
-        """Build incremental bar update event for WebSocket push."""
+    def _build_bar_close_event(self, bar: Any) -> dict[str, Any]:
+        """Build bar_close event with equity point for WebSocket push."""
+        state, new_fills, new_trades, new_logs = self._build_state_snapshot()
         ctx = self._context
 
-        fill_delta = ctx._total_fills_added - self._last_emitted_fill_total
-        trade_delta = ctx._total_trades_added - self._last_emitted_trade_total
-        log_delta = ctx._total_logs_added - self._last_emitted_log_total
-
-        new_fills = list(ctx._fills)[-fill_delta:] if fill_delta > 0 else []
-        new_trades = list(ctx._trades)[-trade_delta:] if trade_delta > 0 else []
-        new_logs = list(ctx._logs)[-log_delta:] if log_delta > 0 else []
-
-        self._last_emitted_fill_total = ctx._total_fills_added
-        self._last_emitted_trade_total = ctx._total_trades_added
-        self._last_emitted_log_total = ctx._total_logs_added
+        equity_point = {
+            "time": bar.time.isoformat(),
+            "equity": str(ctx.equity),
+            "cash": str(ctx._cash),
+            "position_value": str(ctx._get_position_value()),
+            "unrealized_pnl": str(ctx._get_unrealized_pnl()),
+        }
 
         return {
-            "event": "bar_update",
+            "event": "bar_close",
             "run_id": str(self._run_id),
             "bar_count": self._bar_count,
-            "cash": str(ctx._cash),
-            "equity": str(ctx.equity),
-            "unrealized_pnl": str(ctx._get_unrealized_pnl()),
-            "realized_pnl": str(sum(t.pnl for t in ctx._trades)),
-            "total_fees": str(ctx._total_fees),
-            "completed_orders_count": len(ctx._completed_orders),
-            "trades_count": len(ctx._trades),
-            "positions": {
-                sym: {
-                    "amount": str(pos.amount),
-                    "avg_entry_price": str(pos.avg_entry_price),
-                }
-                for sym, pos in ctx._positions.items()
-                if pos.amount != 0
+            "bar": {
+                "time": bar.time.isoformat(),
+                "open": str(bar.open),
+                "high": str(bar.high),
+                "low": str(bar.low),
+                "close": str(bar.close),
+                "volume": str(bar.volume),
             },
-            "pending_orders": [
-                {
-                    "id": o.id,
-                    "symbol": o.symbol,
-                    "side": o.side.value,
-                    "type": o.type.value,
-                    "amount": str(o.amount),
-                    "price": str(o.price) if o.price else None,
-                    "status": o.status.value,
-                    "created_at": o.created_at.isoformat() if o.created_at else None,
-                }
-                for o in ctx._pending_orders
-            ],
-            "open_trade": _serialize_open_trade(ctx._open_trade),
-            "new_fills": [_serialize_fill(f) for f in new_fills],
-            "new_trades": [_serialize_trade(t) for t in new_trades],
+            "equity_point": equity_point,
+            "state": state,
+            "new_fills": new_fills,
+            "new_trades": new_trades,
             "new_logs": new_logs,
-            "risk_state": (
-                self._risk_manager.get_state_summary() if self._risk_manager else None
-            ),
         }

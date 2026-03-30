@@ -239,7 +239,6 @@ class TestExchangeStreamSettings:
     def test_default_values(self):
         s = ExchangeStreamSettings()
         assert s.default_exchange == "okx"
-        assert s.use_ccxt_provider is True
 
 
 # ===========================================================================

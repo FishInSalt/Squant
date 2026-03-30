@@ -93,7 +93,6 @@ const mockPaperStatus: PaperTradingStatus = {
       timestamp: '2024-01-16T10:00:00Z',
     },
   ],
-  logs: ['[2024-01-15 10:00:00] Strategy started', '[2024-01-15 10:05:00] Buy signal detected'],
 }
 
 const mockLiveStatus: LiveTradingStatus = {
@@ -391,13 +390,13 @@ describe('SessionDetail', () => {
       expect(tabLabels.some(el => el.text().includes('风控'))).toBe(true)
     })
 
-    it('does not show trades, fills, or logs tabs for live', async () => {
+    it('does not show trades or fills tabs for live, but shows logs tab', async () => {
       const wrapper = mountLive()
       await flushPromises()
       const tabLabels = wrapper.findAll('.el-tabs__item')
       expect(tabLabels.some(el => el.text().includes('交易记录'))).toBe(false)
       expect(tabLabels.some(el => el.text().includes('成交明细'))).toBe(false)
-      expect(tabLabels.some(el => el.text().includes('日志'))).toBe(false)
+      expect(tabLabels.some(el => el.text().includes('日志'))).toBe(true)
     })
 
     it('win rate is hidden for live session', async () => {

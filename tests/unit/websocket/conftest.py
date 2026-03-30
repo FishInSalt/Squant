@@ -484,7 +484,6 @@ def mock_ws_settings():
     settings = MagicMock()
 
     # Provider settings
-    settings.use_ccxt_provider = True
     settings.default_exchange = "okx"
 
     # OKX credentials
@@ -494,17 +493,14 @@ def mock_ws_settings():
     settings.okx_api_secret.get_secret_value.return_value = "test-secret"
     settings.okx_passphrase = MagicMock()
     settings.okx_passphrase.get_secret_value.return_value = "test-passphrase"
-    settings.okx_testnet = True
 
     # Binance credentials (not configured)
     settings.binance_api_key = None
     settings.binance_api_secret = None
-    settings.binance_testnet = False
 
     # Bybit credentials (not configured)
     settings.bybit_api_key = None
     settings.bybit_api_secret = None
-    settings.bybit_testnet = False
 
     return settings
 

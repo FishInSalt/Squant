@@ -730,9 +730,7 @@ class TestMultiBarLimitOrder:
 class TestStopOrders:
     """Tests for stop (market) order matching."""
 
-    def test_buy_stop_triggers_when_high_reaches_stop_price(
-        self, engine: MatchingEngine
-    ) -> None:
+    def test_buy_stop_triggers_when_high_reaches_stop_price(self, engine: MatchingEngine) -> None:
         """Buy STOP triggers when bar.high >= stop_price."""
         order = SimulatedOrder.create(
             symbol="BTC/USDT",
@@ -779,9 +777,7 @@ class TestStopOrders:
         fills = engine.process_bar(bar, [order])
         assert len(fills) == 0
 
-    def test_sell_stop_triggers_when_low_reaches_stop_price(
-        self, engine: MatchingEngine
-    ) -> None:
+    def test_sell_stop_triggers_when_low_reaches_stop_price(self, engine: MatchingEngine) -> None:
         """Sell STOP triggers when bar.low <= stop_price."""
         order = SimulatedOrder.create(
             symbol="BTC/USDT",
@@ -933,9 +929,7 @@ class TestStopOrders:
 class TestStopLimitOrders:
     """Tests for stop-limit order matching."""
 
-    def test_stop_limit_triggers_and_fills_on_same_bar(
-        self, engine: MatchingEngine
-    ) -> None:
+    def test_stop_limit_triggers_and_fills_on_same_bar(self, engine: MatchingEngine) -> None:
         """STOP_LIMIT triggers and limit is reachable → fills on same bar."""
         order = SimulatedOrder.create(
             symbol="BTC/USDT",
@@ -961,9 +955,7 @@ class TestStopLimitOrders:
         # Fill at max(limit_price, stop_price) = max(43500, 43000) = 43500
         assert fills[0].price == Decimal("43500")
 
-    def test_stop_limit_triggers_but_limit_not_reachable(
-        self, engine: MatchingEngine
-    ) -> None:
+    def test_stop_limit_triggers_but_limit_not_reachable(self, engine: MatchingEngine) -> None:
         """STOP_LIMIT triggers but limit is not reachable → no fill, triggered=True."""
         # Sell stop-limit: stop at 41500, limit at 41000
         # Bar low reaches 41500 (triggers) but not 41000 (limit not reachable for sell)
@@ -991,9 +983,7 @@ class TestStopLimitOrders:
         assert len(fills) == 0
         assert order.triggered is True  # Trigger condition met
 
-    def test_stop_limit_triggered_fills_on_next_bar(
-        self, engine: MatchingEngine
-    ) -> None:
+    def test_stop_limit_triggered_fills_on_next_bar(self, engine: MatchingEngine) -> None:
         """After triggering, STOP_LIMIT fills as limit order on subsequent bar."""
         order = SimulatedOrder.create(
             symbol="BTC/USDT",
@@ -1082,9 +1072,7 @@ class TestStopLimitOrders:
         # Sell fill at min(limit_price=40500, stop_price=41000) = 40500
         assert fills[0].price == Decimal("40500")
 
-    def test_stop_limit_cross_bar_uses_gap_open_improvement(
-        self, engine: MatchingEngine
-    ) -> None:
+    def test_stop_limit_cross_bar_uses_gap_open_improvement(self, engine: MatchingEngine) -> None:
         """Previously triggered STOP_LIMIT fills with gap-open price improvement."""
         SimulatedOrder.create(
             symbol="BTC/USDT",

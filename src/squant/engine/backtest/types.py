@@ -31,6 +31,7 @@ class OrderStatus(str, Enum):
     FILLED = "filled"
     PARTIAL = "partial"
     CANCELLED = "cancelled"
+    REJECTED = "rejected"
 
 
 @dataclass(frozen=True)
@@ -131,6 +132,7 @@ class SimulatedOrder:
     created_at: datetime | None = None
     filled_at: datetime | None = None
     bars_remaining: int | None = None  # None = GTC, positive int = expire after N bars
+    reject_reason: str | None = None
 
     @classmethod
     def create(
@@ -176,8 +178,8 @@ class SimulatedOrder:
 
     @property
     def is_complete(self) -> bool:
-        """Check if order is fully filled or cancelled."""
-        return self.status in (OrderStatus.FILLED, OrderStatus.CANCELLED)
+        """Check if order is fully filled, cancelled, or rejected."""
+        return self.status in (OrderStatus.FILLED, OrderStatus.CANCELLED, OrderStatus.REJECTED)
 
 
 @dataclass
@@ -194,6 +196,9 @@ class Fill:
     amount: Decimal
     fee: Decimal
     timestamp: datetime
+    # Fee currency — when fee is in base currency (e.g., BTC for BTC/USDT),
+    # _process_fill adjusts position instead of cash. None = quote currency (default).
+    fee_currency: str | None = None
     # 价格来源元数据（模拟交易撮合引擎填充，回测为 None）
     price_source: str | None = None  # "ask", "bid", "slippage", "limit", "stop_limit"
     reference_price: Decimal | None = None  # last price

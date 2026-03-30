@@ -6,11 +6,13 @@ Drives strategy execution with actual order placement via exchange adapter.
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
+from collections import OrderedDict
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal
+from enum import Enum
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
@@ -28,13 +30,15 @@ from squant.engine.paper.engine import (
 )
 from squant.engine.resource_limits import ResourceLimitExceededError, resource_limiter
 from squant.engine.risk import RiskConfig, RiskManager
+from squant.infra.exchange.exceptions import InvalidOrderError
 from squant.infra.exchange.types import CancelOrderRequest, OrderRequest, OrderResponse
+from squant.infra.exchange.ws_types import WSTradeExecution
 from squant.models.enums import OrderSide, OrderStatus
 
 if TYPE_CHECKING:
     from squant.infra.exchange.base import ExchangeAdapter
     from squant.infra.exchange.ccxt.types import ExchangeCredentials
-    from squant.infra.exchange.okx.ws_types import WSCandle, WSOrderUpdate
+    from squant.infra.exchange.ws_types import WSCandle, WSOrderUpdate
 
 # Callback type for synchronous snapshot persistence
 SnapshotPersistCallback = Callable[[str, EquitySnapshot], Awaitable[None]]
@@ -47,6 +51,24 @@ OrderPersistCallback = Callable[[str, list[dict[str, Any]]], Awaitable[None]]
 
 logger = logging.getLogger(__name__)
 
+
+class EngineEventType(str, Enum):
+    """Event types processed by the unified event loop."""
+
+    WS_FILL = "ws_fill"
+    WS_ORDER = "ws_order"
+    BAR_CLOSE = "bar_close"
+
+
+@dataclass(frozen=True)
+class EngineEvent:
+    """Immutable event wrapper for the engine queue."""
+
+    type: EngineEventType
+    data: Any  # WSTradeExecution | WSOrderUpdate | WSCandle
+    received_at: datetime
+
+
 # WebSocket order status mapping (internal string -> OrderStatus enum).
 # Both CCXT transformer and native OKX StreamManager mapper normalize to
 # these internal status strings before dispatching to the engine.
@@ -57,6 +79,35 @@ _WS_STATUS_MAP: dict[str, OrderStatus] = {
     "cancelled": OrderStatus.CANCELLED,
     "rejected": OrderStatus.REJECTED,
 }
+
+# Module-level set to prevent GC of fire-and-forget tasks (m-2 fix).
+# Python's event loop only keeps weak references to tasks, so untracked
+# tasks may be garbage-collected before completion.
+_background_tasks: set[asyncio.Task[Any]] = set()
+
+
+def _compute_incremental_fill_price(
+    new_avg: Decimal,
+    new_total: Decimal,
+    old_avg: Decimal | None,
+    old_filled: Decimal,
+    fill_delta: Decimal,
+) -> Decimal:
+    """Compute the price of an incremental fill from blended averages.
+
+    CCXT and exchange APIs report blended avg_price across all fills.
+    For partial fills, reverse-calculate the actual incremental price:
+        inc_price = (new_avg * new_total - old_avg * old_total) / fill_delta
+
+    Falls back to new_avg when old_avg is unavailable (first fill) or
+    when the calculation produces a non-positive result (data anomaly).
+    """
+    if old_avg is None or old_filled <= 0:
+        return new_avg
+    numerator = new_avg * new_total - old_avg * old_filled
+    if numerator <= 0 or fill_delta <= 0:
+        return new_avg
+    return numerator / fill_delta
 
 
 class LiveOrder:
@@ -92,6 +143,9 @@ class LiveOrder:
         self.updated_at: datetime | None = None
         self.error_message: str | None = None
         self.bars_remaining: int | None = None  # None = GTC, positive int = expire after N bars
+        # Tracks fill amount recorded via ws_order fallback (not confirmed by trade_id).
+        # Used by _process_trade_execution to skip fills already accounted for.
+        self._fallback_fill_pending = Decimal("0")
 
     @property
     def remaining_amount(self) -> Decimal:
@@ -117,10 +171,10 @@ def _serialize_live_order(order: LiveOrder) -> dict[str, Any]:
         "side": order.side.value,
         "order_type": order.order_type,
         "amount": str(order.amount),
-        "price": str(order.price) if order.price else None,
+        "price": str(order.price) if order.price is not None else None,
         "status": order.status.value,
         "filled_amount": str(order.filled_amount),
-        "avg_fill_price": str(order.avg_fill_price) if order.avg_fill_price else None,
+        "avg_fill_price": str(order.avg_fill_price) if order.avg_fill_price is not None else None,
         "fee": str(order.fee),
         "fee_currency": order.fee_currency,
         "created_at": order.created_at.isoformat() if order.created_at else None,
@@ -145,7 +199,7 @@ def _fire_notification(
         from squant.services.notification import emit_notification
 
         loop = asyncio.get_running_loop()
-        loop.create_task(
+        task = loop.create_task(
             emit_notification(
                 level=level,
                 event_type=event_type,
@@ -155,6 +209,8 @@ def _fire_notification(
                 run_id=str(run_id),
             )
         )
+        _background_tasks.add(task)
+        task.add_done_callback(_background_tasks.discard)
     except Exception as e:
         logger.debug(f"Failed to fire notification for {run_id}: {e}")
 
@@ -186,6 +242,7 @@ class LiveTradingEngine:
         on_result: ResultPersistCallback | None = None,
         on_event: EventCallback | None = None,
         on_order_persist: OrderPersistCallback | None = None,
+        on_stop: Callable[[], Awaitable[None]] | None = None,
         credentials: ExchangeCredentials | None = None,
         exchange_id: str = "okx",
     ):
@@ -224,6 +281,11 @@ class LiveTradingEngine:
 
         settings = get_settings()
 
+        # Get exchange amount precision to keep positions aligned with exchange
+        amount_precision = None
+        if hasattr(adapter, "get_amount_precision"):
+            amount_precision = adapter.get_amount_precision(symbol)
+
         # Initialize context with in-memory tracking (no simulated matching)
         self._context = BacktestContext(
             initial_capital=initial_equity,
@@ -237,6 +299,8 @@ class LiveTradingEngine:
             max_trades=settings.paper_max_trades,
             max_logs=settings.paper_max_logs,
             min_order_value=risk_config.min_order_value,
+            use_real_time=True,
+            amount_precision=amount_precision,
         )
 
         # Risk manager
@@ -254,8 +318,12 @@ class LiveTradingEngine:
         self._stopped_at: datetime | None = None
         self._error_message: str | None = None
         self._bar_count = 0
+        self._last_bar_time: datetime | None = None  # Dedup: last processed candle time (fix #5)
         self._last_active_at: datetime | None = None
         self._circuit_breaker_triggered = False  # Set when risk manager triggers circuit breaker
+        self._circuit_breaker_losses: int | None = (
+            None  # Snapshot of consecutive_losses at trigger time
+        )
         self._warming_up = False  # True during strategy warmup on resume (IMP-009)
 
         # Live order tracking
@@ -289,10 +357,15 @@ class LiveTradingEngine:
         # Processing lock to prevent stop()/process_candle() race conditions (R3-002)
         self._processing_lock = asyncio.Lock()
 
-        # Buffered WebSocket order updates (ISSUE-203 fix)
-        # Updates are queued here and drained synchronously within process_candle
-        # to prevent concurrent state mutation between WS callbacks and polling.
-        self._pending_ws_updates: list[WSOrderUpdate] = []
+        # Unified event queue and loop task (Task 2: event-loop lifecycle)
+        self._event_queue: asyncio.Queue[EngineEvent] = asyncio.Queue(maxsize=1000)
+        self._event_loop_task: asyncio.Task | None = None
+
+        # Dedup set for processed trade IDs (LRU eviction when cap exceeded)
+        self._processed_trade_ids: OrderedDict[str, bool] = OrderedDict()
+
+        # Orders needing fill reconciliation (WS reconnect, fill mismatch)
+        self._orders_needing_reconciliation: set[str] = set()
 
         # WebSocket event emission callback
         self._on_event = on_event
@@ -308,20 +381,26 @@ class LiveTradingEngine:
         # Order sync rate limiting - avoid excessive polling
         # Track last poll time per order to avoid redundant API calls
         self._order_last_poll: dict[str, datetime] = {}  # exchange_order_id -> last poll time
-        self._order_poll_min_interval = 30.0  # Minimum seconds between polls for same order
+        self._order_poll_min_interval = risk_config.order_poll_interval  # m-7: configurable
 
         # Last exchange balance for diagnostics (LIVE-012)
         self._last_exchange_balance: Decimal | None = None
 
         # Order/trade audit persistence (LIVE-013)
         self._on_order_persist = on_order_persist
+        self._on_stop = on_stop
         self._pending_order_events: list[dict[str, Any]] = []
 
         # Balance sync rate limiting (R5-F5): avoid excessive API calls
         # Balance is monitoring-only, so checking every 5 minutes is sufficient.
-        self._balance_check_interval: float = 300.0  # seconds
+        self._balance_check_interval: float = (
+            risk_config.balance_check_interval
+        )  # m-7: configurable
         self._last_balance_check: datetime | None = None
         self._has_recent_fill: bool = False  # set True on fill, triggers immediate check
+
+        # Instance-level set to prevent GC of fire-and-forget tasks (m-2 fix)
+        self._background_tasks: set[asyncio.Task[Any]] = set()
 
         # Exchange connection failure tracking (LV-3)
         # Separate counters for balance and order sync (R3-011)
@@ -330,8 +409,13 @@ class LiveTradingEngine:
         self._sync_failure_threshold: int = 5
 
         # Dead Man's Switch (F-2): exchange cancels all orders if heartbeat stops
+        # M-3: Adapt DMS timeout to timeframe so longer candle periods (5m, 1h)
+        # don't cause false DMS triggers between bars.
         self._dms_enabled: bool = False
-        self._dms_timeout_ms: int = 60_000  # 60s timeout — heartbeat sent every bar
+        tf_seconds = self._TIMEFRAME_SECONDS.get(self._timeframe, 300)
+        self._dms_timeout_ms: int = max(60_000, tf_seconds * 2 * 1000)
+        self._dms_consecutive_failures: int = 0
+        self._dms_failure_threshold: int = 3
 
     @property
     def run_id(self) -> UUID:
@@ -393,78 +477,27 @@ class LiveTradingEngine:
         """Get the risk manager."""
         return self._risk_manager
 
-    async def _trigger_global_circuit_breaker(self) -> None:
-        """Trigger global circuit breaker to stop all trading sessions.
+    # Maximum pending order events to prevent unbounded growth on persist failure (M-8)
+    _MAX_PENDING_ORDER_EVENTS: int = 1000
 
-        Called when this session's local circuit breaker triggers due to
-        consecutive losses. This ensures all sessions stop for safety,
-        implementing the global risk synchronization (Issue 033 fix).
-
-        Also persists the circuit breaker state to Redis so it survives
-        restarts and prevents new sessions from starting (LIVE-RM-002).
-        """
-        from squant.engine.live.manager import get_live_session_manager
-        from squant.engine.paper.manager import get_session_manager
-
-        reason = (
-            f"Auto-triggered by session {self._run_id}: "
-            f"{self._risk_manager.state.consecutive_losses} consecutive losses"
-        )
-
-        logger.critical(
-            f"GLOBAL CIRCUIT BREAKER TRIGGERED: {reason} | Stopping all trading sessions for safety"
-        )
-
-        # Persist circuit breaker state to Redis (LIVE-RM-002)
-        # This prevents new sessions from starting after restart.
-        try:
-            from squant.infra.redis import get_redis_client
-            from squant.services.circuit_breaker import (
-                CIRCUIT_BREAKER_STATE_KEY,
-                CircuitBreakerState,
-            )
-
-            redis = get_redis_client()
-            now = datetime.now(UTC)
-            cooldown_minutes = self._risk_manager.config.circuit_breaker_cooldown_minutes
-            cooldown_until = datetime.fromtimestamp(
-                now.timestamp() + cooldown_minutes * 60, tz=UTC
-            )
-            state = CircuitBreakerState(
-                is_active=True,
-                triggered_at=now,
-                trigger_type="auto",
-                trigger_reason=reason,
-                cooldown_until=cooldown_until,
-            )
-            await redis.set(CIRCUIT_BREAKER_STATE_KEY, json.dumps(state.to_dict()))
-        except Exception:
-            logger.warning("Failed to persist circuit breaker state to Redis", exc_info=True)
-
-        # Stop all live sessions (except this one which is already stopped)
-        live_manager = get_live_session_manager()
-        try:
-            await live_manager.stop_all(reason=f"Circuit breaker: {reason}")
-        except Exception as e:
-            logger.exception(f"Error stopping live sessions: {e}")
-
-        # Stop all paper sessions
-        paper_manager = get_session_manager()
-        try:
-            await paper_manager.stop_all(reason=f"Circuit breaker: {reason}")
-        except Exception as e:
-            logger.exception(f"Error stopping paper sessions: {e}")
+    # Maximum tracked trade IDs for dedup (LRU eviction at 50% when cap exceeded)
+    _MAX_PROCESSED_TRADE_IDS: int = 10000
 
     # Timeframe to seconds mapping for adaptive health check timeout
     _TIMEFRAME_SECONDS: dict[str, int] = {
         "1m": 60,
+        "3m": 180,
         "5m": 300,
         "15m": 900,
         "30m": 1800,
         "1h": 3600,
+        "2h": 7200,
         "4h": 14400,
+        "6h": 21600,
+        "12h": 43200,
         "1d": 86400,
         "1w": 604800,
+        "1M": 2592000,
     }
 
     def is_healthy(self, timeout_seconds: int = 300) -> bool:
@@ -485,7 +518,12 @@ class LiveTradingEngine:
         if not self._is_running:
             return False
         if self._last_active_at is None:
-            return True
+            # No candles processed yet — healthy if started recently,
+            # stale if no candle ever arrived within timeout period.
+            if self._started_at is None:
+                return True
+            startup_elapsed = (datetime.now(UTC) - self._started_at).total_seconds()
+            return startup_elapsed < timeout_seconds
         tf_seconds = self._TIMEFRAME_SECONDS.get(self._timeframe, 300)
         effective_timeout = max(timeout_seconds, tf_seconds * 2)
         elapsed = (datetime.now(UTC) - self._last_active_at).total_seconds()
@@ -511,7 +549,9 @@ class LiveTradingEngine:
 
             self._is_running = True
             self._started_at = datetime.now(UTC)
-            self._last_active_at = datetime.now(UTC)
+            # NOTE: Do NOT set _last_active_at here. It stays None until the first
+            # candle arrives, so is_healthy() returns True for a just-started engine
+            # that hasn't received data yet (prevents premature health-check timeout).
 
             # Start private WS for real-time order updates (LIVE-CN-001)
             await self._start_private_ws()
@@ -522,6 +562,10 @@ class LiveTradingEngine:
             # Call strategy initialization
             self._strategy.on_init()
             logger.info(f"Strategy initialized for live run {self._run_id}")
+
+            # Start unified event loop
+            self._event_loop_task = asyncio.create_task(self._event_loop())
+            self._event_loop_task.add_done_callback(self._on_event_loop_done)
 
         except Exception as e:
             logger.exception(f"Error starting live trading engine: {e}")
@@ -553,6 +597,14 @@ class LiveTradingEngine:
         if error:
             self._error_message = error
 
+        # Shut down event loop
+        if self._event_loop_task and not self._event_loop_task.done():
+            if self._event_loop_task != asyncio.current_task():
+                try:
+                    await asyncio.wait_for(self._event_loop_task, timeout=5.0)
+                except (TimeoutError, asyncio.CancelledError):
+                    self._event_loop_task.cancel()
+
         # Close private WS provider (LIVE-CN-001)
         await self._stop_private_ws()
 
@@ -576,6 +628,43 @@ class LiveTradingEngine:
 
         self._stopped_at = datetime.now(UTC)
 
+        # Self-stop path (circuit breaker, risk limit, etc.):
+        # Persist final state and notify service layer to update DB.
+        # Uses the `error` parameter (not _error_message) to distinguish self-stop
+        # from user-initiated stop. _error_message can also be set by strategy.on_stop()
+        # failure, which is NOT a self-stop and should not trigger DB update.
+        if error:
+            # Persist final result state
+            if self._on_result:
+                try:
+                    result_data = self.build_result_for_persistence()
+                    await self._on_result(str(self._run_id), result_data)
+                except Exception as e:
+                    logger.warning(f"Failed to persist final state on stop: {e}")
+
+            # Flush any remaining order events
+            if self._on_order_persist and self._pending_order_events:
+                try:
+                    events = list(self._pending_order_events)
+                    self._pending_order_events.clear()
+                    await self._on_order_persist(str(self._run_id), events)
+                except Exception as e:
+                    logger.warning(f"Failed to flush order events on stop: {e}")
+
+        # Close REST adapter connection to release aiohttp resources (M-2)
+        try:
+            await self._adapter.close()
+        except Exception as e:
+            logger.debug(f"Error closing adapter for {self._run_id}: {e}")
+
+        # Notify service layer to update DB status. Only for self-stops
+        # (explicit error param) — service.stop() handles its own DB update.
+        if self._on_stop and error:
+            try:
+                await self._on_stop()
+            except Exception as e:
+                logger.warning(f"on_stop callback failed for {self._run_id}: {e}")
+
         # Notification: engine stopped (LIVE-011)
         _fire_notification(
             self._run_id,
@@ -596,7 +685,9 @@ class LiveTradingEngine:
                     "stopped_at": self._stopped_at.isoformat() if self._stopped_at else None,
                 }
                 loop = asyncio.get_running_loop()
-                loop.create_task(self._on_event(event))
+                task = loop.create_task(self._on_event(event))
+                self._background_tasks.add(task)
+                task.add_done_callback(self._background_tasks.discard)
             except Exception:
                 pass
 
@@ -618,9 +709,12 @@ class LiveTradingEngine:
             self._private_ws.add_handler(self._handle_private_ws_message)
             await self._private_ws.connect()
             await self._private_ws.watch_orders(self._symbol)
-            logger.info(
-                f"Private WS connected for {self._run_id} orders on {self._symbol}"
-            )
+            await self._private_ws.watch_my_trades(self._symbol)
+
+            # Register reconnect handler for fill reconciliation
+            self._private_ws.add_reconnect_handler(self._on_ws_reconnect)
+
+            logger.info(f"Private WS connected for {self._run_id} orders on {self._symbol}")
         except Exception as e:
             logger.warning(
                 f"Failed to start private WS for {self._run_id}: {e}. "
@@ -646,16 +740,33 @@ class LiveTradingEngine:
         finally:
             self._private_ws = None
 
+    async def _on_ws_reconnect(self) -> None:
+        """Handle WS reconnection -- trigger fill reconciliation for active orders."""
+        logger.info(f"WS reconnected for {self._run_id}, scheduling fill reconciliation")
+        for internal_id in self._live_orders:
+            self._orders_needing_reconciliation.add(internal_id)
+
     async def _handle_private_ws_message(self, msg: dict[str, Any]) -> None:
         """Handle messages from private WS provider.
 
-        Routes order updates into the existing _pending_ws_updates buffer,
-        which is drained synchronously within process_candle.
+        Routes order updates and trade executions into the unified event queue
+        for processing by the event loop.
         """
-        if msg.get("type") == "order":
-            data = msg.get("data")
-            if data:
-                self.on_order_update(data)
+        msg_type = msg.get("type")
+        data = msg.get("data")
+        if not data:
+            return
+
+        if msg_type == "order":
+            self.on_order_update(data)
+        elif msg_type == "trade_execution":
+            if isinstance(data, WSTradeExecution):
+                try:
+                    self._event_queue.put_nowait(
+                        EngineEvent(EngineEventType.WS_FILL, data, datetime.now(UTC))
+                    )
+                except asyncio.QueueFull:
+                    logger.warning(f"Event queue full, dropping WS_FILL for {self._run_id}")
 
     async def _activate_dead_man_switch(self) -> None:
         """Activate Dead Man's Switch on exchange (F-2).
@@ -676,8 +787,7 @@ class LiveTradingEngine:
             await self._adapter.setup_dead_man_switch(self._dms_timeout_ms)
             self._dms_enabled = True
             logger.info(
-                f"Dead Man's Switch activated for {self._run_id} "
-                f"(timeout={self._dms_timeout_ms}ms)"
+                f"Dead Man's Switch activated for {self._run_id} (timeout={self._dms_timeout_ms}ms)"
             )
         except Exception as e:
             logger.warning(f"Failed to activate Dead Man's Switch: {e}")
@@ -692,8 +802,36 @@ class LiveTradingEngine:
 
         try:
             await self._adapter.setup_dead_man_switch(self._dms_timeout_ms)
+            self._dms_consecutive_failures = 0
         except Exception as e:
-            logger.warning(f"Failed to refresh Dead Man's Switch: {e}")
+            self._dms_consecutive_failures += 1
+            logger.warning(
+                f"Failed to refresh Dead Man's Switch: {e} "
+                f"(consecutive failures: {self._dms_consecutive_failures})"
+            )
+            self._context.log(
+                f"Dead Man's Switch 续期失败: {e}",
+                level="warning",
+                category="system",
+            )
+            if self._dms_consecutive_failures == self._dms_failure_threshold:
+                logger.error(
+                    f"DMS heartbeat lost for {self._run_id}: "
+                    f"{self._dms_consecutive_failures} consecutive failures. "
+                    f"Exchange may auto-cancel all orders."
+                )
+                _fire_notification(
+                    self._run_id,
+                    level="critical",
+                    event_type="dms_heartbeat_lost",
+                    title="DMS 心跳丢失",
+                    message=(
+                        f"实盘会话 {self._symbol} Dead Man's Switch 心跳连续"
+                        f"{self._dms_consecutive_failures}次失败，"
+                        f"交易所可能自动撤销所有订单"
+                    ),
+                    details={"symbol": self._symbol},
+                )
 
     async def _deactivate_dead_man_switch(self) -> None:
         """Deactivate Dead Man's Switch on graceful stop."""
@@ -710,6 +848,11 @@ class LiveTradingEngine:
 
     async def emergency_close(self) -> dict[str, Any]:
         """Emergency close all positions at market price.
+
+        Acquires _processing_lock to prevent interleaving with process_candle().
+        Without this, emergency_close could cancel orders and place market closes
+        while process_candle is suspended at an await point, leading to the
+        strategy submitting new orders during the close operation (fix #2).
 
         Note: DMS is NOT refreshed here — market orders fill in seconds, well within
         the 60s DMS window. If the process crashes mid-close, DMS will cancel any
@@ -737,124 +880,176 @@ class LiveTradingEngine:
                 "errors": None,
             }
 
+        # Acquire processing lock to prevent interleaving with process_candle (fix #2).
+        # Set _emergency_close_in_progress BEFORE acquiring the lock so that if
+        # process_candle is currently holding the lock and reaches an await point,
+        # it will see the flag and exit early on the next iteration.
         self._emergency_close_in_progress = True
-        try:
-            # Update activity timestamp to prevent health check timeout during close (LV-6)
-            self._last_active_at = datetime.now(UTC)
-            logger.warning(f"Emergency close triggered for run {self._run_id}")
+        async with self._processing_lock:
+            try:
+                # Update activity timestamp to prevent health check timeout during close (LV-6)
+                self._last_active_at = datetime.now(UTC)
+                logger.warning(f"Emergency close triggered for run {self._run_id}")
 
-            # Notification: emergency close (LIVE-011)
-            _fire_notification(
-                self._run_id,
-                level="critical",
-                event_type="emergency_close",
-                title="紧急平仓触发",
-                message=f"实盘会话 {self._symbol} 开始执行紧急平仓",
-                details={"symbol": self._symbol},
-            )
+                # Notification: emergency close (LIVE-011)
+                _fire_notification(
+                    self._run_id,
+                    level="critical",
+                    event_type="emergency_close",
+                    title="紧急平仓触发",
+                    message=f"实盘会话 {self._symbol} 开始执行紧急平仓",
+                    details={"symbol": self._symbol},
+                )
 
-            results: dict[str, Any] = {
-                "run_id": str(self._run_id),
-                "orders_cancelled": 0,
-                "positions_closed": 0,
-                "remaining_positions": [],
-                "errors": [],
-            }
+                results: dict[str, Any] = {
+                    "run_id": str(self._run_id),
+                    "orders_cancelled": 0,
+                    "positions_closed": 0,
+                    "remaining_positions": [],
+                    "errors": [],
+                }
 
-            # Cancel all open orders first
-            cancelled = await self._cancel_all_orders()
-            results["orders_cancelled"] = len(cancelled)
+                # Cancel all open orders first
+                cancelled = await self._cancel_all_orders()
+                results["orders_cancelled"] = len(cancelled)
 
-            # Close all positions at market and wait for fills
-            pending_close_orders: list[tuple[str, OrderResponse]] = []  # (symbol, response)
-            for symbol, position in list(self._context.positions.items()):
-                if position.is_open:
+                # Close all positions at market and wait for fills
+                pending_close_orders: list[tuple[str, OrderResponse]] = []
+                for symbol, position in list(self._context.positions.items()):
+                    if position.is_open:
+                        try:
+                            # Place market order to close
+                            side = OrderSide.SELL if position.amount > 0 else OrderSide.BUY
+                            order_request = OrderRequest(
+                                symbol=symbol,
+                                side=side,
+                                type="market",
+                                amount=abs(position.amount),
+                            )
+
+                            response = await self._adapter.place_order(order_request)
+                            pending_close_orders.append((symbol, response))
+                            self._last_active_at = datetime.now(UTC)
+                            logger.info(
+                                f"Emergency close order placed: {symbol} {side.value} "
+                                f"{abs(position.amount)} (order_id={response.order_id})"
+                            )
+
+                            # Buffer "placed" event for audit persistence
+                            self._pending_order_events.append(
+                                {
+                                    "type": "placed",
+                                    "internal_id": f"emergency-{response.order_id}",
+                                    "exchange_order_id": response.order_id,
+                                    "symbol": symbol,
+                                    "side": side.value,
+                                    "order_type": "market",
+                                    "amount": str(abs(position.amount)),
+                                    "price": None,
+                                    "status": response.status.value,
+                                    "created_at": datetime.now(UTC).isoformat(),
+                                }
+                            )
+
+                        except Exception as e:
+                            logger.exception(f"Error closing position for {symbol}: {e}")
+                            results["errors"].append(
+                                {
+                                    "symbol": symbol,
+                                    "error": str(e),
+                                }
+                            )
+
+                # Wait for close orders to fill in parallel (LIVE-OP-002)
+                async def _wait_single(sym: str, resp: OrderResponse) -> None:
                     try:
-                        # Place market order to close
-                        side = OrderSide.SELL if position.amount > 0 else OrderSide.BUY
-                        order_request = OrderRequest(
-                            symbol=symbol,
-                            side=side,
-                            type="market",
-                            amount=abs(position.amount),
-                        )
-
-                        response = await self._adapter.place_order(order_request)
-                        pending_close_orders.append((symbol, response))
-                        self._last_active_at = datetime.now(UTC)
-                        logger.info(
-                            f"Emergency close order placed: {symbol} {side.value} "
-                            f"{abs(position.amount)} (order_id={response.order_id})"
-                        )
-
+                        final = await self._wait_for_order_fill(sym, resp)
+                        if final.status == OrderStatus.FILLED:
+                            results["positions_closed"] += 1
+                            # C-1: Update local state via _record_fill so position
+                            # and cash stay in sync with the exchange after close.
+                            temp_order = LiveOrder(
+                                internal_id=f"emergency-{final.order_id}",
+                                exchange_order_id=final.order_id,
+                                symbol=sym,
+                                side=final.side,
+                                order_type=final.type.value
+                                if hasattr(final.type, "value")
+                                else str(final.type),
+                                amount=final.amount,
+                                price=final.avg_price,
+                                status=OrderStatus.FILLED,
+                            )
+                            temp_order.filled_amount = final.filled
+                            temp_order.avg_fill_price = final.avg_price
+                            temp_order.fee = final.fee or Decimal("0")
+                            temp_order.fee_currency = final.fee_currency
+                            self._record_fill(
+                                live_order=temp_order,
+                                fill_price=final.avg_price,
+                                fill_amount=final.filled,
+                                fee_delta=final.fee,
+                                total_fee=final.fee or Decimal("0"),
+                                source="emergency_close",
+                                exchange_timestamp=final.updated_at,
+                            )
+                        else:
+                            logger.warning(
+                                f"Emergency close order not filled: "
+                                f"{sym} status={final.status.value}"
+                            )
+                            results["errors"].append(
+                                {
+                                    "symbol": sym,
+                                    "error": f"Order not filled: status={final.status.value}",
+                                }
+                            )
                     except Exception as e:
-                        logger.exception(f"Error closing position for {symbol}: {e}")
-                        results["errors"].append(
-                            {
-                                "symbol": symbol,
-                                "error": str(e),
-                            }
-                        )
-
-            # Wait for close orders to fill in parallel (LIVE-OP-002)
-            async def _wait_single(sym: str, resp: OrderResponse) -> None:
-                try:
-                    final = await self._wait_for_order_fill(sym, resp)
-                    if final.status == OrderStatus.FILLED:
-                        results["positions_closed"] += 1
-                    else:
-                        logger.warning(
-                            f"Emergency close order not filled: {sym} "
-                            f"status={final.status.value}"
-                        )
+                        logger.exception(f"Error waiting for close order fill: {sym}: {e}")
                         results["errors"].append(
                             {
                                 "symbol": sym,
-                                "error": f"Order not filled: status={final.status.value}",
+                                "error": f"Fill wait failed: {e}",
                             }
                         )
-                except Exception as e:
-                    logger.exception(f"Error waiting for close order fill: {sym}: {e}")
-                    results["errors"].append(
-                        {
-                            "symbol": sym,
-                            "error": f"Fill wait failed: {e}",
-                        }
-                    )
 
-            await asyncio.gather(
-                *[_wait_single(sym, resp) for sym, resp in pending_close_orders]
-            )
-
-            # TRD-038#5: Collect remaining positions based on unfilled orders
-            error_symbols = {err["symbol"] for err in results["errors"]}
-            for symbol, position in self._context.positions.items():
-                if position.is_open and symbol in error_symbols:
-                    results["remaining_positions"].append(
-                        {
-                            "symbol": symbol,
-                            "amount": str(position.amount),
-                            "side": "long" if position.amount > 0 else "short",
-                        }
-                    )
-
-            # Set status based on results
-            if results["remaining_positions"]:
-                results["status"] = "partial"
-                results["message"] = (
-                    f"Partial close: {results['positions_closed']} closed, "
-                    f"{len(results['remaining_positions'])} remaining"
+                await asyncio.gather(
+                    *[_wait_single(sym, resp) for sym, resp in pending_close_orders]
                 )
-            else:
-                results["status"] = "completed"
-                results["message"] = None
 
-            # Stop the engine
-            await self.stop(error="Emergency close executed", cancel_orders=False)
+                # TRD-038#5: Collect remaining positions based on unfilled orders
+                error_symbols = {err["symbol"] for err in results["errors"]}
+                for symbol, position in self._context.positions.items():
+                    if position.is_open and symbol in error_symbols:
+                        results["remaining_positions"].append(
+                            {
+                                "symbol": symbol,
+                                "amount": str(position.amount),
+                                "side": "long" if position.amount > 0 else "short",
+                            }
+                        )
 
-            return results
-        finally:
-            self._emergency_close_in_progress = False
+                # Set status based on results
+                if results["remaining_positions"]:
+                    results["status"] = "partial"
+                    results["message"] = (
+                        f"Partial close: {results['positions_closed']} closed, "
+                        f"{len(results['remaining_positions'])} remaining"
+                    )
+                else:
+                    results["status"] = "completed"
+                    results["message"] = None
+
+                # Flush order events before stopping to persist emergency close orders
+                await self._flush_order_events()
+
+                # Stop the engine — does NOT acquire _processing_lock (R3-002)
+                # so this is safe to call while holding the lock.
+                await self.stop(error="Emergency close executed", cancel_orders=False)
+
+                return results
+            finally:
+                self._emergency_close_in_progress = False
 
     async def process_candle(self, candle: WSCandle) -> None:
         """Process a WebSocket candle update.
@@ -879,7 +1074,15 @@ class LiveTradingEngine:
 
         # Check if circuit breaker was triggered by order update (RSK-012)
         if self._circuit_breaker_triggered:
-            logger.warning(f"Circuit breaker active for session {self._run_id}, stopping trading")
+            losses = self._circuit_breaker_losses or "N/A"
+            reason = f"连续亏损 {losses} 次，触发熔断"
+            logger.warning(f"Circuit breaker active for session {self._run_id}: {reason}")
+
+            self._context.log(
+                f"熔断触发：{reason}，停止交易",
+                level="error",
+                category="risk",
+            )
 
             # Notification: circuit breaker (LIVE-011)
             _fire_notification(
@@ -887,16 +1090,14 @@ class LiveTradingEngine:
                 level="critical",
                 event_type="circuit_breaker_triggered",
                 title="熔断触发",
-                message=f"实盘会话 {self._symbol} 因连续亏损触发熔断，已停止交易",
-                details={"symbol": self._symbol},
+                message=f"实盘会话 {self._symbol} {reason}，已停止交易",
+                details={"symbol": self._symbol, "consecutive_losses": losses},
             )
 
-            await self.stop(error="Circuit breaker triggered due to consecutive losses")
-
-            # Trigger global circuit breaker to stop all sessions (Issue 033 fix)
-            # This ensures that when one session triggers circuit breaker due to
-            # consecutive losses, all sessions are stopped for safety
-            await self._trigger_global_circuit_breaker()
+            await self.stop(error=f"Circuit breaker: {losses} consecutive losses")
+            # Local circuit breaker only stops this session.
+            # Global circuit breaker is available via manual API trigger
+            # (CircuitBreakerService) for multi-strategy risk management.
             return
 
         # Only process closed candles
@@ -908,210 +1109,25 @@ class LiveTradingEngine:
             logger.warning(f"Symbol mismatch: expected {self._symbol}, got {candle.symbol}")
             return
 
-        # Acquire processing lock to prevent race with stop() (R3-002)
-        async with self._processing_lock:
-            if not self._is_running:
-                return
+        # Dedup: skip candles that don't advance in time (fix #5).
+        # WebSocket reconnections or message replays can deliver duplicate closed candles.
+        if self._last_bar_time is not None and candle.timestamp <= self._last_bar_time:
+            logger.debug(
+                f"Skipping duplicate/stale candle: time={candle.timestamp}, "
+                f"last={self._last_bar_time}"
+            )
+            return
 
-            try:
-                # Update last activity timestamp
-                self._last_active_at = datetime.now(UTC)
-
-                # Update current price
-                self._current_price = candle.close
-
-                # Convert WSCandle to Bar
-                bar = self._candle_to_bar(candle)
-
-                # Update context prices first so position valuations use fresh data
-                self._context._set_current_bar(bar)
-                self._context._add_bar_to_history(bar)
-
-                # Drain buffered WebSocket order updates before polling to ensure
-                # consistent state (ISSUE-203 fix: no concurrent mutation)
-                self._drain_ws_updates()
-
-                # Validate exchange balance (monitoring only, no cash overwrite).
-                # Cash tracked incrementally via fill processing (LIVE-012).
-                await self._sync_balance()
-                await self._sync_pending_orders()
-                await self._expire_ttl_orders()
-
-                # Check daily risk stats reset on each bar (LIVE-RM-005)
-                self._risk_manager.check_daily_reset()
-
-                # Update risk manager with equity computed from consistent state
-                self._risk_manager.update_equity(self._context.equity)
-                self._risk_manager.update_unrealized_pnl(self._context._get_unrealized_pnl())
-                self._risk_manager.update_position_value(self._context._get_position_value())
-
-                # Auto-stop if total loss limit triggered (IMP-005)
-                if self._risk_manager.check_total_loss_limit():
-                    msg = (
-                        f"Risk auto-stop: total loss limit triggered "
-                        f"(loss {-self._risk_manager.state.total_pnl:.2f}, "
-                        f"unrealized {self._risk_manager.state.unrealized_pnl:.2f})"
-                    )
-                    logger.warning(f"Live engine {self._run_id}: {msg}")
-                    self._context.log(msg)
-
-                    # Notification: total loss limit (LIVE-011)
-                    _fire_notification(
-                        self._run_id,
-                        level="critical",
-                        event_type="total_loss_limit",
-                        title="总亏损限额触发",
-                        message=f"实盘会话 {self._symbol} 已触发总亏损限额自动停止",
-                        details={
-                            "symbol": self._symbol,
-                            "total_pnl": float(self._risk_manager.state.total_pnl),
-                            "unrealized_pnl": float(
-                                self._risk_manager.state.unrealized_pnl
-                            ),
-                        },
-                    )
-
-                    await self.stop(error=msg)
-                    return
-
-                # Record equity snapshot BEFORE strategy execution to capture
-                # the portfolio state at bar close (C-DEFER-8)
-                self._context._record_equity_snapshot(bar.time)
-
-                # Persist snapshot: try synchronous callback first, fall back to batch
-                if self._context.equity_curve:
-                    latest_snapshot = self._context.equity_curve[-1]
-                    persisted = False
-                    if self._on_snapshot:
-                        try:
-                            await self._on_snapshot(str(self._run_id), latest_snapshot)
-                            persisted = True
-                        except Exception as e:
-                            logger.warning(
-                                f"Snapshot persist callback failed for {self._run_id}: {e}"
-                            )
-                    if not persisted:
-                        self._pending_snapshots.append(latest_snapshot)
-
-                # Notify strategy of fills and completed orders (before on_bar)
-                fill_delta = (
-                    self._context._total_fills_added - self._last_callback_fill_total
-                )
-                if fill_delta > 0:
-                    recent_fills = list(self._context._fills)[-fill_delta:]
-                    for fill in recent_fills:
-                        try:
-                            self._strategy.on_fill(fill)
-                        except Exception as e:
-                            self._context.log(f"ERROR in on_fill: {e}")
-                            logger.warning(f"Strategy on_fill error: {e}")
-                self._last_callback_fill_total = self._context._total_fills_added
-
-                completed_delta = (
-                    self._context._total_completed_added
-                    - self._last_callback_completed_total
-                )
-                if completed_delta > 0:
-                    recent_completed = list(self._context._completed_orders)[
-                        -completed_delta:
-                    ]
-                    for order in recent_completed:
-                        try:
-                            self._strategy.on_order_done(order)
-                        except Exception as e:
-                            self._context.log(f"ERROR in on_order_done: {e}")
-                            logger.warning(f"Strategy on_order_done error: {e}")
-                self._last_callback_completed_total = (
-                    self._context._total_completed_added
-                )
-
-                # Call strategy on_bar with resource limits (STR-013)
-                from squant.config import get_settings
-
-                settings = get_settings()
-                try:
-                    with resource_limiter(
-                        cpu_seconds=settings.strategy.cpu_limit_seconds,
-                        memory_mb=settings.strategy.memory_limit_mb,
-                    ):
-                        self._strategy.on_bar(bar)
-                except ResourceLimitExceededError as e:
-                    logger.error(f"Strategy resource limit exceeded: {e}")
-
-                    # Notification: resource limit (LIVE-011)
-                    _fire_notification(
-                        self._run_id,
-                        level="critical",
-                        event_type="strategy_resource_exceeded",
-                        title="策略资源超限",
-                        message=f"实盘会话 {self._symbol} 策略资源超限: {e}",
-                        details={"symbol": self._symbol, "error": str(e)},
-                    )
-
-                    await self.stop(error=f"Strategy resource limit exceeded: {e}")
-                    raise
-                except Exception as e:
-                    # Strategy errors (KeyError, IndexError, etc.) should be isolated
-                    # — consistent with paper engine and backtest runner behavior.
-                    # Only system-level errors (exchange, data integrity) should stop the engine.
-                    logger.warning(
-                        f"Strategy on_bar error in live engine {self._run_id}: {e}"
-                    )
-                    self._context.log(f"ERROR in on_bar: {e}")
-
-                # Process pending order requests from strategy
-                await self._process_order_requests()
-
-                self._bar_count += 1
-
-                # Persist result state for crash recovery
-                if self._on_result:
-                    try:
-                        result_data = self.build_result_for_persistence()
-                        await self._on_result(str(self._run_id), result_data)
-                    except Exception as e:
-                        logger.warning(f"Result persist callback failed for {self._run_id}: {e}")
-
-                # Flush order/trade audit events (LIVE-013)
-                if self._on_order_persist and self._pending_order_events:
-                    events_to_persist = self._pending_order_events.copy()
-                    self._pending_order_events.clear()
-                    try:
-                        await self._on_order_persist(
-                            str(self._run_id), events_to_persist
-                        )
-                    except Exception as e:
-                        logger.warning(f"Order persist callback failed for {self._run_id}: {e}")
-                        # Put events back for retry on next bar
-                        self._pending_order_events = events_to_persist + self._pending_order_events
-
-                # Emit bar update event via WebSocket
-                if self._on_event:
-                    try:
-                        event = self._build_bar_update_event()
-                        loop = asyncio.get_running_loop()
-                        loop.create_task(self._on_event(event))
-                    except Exception as e:
-                        logger.debug(f"Event emit failed for {self._run_id}: {e}")
-
-                # Refresh Dead Man's Switch heartbeat (F-2)
-                await self._refresh_dead_man_switch()
-
-                logger.debug(
-                    f"Processed bar {self._bar_count} at {bar.time}, equity={self._context.equity}"
-                )
-
-            except Exception as e:
-                logger.exception(f"Error processing candle in live engine {self._run_id}: {e}")
-                await self.stop(error=f"Error processing candle: {e}")
-                raise
+        # Route to event loop — await guarantees delivery
+        await self._event_queue.put(
+            EngineEvent(EngineEventType.BAR_CLOSE, candle, datetime.now(UTC))
+        )
 
     def on_order_update(self, update: WSOrderUpdate) -> None:
-        """Handle WebSocket order update by buffering it for later processing.
+        """Handle WebSocket order update by enqueuing it for event loop processing.
 
-        Called when exchange pushes order status updates. Updates are queued
-        and processed synchronously within process_candle via _drain_ws_updates()
-        to prevent concurrent state mutation (ISSUE-203 fix).
+        Called when exchange pushes order status updates. Updates are placed on
+        the unified event queue and processed by the event loop.
 
         Args:
             update: Order update from WebSocket.
@@ -1122,22 +1138,39 @@ class LiveTradingEngine:
             logger.debug(f"Ignoring order update during emergency close: {update.order_id}")
             return
 
-        self._pending_ws_updates.append(update)
+        try:
+            self._event_queue.put_nowait(
+                EngineEvent(EngineEventType.WS_ORDER, update, datetime.now(UTC))
+            )
+        except asyncio.QueueFull:
+            logger.warning(f"Event queue full, dropping WS_ORDER for {self._run_id}")
 
-    def _drain_ws_updates(self) -> None:
-        """Process all buffered WebSocket order updates.
+    async def _flush_order_events(self) -> None:
+        """Flush pending order/trade audit events to persistence.
 
-        Called synchronously within process_candle to ensure all WS state
-        mutations happen at a controlled point, not interleaved with polling.
+        Called multiple times per bar (after WS drain, after order submission)
+        to minimize the data loss window on crash/reload.
         """
-        if not self._pending_ws_updates:
+        if not self._on_order_persist or not self._pending_order_events:
             return
 
-        updates = self._pending_ws_updates.copy()
-        self._pending_ws_updates.clear()
-
-        for update in updates:
-            self._process_single_ws_update(update)
+        events_to_persist = self._pending_order_events.copy()
+        self._pending_order_events.clear()
+        try:
+            await self._on_order_persist(str(self._run_id), events_to_persist)
+        except Exception as e:
+            logger.warning(f"Order persist callback failed for {self._run_id}: {e}")
+            # Put events back for retry
+            self._pending_order_events = events_to_persist + self._pending_order_events
+            if len(self._pending_order_events) > self._MAX_PENDING_ORDER_EVENTS:
+                discarded = len(self._pending_order_events) - self._MAX_PENDING_ORDER_EVENTS
+                self._pending_order_events = self._pending_order_events[
+                    -self._MAX_PENDING_ORDER_EVENTS :
+                ]
+                logger.warning(
+                    f"Dropped {discarded} oldest pending order events "
+                    f"(limit={self._MAX_PENDING_ORDER_EVENTS}) for {self._run_id}"
+                )
 
     def _process_single_ws_update(self, update: WSOrderUpdate) -> None:
         """Process a single WebSocket order update.
@@ -1157,15 +1190,26 @@ class LiveTradingEngine:
             logger.warning(f"Live order not found for internal ID: {internal_id}")
             return
 
-        # Convert string status to OrderStatus enum
-        new_status = _WS_STATUS_MAP.get(update.status, OrderStatus.PENDING)
+        # Convert string status to OrderStatus enum.
+        # Unknown statuses are logged and the order retains its current status
+        # to prevent a filled order from regressing to PENDING (fix #3).
+        mapped_status = _WS_STATUS_MAP.get(update.status)
+        if mapped_status is None:
+            logger.error(
+                f"Unknown WS order status '{update.status}' for order {internal_id} "
+                f"— keeping current status {live_order.status.value}"
+            )
+            return
+        new_status = mapped_status
 
         # Update order state
         old_status = live_order.status
-        old_filled = live_order.filled_amount  # Save before updating
-        old_fee = live_order.fee  # Save old fee for incremental calculation
+        old_filled = live_order.filled_amount
+        old_avg = live_order.avg_fill_price
+        old_fee = live_order.fee
         live_order.status = new_status
-        live_order.filled_amount = update.filled_size
+        # Guard against filled_amount regression from out-of-order WS messages (fix #4)
+        live_order.filled_amount = max(live_order.filled_amount, update.filled_size)
         live_order.avg_fill_price = update.avg_price
         live_order.fee = update.fee or Decimal("0")
         live_order.fee_currency = update.fee_currency
@@ -1176,29 +1220,361 @@ class LiveTradingEngine:
             f"filled={update.filled_size}/{live_order.amount}"
         )
 
-        # Process fills and track trade PnL for risk management
-        # Only process if there's new fill amount (incremental delta)
+        # Fallback fill processing from watchOrders aggregated data.
+        # If watchMyTrades already processed the fills via a WS_FILL event processed first,
+        # old_filled will already reflect them and fill_delta will be 0 — no duplicate.
+        # If watchMyTrades is unavailable (e.g., OKX demo), this is the primary fill path.
         fill_delta = update.filled_size - old_filled
+        has_new_fills = False
         if new_status in (OrderStatus.PARTIAL, OrderStatus.FILLED) and fill_delta > 0:
-            if update.avg_price is None:
-                return
+            if update.avg_price is not None:
+                has_new_fills = True
+                had_open_trade = self._context._open_trade is not None
+                circuit_breaker_before = self._risk_manager.state.circuit_breaker_triggered
 
+                # Calculate incremental fee
+                fee_delta = None
+                if update.fee is not None:
+                    fee_delta = update.fee - old_fee
+                    if fee_delta < 0:
+                        fee_delta = Decimal("0")
+
+                # Compute incremental fill price from blended averages
+                fill_price = _compute_incremental_fill_price(
+                    update.avg_price, update.filled_size, old_avg, old_filled, fill_delta
+                )
+
+                # Track fallback fill amount so _process_trade_execution can
+                # detect and skip fills already accounted for by this fallback.
+                live_order._fallback_fill_pending += fill_delta
+
+                self._record_fill(
+                    live_order,
+                    fill_price,
+                    fill_delta,
+                    fee_delta,
+                    update.fee or Decimal("0"),
+                    source="ws_order",
+                    exchange_timestamp=update.updated_at,
+                )
+                self._check_trade_completion(had_open_trade, circuit_breaker_before, "ws_order")
+
+                # Queue async enrichment: fetch per-fill details via REST
+                # to populate exchange_tid, exact per-fill prices, taker_or_maker
+                self._orders_needing_reconciliation.add(internal_id)
+
+        # Log + audit event when order reaches terminal status without new fills
+        if new_status != old_status and live_order.is_complete and not has_new_fills:
+            short_id = internal_id[:8]
+            if new_status == OrderStatus.CANCELLED:
+                self._context.log(
+                    f"订单被取消 #{short_id} {live_order.symbol} "
+                    f"{live_order.side.value} {live_order.amount} "
+                    f"(filled={live_order.filled_amount}, source=ws)",
+                    level="warning",
+                    category="order",
+                )
+            elif new_status == OrderStatus.REJECTED:
+                self._context.log(
+                    f"订单被拒绝 #{short_id} {live_order.symbol} "
+                    f"{live_order.side.value} {live_order.amount} (source=ws)",
+                    level="error",
+                    category="order",
+                )
+
+            self._pending_order_events.append(
+                {
+                    "type": "status_change",
+                    "internal_id": internal_id,
+                    "exchange_order_id": live_order.exchange_order_id,
+                    "old_status": old_status.value,
+                    "new_status": new_status.value,
+                    "filled_amount": str(live_order.filled_amount),
+                    "avg_fill_price": str(live_order.avg_fill_price)
+                    if live_order.avg_fill_price
+                    else None,
+                    "fee": str(live_order.fee),
+                    "fee_currency": live_order.fee_currency,
+                    "timestamp": (update.updated_at or datetime.now(UTC)).isoformat(),
+                    "source": "ws",
+                }
+            )
+
+        # If watchOrders reports FILLED but fills haven't all arrived,
+        # queue for REST reconciliation to recover missing fills
+        if new_status == OrderStatus.FILLED and live_order.filled_amount < live_order.amount:
+            self._orders_needing_reconciliation.add(internal_id)
+            logger.info(
+                f"Order {internal_id} reported FILLED but fills incomplete "
+                f"({live_order.filled_amount}/{live_order.amount}), queuing reconciliation"
+            )
+
+    def _process_trade_execution(self, exec_data: WSTradeExecution) -> None:
+        """Process a per-fill record from watchMyTrades.
+
+        Args:
+            exec_data: Individual fill data from exchange WS.
+        """
+        # Dedup by trade_id
+        if exec_data.trade_id in self._processed_trade_ids:
+            logger.debug(f"Skipping duplicate trade: {exec_data.trade_id}")
+            return
+
+        # Find the corresponding LiveOrder
+        internal_id = self._exchange_order_map.get(exec_data.order_id)
+        if internal_id is None:
+            # Fill for an order not managed by this session (e.g., another session
+            # on same account, or manual trade). Skip silently.
+            logger.debug(
+                f"Ignoring trade {exec_data.trade_id} for unknown order {exec_data.order_id}"
+            )
+            return
+
+        live_order = self._live_orders.get(internal_id)
+        if live_order is None:
+            logger.warning(
+                f"Trade {exec_data.trade_id}: internal_id {internal_id} not in _live_orders"
+            )
+            return
+
+        # Guard: skip if this fill was already accounted for by ws_order fallback.
+        # When WS_ORDER arrives before WS_FILL (cross-batch), the fallback path
+        # records fills without trade_ids. Track pending fallback amount on the
+        # LiveOrder and consume it here to prevent double-counting.
+        old_filled = live_order.filled_amount
+        if live_order._fallback_fill_pending >= exec_data.amount - Decimal("1E-8"):
+            logger.info(
+                f"Skipping ws_trade fill for {internal_id}: covered by ws_order fallback "
+                f"(fallback_pending={live_order._fallback_fill_pending}, "
+                f"fill_amount={exec_data.amount})"
+            )
+            live_order._fallback_fill_pending -= exec_data.amount
+            if live_order._fallback_fill_pending < Decimal("0"):
+                live_order._fallback_fill_pending = Decimal("0")
+            self._processed_trade_ids[exec_data.trade_id] = True
+            return
+
+        # Capture pre-fill state for risk checks
+        had_open_trade = self._context._open_trade is not None
+        circuit_breaker_before = self._risk_manager.state.circuit_breaker_triggered
+
+        # Update LiveOrder tracking fields
+        live_order.filled_amount += exec_data.amount
+        if old_filled > 0 and live_order.avg_fill_price:
+            live_order.avg_fill_price = (
+                live_order.avg_fill_price * old_filled + exec_data.price * exec_data.amount
+            ) / live_order.filled_amount
+        else:
+            live_order.avg_fill_price = exec_data.price
+        live_order.fee += exec_data.fee
+        if exec_data.fee_currency:
+            live_order.fee_currency = exec_data.fee_currency
+        live_order.updated_at = exec_data.timestamp
+
+        # Status transition
+        if live_order.filled_amount >= live_order.amount:
+            live_order.status = OrderStatus.FILLED
+        elif live_order.filled_amount > 0:
+            live_order.status = OrderStatus.PARTIAL
+
+        # Record fill with exact data
+        self._record_fill(
+            live_order,
+            exec_data.price,
+            exec_data.amount,
+            exec_data.fee,
+            live_order.fee,
+            "ws_trade",
+            exec_data.timestamp,
+            exchange_tid=exec_data.trade_id,
+            taker_or_maker=exec_data.taker_or_maker,
+        )
+
+        # Check trade completion for risk tracking
+        self._check_trade_completion(had_open_trade, circuit_breaker_before, "ws")
+
+        # Track processed trade_id with LRU eviction
+        self._processed_trade_ids[exec_data.trade_id] = True
+        if len(self._processed_trade_ids) > self._MAX_PROCESSED_TRADE_IDS:
+            evict_count = self._MAX_PROCESSED_TRADE_IDS // 2
+            for _ in range(evict_count):
+                self._processed_trade_ids.popitem(last=False)
+
+        self._has_recent_fill = True
+
+    async def _reconcile_order_fills(self, live_order: LiveOrder) -> None:
+        """Reconcile fills for a single order against exchange records.
+
+        Two modes of operation:
+        1. **Fill recovery**: If fills were missed (e.g., WS reconnect, crash recovery),
+           records the missing fills and updates LiveOrder state.
+        2. **Async enrichment**: If fills were already processed from watchOrders
+           aggregated data, enriches existing Trade records with per-fill details
+           (exchange_tid, exact prices, taker_or_maker) via "enrichment" audit events.
+        """
+        if not live_order.exchange_order_id:
+            return
+
+        logger.info(
+            f"Reconciling fills for order {live_order.internal_id} "
+            f"(exchange: {live_order.exchange_order_id})"
+        )
+        try:
+            trades = await self._adapter.get_order_trades(
+                live_order.symbol, live_order.exchange_order_id
+            )
+        except Exception as e:
+            logger.error(f"Failed to fetch order trades for {live_order.exchange_order_id}: {e}")
+            return
+
+        logger.info(
+            f"Fetched {len(trades)} trades for order {live_order.exchange_order_id}: "
+            f"{[(t.trade_id, str(t.amount), str(t.price)) for t in trades]}"
+        )
+
+        if not trades:
+            return
+
+        # Mark all exchange trade_ids as processed (dedup for future WS messages)
+        for trade in trades:
+            self._processed_trade_ids[trade.trade_id] = True
+
+        # Check if fills were already recorded (from watchOrders fallback or watchMyTrades)
+        # by comparing context fill count with exchange trade count.
+        # If context already has fills for this order, this is an enrichment pass.
+        fills_already_recorded = live_order.filled_amount > 0
+
+        if fills_already_recorded:
+            # Enrichment mode: emit enrichment events so persistence layer
+            # can update existing Trade records with exchange_tid, exact prices
+            self._pending_order_events.append(
+                {
+                    "type": "enrichment",
+                    "internal_id": live_order.internal_id,
+                    "exchange_order_id": live_order.exchange_order_id,
+                    "trades": [
+                        {
+                            "exchange_tid": t.trade_id,
+                            "price": str(t.price),
+                            "amount": str(t.amount),
+                            "fee": str(t.fee),
+                            "fee_currency": t.fee_currency,
+                            "taker_or_maker": t.taker_or_maker,
+                            "timestamp": t.timestamp.isoformat(),
+                        }
+                        for t in trades
+                    ],
+                    "timestamp": datetime.now(UTC).isoformat(),
+                }
+            )
+            logger.info(
+                f"Enrichment data fetched for order {live_order.exchange_order_id}: "
+                f"{len(trades)} trades"
+            )
+            return
+
+        # Recovery mode: fills not yet recorded, process them now
+        missing_trade_ids: list[str] = []
+        for trade in trades:
+            # Capture pre-fill state
             had_open_trade = self._context._open_trade is not None
             circuit_breaker_before = self._risk_manager.state.circuit_breaker_triggered
 
-            # Calculate incremental fee (not cumulative) (LV-2)
-            fee_delta = None
-            if update.fee is not None:
-                fee_delta = update.fee - old_fee
-                if fee_delta < 0:
-                    fee_delta = Decimal("0")
+            # Update LiveOrder tracking fields
+            old_filled = live_order.filled_amount
+            live_order.filled_amount += trade.amount
+            if old_filled > 0 and live_order.avg_fill_price:
+                live_order.avg_fill_price = (
+                    live_order.avg_fill_price * old_filled + trade.price * trade.amount
+                ) / live_order.filled_amount
+            else:
+                live_order.avg_fill_price = trade.price
+            live_order.fee += trade.fee
 
+            # Status transition
+            if live_order.filled_amount >= live_order.amount:
+                live_order.status = OrderStatus.FILLED
+            elif live_order.filled_amount > 0:
+                live_order.status = OrderStatus.PARTIAL
+
+            # Record the missing fill
             self._record_fill(
-                live_order, update.avg_price, fill_delta, fee_delta,
-                update.fee or Decimal("0"), source="ws",
-                exchange_timestamp=update.updated_at,
+                live_order,
+                trade.price,
+                trade.amount,
+                trade.fee,
+                live_order.fee,
+                "reconcile",
+                trade.timestamp,
+                exchange_tid=trade.trade_id,
+                taker_or_maker=trade.taker_or_maker,
             )
-            self._check_trade_completion(had_open_trade, circuit_breaker_before, "ws")
+
+            self._check_trade_completion(had_open_trade, circuit_breaker_before, "reconcile")
+            self._processed_trade_ids[trade.trade_id] = True
+            missing_trade_ids.append(trade.trade_id)
+
+        # Record correction event if fills were missing
+        if missing_trade_ids:
+            # Calculate expected totals from all exchange trades
+            exchange_filled = sum(t.amount for t in trades)
+
+            corrections: list[dict[str, str]] = []
+            if abs(live_order.filled_amount - exchange_filled) > Decimal("0.00000001"):
+                corrections.append(
+                    {
+                        "field": "filled_amount",
+                        "before": str(
+                            live_order.filled_amount
+                            - sum(t.amount for t in trades if t.trade_id in missing_trade_ids)
+                        ),
+                        "after": str(live_order.filled_amount),
+                    }
+                )
+
+            if corrections or missing_trade_ids:
+                self._pending_order_events.append(
+                    {
+                        "type": "correction",
+                        "internal_id": live_order.internal_id,
+                        "exchange_order_id": live_order.exchange_order_id,
+                        "corrections": corrections,
+                        "reason": "reconcile_missing_fills",
+                        "missing_trade_ids": missing_trade_ids,
+                        "timestamp": datetime.now(UTC).isoformat(),
+                    }
+                )
+
+            logger.info(
+                f"Reconciled order {live_order.exchange_order_id}: "
+                f"{len(missing_trade_ids)} missing fills recovered"
+            )
+
+    async def _reconcile_pending_orders(self) -> None:
+        """Reconcile orders that need fill data recovery.
+
+        Called from process_candle() after draining WS updates.
+        Rate-limited by reconcile_interval_ms and reconcile_batch_size from RiskConfig.
+        """
+        if not self._orders_needing_reconciliation:
+            return
+
+        batch_size = self._risk_manager.config.reconcile_batch_size
+        interval = self._risk_manager.config.reconcile_interval_ms / 1000.0
+
+        batch = list(self._orders_needing_reconciliation)[:batch_size]
+
+        for internal_id in batch:
+            live_order = self._live_orders.get(internal_id)
+            if live_order is None:
+                self._orders_needing_reconciliation.discard(internal_id)
+                continue
+
+            await self._reconcile_order_fills(live_order)
+            self._orders_needing_reconciliation.discard(internal_id)
+
+            if interval > 0 and len(batch) > 1:
+                await asyncio.sleep(interval)
 
     def _candle_to_bar(self, candle: WSCandle) -> Bar:
         """Convert WSCandle to Bar."""
@@ -1237,7 +1613,7 @@ class LiveTradingEngine:
             quote_currency = self._symbol.split("/")[1]  # e.g., "USDT" from "BTC/USDT"
             quote_balance = balance.get_balance(quote_currency)
             if quote_balance:
-                exchange_cash = quote_balance.available
+                exchange_cash = quote_balance.total
                 self._last_exchange_balance = exchange_cash
                 local_cash = self._context._cash
                 diff = abs(exchange_cash - local_cash)
@@ -1251,7 +1627,7 @@ class LiveTradingEngine:
             # Reconcile base currency position (LIVE-005)
             base_currency = self._symbol.split("/")[0]  # e.g., "BTC" from "BTC/USDT"
             base_balance = balance.get_balance(base_currency)
-            exchange_amount = base_balance.available if base_balance else Decimal("0")
+            exchange_amount = base_balance.total if base_balance else Decimal("0")
             local_pos = self._context.get_position(self._symbol)
             local_amount = local_pos.amount if local_pos else Decimal("0")
 
@@ -1304,7 +1680,10 @@ class LiveTradingEngine:
                     event_type="balance_sync_failure",
                     title="余额同步失败",
                     message=f"实盘会话 {self._symbol} 连续{self._balance_consecutive_failures}次余额同步失败",
-                    details={"symbol": self._symbol, "failures": self._balance_consecutive_failures},
+                    details={
+                        "symbol": self._symbol,
+                        "failures": self._balance_consecutive_failures,
+                    },
                 )
 
                 raise RuntimeError(msg)
@@ -1321,8 +1700,7 @@ class LiveTradingEngine:
             return
 
         logger.info(
-            f"Reconciling {len(self._timed_out_orders)} timed-out orders "
-            f"via open orders query"
+            f"Reconciling {len(self._timed_out_orders)} timed-out orders via open orders query"
         )
 
         try:
@@ -1339,7 +1717,9 @@ class LiveTradingEngine:
 
         reconciled: list[str] = []
         for client_id, order in list(self._timed_out_orders.items()):
-            exchange_resp = exchange_by_client_id.get(client_id)
+            # client_order_id sent to exchange has hyphens stripped
+            exchange_client_id = client_id.replace("-", "")
+            exchange_resp = exchange_by_client_id.get(exchange_client_id)
             if exchange_resp:
                 # Order exists on exchange — create LiveOrder and track it
                 live_order = LiveOrder(
@@ -1369,10 +1749,136 @@ class LiveTradingEngine:
                 )
 
                 # Buffer "placed" event for audit persistence
-                self._pending_order_events.append({
+                self._pending_order_events.append(
+                    {
+                        "type": "placed",
+                        "internal_id": client_id,
+                        "exchange_order_id": exchange_resp.order_id,
+                        "symbol": live_order.symbol,
+                        "side": live_order.side.value,
+                        "order_type": live_order.order_type,
+                        "amount": str(live_order.amount),
+                        "price": str(live_order.price) if live_order.price else None,
+                        "status": live_order.status.value,
+                        "created_at": live_order.created_at.isoformat()
+                        if live_order.created_at
+                        else datetime.now(UTC).isoformat(),
+                    }
+                )
+
+                # Process any fills that already occurred
+                if exchange_resp.filled > Decimal("0") and exchange_resp.avg_price:
+                    had_open_trade = self._context._open_trade is not None
+                    cb_before = self._risk_manager.state.circuit_breaker_triggered
+                    self._record_fill(
+                        live_order,
+                        exchange_resp.avg_price,
+                        exchange_resp.filled,
+                        None,
+                        exchange_resp.fee or Decimal("0"),
+                        source="reconcile",
+                        exchange_timestamp=exchange_resp.updated_at,
+                    )
+                    self._check_trade_completion(had_open_trade, cb_before, "reconcile")
+
+                reconciled.append(client_id)
+            else:
+                # Not in open orders — order may have been filled, cancelled,
+                # or never placed. Query the exchange for the final status
+                # before assuming cancelled (M-1 fix).
+                await self._reconcile_missing_timed_out_order(client_id, order)
+                reconciled.append(client_id)
+
+        for client_id in reconciled:
+            del self._timed_out_orders[client_id]
+
+        if reconciled:
+            logger.info(f"Reconciled {len(reconciled)} timed-out orders")
+
+    async def _reconcile_missing_timed_out_order(self, client_id: str, order: Any) -> None:
+        """Query exchange for final status of a timed-out order not in open_orders.
+
+        The order may have been filled (no longer open), cancelled, or never
+        placed. We query get_order to determine the actual outcome before
+        falling back to CANCELLED (M-1 fix).
+
+        Note: For timed-out orders we may have a stashed exchange_order_id
+        (if the WS push arrived before reconciliation). If not available,
+        we attempt to query by client_order_id — some exchanges (OKX)
+        support this while others may raise OrderNotFound.
+
+        Args:
+            client_id: The client/internal order ID.
+            order: The SimulatedOrder reference from _timed_out_orders.
+        """
+        # Prefer exchange_order_id if we received it via WS before reconciliation.
+        # _exchange_order_map is {exchange_id: internal_id}, so reverse-lookup.
+        # Fall back to client_id (works on OKX, may fail on other exchanges).
+        exchange_oid = next(
+            (eid for eid, iid in self._exchange_order_map.items() if iid == client_id),
+            None,
+        )
+        # client_order_id sent to exchange has hyphens stripped
+        query_id = exchange_oid or client_id.replace("-", "")
+        try:
+            response = await self._adapter.get_order(order.symbol, query_id)
+        except Exception as e:
+            logger.warning(
+                f"Failed to query timed-out order {client_id} — marking as cancelled: {e}"
+            )
+            order.status = OrderStatus.CANCELLED
+            self._context._completed_orders.append(order)
+            self._context._total_completed_added += 1
+            if order in self._context._pending_orders:
+                self._context._pending_orders.remove(order)
+            return
+
+        if response.status == OrderStatus.FILLED:
+            # Order was filled on exchange — create LiveOrder and record fill
+            logger.info(
+                f"Timed-out order {client_id} was FILLED on exchange (order_id={response.order_id})"
+            )
+            live_order = LiveOrder(
+                internal_id=client_id,
+                exchange_order_id=response.order_id,
+                symbol=order.symbol,
+                side=order.side,
+                order_type=order.type.value,
+                amount=order.amount,
+                price=order.price,
+                status=OrderStatus.FILLED,
+            )
+            live_order.filled_amount = response.filled
+            live_order.avg_fill_price = response.avg_price
+            live_order.fee = response.fee or Decimal("0")
+            live_order.fee_currency = response.fee_currency
+            live_order.created_at = response.created_at or datetime.now(UTC)
+
+            self._live_orders[client_id] = live_order
+            self._exchange_order_map[response.order_id] = client_id
+            order.status = OrderStatus.FILLED
+
+            # Record the fill
+            if response.filled > Decimal("0") and response.avg_price:
+                had_open_trade = self._context._open_trade is not None
+                cb_before = self._risk_manager.state.circuit_breaker_triggered
+                self._record_fill(
+                    live_order,
+                    response.avg_price,
+                    response.filled,
+                    None,
+                    response.fee or Decimal("0"),
+                    source="reconcile",
+                    exchange_timestamp=response.updated_at,
+                )
+                self._check_trade_completion(had_open_trade, cb_before, "reconcile")
+
+            # Buffer audit event
+            self._pending_order_events.append(
+                {
                     "type": "placed",
                     "internal_id": client_id,
-                    "exchange_order_id": exchange_resp.order_id,
+                    "exchange_order_id": response.order_id,
                     "symbol": live_order.symbol,
                     "side": live_order.side.value,
                     "order_type": live_order.order_type,
@@ -1382,40 +1888,19 @@ class LiveTradingEngine:
                     "created_at": live_order.created_at.isoformat()
                     if live_order.created_at
                     else datetime.now(UTC).isoformat(),
-                })
-
-                # Process any fills that already occurred
-                if exchange_resp.filled > Decimal("0") and exchange_resp.avg_price:
-                    had_open_trade = self._context._open_trade is not None
-                    cb_before = self._risk_manager.state.circuit_breaker_triggered
-                    self._record_fill(
-                        live_order, exchange_resp.avg_price, exchange_resp.filled,
-                        None, exchange_resp.fee or Decimal("0"), source="reconcile",
-                        exchange_timestamp=exchange_resp.updated_at,
-                    )
-                    self._check_trade_completion(had_open_trade, cb_before, "reconcile")
-
-                reconciled.append(client_id)
-            else:
-                # Not in open orders — order was either never placed,
-                # already filled, or cancelled. Mark as cancelled in context
-                # so strategy gets notified via on_order_done.
-                logger.warning(
-                    f"Timed-out order {client_id} not found in open orders — "
-                    "marking as cancelled"
-                )
-                order.status = OrderStatus.CANCELLED
-                self._context._completed_orders.append(order)
-                self._context._total_completed_added += 1
-                if order in self._context._pending_orders:
-                    self._context._pending_orders.remove(order)
-                reconciled.append(client_id)
-
-        for client_id in reconciled:
-            del self._timed_out_orders[client_id]
-
-        if reconciled:
-            logger.info(f"Reconciled {len(reconciled)} timed-out orders")
+                }
+            )
+        else:
+            # Order is CANCELLED, REJECTED, or other terminal state
+            logger.warning(
+                f"Timed-out order {client_id} not found in open orders — "
+                f"exchange status: {response.status.value}, marking as cancelled"
+            )
+            order.status = OrderStatus.CANCELLED
+            self._context._completed_orders.append(order)
+            self._context._total_completed_added += 1
+            if order in self._context._pending_orders:
+                self._context._pending_orders.remove(order)
 
     async def _sync_pending_orders(self) -> None:
         """Sync pending order status from exchange with rate limiting.
@@ -1537,6 +2022,36 @@ class LiveTradingEngine:
             if order.exchange_order_id and order.exchange_order_id in self._exchange_order_map:
                 del self._exchange_order_map[order.exchange_order_id]
 
+            # Emit a final "status_change" audit event so the DB record reflects
+            # the terminal status. Without this, orders whose last fill event
+            # captured an intermediate "partial" status would never be updated
+            # to "filled" in the database (BUG-FIX: split fills).
+            self._pending_order_events.append(
+                {
+                    "type": "status_change",
+                    "internal_id": internal_id,
+                    "exchange_order_id": order.exchange_order_id,
+                    "old_status": order.status.value,  # already terminal at cleanup time
+                    "new_status": order.status.value,  # same — ensures DB catches up
+                    "filled_amount": str(order.filled_amount),
+                    "avg_fill_price": str(order.avg_fill_price) if order.avg_fill_price else None,
+                    "fee": str(order.fee),
+                    "fee_currency": order.fee_currency,
+                    "timestamp": datetime.now(UTC).isoformat(),
+                    "source": "cleanup",
+                }
+            )
+
+            # Move corresponding SimulatedOrder to completed_orders so strategy
+            # context stays in sync and orders are not re-submitted.
+            for pending in list(self._context._pending_orders):
+                if pending.id == internal_id:
+                    pending.status = order.status
+                    self._context._completed_orders.append(pending)
+                    self._context._total_completed_added += 1
+                    self._context._pending_orders.remove(pending)
+                    break
+
     async def _expire_ttl_orders(self) -> None:
         """Cancel live orders whose bars_remaining TTL has expired.
 
@@ -1573,13 +2088,31 @@ class LiveTradingEngine:
                     f"Order {internal_id} expired (TTL reached), "
                     f"cancel status={live_order.status.value}"
                 )
+                self._context.log(
+                    f"订单超时已取消 #{internal_id[:8]}",
+                    level="warning",
+                    category="order",
+                )
             except Exception as e:
                 logger.warning(f"Failed to cancel expired order {internal_id}: {e}")
 
     def _update_order_from_response(self, live_order: LiveOrder, response: OrderResponse) -> None:
         """Update live order from exchange response."""
         old_filled = live_order.filled_amount
-        old_fee = live_order.fee  # Save old fee for incremental calculation
+        old_status = live_order.status
+
+        # Skip stale poll responses entirely (BUG-1/BUG-2): if the response
+        # reports less filled than we already know, it's outdated — don't let
+        # it regress avg_price, fee, or status.
+        if response.filled < old_filled:
+            logger.debug(
+                f"Stale poll response for {live_order.internal_id}: "
+                f"response filled={response.filled} < current={old_filled}, skipping"
+            )
+            return
+
+        old_avg = live_order.avg_fill_price
+        old_fee = live_order.fee
         live_order.status = response.status
         live_order.filled_amount = response.filled
         live_order.avg_fill_price = response.avg_price
@@ -1587,28 +2120,79 @@ class LiveTradingEngine:
         live_order.fee_currency = response.fee_currency
         live_order.updated_at = datetime.now(UTC)
 
-        # Process new fills
+        # Fallback fill processing (same logic as watchOrders path)
+        has_new_fills = False
         if response.filled > old_filled:
-            if response.avg_price is None:
-                return
+            if response.avg_price is not None:
+                has_new_fills = True
+                fill_amount = response.filled - old_filled
+                fee_delta = None
+                if response.fee is not None:
+                    fee_delta = response.fee - old_fee
+                    if fee_delta < 0:
+                        fee_delta = Decimal("0")
 
-            fill_amount = response.filled - old_filled
-            # Only compute fee delta if fee info is available (LV-2)
-            fee_delta = None
-            if response.fee is not None:
-                fee_delta = response.fee - old_fee
-                if fee_delta < 0:
-                    fee_delta = Decimal("0")
+                had_open_trade = self._context._open_trade is not None
+                circuit_breaker_before = self._risk_manager.state.circuit_breaker_triggered
 
-            had_open_trade = self._context._open_trade is not None
-            circuit_breaker_before = self._risk_manager.state.circuit_breaker_triggered
+                fill_price = _compute_incremental_fill_price(
+                    response.avg_price, response.filled, old_avg, old_filled, fill_amount
+                )
 
-            self._record_fill(
-                live_order, response.avg_price, fill_amount, fee_delta,
-                response.fee or Decimal("0"), source="poll",
-                exchange_timestamp=response.updated_at,
+                self._record_fill(
+                    live_order,
+                    fill_price,
+                    fill_amount,
+                    fee_delta,
+                    response.fee or Decimal("0"),
+                    source="poll",
+                    exchange_timestamp=response.updated_at,
+                )
+                self._check_trade_completion(had_open_trade, circuit_breaker_before, "polling")
+
+                # Queue async enrichment
+                self._orders_needing_reconciliation.add(live_order.internal_id)
+
+        # If REST polling sees FILLED but local fills incomplete, queue reconciliation
+        if response.status == OrderStatus.FILLED and live_order.filled_amount < live_order.amount:
+            self._orders_needing_reconciliation.add(live_order.internal_id)
+
+        # Log + audit event when polling detects terminal status without new fills
+        if response.status != old_status and live_order.is_complete and not has_new_fills:
+            short_id = live_order.internal_id[:8]
+            if response.status == OrderStatus.CANCELLED:
+                self._context.log(
+                    f"订单被取消 #{short_id} {live_order.symbol} "
+                    f"{live_order.side.value} {live_order.amount} "
+                    f"(filled={live_order.filled_amount}, source=poll)",
+                    level="warning",
+                    category="order",
+                )
+            elif response.status == OrderStatus.REJECTED:
+                self._context.log(
+                    f"订单被拒绝 #{short_id} {live_order.symbol} "
+                    f"{live_order.side.value} {live_order.amount} (source=poll)",
+                    level="error",
+                    category="order",
+                )
+
+            self._pending_order_events.append(
+                {
+                    "type": "status_change",
+                    "internal_id": live_order.internal_id,
+                    "exchange_order_id": live_order.exchange_order_id,
+                    "old_status": old_status.value,
+                    "new_status": response.status.value,
+                    "filled_amount": str(live_order.filled_amount),
+                    "avg_fill_price": str(live_order.avg_fill_price)
+                    if live_order.avg_fill_price
+                    else None,
+                    "fee": str(live_order.fee),
+                    "fee_currency": live_order.fee_currency,
+                    "timestamp": (response.updated_at or datetime.now(UTC)).isoformat(),
+                    "source": "poll",
+                }
             )
-            self._check_trade_completion(had_open_trade, circuit_breaker_before, "polling")
 
     def _record_fill(
         self,
@@ -1619,6 +2203,8 @@ class LiveTradingEngine:
         total_fee: Decimal,
         source: str,
         exchange_timestamp: datetime | None = None,
+        exchange_tid: str | None = None,
+        taker_or_maker: str | None = None,
     ) -> None:
         """Record an incremental fill from any source (WebSocket, polling, reconcile).
 
@@ -1631,14 +2217,19 @@ class LiveTradingEngine:
             fill_amount: Incremental fill amount (new fills only).
             fee_delta: Incremental fee, or None to use total_fee as fallback.
             total_fee: Total cumulative fee (used as fallback when fee_delta is None).
-            source: Fill source identifier for audit trail ("ws", "poll", "reconcile").
+            source: Fill source identifier for audit trail ("ws_trade", "ws_order", "poll", "reconcile", "emergency_close").
             exchange_timestamp: Exchange-reported fill time. Falls back to local
                 UTC time when not available (R5-F4).
+            exchange_tid: Exchange trade ID for per-fill tracking.
+            taker_or_maker: Whether this fill was taker or maker.
         """
         if fill_price is None:
             return
 
         fill_fee = fee_delta if fee_delta is not None else total_fee
+        # OKX (and some other exchanges) return negative fees to indicate
+        # deduction from received currency. Context expects positive fee (cost).
+        fill_fee = abs(fill_fee)
 
         fill = Fill(
             order_id=live_order.internal_id,
@@ -1648,12 +2239,22 @@ class LiveTradingEngine:
             amount=fill_amount,
             fee=fill_fee,
             timestamp=exchange_timestamp or datetime.now(UTC),
+            fee_currency=live_order.fee_currency,
         )
 
         # force=True: live fills are already executed on the exchange and must
         # be recorded regardless of local cash/position tracking (ISSUE-201 fix)
         self._context._process_fill(fill, force=True)
         self._context._move_completed_orders()
+
+        side_cn = "买入" if live_order.side == OrderSide.BUY else "卖出"
+        fee_info = f" fee={fill_fee}"
+        if live_order.fee_currency:
+            fee_info += f" {live_order.fee_currency}"
+        self._context.log(
+            f"{side_cn}成交 {live_order.symbol} {fill_amount} @{fill_price}{fee_info} ({source})",
+            category="fill",
+        )
 
         # Record fill for daily trade count limit (LIVE-RM-001)
         self._risk_manager.record_order_fill()
@@ -1662,21 +2263,25 @@ class LiveTradingEngine:
         self._has_recent_fill = True
 
         # Buffer "fill" event for audit persistence (LIVE-013)
-        self._pending_order_events.append({
-            "type": "fill",
-            "internal_id": live_order.internal_id,
-            "fill_price": str(fill_price),
-            "fill_amount": str(fill_amount),
-            "fee": str(fill_fee),
-            "fee_currency": live_order.fee_currency,
-            "total_filled": str(live_order.filled_amount),
-            "avg_fill_price": str(live_order.avg_fill_price)
-            if live_order.avg_fill_price
-            else None,
-            "status": live_order.status.value,
-            "timestamp": (exchange_timestamp or datetime.now(UTC)).isoformat(),
-            "fill_source": source,
-        })
+        self._pending_order_events.append(
+            {
+                "type": "fill",
+                "internal_id": live_order.internal_id,
+                "fill_price": str(fill_price),
+                "fill_amount": str(fill_amount),
+                "fee": str(fill_fee),
+                "fee_currency": live_order.fee_currency,
+                "total_filled": str(live_order.filled_amount),
+                "avg_fill_price": str(live_order.avg_fill_price)
+                if live_order.avg_fill_price
+                else None,
+                "status": live_order.status.value,
+                "timestamp": (exchange_timestamp or datetime.now(UTC)).isoformat(),
+                "fill_source": source,
+                "exchange_tid": exchange_tid,
+                "taker_or_maker": taker_or_maker,
+            }
+        )
 
     def _check_trade_completion(
         self,
@@ -1709,9 +2314,10 @@ class LiveTradingEngine:
         )
 
         if not circuit_breaker_before and self._risk_manager.state.circuit_breaker_triggered:
+            self._circuit_breaker_losses = self._risk_manager.state.consecutive_losses
             logger.warning(
                 f"Circuit breaker triggered for session {self._run_id} "
-                f"after {self._risk_manager.state.consecutive_losses} "
+                f"after {self._circuit_breaker_losses} "
                 f"consecutive losses (detected via {source})"
             )
             self._circuit_breaker_triggered = True
@@ -1722,6 +2328,10 @@ class LiveTradingEngine:
         Gets orders from the context's pending orders and submits them
         to the exchange after risk validation.
         """
+        # Skip if engine was stopped while process_candle held the lock (R3-002/C-1)
+        if not self._is_running:
+            return
+
         # Skip all order processing if circuit breaker was triggered
         if self._circuit_breaker_triggered:
             logger.warning("Skipping order processing: circuit breaker triggered")
@@ -1786,6 +2396,9 @@ class LiveTradingEngine:
                         },
                     }
                 )
+                # Cap pending risk triggers to prevent unbounded growth (m-2)
+                if len(self._pending_risk_triggers) > 100:
+                    self._pending_risk_triggers = self._pending_risk_triggers[-100:]
                 continue
 
             # F-7: enforce per-bar cap
@@ -1814,7 +2427,7 @@ class LiveTradingEngine:
                 amount=order.amount,
                 price=order.price,
                 stop_price=order.stop_price,
-                client_order_id=order.id,
+                client_order_id=order.id.replace("-", ""),
             )
 
             # F-4: explicit timeout to prevent blocking process_candle indefinitely.
@@ -1855,22 +2468,29 @@ class LiveTradingEngine:
                 f"Order submitted: {order.id} -> exchange:{response.order_id}, "
                 f"status={response.status.value}"
             )
+            self._context.log(
+                f"订单已提交 {order.symbol} {order.side.value} {order.amount} "
+                f"{order.type.value} → exchange:{response.order_id}",
+                category="order",
+            )
 
             # Buffer "placed" event for audit persistence (LIVE-013)
-            self._pending_order_events.append({
-                "type": "placed",
-                "internal_id": live_order.internal_id,
-                "exchange_order_id": live_order.exchange_order_id,
-                "symbol": live_order.symbol,
-                "side": live_order.side.value,
-                "order_type": live_order.order_type,
-                "amount": str(live_order.amount),
-                "price": str(live_order.price) if live_order.price else None,
-                "status": live_order.status.value,
-                "created_at": live_order.created_at.isoformat()
-                if live_order.created_at
-                else datetime.now(UTC).isoformat(),
-            })
+            self._pending_order_events.append(
+                {
+                    "type": "placed",
+                    "internal_id": live_order.internal_id,
+                    "exchange_order_id": live_order.exchange_order_id,
+                    "symbol": live_order.symbol,
+                    "side": live_order.side.value,
+                    "order_type": live_order.order_type,
+                    "amount": str(live_order.amount),
+                    "price": str(live_order.price) if live_order.price else None,
+                    "status": live_order.status.value,
+                    "created_at": live_order.created_at.isoformat()
+                    if live_order.created_at
+                    else datetime.now(UTC).isoformat(),
+                }
+            )
 
         except TimeoutError:
             logger.error(
@@ -1878,18 +2498,89 @@ class LiveTradingEngine:
                 f"({order.symbol} {order.side.value} {order.amount}). "
                 "Order may have been placed — will reconcile on next sync."
             )
+            self._context.log(
+                f"订单提交超时 {order.symbol} {order.side.value} {order.amount}，将在下次同步时对账",
+                level="warning",
+                category="order",
+            )
             # Do NOT mark as REJECTED — the order may be live on the exchange.
             # Track by client_order_id so _reconcile_timed_out_orders can query
             # the exchange and recover the order on the next bar (R5-F3).
             self._timed_out_orders[order.id] = order
         except Exception as e:
-            logger.exception(f"Failed to submit order {order.id}: {e}")
-            # Mark as rejected
-            order.status = OrderStatus.REJECTED
-            self._context._completed_orders.append(order)
-            self._context._total_completed_added += 1
-            if order in self._context._pending_orders:
-                self._context._pending_orders.remove(order)
+            # Check if this is a timeout wrapped as ExchangeAPIError (CCXT
+            # RequestTimeout → adapter → ExchangeAPIError). Timeouts mean the
+            # order may have been placed — don't mark as REJECTED.
+            err_msg = str(e).lower()
+            if "timeout" in err_msg or "requesttimeout" in err_msg:
+                logger.error(
+                    f"Order submission likely timed out for {order.id} "
+                    f"({order.symbol} {order.side.value} {order.amount}): {e}. "
+                    "Order may have been placed — will reconcile on next sync."
+                )
+                self._context.log(
+                    f"订单提交超时 {order.symbol} {order.side.value} {order.amount}，将在下次同步时对账",
+                    level="warning",
+                    category="order",
+                )
+                self._timed_out_orders[order.id] = order
+            else:
+                # Detect insufficient funds and notify user (B2)
+                is_insufficient = isinstance(e, InvalidOrderError) and e.field == "amount"
+                if is_insufficient:
+                    if order.side == OrderSide.BUY:
+                        title = "余额不足"
+                        msg = f"买入失败：{order.symbol} {order.amount}，交易所余额不足"
+                    else:
+                        title = "持仓不足"
+                        msg = (
+                            f"卖出失败：{order.symbol} {order.amount}，"
+                            "交易所持仓不足（可能因手续费从标的扣除导致）"
+                        )
+                    _fire_notification(
+                        self._run_id,
+                        level="warning",
+                        event_type="insufficient_funds",
+                        title=title,
+                        message=msg,
+                    )
+                    self._context.log(msg, level="warning", category="order")
+
+                # Detect exchange unavailable and notify user
+                is_unavailable = "unavailable" in err_msg or "maintenance" in err_msg
+                if is_unavailable:
+                    unavail_msg = (
+                        f"交易所临时不可用：{order.symbol} {order.side.value} "
+                        f"{order.amount} 下单被拒绝，请关注交易所状态"
+                    )
+                    _fire_notification(
+                        self._run_id,
+                        level="warning",
+                        event_type="exchange_unavailable",
+                        title="交易所不可用",
+                        message=unavail_msg,
+                    )
+                    self._context.log(unavail_msg, level="warning", category="order")
+
+                logger.exception(f"Failed to submit order {order.id}: {e}")
+                if not is_insufficient and not is_unavailable:
+                    self._context.log(
+                        f"下单失败: {e}",
+                        level="error",
+                        category="order",
+                    )
+                # Mark as rejected
+                if is_insufficient:
+                    order.reject_reason = "insufficient_funds"
+                elif is_unavailable:
+                    order.reject_reason = "exchange_unavailable"
+                else:
+                    order.reject_reason = f"exchange_error: {e}"
+                order.status = OrderStatus.REJECTED
+                self._context._completed_orders.append(order)
+                self._context._total_completed_added += 1
+                if order in self._context._pending_orders:
+                    self._context._pending_orders.remove(order)
 
     async def _cancel_all_orders(self) -> list[str]:
         """Cancel all open orders.
@@ -1899,7 +2590,7 @@ class LiveTradingEngine:
         """
         cancelled: list[str] = []
 
-        for internal_id, live_order in self._live_orders.items():
+        for internal_id, live_order in list(self._live_orders.items()):
             if not live_order.is_complete and live_order.exchange_order_id:
                 try:
                     response = await self._adapter.cancel_order(
@@ -1913,6 +2604,10 @@ class LiveTradingEngine:
                     if live_order.status == OrderStatus.CANCELLED:
                         cancelled.append(internal_id)
                         logger.info(f"Cancelled order {internal_id}")
+                        self._context.log(
+                            f"订单已取消 #{internal_id[:8]}",
+                            category="order",
+                        )
                     else:
                         logger.warning(
                             f"Order {internal_id} was {live_order.status.value} "
@@ -1992,6 +2687,16 @@ class LiveTradingEngine:
         """Check if there are pending risk triggers to persist."""
         return len(self._pending_risk_triggers) > 0
 
+    def get_pending_order_events(self) -> list[dict[str, Any]]:
+        """Return and clear pending order events (for flushing on stop).
+
+        Used by the service layer after engine.stop() to ensure fills generated
+        during order cancellation (M-6) are persisted to the audit log.
+        """
+        events = self._pending_order_events.copy()
+        self._pending_order_events.clear()
+        return events
+
     def get_state_snapshot(self) -> dict[str, Any]:
         """Get current engine state snapshot for API responses.
 
@@ -2027,15 +2732,7 @@ class LiveTradingEngine:
 
         # API-only: live exchange orders (transient, not persisted)
         result["live_orders"] = [
-            {
-                "internal_id": lo.internal_id,
-                "exchange_id": lo.exchange_order_id,
-                "symbol": lo.symbol,
-                "side": lo.side.value,
-                "amount": str(lo.amount),
-                "filled": str(lo.filled_amount),
-                "status": lo.status.value,
-            }
+            _serialize_live_order(lo)
             for _oid, lo in self._live_orders.items()
             if not lo.is_complete
         ]
@@ -2050,6 +2747,7 @@ class LiveTradingEngine:
         """
         result = self._context.build_result_snapshot()
         result["bar_count"] = self._bar_count
+        result["last_bar_time"] = self._last_bar_time.isoformat() if self._last_bar_time else None
         result["risk_state"] = self._risk_manager.get_state_summary()
         result["risk_config"] = self._risk_manager.config.model_dump(mode="json")
         result["live_orders"] = {
@@ -2105,13 +2803,35 @@ class LiveTradingEngine:
             if internal_id in self._live_orders:
                 self._exchange_order_map[exchange_id] = internal_id
 
+        # Queue all restored orders with exchange IDs for fill reconciliation
+        # to recover any fills that occurred during downtime.
+        for internal_id, live_order in self._live_orders.items():
+            if live_order.exchange_order_id:
+                self._orders_needing_reconciliation.add(internal_id)
+
         logger.info(
             f"Restored {len(self._live_orders)} live orders and "
             f"{len(self._exchange_order_map)} exchange mappings"
+            + (
+                f", {len(self._orders_needing_reconciliation)} queued for reconciliation"
+                if self._orders_needing_reconciliation
+                else ""
+            )
         )
 
-    def _build_bar_update_event(self) -> dict[str, Any]:
-        """Build incremental bar update event for WebSocket push."""
+    def _build_state_snapshot(
+        self,
+    ) -> tuple[dict[str, Any], list[dict[str, Any]], list[dict[str, Any]], list[Any]]:
+        """Build a state snapshot of the engine for WebSocket push.
+
+        Returns a 4-tuple of:
+        - state_dict: all current state fields (cash, equity, positions, etc.)
+        - new_fills_serialized: incremental fills since last emission
+        - new_trades_serialized: incremental trades since last emission
+        - new_logs: incremental log entries since last emission
+
+        The delta counters (_last_emitted_*) are updated as a side effect.
+        """
         ctx = self._context
 
         fill_delta = ctx._total_fills_added - self._last_emitted_fill_total
@@ -2126,16 +2846,20 @@ class LiveTradingEngine:
         self._last_emitted_trade_total = ctx._total_trades_added
         self._last_emitted_log_total = ctx._total_logs_added
 
-        return {
-            "event": "bar_update",
-            "run_id": str(self._run_id),
-            "bar_count": self._bar_count,
+        state: dict[str, Any] = {
             "cash": str(ctx._cash),
             "equity": str(ctx.equity),
             "unrealized_pnl": str(ctx._get_unrealized_pnl()),
-            "realized_pnl": str(sum(t.pnl for t in ctx._trades)),
+            "realized_pnl": str(ctx._cumulative_realized_pnl),
             "total_fees": str(ctx._total_fees),
-            "completed_orders_count": len(ctx._completed_orders),
+            "fees_by_currency": {k: str(v) for k, v in ctx._fees_by_currency.items()},
+            "fees_usdt_equivalent": (
+                str(usdt_equiv)
+                if (usdt_equiv := ctx.get_fees_usdt_equivalent()) is not None
+                else None
+            ),
+            "completed_orders_count": ctx._restored_completed_orders_count
+            + len(ctx._completed_orders),
             "trades_count": len(ctx._trades),
             "positions": {
                 sym: {
@@ -2159,8 +2883,355 @@ class LiveTradingEngine:
                 for o in ctx._pending_orders
             ],
             "open_trade": _serialize_open_trade(ctx._open_trade),
-            "new_fills": [_serialize_fill(f) for f in new_fills],
-            "new_trades": [_serialize_trade(t) for t in new_trades],
-            "new_logs": new_logs,
             "risk_state": self._risk_manager.get_state_summary(),
+        }
+
+        new_fills_serialized = [_serialize_fill(f) for f in new_fills]
+        new_trades_serialized = [_serialize_trade(t) for t in new_trades]
+
+        return state, new_fills_serialized, new_trades_serialized, new_logs
+
+    # ------------------------------------------------------------------
+    # Unified event loop (Task 2)
+    # ------------------------------------------------------------------
+
+    # Priority for WS event batch sorting: fills before orders before bar close.
+    # This ensures ws_trade (exact per-fill data) is processed before ws_order
+    # (aggregated fallback), preventing duplicate fill recording.
+    _EVENT_PRIORITY = {
+        EngineEventType.WS_FILL: 0,
+        EngineEventType.WS_ORDER: 1,
+        EngineEventType.BAR_CLOSE: 2,
+    }
+
+    async def _event_loop(self) -> None:
+        """Unified event processor. Single consumer, single lock.
+
+        Processes WS fills, WS order updates, and bar closes from a single
+        queue. When a WS event arrives, all currently queued WS events are
+        drained and sorted (fills before orders) to maintain the ordering
+        guarantee that ws_trade data takes priority over ws_order fallback.
+        """
+        while self._is_running:
+            try:
+                event = await asyncio.wait_for(self._event_queue.get(), timeout=1.0)
+            except TimeoutError:
+                continue
+
+            self._last_active_at = datetime.now(UTC)
+
+            # Batch drain: collect all currently queued events for atomic processing.
+            # Sort WS_FILL before WS_ORDER to ensure exact per-fill data (ws_trade)
+            # is processed before aggregated fallback data (ws_order), preventing
+            # duplicate fill recording.
+            batch = [event]
+            while True:
+                try:
+                    more = self._event_queue.get_nowait()
+                    batch.append(more)
+                except asyncio.QueueEmpty:
+                    break
+            batch.sort(key=lambda e: self._EVENT_PRIORITY.get(e.type, 9))
+
+            push_events: list[dict[str, Any]] = []
+            async with self._processing_lock:
+                if not self._is_running:
+                    break
+                for ev in batch:
+                    # Skip WS events during emergency close
+                    if self._emergency_close_in_progress and ev.type in (
+                        EngineEventType.WS_FILL,
+                        EngineEventType.WS_ORDER,
+                    ):
+                        continue
+                    try:
+                        match ev.type:
+                            case EngineEventType.WS_FILL:
+                                self._process_trade_execution(ev.data)
+                                await self._flush_order_events()
+                                push_events.append(self._build_state_update_event("fill", ev.data))
+                            case EngineEventType.WS_ORDER:
+                                self._process_single_ws_update(ev.data)
+                                await self._flush_order_events()
+                                push_events.append(
+                                    self._build_state_update_event("order_update", ev.data)
+                                )
+                            case EngineEventType.BAR_CLOSE:
+                                await self._handle_bar_close(ev.data)
+                    except Exception as e:
+                        logger.exception(f"Event loop error for {self._run_id}: {e}")
+                        if ev.type == EngineEventType.BAR_CLOSE:
+                            await self.stop(error=f"Bar processing error: {e}")
+                            return
+
+            # Fire-and-forget push OUTSIDE the lock
+            if push_events and self._on_event:
+                # Push only the LAST state_update — it contains the most current
+                # state snapshot. Earlier ones in the batch are superseded.
+                last_event = push_events[-1]
+                try:
+                    loop = asyncio.get_running_loop()
+                    task = loop.create_task(self._on_event(last_event))
+                    self._background_tasks.add(task)
+                    task.add_done_callback(self._background_tasks.discard)
+                except Exception as e:
+                    logger.debug(f"State update push failed for {self._run_id}: {e}")
+
+    def _on_event_loop_done(self, task: asyncio.Task) -> None:
+        """Detect unexpected event loop exit."""
+        if not task.cancelled() and task.exception() and self._is_running:
+            logger.error(f"Event loop crashed for {self._run_id}: {task.exception()}")
+            stop_task = asyncio.create_task(
+                self.stop(error=f"Event loop crashed: {task.exception()}")
+            )
+            _background_tasks.add(stop_task)
+            stop_task.add_done_callback(_background_tasks.discard)
+
+    def _build_state_update_event(self, trigger: str, event_data: Any) -> dict[str, Any]:
+        """Build state_update event for immediate push after WS event processing."""
+        state, new_fills, new_trades, new_logs = self._build_state_snapshot()
+
+        trigger_detail: dict[str, Any] = {}
+        if trigger == "fill" and hasattr(event_data, "price"):
+            trigger_detail = {
+                "order_id": getattr(event_data, "order_id", ""),
+                "side": getattr(event_data, "side", None) or "",
+                "price": str(event_data.price),
+                "amount": str(event_data.amount),
+                "fee": str(getattr(event_data, "fee", "0")),
+                "fee_currency": getattr(event_data, "fee_currency", ""),
+            }
+        elif trigger == "order_update" and hasattr(event_data, "order_id"):
+            internal_id = self._exchange_order_map.get(event_data.order_id)
+            live_order = self._live_orders.get(internal_id) if internal_id else None
+            trigger_detail = {
+                "order_id": event_data.order_id,
+                "status": getattr(event_data, "status", ""),
+                "side": live_order.side.value if live_order else "",
+                "amount": str(live_order.amount) if live_order else "0",
+                "filled_amount": str(getattr(event_data, "filled_size", "0")),
+            }
+
+        return {
+            "event": "state_update",
+            "run_id": str(self._run_id),
+            "trigger": trigger,
+            "trigger_detail": trigger_detail,
+            "state": state,
+            "new_fills": new_fills,
+            "new_trades": new_trades,
+            "new_logs": new_logs,
+        }
+
+    async def _handle_bar_close(self, candle: WSCandle) -> None:
+        """Process a closed candle bar.
+
+        Called by the event loop with _processing_lock already held.
+        Contains the full bar-processing body formerly in process_candle().
+
+        Args:
+            candle: WebSocket candle data (must be a closed candle).
+        """
+        # Update current price
+        self._current_price = candle.close
+
+        # Convert WSCandle to Bar
+        bar = self._candle_to_bar(candle)
+
+        # Update context prices first so position valuations use fresh data
+        self._context._set_current_bar(bar)
+        self._context._add_bar_to_history(bar)
+
+        # Flush fill/order events immediately to minimize
+        # data loss window on crash/reload (FIX: event loss on reload)
+        await self._flush_order_events()
+
+        # Reconcile any orders needing fill recovery (WS reconnect, fill mismatch)
+        await self._reconcile_pending_orders()
+
+        # Validate exchange balance (monitoring only, no cash overwrite).
+        # Cash tracked incrementally via fill processing (LIVE-012).
+        await self._sync_balance()
+        await self._sync_pending_orders()
+        await self._expire_ttl_orders()
+
+        # Check daily risk stats reset on each bar (LIVE-RM-005)
+        self._risk_manager.check_daily_reset()
+
+        # Update risk manager with equity computed from consistent state
+        self._risk_manager.update_equity(self._context.equity)
+        self._risk_manager.update_unrealized_pnl(self._context._get_unrealized_pnl())
+        self._risk_manager.update_position_value(self._context._get_position_value())
+
+        # Auto-stop if total loss limit triggered (IMP-005)
+        if self._risk_manager.check_total_loss_limit():
+            msg = (
+                f"Risk auto-stop: total loss limit triggered "
+                f"(loss {-self._risk_manager.state.total_pnl:.2f}, "
+                f"unrealized {self._risk_manager.state.unrealized_pnl:.2f})"
+            )
+            logger.warning(f"Live engine {self._run_id}: {msg}")
+            self._context.log(msg, level="error", category="risk")
+
+            # Notification: total loss limit (LIVE-011)
+            _fire_notification(
+                self._run_id,
+                level="critical",
+                event_type="total_loss_limit",
+                title="总亏损限额触发",
+                message=f"实盘会话 {self._symbol} 已触发总亏损限额自动停止",
+                details={
+                    "symbol": self._symbol,
+                    "total_pnl": float(self._risk_manager.state.total_pnl),
+                    "unrealized_pnl": float(self._risk_manager.state.unrealized_pnl),
+                },
+            )
+
+            await self.stop(error=msg)
+            return
+
+        # Record equity snapshot BEFORE strategy execution to capture
+        # the portfolio state at bar close (C-DEFER-8)
+        self._context._record_equity_snapshot(bar.time)
+
+        # Persist snapshot: try synchronous callback first, fall back to batch
+        if self._context.equity_curve:
+            latest_snapshot = self._context.equity_curve[-1]
+            persisted = False
+            if self._on_snapshot:
+                try:
+                    await self._on_snapshot(str(self._run_id), latest_snapshot)
+                    persisted = True
+                except Exception as e:
+                    logger.warning(f"Snapshot persist callback failed for {self._run_id}: {e}")
+            if not persisted:
+                self._pending_snapshots.append(latest_snapshot)
+
+        # Notify strategy of fills and completed orders (before on_bar)
+        fill_delta = self._context._total_fills_added - self._last_callback_fill_total
+        if fill_delta > 0:
+            recent_fills = list(self._context._fills)[-fill_delta:]
+            for fill in recent_fills:
+                try:
+                    self._strategy.on_fill(fill)
+                except Exception as e:
+                    self._context.log(f"ERROR in on_fill: {e}", level="error", category="strategy")
+                    logger.warning(f"Strategy on_fill error: {e}")
+        self._last_callback_fill_total = self._context._total_fills_added
+
+        completed_delta = self._context._total_completed_added - self._last_callback_completed_total
+        if completed_delta > 0:
+            recent_completed = list(self._context._completed_orders)[-completed_delta:]
+            for order in recent_completed:
+                try:
+                    self._strategy.on_order_done(order)
+                except Exception as e:
+                    self._context.log(
+                        f"ERROR in on_order_done: {e}",
+                        level="error",
+                        category="strategy",
+                    )
+                    logger.warning(f"Strategy on_order_done error: {e}")
+        self._last_callback_completed_total = self._context._total_completed_added
+
+        # Call strategy on_bar with resource limits (STR-013)
+        from squant.config import get_settings
+
+        settings = get_settings()
+        try:
+            with resource_limiter(
+                cpu_seconds=settings.strategy.cpu_limit_seconds,
+                memory_mb=settings.strategy.memory_limit_mb,
+            ):
+                self._strategy.on_bar(bar)
+        except ResourceLimitExceededError as e:
+            logger.error(f"Strategy resource limit exceeded: {e}")
+
+            # Notification: resource limit (LIVE-011)
+            _fire_notification(
+                self._run_id,
+                level="critical",
+                event_type="strategy_resource_exceeded",
+                title="策略资源超限",
+                message=f"实盘会话 {self._symbol} 策略资源超限: {e}",
+                details={"symbol": self._symbol, "error": str(e)},
+            )
+
+            await self.stop(error=f"Strategy resource limit exceeded: {e}")
+            raise
+        except Exception as e:
+            # Strategy errors (KeyError, IndexError, etc.) should be isolated
+            # — consistent with paper engine and backtest runner behavior.
+            # Only system-level errors (exchange, data integrity) should stop the engine.
+            logger.warning(f"Strategy on_bar error in live engine {self._run_id}: {e}")
+            self._context.log(f"ERROR in on_bar: {e}", level="error", category="strategy")
+
+        # Process pending order requests from strategy
+        await self._process_order_requests()
+
+        # Flush order events again after order submission
+        await self._flush_order_events()
+
+        self._bar_count += 1
+        self._last_bar_time = bar.time  # Dedup tracking (fix #5)
+
+        # Persist result state for crash recovery
+        if self._on_result:
+            try:
+                result_data = self.build_result_for_persistence()
+                await self._on_result(str(self._run_id), result_data)
+            except Exception as e:
+                logger.warning(f"Result persist callback failed for {self._run_id}: {e}")
+
+        # Final flush for any remaining events (e.g., from strategy callbacks)
+        await self._flush_order_events()
+
+        # Emit bar close event via WebSocket
+        if self._on_event:
+            try:
+                event = self._build_bar_close_event(bar)
+                loop = asyncio.get_running_loop()
+                task = loop.create_task(self._on_event(event))
+                self._background_tasks.add(task)
+                task.add_done_callback(self._background_tasks.discard)
+            except Exception as e:
+                logger.debug(f"Event emit failed for {self._run_id}: {e}")
+
+        # Refresh Dead Man's Switch heartbeat (F-2)
+        await self._refresh_dead_man_switch()
+
+        logger.debug(
+            f"Processed bar {self._bar_count} at {bar.time}, equity={self._context.equity}"
+        )
+
+    def _build_bar_close_event(self, bar: Bar) -> dict[str, Any]:
+        """Build bar_close event with equity point and full state snapshot."""
+        state, new_fills, new_trades, new_logs = self._build_state_snapshot()
+        ctx = self._context
+
+        equity_point = {
+            "time": bar.time.isoformat(),
+            "equity": str(ctx.equity),
+            "cash": str(ctx._cash),
+            "position_value": str(ctx._get_position_value()),
+            "unrealized_pnl": str(ctx._get_unrealized_pnl()),
+        }
+
+        return {
+            "event": "bar_close",
+            "run_id": str(self._run_id),
+            "bar_count": self._bar_count,
+            "bar": {
+                "time": bar.time.isoformat(),
+                "open": str(bar.open),
+                "high": str(bar.high),
+                "low": str(bar.low),
+                "close": str(bar.close),
+                "volume": str(bar.volume),
+            },
+            "equity_point": equity_point,
+            "state": state,
+            "new_fills": new_fills,
+            "new_trades": new_trades,
+            "new_logs": new_logs,
         }

@@ -413,7 +413,7 @@
           "Account"
         ],
         "summary": "Get Balance",
-        "description": "Get account balance for all currencies.\n\nReturns the available and frozen balance for each currency in the account.",
+        "description": "Get account balance for all currencies.\n\nReturns the available and frozen balance for each currency\nusing the first active exchange account.",
         "operationId": "get_balance_api_v1_account_balance_get",
         "responses": {
           "200": {
@@ -798,9 +798,28 @@
           "Orders"
         ],
         "summary": "List Orders",
-        "description": "List orders with optional filters.\n\nReturns paginated list of orders matching the specified criteria.",
+        "description": "List orders with optional filters.\n\nReturns paginated list of orders across all accounts matching the specified criteria.",
         "operationId": "list_orders_api_v1_orders_get",
         "parameters": [
+          {
+            "name": "account_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by exchange account ID",
+              "title": "Account Id"
+            },
+            "description": "Filter by exchange account ID"
+          },
           {
             "name": "status",
             "in": "query",
@@ -857,6 +876,44 @@
               "title": "Side"
             },
             "description": "Filter by side"
+          },
+          {
+            "name": "start_time",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter orders created after this time",
+              "title": "Start Time"
+            },
+            "description": "Filter orders created after this time"
+          },
+          {
+            "name": "end_time",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter orders created before this time",
+              "title": "End Time"
+            },
+            "description": "Filter orders created before this time"
           },
           {
             "name": "page",
@@ -916,7 +973,7 @@
           "Orders"
         ],
         "summary": "Get Open Orders",
-        "description": "Get all open (non-terminal) orders.\n\nReturns orders with status PENDING, SUBMITTED, or PARTIAL.",
+        "description": "Get all open (non-terminal) orders.\n\nReturns orders with status PENDING, SUBMITTED, or PARTIAL across all accounts.",
         "operationId": "get_open_orders_api_v1_orders_open_get",
         "parameters": [
           {
@@ -968,7 +1025,7 @@
           "Orders"
         ],
         "summary": "Get Order Stats",
-        "description": "Get order statistics by status.",
+        "description": "Get order statistics by status across all accounts.",
         "operationId": "get_order_stats_api_v1_orders_stats_get",
         "responses": {
           "200": {
@@ -2490,6 +2547,62 @@
         }
       }
     },
+    "/api/v1/paper/{run_id}/logs": {
+      "get": {
+        "tags": [
+          "Paper Trading"
+        ],
+        "summary": "Get Trading Logs",
+        "description": "Get trading logs for a session.\n\nReads the current log file for the given run_id.\nReturns the last `tail` lines.",
+        "operationId": "get_trading_logs_api_v1_paper__run_id__logs_get",
+        "parameters": [
+          {
+            "name": "run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Run Id"
+            }
+          },
+          {
+            "name": "tail",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 5000,
+              "minimum": 1,
+              "default": 500,
+              "title": "Tail"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/paper/{run_id}": {
       "get": {
         "tags": [
@@ -2992,6 +3105,60 @@
         }
       }
     },
+    "/api/v1/live/account-balance/{account_id}": {
+      "get": {
+        "tags": [
+          "Live Trading"
+        ],
+        "summary": "Get Account Balance",
+        "description": "Get account balance with available capital for live trading.\n\nCalculates the total account value on the exchange, subtracts equity\nallocated to running live trading sessions, and returns the available\ncapital for new sessions.\n\nArgs:\n    account_id: Exchange account ID.\n    quote_currency: Quote currency for balance (default: USDT).\n    session: Database session.\n\nReturns:\n    Account balance breakdown with available capital.\n\nRaises:\n    HTTPException:\n        - 404 if exchange account not found\n        - 503 if exchange connection fails\n        - 400 for other live trading errors",
+        "operationId": "get_account_balance_api_v1_live_account_balance__account_id__get",
+        "parameters": [
+          {
+            "name": "account_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Account Id"
+            }
+          },
+          {
+            "name": "quote_currency",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "USDT",
+              "title": "Quote Currency"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_AccountBalanceResponse_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/live/{run_id}/orders": {
       "get": {
         "tags": [
@@ -3046,6 +3213,62 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ApiResponse_PaginatedData_LiveSessionOrderResponse__"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/live/{run_id}/logs": {
+      "get": {
+        "tags": [
+          "Live Trading"
+        ],
+        "summary": "Get Trading Logs",
+        "description": "Get trading logs for a session.\n\nReads the current log file for the given run_id.\nReturns the last `tail` lines.",
+        "operationId": "get_trading_logs_api_v1_live__run_id__logs_get",
+        "parameters": [
+          {
+            "name": "run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Run Id"
+            }
+          },
+          {
+            "name": "tail",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 5000,
+              "minimum": 1,
+              "default": 500,
+              "title": "Tail"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse"
                 }
               }
             }
@@ -4613,6 +4836,42 @@
   },
   "components": {
     "schemas": {
+      "AccountBalanceResponse": {
+        "properties": {
+          "account_total_value": {
+            "type": "number",
+            "title": "Account Total Value"
+          },
+          "quote_currency": {
+            "type": "string",
+            "title": "Quote Currency"
+          },
+          "running_sessions": {
+            "items": {
+              "$ref": "#/components/schemas/RunningSessionEquity"
+            },
+            "type": "array",
+            "title": "Running Sessions"
+          },
+          "sessions_total_equity": {
+            "type": "number",
+            "title": "Sessions Total Equity",
+            "default": 0.0
+          },
+          "available": {
+            "type": "number",
+            "title": "Available",
+            "default": 0.0
+          }
+        },
+        "type": "object",
+        "required": [
+          "account_total_value",
+          "quote_currency"
+        ],
+        "title": "AccountBalanceResponse",
+        "description": "Account balance with available capital calculation."
+      },
       "AddToWatchlistRequest": {
         "properties": {
           "symbol": {
@@ -4637,6 +4896,51 @@
         ],
         "title": "AddToWatchlistRequest",
         "description": "Request to add a symbol to the watchlist."
+      },
+      "ApiResponse": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "default": 0
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "success"
+          },
+          "data": {
+            "title": "Data"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "title": "ApiResponse",
+        "description": "Standard API response wrapper.\n\nAll API responses follow this format per dev-docs/technical/api/01-conventions.md."
+      },
+      "ApiResponse_AccountBalanceResponse_": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "default": 0
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "success"
+          },
+          "data": {
+            "$ref": "#/components/schemas/AccountBalanceResponse"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "title": "ApiResponse[AccountBalanceResponse]"
       },
       "ApiResponse_BacktestDetailResponse_": {
         "properties": {
@@ -8070,6 +8374,18 @@
             "type": "array",
             "title": "Trades"
           },
+          "corrections": {
+            "anyOf": [
+              {
+                "items": {},
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Corrections"
+          },
           "created_at": {
             "type": "string",
             "format": "date-time",
@@ -8103,6 +8419,17 @@
             "format": "uuid",
             "title": "Id"
           },
+          "exchange_tid": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Exchange Tid"
+          },
           "price": {
             "type": "number",
             "title": "Price"
@@ -8125,6 +8452,28 @@
               }
             ],
             "title": "Fee Currency"
+          },
+          "fill_source": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fill Source"
+          },
+          "taker_or_maker": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Taker Or Maker"
           },
           "timestamp": {
             "type": "string",
@@ -8484,6 +8833,22 @@
             "type": "number",
             "title": "Total Fees"
           },
+          "fees_by_currency": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Fees By Currency"
+          },
+          "fees_usdt_equivalent": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fees Usdt Equivalent"
+          },
           "unrealized_pnl": {
             "type": "number",
             "title": "Unrealized Pnl",
@@ -8708,6 +9073,18 @@
             "title": "Account Id",
             "description": "Account ID"
           },
+          "account_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Account Name",
+            "description": "Exchange account name"
+          },
           "run_id": {
             "anyOf": [
               {
@@ -8854,6 +9231,19 @@
             ],
             "title": "Strategy Name",
             "description": "Strategy name (from run.strategy)"
+          },
+          "corrections": {
+            "anyOf": [
+              {
+                "items": {},
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Corrections",
+            "description": "Data correction audit log"
           },
           "created_at": {
             "type": "string",
@@ -9025,6 +9415,18 @@
             "title": "Account Id",
             "description": "Account ID"
           },
+          "account_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Account Name",
+            "description": "Exchange account name"
+          },
           "run_id": {
             "anyOf": [
               {
@@ -9171,6 +9573,19 @@
             ],
             "title": "Strategy Name",
             "description": "Strategy name (from run.strategy)"
+          },
+          "corrections": {
+            "anyOf": [
+              {
+                "items": {},
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Corrections",
+            "description": "Data correction audit log"
           },
           "created_at": {
             "type": "string",
@@ -9799,6 +10214,22 @@
             "type": "number",
             "title": "Total Fees"
           },
+          "fees_by_currency": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Fees By Currency"
+          },
+          "fees_usdt_equivalent": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fees Usdt Equivalent"
+          },
           "unrealized_pnl": {
             "type": "number",
             "title": "Unrealized Pnl",
@@ -9854,13 +10285,6 @@
                 "type": "null"
               }
             ]
-          },
-          "logs": {
-            "items": {
-              "type": "string"
-            },
-            "type": "array",
-            "title": "Logs"
           },
           "risk_state": {
             "anyOf": [
@@ -10217,6 +10641,22 @@
             "title": "Min Order Value",
             "description": "Minimum order value in quote currency (e.g., USDT)",
             "default": "10"
+          },
+          "order_poll_interval": {
+            "type": "number",
+            "maximum": 300.0,
+            "exclusiveMinimum": 0.0,
+            "title": "Order Poll Interval",
+            "description": "Minimum seconds between order status polls (default 30s)",
+            "default": 30.0
+          },
+          "balance_check_interval": {
+            "type": "number",
+            "maximum": 3600.0,
+            "exclusiveMinimum": 0.0,
+            "title": "Balance Check Interval",
+            "description": "Seconds between balance sync checks (default 300s)",
+            "default": 300.0
           }
         },
         "type": "object",
@@ -10634,6 +11074,42 @@
         ],
         "title": "RunBacktestRequest",
         "description": "Request to create and run a backtest."
+      },
+      "RunningSessionEquity": {
+        "properties": {
+          "run_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Run Id"
+          },
+          "strategy_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Strategy Name"
+          },
+          "symbol": {
+            "type": "string",
+            "title": "Symbol"
+          },
+          "equity": {
+            "type": "number",
+            "title": "Equity"
+          }
+        },
+        "type": "object",
+        "required": [
+          "run_id",
+          "symbol",
+          "equity"
+        ],
+        "title": "RunningSessionEquity",
+        "description": "Equity info for a running session."
       },
       "StartLiveTradingRequest": {
         "properties": {
@@ -11219,6 +11695,30 @@
             "format": "date-time",
             "title": "Timestamp",
             "description": "Execution time"
+          },
+          "fill_source": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fill Source",
+            "description": "Fill source: ws, poll, or reconcile"
+          },
+          "taker_or_maker": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Taker Or Maker",
+            "description": "Maker or taker fill"
           }
         },
         "type": "object",

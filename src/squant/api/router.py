@@ -64,9 +64,7 @@ api_router.include_router(
 )
 
 # Notification endpoints
-api_router.include_router(
-    notifications.router, prefix="/notifications", tags=["Notifications"]
-)
+api_router.include_router(notifications.router, prefix="/notifications", tags=["Notifications"])
 
 # Watchlist endpoints
 api_router.include_router(watchlist.router, prefix="/watchlist", tags=["Watchlist"])

@@ -3,6 +3,7 @@
 import logging
 from datetime import datetime
 from decimal import Decimal
+from pathlib import Path
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -11,9 +12,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from squant.api.utils import ApiResponse, PaginatedData
 from squant.engine.risk import RiskConfig
 from squant.infra.database import get_session
+from squant.infra.trading_logger import DEFAULT_LOG_BASE
 from squant.models.enums import RunStatus
 from squant.schemas.backtest import EquityCurvePoint
 from squant.schemas.live_trading import (
+    AccountBalanceResponse,
     EmergencyCloseResponse,
     LiveOrderInfo,
     LivePositionInfo,
@@ -21,6 +24,7 @@ from squant.schemas.live_trading import (
     LiveTradingListItem,
     LiveTradingRunResponse,
     LiveTradingStatusResponse,
+    RemainingPosition,
     ResumeLiveTradingRequest,
     RiskStateResponse,
     StartLiveTradingRequest,
@@ -28,7 +32,7 @@ from squant.schemas.live_trading import (
 )
 from squant.services.live_trading import (
     ExchangeAccountNotFoundError,
-    ExchangeConnectionError,
+    LiveExchangeConnectionError,
     LiveTradingError,
     LiveTradingService,
     RiskConfigurationError,
@@ -39,6 +43,8 @@ from squant.services.live_trading import (
 from squant.services.strategy import StrategyNotFoundError
 
 logger = logging.getLogger(__name__)
+
+TRADING_LOG_BASE = DEFAULT_LOG_BASE
 
 router = APIRouter()
 
@@ -80,6 +86,8 @@ async def start_live_trading(
         max_price_deviation=request.risk_config.price_deviation_limit,
         circuit_breaker_loss_count=request.risk_config.circuit_breaker_threshold,
         min_order_value=request.risk_config.min_order_value,
+        order_poll_interval=request.risk_config.order_poll_interval,
+        balance_check_interval=request.risk_config.balance_check_interval,
     )
 
     try:
@@ -101,7 +109,7 @@ async def start_live_trading(
         raise HTTPException(status_code=400, detail=f"Risk configuration error: {e}")
     except StrategyInstantiationError as e:
         raise HTTPException(status_code=400, detail=str(e))
-    except ExchangeConnectionError as e:
+    except LiveExchangeConnectionError as e:
         raise HTTPException(status_code=503, detail=str(e))
     except LiveTradingError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -136,6 +144,8 @@ async def stop_live_trading(
         return ApiResponse(data=LiveTradingRunResponse.model_validate(run))
     except SessionNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
+    except LiveTradingError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 @router.post("/{run_id}/resume", response_model=ApiResponse[LiveTradingRunResponse])
@@ -176,7 +186,7 @@ async def resume_live_trading(
         raise HTTPException(status_code=409, detail=str(e))
     except ExchangeAccountNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
-    except ExchangeConnectionError as e:
+    except LiveExchangeConnectionError as e:
         raise HTTPException(status_code=503, detail=str(e))
     except LiveTradingError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -218,10 +228,23 @@ async def emergency_close(
                 message=result.get("message"),
                 orders_cancelled=result.get("orders_cancelled"),
                 positions_closed=result.get("positions_closed"),
+                remaining_positions=[
+                    RemainingPosition(**rp) for rp in (result.get("remaining_positions") or [])
+                ]
+                or None,
+                errors=result.get("errors") or None,
             )
         )
     except SessionNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
+    except LiveTradingError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception:
+        logger.exception(f"Emergency close failed for {run_id}")
+        raise HTTPException(
+            status_code=500,
+            detail="Emergency close failed due to an internal error",
+        )
 
 
 @router.get("/{run_id}/status", response_model=ApiResponse[LiveTradingStatusResponse])
@@ -272,7 +295,7 @@ async def get_live_trading_status(
                     exchange_order_id=order.get("exchange_order_id"),
                     symbol=order.get("symbol", ""),
                     side=order.get("side", ""),
-                    type=order.get("type", ""),
+                    type=order.get("order_type", order.get("type", "")),
                     amount=Decimal(str(order.get("amount", 0))),
                     filled_amount=Decimal(str(order.get("filled_amount", 0))),
                     price=Decimal(str(order["price"])) if order.get("price") else None,
@@ -315,6 +338,8 @@ async def get_live_trading_status(
             equity=Decimal(str(status.get("equity", 0))),
             initial_capital=Decimal(str(status.get("initial_capital", 0))),
             total_fees=Decimal(str(status.get("total_fees", 0))),
+            fees_by_currency=status.get("fees_by_currency", {}),
+            fees_usdt_equivalent=status.get("fees_usdt_equivalent"),
             unrealized_pnl=Decimal(str(status.get("unrealized_pnl", 0))),
             realized_pnl=Decimal(str(status.get("realized_pnl", 0))),
             positions=positions,
@@ -348,19 +373,21 @@ async def list_active_sessions(
 
     sessions = service.list_active()
 
+    # Batch-fetch all run records in one query (fix: N+1 query)
+    run_ids = [UUID(sess["run_id"]) for sess in sessions]
+    runs_by_id = await service.get_runs_by_ids(run_ids) if run_ids else {}
+
     items = []
     for sess in sessions:
-        # Get strategy_id from database
-        try:
-            run = await service.get_run(UUID(sess["run_id"]))
-            strategy_id = UUID(run.strategy_id)
-        except SessionNotFoundError:
+        run_id_str = sess["run_id"]
+        run = runs_by_id.get(run_id_str)
+        if not run:
             continue
 
         items.append(
             LiveTradingListItem(
-                id=UUID(sess["run_id"]),
-                strategy_id=strategy_id,
+                id=UUID(run_id_str),
+                strategy_id=UUID(run.strategy_id),
                 strategy_name=run.strategy_name,
                 account_id=run.account_id,
                 symbol=sess["symbol"],
@@ -430,6 +457,47 @@ async def list_live_trading_runs(
 
 
 @router.get(
+    "/account-balance/{account_id}",
+    response_model=ApiResponse[AccountBalanceResponse],
+)
+async def get_account_balance(
+    account_id: UUID,
+    quote_currency: str = "USDT",
+    session: AsyncSession = Depends(get_session),
+) -> ApiResponse[AccountBalanceResponse]:
+    """Get account balance with available capital for live trading.
+
+    Calculates the total account value on the exchange, subtracts equity
+    allocated to running live trading sessions, and returns the available
+    capital for new sessions.
+
+    Args:
+        account_id: Exchange account ID.
+        quote_currency: Quote currency for balance (default: USDT).
+        session: Database session.
+
+    Returns:
+        Account balance breakdown with available capital.
+
+    Raises:
+        HTTPException:
+            - 404 if exchange account not found
+            - 503 if exchange connection fails
+            - 400 for other live trading errors
+    """
+    service = LiveTradingService(session)
+    try:
+        result = await service.get_account_available_balance(str(account_id), quote_currency)
+        return ApiResponse(data=result)
+    except ExchangeAccountNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    except LiveExchangeConnectionError as e:
+        raise HTTPException(status_code=503, detail=str(e)) from e
+    except LiveTradingError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+
+@router.get(
     "/{run_id}/orders",
     response_model=ApiResponse[PaginatedData[LiveSessionOrderResponse]],
 )
@@ -472,6 +540,30 @@ async def get_session_orders(
     )
 
 
+@router.get("/{run_id}/logs")
+async def get_trading_logs(
+    run_id: UUID,
+    tail: int = Query(default=500, ge=1, le=5000),
+) -> ApiResponse:
+    """Get trading logs for a session.
+
+    Reads the current log file for the given run_id.
+    Returns the last `tail` lines.
+    """
+    import asyncio
+
+    def _read_tail() -> list[str]:
+        log_file = Path(TRADING_LOG_BASE) / str(run_id) / "trading.log"
+        if not log_file.exists():
+            return []
+        with open(log_file, encoding="utf-8") as f:
+            lines = f.readlines()
+        return [line.rstrip("\n") for line in lines[-tail:]]
+
+    logs = await asyncio.to_thread(_read_tail)
+    return ApiResponse(code=0, data={"logs": logs})
+
+
 @router.get("/{run_id}", response_model=ApiResponse[LiveTradingRunResponse])
 async def get_live_trading_run(
     run_id: UUID,
@@ -502,7 +594,9 @@ async def get_live_trading_run(
 async def get_equity_curve(
     run_id: UUID,
     session: AsyncSession = Depends(get_session),
-    since: datetime | None = Query(None, description="Only return records after this time (ISO 8601)"),
+    since: datetime | None = Query(
+        None, description="Only return records after this time (ISO 8601)"
+    ),
 ) -> ApiResponse[list[EquityCurvePoint]]:
     """Get equity curve for a live trading run.
 

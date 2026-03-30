@@ -1,13 +1,20 @@
 """Pydantic schemas for live trading API requests and responses."""
 
+import re
 from datetime import datetime
 from decimal import Decimal
 from typing import Any
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from squant.schemas.types import NumberDecimal
+
+VALID_TIMEFRAMES = frozenset(
+    {"1m", "3m", "5m", "15m", "30m", "1h", "2h", "4h", "6h", "12h", "1d", "1w", "1M"}
+)
+
+_SYMBOL_PATTERN = re.compile(r"^[A-Z0-9]+/[A-Z0-9]+$")
 
 
 class RiskConfigRequest(BaseModel):
@@ -50,6 +57,18 @@ class RiskConfigRequest(BaseModel):
         le=100000,
         description="Minimum order value in quote currency (e.g., USDT)",
     )
+    order_poll_interval: float = Field(
+        default=30.0,
+        gt=0,
+        le=300,
+        description="Minimum seconds between order status polls (default 30s)",
+    )
+    balance_check_interval: float = Field(
+        default=300.0,
+        gt=0,
+        le=3600,
+        description="Seconds between balance sync checks (default 300s)",
+    )
 
 
 class StartLiveTradingRequest(BaseModel):
@@ -64,6 +83,29 @@ class StartLiveTradingRequest(BaseModel):
         ..., min_length=1, max_length=8, description="Candle timeframe (e.g., 1m)"
     )
     risk_config: RiskConfigRequest = Field(..., description="Risk management configuration")
+
+    @field_validator("symbol")
+    @classmethod
+    def validate_symbol_format(cls, v: str) -> str:
+        """Validate symbol is in BASE/QUOTE format (e.g., BTC/USDT)."""
+        if not _SYMBOL_PATTERN.match(v):
+            raise ValueError(
+                f"Invalid symbol format: '{v}'. "
+                "Must be in BASE/QUOTE format with uppercase alphanumeric characters "
+                "(e.g., BTC/USDT, ETH/BTC)"
+            )
+        return v
+
+    @field_validator("timeframe")
+    @classmethod
+    def validate_timeframe(cls, v: str) -> str:
+        """Validate timeframe is a supported value."""
+        if v not in VALID_TIMEFRAMES:
+            raise ValueError(
+                f"Invalid timeframe: '{v}'. Must be one of: {', '.join(sorted(VALID_TIMEFRAMES))}"
+            )
+        return v
+
     initial_equity: Decimal | None = Field(
         None,
         gt=0,
@@ -162,6 +204,8 @@ class LiveTradingStatusResponse(BaseModel):
     equity: NumberDecimal
     initial_capital: NumberDecimal
     total_fees: NumberDecimal
+    fees_by_currency: dict[str, Any] = Field(default_factory=dict)
+    fees_usdt_equivalent: NumberDecimal | None = None
     unrealized_pnl: NumberDecimal = Field(default=Decimal("0"))
     realized_pnl: NumberDecimal = Field(default=Decimal("0"))
     positions: dict[str, LivePositionInfo]
@@ -212,10 +256,13 @@ class LiveSessionTradeResponse(BaseModel):
     """Trade execution record for a live session order."""
 
     id: UUID
+    exchange_tid: str | None = None
     price: NumberDecimal
     amount: NumberDecimal
     fee: NumberDecimal
     fee_currency: str | None = None
+    fill_source: str | None = None
+    taker_or_maker: str | None = None
     timestamp: datetime
 
     model_config = {"from_attributes": True}
@@ -235,10 +282,30 @@ class LiveSessionOrderResponse(BaseModel):
     price: NumberDecimal | None = None
     status: str
     trades: list[LiveSessionTradeResponse] = Field(default_factory=list)
+    corrections: list | None = None
     created_at: datetime
     updated_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+class RunningSessionEquity(BaseModel):
+    """Equity info for a running session."""
+
+    run_id: UUID
+    strategy_name: str | None = None
+    symbol: str
+    equity: NumberDecimal
+
+
+class AccountBalanceResponse(BaseModel):
+    """Account balance with available capital calculation."""
+
+    account_total_value: NumberDecimal
+    quote_currency: str
+    running_sessions: list[RunningSessionEquity] = Field(default_factory=list)
+    sessions_total_equity: NumberDecimal = Field(default=Decimal("0"))
+    available: NumberDecimal = Field(default=Decimal("0"))
 
 
 class EmergencyCloseResponse(BaseModel):

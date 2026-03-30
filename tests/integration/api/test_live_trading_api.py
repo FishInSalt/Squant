@@ -602,19 +602,19 @@ class TestEmergencyClose:
         assert result["message"] == "Emergency close completed"
 
     @pytest.mark.skip(
-        reason="ExchangeConnectionError not explicitly caught in emergency_close endpoint - error handling tested at service level"
+        reason="LiveTradingError now caught in emergency_close endpoint - covered by unit test"
     )
     @pytest.mark.asyncio
     async def test_emergency_close_exchange_unavailable(self, client):
         """Test TRD-038-4: Show error when exchange API unavailable."""
-        from squant.services.live_trading import ExchangeConnectionError
+        from squant.services.live_trading import LiveExchangeConnectionError
 
         run_id = uuid4()
 
         with patch(
             "squant.services.live_trading.LiveTradingService.emergency_close",
             new_callable=AsyncMock,
-            side_effect=ExchangeConnectionError("Exchange connection failed"),
+            side_effect=LiveExchangeConnectionError("Exchange connection failed"),
         ):
             response = await client.post(f"/api/v1/live/{run_id}/emergency-close")
 

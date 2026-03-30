@@ -60,6 +60,60 @@ def _configure_logging() -> None:
     logging.getLogger("ccxt").setLevel(logging.WARNING)
 
 
+async def _cleanup_stale_circuit_breaker() -> None:
+    """Clear auto-triggered circuit breaker state if the trigger session no longer exists.
+
+    Hot reloads and crashes can leave orphaned CB state in Redis referencing
+    sessions that were never persisted (or have since been cleaned up).
+    Also clears any state whose cooldown has already expired.
+    """
+    import json
+    from datetime import UTC, datetime
+
+    from sqlalchemy import select
+
+    from squant.infra.database import get_session_context
+    from squant.infra.redis import get_redis_client
+    from squant.models.enums import CircuitBreakerTriggerType
+    from squant.models.strategy import StrategyRun
+    from squant.services.circuit_breaker import (
+        CIRCUIT_BREAKER_STATE_KEY,
+        CircuitBreakerState,
+    )
+
+    try:
+        redis = get_redis_client()
+        raw = await redis.get(CIRCUIT_BREAKER_STATE_KEY)
+        if not raw:
+            return
+
+        state = CircuitBreakerState.from_dict(json.loads(raw))
+        if not state.is_active:
+            return
+
+        # Auto-clear if cooldown already expired
+        if state.cooldown_until and datetime.now(UTC) >= state.cooldown_until:
+            await redis.delete(CIRCUIT_BREAKER_STATE_KEY)
+            logger.info("Startup: cleared expired circuit breaker state")
+            return
+
+        # For auto-triggered state, check if the trigger session still exists in DB
+        session_id = state.trigger_session_id
+        if state.trigger_type == CircuitBreakerTriggerType.AUTO and session_id:
+            async with get_session_context() as db:
+                result = await db.execute(
+                    select(StrategyRun.id).where(StrategyRun.id == session_id)
+                )
+                if result.scalar_one_or_none() is None:
+                    await redis.delete(CIRCUIT_BREAKER_STATE_KEY)
+                    logger.warning(
+                        f"Startup: cleared stale circuit breaker state "
+                        f"(trigger session {session_id} not found in DB)"
+                    )
+    except Exception:
+        logger.warning("Startup: failed to clean up circuit breaker state", exc_info=True)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """Application lifespan manager."""
@@ -75,6 +129,11 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         redis_initialized = True
         logger.info("Redis connection initialized")
 
+        # Clean up stale circuit breaker state in Redis.
+        # Hot reloads / crashes can leave auto-triggered CB state referencing
+        # sessions that no longer exist in DB, blocking all new sessions.
+        await _cleanup_stale_circuit_breaker()
+
         # WebSocket stream manager — initialize in background so it doesn't block
         # the HTTP server from accepting connections. The server starts immediately;
         # when the stream manager connects to the exchange, it publishes a
@@ -85,8 +144,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                 logger.info("Stream manager initialized (background)")
             except Exception as e:
                 logger.warning(
-                    f"Failed to initialize stream manager: {e}. "
-                    "Real-time data will be unavailable."
+                    f"Failed to initialize stream manager: {e}. Real-time data will be unavailable."
                 )
                 from squant.websocket.manager import get_stream_manager
 
@@ -120,9 +178,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                     live_service = LiveTradingService(session)
                     live_count = await live_service.mark_orphaned_sessions()
                     if live_count > 0:
-                        logger.warning(
-                            f"Marked {live_count} orphaned live sessions as INTERRUPTED"
-                        )
+                        logger.warning(f"Marked {live_count} orphaned live sessions as INTERRUPTED")
                 return
 
             # Stream manager ready — attempt auto-recovery
@@ -254,8 +310,7 @@ def create_app() -> FastAPI:
     # CORS middleware
     if settings.debug:
         logger.warning(
-            "CORS allow_origins=['*'] — debug mode is ON. "
-            "Do NOT use debug=True in production."
+            "CORS allow_origins=['*'] — debug mode is ON. Do NOT use debug=True in production."
         )
     # GZip compression — reduces large JSON responses (backtest results, equity curves)
     # by ~70-80%, preventing ERR_CONTENT_LENGTH_MISMATCH in DevContainer proxy chains.

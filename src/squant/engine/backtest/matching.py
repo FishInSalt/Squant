@@ -302,9 +302,7 @@ class MatchingEngine:
         # Already triggered on a previous bar: regular limit fill with gap-open
         return self._fill_limit_order(order, bar)
 
-    def _fill_limit_order_at_trigger(
-        self, order: SimulatedOrder, bar: Bar
-    ) -> Fill | None:
+    def _fill_limit_order_at_trigger(self, order: SimulatedOrder, bar: Bar) -> Fill | None:
         """Fill a just-triggered stop-limit as a limit order without gap-open improvement.
 
         When a STOP_LIMIT triggers on the same bar it fills, bar.open occurred

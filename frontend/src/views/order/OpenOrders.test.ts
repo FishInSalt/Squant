@@ -71,7 +71,6 @@ describe('OpenOrders', () => {
   it('shows filter form', async () => {
     const wrapper = mountView(OpenOrders)
     await flushPromises()
-    expect(wrapper.text()).toContain('交易所')
     expect(wrapper.text()).toContain('交易对')
     expect(wrapper.text()).toContain('方向')
     expect(wrapper.text()).toContain('查询')

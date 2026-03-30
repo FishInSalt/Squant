@@ -8,6 +8,7 @@ The BacktestContext is injected into user strategies and provides:
 - Logging
 """
 
+import logging
 from collections import deque
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -52,6 +53,9 @@ class BacktestContext:
         max_trades: int | None = None,
         max_logs: int = 1000,
         min_order_value: Decimal = Decimal("5"),
+        file_logger: logging.Logger | None = None,
+        use_real_time: bool = False,
+        amount_precision: int | None = None,
     ):
         """Initialize backtest context.
 
@@ -68,12 +72,16 @@ class BacktestContext:
             max_logs: Maximum log entries to keep.
             min_order_value: Minimum order notional value in quote currency.
                 Orders below this value are silently rejected (returns None).
+            amount_precision: Exchange's decimal places for amount (e.g., 8 for BTC).
+                When set, position amounts are truncated after base currency fee
+                deduction to stay within exchange precision.
         """
         self._initial_capital = initial_capital
         self._cash = initial_capital
         self._commission_rate = commission_rate
         self._slippage = slippage
         self._min_order_value = min_order_value
+        self._amount_precision = amount_precision
         self._params = params or {}
         self._max_bar_history = max_bar_history
 
@@ -106,6 +114,8 @@ class BacktestContext:
 
         # Logging
         self._logs: deque[str] = deque(maxlen=max_logs)
+        self._file_logger = file_logger
+        self._use_real_time = use_real_time
 
         # Cumulative counters for incremental WebSocket tracking and callback delivery.
         # Deque maxlen causes old items to be evicted, so len(deque) plateaus.
@@ -117,6 +127,12 @@ class BacktestContext:
 
         # Total fees paid
         self._total_fees = Decimal("0")
+        self._fees_by_currency: dict[str, Decimal] = {}
+
+        # Cumulative realized PnL (survives deque eviction).
+        # _trades deque has a maxlen, so sum(t.pnl for t in _trades) becomes
+        # incorrect once old trades are evicted. This counter tracks the true total.
+        self._cumulative_realized_pnl = Decimal("0")
 
         # Price cache for multi-symbol equity calculation
         self._last_prices: dict[str, Decimal] = {}
@@ -206,6 +222,27 @@ class BacktestContext:
         """Get total fees paid."""
         return self._total_fees
 
+    def get_fees_usdt_equivalent(self) -> Decimal | None:
+        """Compute USDT equivalent of all fees using current prices.
+
+        Returns:
+            Total fees in USDT, or None if conversion not possible.
+        """
+        if not self._fees_by_currency:
+            return Decimal("0")
+
+        total = Decimal("0")
+        for currency, amount in self._fees_by_currency.items():
+            if currency == "USDT":
+                total += amount
+            else:
+                symbol = f"{currency}/USDT"
+                price = self._last_prices.get(symbol)
+                if price is None:
+                    return None
+                total += amount * price
+        return total
+
     @property
     def unrealized_pnl(self) -> Decimal:
         """Get unrealized PnL for all open positions."""
@@ -213,8 +250,12 @@ class BacktestContext:
 
     @property
     def realized_pnl(self) -> Decimal:
-        """Get total realized PnL from closed trades."""
-        return sum((t.pnl for t in self._trades), Decimal("0"))
+        """Get total realized PnL from closed trades.
+
+        Uses cumulative counter that survives deque eviction, rather than
+        summing the bounded _trades deque which loses old entries.
+        """
+        return self._cumulative_realized_pnl
 
     @property
     def return_pct(self) -> Decimal:
@@ -277,9 +318,12 @@ class BacktestContext:
 
         # Minimum order value check — silently reject dust orders
         ref_price = (
-            Decimal(str(price)) if price is not None
-            else Decimal(str(stop_price)) if stop_price is not None
-            else self._current_bar.close if self._current_bar
+            Decimal(str(price))
+            if price is not None
+            else Decimal(str(stop_price))
+            if stop_price is not None
+            else self._current_bar.close
+            if self._current_bar
             else None
         )
         if ref_price is not None and amount * ref_price < self._min_order_value:
@@ -341,11 +385,7 @@ class BacktestContext:
                     pending_ref = self._current_bar.close * (1 + self._slippage)
                     if self._ref_ask is not None:
                         pending_ref = max(pending_ref, self._ref_ask)
-                    pending_buy_cost += (
-                        pending_ref
-                        * order.remaining
-                        * (1 + self._commission_rate)
-                    )
+                    pending_buy_cost += pending_ref * order.remaining * (1 + self._commission_rate)
 
         available_cash = self._cash - pending_buy_cost
         if estimated_cost > 0 and available_cash < estimated_cost:
@@ -376,7 +416,7 @@ class BacktestContext:
         else:
             price_info = "市价"
         short_id = order.id[:8]
-        self.log(f"提交买入 {symbol} {amount} {price_info} #{short_id}")
+        self.log(f"提交买入 {symbol} {amount} {price_info} #{short_id}", category="order")
         return order.id
 
     def sell(
@@ -413,9 +453,12 @@ class BacktestContext:
 
         # Minimum order value check — silently reject dust orders
         ref_price = (
-            Decimal(str(price)) if price is not None
-            else Decimal(str(stop_price)) if stop_price is not None
-            else self._current_bar.close if self._current_bar
+            Decimal(str(price))
+            if price is not None
+            else Decimal(str(stop_price))
+            if stop_price is not None
+            else self._current_bar.close
+            if self._current_bar
             else None
         )
         if ref_price is not None and amount * ref_price < self._min_order_value:
@@ -469,7 +512,7 @@ class BacktestContext:
         else:
             price_info = "市价"
         short_id = order.id[:8]
-        self.log(f"提交卖出 {symbol} {amount} {price_info} #{short_id}")
+        self.log(f"提交卖出 {symbol} {amount} {price_info} #{short_id}", category="order")
         return order.id
 
     def cancel_order(self, order_id: str) -> bool:
@@ -703,15 +746,23 @@ class BacktestContext:
     # Logging
     # =========================================================================
 
-    def log(self, message: str) -> None:
-        """Log a message.
+    def log(self, message: str, level: str = "info", category: str = "strategy") -> None:
+        """Log a message with level and category.
 
         Args:
             message: Message to log.
+            level: Log level (info, warning, error).
+            category: Log category (strategy, order, fill, risk, system).
         """
-        timestamp = self._current_bar.time if self._current_bar else datetime.now(UTC)
-        self._logs.append(f"[{timestamp}] {message}")
+        if self._use_real_time:
+            timestamp = datetime.now(UTC)
+        else:
+            timestamp = self._current_bar.time if self._current_bar else datetime.now(UTC)
+        entry = f"[{timestamp:%Y-%m-%d %H:%M:%S}] [{level.upper()}] [{category}] {message}"
+        self._logs.append(entry)
         self._total_logs_added += 1
+        if self._file_logger:
+            self._file_logger.info(entry)
 
     # =========================================================================
     # Internal Methods (called by BacktestRunner)
@@ -753,9 +804,16 @@ class BacktestContext:
         position = self._positions[fill.symbol]
         prev_amount = position.amount
 
+        # Determine if fee is in base currency (e.g., BTC for BTC/USDT)
+        fee_in_base = False
+        if fill.fee_currency:
+            base_currency = fill.symbol.split("/")[0]
+            fee_in_base = fill.fee_currency.upper() == base_currency.upper()
+
         # Calculate trade cost/proceeds and validate
         if fill.side == OrderSide.BUY:
-            cost = fill.price * fill.amount + fill.fee
+            # Fee in base currency doesn't affect cash; fee in quote adds to cost
+            cost = fill.price * fill.amount if fee_in_base else fill.price * fill.amount + fill.fee
             # Validate sufficient cash before executing
             if not force and self._cash < cost:
                 raise ValueError(
@@ -770,7 +828,11 @@ class BacktestContext:
                     f"Insufficient position for sell fill: position={position.amount}, "
                     f"fill_amount={fill.amount}"
                 )
-            proceeds = fill.price * fill.amount - fill.fee
+            if fee_in_base:
+                # Fee taken from sold base amount: only (amount - fee) converts to proceeds
+                proceeds = fill.price * (fill.amount - fill.fee)
+            else:
+                proceeds = fill.price * fill.amount - fill.fee
             self._cash += proceeds
 
         # Record the fill (only after validation passes)
@@ -778,11 +840,47 @@ class BacktestContext:
         self._total_fills_added += 1
         self._total_fees += fill.fee
 
+        # Track fees by currency
+        if fill.fee > 0:
+            fee_currency = fill.fee_currency or (
+                fill.symbol.split("/")[1] if "/" in fill.symbol else "UNKNOWN"
+            )
+            self._fees_by_currency[fee_currency] = (
+                self._fees_by_currency.get(fee_currency, Decimal("0")) + fill.fee
+            )
+
         # Update position (this may also raise if trying to go short)
         position.update(fill.amount, fill.price, fill.side)
 
+        # BUY + base fee: deduct fee from position (received less base currency)
+        # SELL + base fee: no position adjustment (fee already reflected in proceeds)
+        if fee_in_base and fill.fee > 0 and fill.side == OrderSide.BUY:
+            position.amount -= fill.fee
+            # Truncate to exchange precision to keep position aligned with exchange.
+            # Without this, fee deduction creates sub-atom precision (e.g., 11 dp)
+            # that the exchange cannot trade, causing dust on close.
+            if self._amount_precision is not None:
+                from decimal import ROUND_DOWN
+
+                step = Decimal(10) ** -self._amount_precision
+                position.amount = position.amount.quantize(step, rounding=ROUND_DOWN)
+
+        # Dust cleanup (safety net): even with precision truncation above, edge cases
+        # like partial fill rounding can leave sub-atom dust. Zero it out.
+        # (e.g., 8E-11 BTC) that exchanges cannot trade. If remaining position is
+        # positive but below the minimum tradeable precision (1E-8), treat as zero.
+        # This must happen BEFORE _update_trade_tracking so the trade closes properly.
+        _DUST_THRESHOLD = Decimal("1E-8")
+        if fill.side == OrderSide.SELL and Decimal("0") < position.amount < _DUST_THRESHOLD:
+            position.amount = Decimal("0")
+
+        # Convert fee to quote currency for consistent PnL calculation.
+        # Base currency fees (e.g., BTC) are converted at fill price so that
+        # _open_trade.fees is always in quote currency (e.g., USDT).
+        fee_in_quote = fill.fee * fill.price if fee_in_base else fill.fee
+
         # Track trades (entry/exit)
-        self._update_trade_tracking(fill, prev_amount, position.amount)
+        self._update_trade_tracking(fill, prev_amount, position.amount, fee_in_quote)
 
         # Update the order status
         for order in self._pending_orders:
@@ -820,6 +918,7 @@ class BacktestContext:
         fill: Fill,
         prev_amount: Decimal,
         new_amount: Decimal,
+        fee_in_quote: Decimal | None = None,
     ) -> None:
         """Update trade tracking based on position changes.
 
@@ -827,10 +926,16 @@ class BacktestContext:
             fill: The fill that caused the position change.
             prev_amount: Position amount before the fill.
             new_amount: Position amount after the fill.
+            fee_in_quote: Fee converted to quote currency for PnL calculation.
+                If None, uses fill.fee (backward compat for backtest).
         """
+        trade_fee = fee_in_quote if fee_in_quote is not None else fill.fee
         side_label = "买入成交" if fill.side == OrderSide.BUY else "卖出成交"
         short_id = fill.order_id[:8]
         price_detail = self._format_price_detail(fill)
+        fee_label = f"{fill.fee}"
+        if fill.fee_currency:
+            fee_label += f" {fill.fee_currency}"
 
         # Position opened
         if prev_amount == Decimal("0") and new_amount != Decimal("0"):
@@ -843,12 +948,13 @@ class BacktestContext:
                 entry_time=fill.timestamp,
                 entry_price=fill.price,
                 amount=abs(new_amount),
-                fees=fill.fee,
+                fees=trade_fee,
             )
             self.log(
                 f"{side_label} #{short_id} {fill.symbol} "
                 f"{fill.amount}@{fill.price} [开仓] "
-                f"{price_detail}手续费={fill.fee}"
+                f"{price_detail}手续费={fee_label}",
+                category="fill",
             )
 
         # Position increased
@@ -861,19 +967,20 @@ class BacktestContext:
                 prev_value = self._open_trade.entry_price * abs(prev_amount)
                 new_value = fill.price * added_amount
                 self._open_trade.entry_price = (prev_value + new_value) / abs(new_amount)
-                self._open_trade.fees += fill.fee
+                self._open_trade.fees += trade_fee
                 self._open_trade.amount = abs(new_amount)
                 avg = self._open_trade.entry_price
                 self.log(
                     f"{side_label} #{short_id} {fill.symbol} "
                     f"{added_amount}@{fill.price} "
                     f"[加仓→{abs(new_amount)} 均价={avg:.4f}] "
-                    f"{price_detail}手续费={fill.fee}"
+                    f"{price_detail}手续费={fee_label}",
+                    category="fill",
                 )
 
         # Position decreased or closed
         elif self._open_trade:
-            self._open_trade.fees += fill.fee
+            self._open_trade.fees += trade_fee
             fill_amount = abs(prev_amount) - abs(new_amount)
 
             # Compute realized PnL for this fill
@@ -892,9 +999,7 @@ class BacktestContext:
                 self._open_trade.exit_time = fill.timestamp
                 # Weighted average exit price across all partial exits
                 if self._exit_fill_amount > 0:
-                    self._open_trade.exit_price = (
-                        self._exit_fill_notional / self._exit_fill_amount
-                    )
+                    self._open_trade.exit_price = self._exit_fill_notional / self._exit_fill_amount
                 else:
                     self._open_trade.exit_price = fill.price
 
@@ -912,17 +1017,20 @@ class BacktestContext:
                     f"{fill_amount}@{fill.price} [平仓] "
                     f"{price_detail}"
                     f"盈亏={pnl_sign}{pnl:.4f}({pnl_sign}{self._open_trade.pnl_pct:.2f}%) "
-                    f"手续费={self._open_trade.fees}"
+                    f"累计手续费≈{self._open_trade.fees:.4f} USDT",
+                    category="fill",
                 )
 
                 self._trades.append(self._open_trade)
                 self._total_trades_added += 1
+                self._cumulative_realized_pnl += pnl
                 self._open_trade = None
             else:
                 self.log(
                     f"{side_label} #{short_id} {fill.symbol} "
                     f"{fill_amount}@{fill.price} [减仓→{abs(new_amount)}] "
-                    f"{price_detail}手续费={fill.fee}"
+                    f"{price_detail}手续费={fee_label}",
+                    category="fill",
                 )
 
             # Note: Position reversal (long→short or short→long) is not supported
@@ -1066,7 +1174,7 @@ class BacktestContext:
             if pos_data.get("unrealized_pnl") is not None:
                 unrealized_pnl_total += Decimal(pos_data["unrealized_pnl"])
 
-        realized_pnl = sum((t.pnl for t in self._trades), Decimal("0"))
+        realized_pnl = self._cumulative_realized_pnl
 
         open_trade = None
         if self._open_trade:
@@ -1100,6 +1208,10 @@ class BacktestContext:
             "cash": str(self._cash),
             "equity": str(self.equity),
             "total_fees": str(self._total_fees),
+            "fees_by_currency": {k: str(v) for k, v in self._fees_by_currency.items()},
+            "fees_usdt_equivalent": str(usdt_equiv)
+            if (usdt_equiv := self.get_fees_usdt_equivalent()) is not None
+            else None,
             "unrealized_pnl": str(unrealized_pnl_total),
             "realized_pnl": str(realized_pnl),
             "positions": positions,
@@ -1109,7 +1221,6 @@ class BacktestContext:
             "trades_count": len(self._trades),
             "completed_orders_count": self._restored_completed_orders_count
             + len(self._completed_orders),
-            "logs": list(self._logs),
             "benchmark_initial_price": (
                 str(self._benchmark_initial_price)
                 if self._benchmark_initial_price is not None
@@ -1135,8 +1246,18 @@ class BacktestContext:
         if "total_fees" in state:
             self._total_fees = Decimal(str(state["total_fees"]))
 
+        # Restore per-currency fees
+        if state.get("fees_by_currency"):
+            self._fees_by_currency = {
+                k: Decimal(str(v)) for k, v in state["fees_by_currency"].items()
+            }
+
+        # Restore cumulative realized PnL (survives deque eviction)
+        if "realized_pnl" in state:
+            self._cumulative_realized_pnl = Decimal(str(state["realized_pnl"]))
+
         # Restore positions
-        if "positions" in state:
+        if state.get("positions") is not None:
             self._positions.clear()
             for symbol, pos_data in state["positions"].items():
                 pos = Position(
@@ -1150,7 +1271,7 @@ class BacktestContext:
                     self._last_prices[symbol] = Decimal(str(pos_data["current_price"]))
 
         # Restore closed trades (for display and metrics)
-        if "trades" in state:
+        if state.get("trades") is not None:
             self._trades.clear()
             for t in state["trades"]:
                 trade = TradeRecord(
@@ -1173,7 +1294,7 @@ class BacktestContext:
             self._total_trades_added = len(self._trades)
 
         # Restore fills (for display and strategy access after resume)
-        if "fills" in state:
+        if state.get("fills") is not None:
             self._fills.clear()
             for f in state["fills"]:
                 fill = Fill(
@@ -1191,13 +1312,6 @@ class BacktestContext:
         # Restore completed orders count (content not serialized, only count)
         self._restored_completed_orders_count = state.get("completed_orders_count", 0)
         self._total_completed_added = self._restored_completed_orders_count
-
-        # Restore logs
-        if "logs" in state:
-            self._logs.clear()
-            for log_entry in state["logs"]:
-                self._logs.append(log_entry)
-            self._total_logs_added = len(self._logs)
 
         # Restore benchmark initial price for buy-and-hold comparison
         bip = state.get("benchmark_initial_price")
