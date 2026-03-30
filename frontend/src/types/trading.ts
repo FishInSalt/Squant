@@ -278,6 +278,12 @@ export interface RiskState {
   max_order_size: number
   daily_trade_limit: number
   daily_loss_limit: number
+  total_pnl: number
+  total_loss_limit: number
+  peak_equity: number
+  current_drawdown: number
+  max_drawdown: number
+  circuit_breaker_until: string | null
 }
 
 // 实盘交易实时状态（匹配后端 LiveTradingStatusResponse）

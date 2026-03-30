@@ -644,6 +644,24 @@
                   :format="() => `${riskState!.daily_trade_count} / ${riskState!.daily_trade_limit}`"
                 />
               </div>
+              <div class="risk-item wide">
+                <span class="label">当前回撤</span>
+                <el-progress
+                  :percentage="drawdownPercent"
+                  :color="riskProgressColor(drawdownPercent)"
+                  :stroke-width="14"
+                  :format="() => `${((riskState!.current_drawdown ?? 0) * 100).toFixed(1)}% / ${((riskState!.max_drawdown ?? 0) * 100).toFixed(0)}%`"
+                />
+              </div>
+              <div class="risk-item">
+                <span class="label">累计盈亏</span>
+                <PriceCell
+                  :value="riskState.total_pnl"
+                  :change="riskState.total_pnl"
+                  show-sign
+                  class="value"
+                />
+              </div>
               <div class="risk-item">
                 <span class="label">连续亏损</span>
                 <span class="value">{{ riskState.consecutive_losses }}</span>
@@ -651,7 +669,7 @@
               <div class="risk-item">
                 <span class="label">熔断状态</span>
                 <el-tag :type="riskState.circuit_breaker_active ? 'danger' : 'success'" size="small">
-                  {{ riskState.circuit_breaker_active ? '已触发' : '正常' }}
+                  {{ riskState.circuit_breaker_active ? (riskState.circuit_breaker_until ? '冷却中' : '已触发') : '正常' }}
                 </el-tag>
               </div>
               <div class="risk-item">
@@ -954,6 +972,9 @@ const dailyLossPercent = computed(() =>
 const dailyTradePercent = computed(() =>
   riskState.value?.daily_trade_limit ? Math.min(100, (riskState.value.daily_trade_count / riskState.value.daily_trade_limit) * 100) : 0)
 
+const drawdownPercent = computed(() =>
+  riskState.value?.max_drawdown ? Math.min(100, ((riskState.value.current_drawdown ?? 0) / riskState.value.max_drawdown) * 100) : 0)
+
 function riskProgressColor(pct: number): string {
   if (pct >= 90) return '#F56C6C'
   if (pct >= 70) return '#E6A23C'
@@ -1017,7 +1038,7 @@ function applyStateSnapshot(state: Record<string, unknown>) {
 
   // Open trade
   if (isPaper.value) {
-    ;(status.value as PaperTradingStatus).open_trade = state.open_trade as OpenTrade | undefined
+    (status.value as PaperTradingStatus).open_trade = state.open_trade as OpenTrade | undefined
   } else if (isLive.value) {
     const ot = state.open_trade as OpenTrade | undefined
     liveOpenTrade.value = ot
@@ -1027,7 +1048,7 @@ function applyStateSnapshot(state: Record<string, unknown>) {
 
   // Risk state
   if (state.risk_state) {
-    ;(status.value as LiveTradingStatus).risk_state = state.risk_state as RiskState
+    (status.value as LiveTradingStatus).risk_state = state.risk_state as RiskState
   }
 }
 
