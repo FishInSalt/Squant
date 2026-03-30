@@ -3,7 +3,7 @@
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
-from squant.engine.risk.models import RiskState
+from squant.engine.risk.models import RiskConfig, RiskRuleType, RiskState
 
 
 class TestCircuitBreakerResetsConsecutiveLosses:
@@ -76,3 +76,54 @@ class TestCircuitBreakerResetsConsecutiveLosses:
         # After reset, one more loss should count as 1, not threshold+1
         state.record_trade(Decimal("-50"))
         assert state.consecutive_losses == 1
+
+
+class TestRiskConfigNewFields:
+    """Tests for new risk config fields (RSK-007, max_drawdown, daily_loss_warning)."""
+
+    def test_default_max_orders_per_minute(self):
+        config = RiskConfig()
+        assert config.max_orders_per_minute == 20
+
+    def test_default_max_drawdown(self):
+        config = RiskConfig()
+        assert config.max_drawdown == Decimal("0.20")
+
+    def test_default_daily_loss_warning_threshold(self):
+        config = RiskConfig()
+        assert config.daily_loss_warning_threshold == Decimal("0.8")
+
+
+class TestRiskStateNewFields:
+    """Tests for new risk state fields (peak_equity, order_timestamps, daily_loss_warned)."""
+
+    def test_peak_equity_default(self):
+        state = RiskState()
+        assert state.peak_equity == Decimal("0")
+
+    def test_order_timestamps_default(self):
+        state = RiskState()
+        assert state.order_timestamps == []
+
+    def test_daily_loss_warned_default(self):
+        state = RiskState()
+        assert state.daily_loss_warned is False
+
+    def test_reset_daily_stats_clears_daily_loss_warned(self):
+        state = RiskState()
+        state.daily_loss_warned = True
+        state.unrealized_pnl = Decimal("100")
+        state.reset_daily_stats(Decimal("10000"))
+        assert state.daily_loss_warned is False
+        assert state.daily_start_unrealized_pnl == Decimal("100")
+
+    def test_reset_daily_stats_preserves_peak_equity(self):
+        state = RiskState()
+        state.peak_equity = Decimal("15000")
+        state.reset_daily_stats(Decimal("10000"))
+        assert state.peak_equity == Decimal("15000")
+
+
+class TestRiskRuleTypeFrequencyLimit:
+    def test_frequency_limit_enum_exists(self):
+        assert RiskRuleType.FREQUENCY_LIMIT == "frequency_limit"
