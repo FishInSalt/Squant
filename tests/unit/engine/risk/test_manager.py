@@ -1975,6 +1975,17 @@ class TestDailyLossWarning:
         manager.state.reset_daily_stats(Decimal("10000"))
         assert manager.state.daily_loss_warned is False
 
+    def test_warning_returns_false_when_daily_start_equity_zero(self):
+        config = RiskConfig(
+            daily_loss_limit=Decimal("0.05"),
+            daily_loss_warning_threshold=Decimal("0.8"),
+        )
+        manager = RiskManager(config=config, initial_equity=Decimal("10000"))
+        manager.state.daily_start_equity = Decimal("0")
+        manager.state.daily_pnl = Decimal("-500")
+        warned = manager.check_daily_loss_warning()
+        assert warned is False
+
 
 class TestMaxDrawdown:
     """Tests for M3: max drawdown auto-stop."""

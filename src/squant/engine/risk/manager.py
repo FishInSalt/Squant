@@ -347,7 +347,13 @@ class RiskManager:
         return RiskCheckResult.ok()
 
     def _check_frequency_limit(self) -> RiskCheckResult:
-        """Check order frequency limit (RSK-007)."""
+        """Check order frequency limit (RSK-007).
+
+        Counts ALL order submission attempts (including those later rejected by
+        other rules like position size or daily loss). This is intentional: the
+        frequency limit is a strategy-level protection against buggy strategies
+        that spam order requests, regardless of whether those orders pass other checks.
+        """
         now = time.time()
         cutoff = now - 60.0
         # Clean expired timestamps
@@ -362,7 +368,7 @@ class RiskManager:
                 current_count=len(self.state.order_timestamps),
                 limit=self.config.max_orders_per_minute,
             )
-        # Record this order attempt
+        # Record this order attempt (before subsequent checks — see docstring)
         self.state.order_timestamps.append(now)
         return RiskCheckResult.ok()
 
@@ -769,7 +775,13 @@ class RiskManager:
             "peak_equity": float(self.state.peak_equity),
             "max_drawdown_pct": float(self.config.max_drawdown),
             "current_drawdown": (
-                float((self.state.peak_equity - self._current_equity) / self.state.peak_equity)
+                max(
+                    0.0,
+                    float(
+                        (self.state.peak_equity - self._current_equity)
+                        / self.state.peak_equity
+                    ),
+                )
                 if self.state.peak_equity > 0
                 else 0.0
             ),

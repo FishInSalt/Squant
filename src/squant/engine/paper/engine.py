@@ -458,7 +458,11 @@ class PaperTradingEngine:
                 # Update last activity timestamp
                 self._last_active_at = datetime.now(UTC)
 
-                # Check circuit breaker (LCB3 — mirrors live engine pattern)
+                # Check circuit breaker (LCB3 — mirrors live engine pattern).
+                # Intentionally checked before is_closed gate: CB is an emergency
+                # state that should stop the engine ASAP, not wait for bar close.
+                # Max drawdown / total loss checks run after is_closed because they
+                # depend on per-bar equity updates.
                 if self._risk_manager and self._circuit_breaker_triggered:
                     losses = self._risk_manager.state.consecutive_losses
                     reason = f"连续亏损 {losses} 次，触发熔断"
