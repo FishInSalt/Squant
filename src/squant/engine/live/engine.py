@@ -3090,6 +3090,52 @@ class LiveTradingEngine:
             await self.stop(error=msg)
             return
 
+        # Max drawdown auto-stop (M3)
+        if self._risk_manager.check_max_drawdown():
+            peak = self._risk_manager.state.peak_equity
+            current = self._context.equity
+            drawdown_pct = (
+                (peak - current) / peak * 100 if peak > 0 else 0
+            )
+            msg = f"最大回撤达到 {drawdown_pct:.1f}%，自动停止"
+            logger.warning(f"Live engine {self._run_id}: {msg}")
+            self._context.log(msg, level="error", category="risk")
+            _fire_notification(
+                self._run_id,
+                level="critical",
+                event_type="max_drawdown_stop",
+                title="最大回撤触发",
+                message=f"实盘会话 {self._symbol} {msg}",
+                details={
+                    "symbol": self._symbol,
+                    "peak_equity": str(peak),
+                    "current_equity": str(current),
+                    "drawdown_pct": f"{drawdown_pct:.1f}",
+                },
+            )
+            await self.stop(error=msg)
+            return
+
+        # Daily loss warning (M5)
+        if self._risk_manager.check_daily_loss_warning():
+            daily_pnl = self._risk_manager.state.daily_pnl
+            limit = self._risk_manager.config.daily_loss_limit
+            threshold = self._risk_manager.config.daily_loss_warning_threshold
+            pct = threshold * 100
+            self._context.log(
+                f"日亏损预警：已达限额 {pct:.0f}%",
+                level="warning",
+                category="risk",
+            )
+            _fire_notification(
+                self._run_id,
+                level="warning",
+                event_type="daily_loss_warning",
+                title="日亏损预警",
+                message=f"日亏损已达限额的 {pct:.0f}%",
+                details={"daily_pnl": str(daily_pnl), "limit": str(limit)},
+            )
+
         # Record equity snapshot BEFORE strategy execution to capture
         # the portfolio state at bar close (C-DEFER-8)
         self._context._record_equity_snapshot(bar.time)
