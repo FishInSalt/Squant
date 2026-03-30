@@ -1935,3 +1935,61 @@ class TestPaperCircuitBreaker:
         await engine.process_candle(candle)
 
         assert engine.is_running is False
+
+
+class TestPaperMaxDrawdown:
+    """Tests for M3 in paper engine: max drawdown detection."""
+
+    def test_drawdown_detected_when_breached(self):
+        """RiskManager should detect drawdown breach through paper engine."""
+        engine = PaperTradingEngine(
+            run_id=uuid4(),
+            strategy=SimpleStrategy(),
+            symbol="BTC/USDT",
+            timeframe="1m",
+            initial_capital=Decimal("10000"),
+            risk_config=RiskConfig(max_drawdown=Decimal("0.20")),
+        )
+        engine._risk_manager.state.peak_equity = Decimal("15000")
+        engine._risk_manager._current_equity = Decimal("10000")
+
+        result = engine._risk_manager.check_max_drawdown()
+        assert result is True
+
+    def test_drawdown_not_detected_within_limit(self):
+        """RiskManager should not trigger when drawdown is within limit."""
+        engine = PaperTradingEngine(
+            run_id=uuid4(),
+            strategy=SimpleStrategy(),
+            symbol="BTC/USDT",
+            timeframe="1m",
+            initial_capital=Decimal("10000"),
+            risk_config=RiskConfig(max_drawdown=Decimal("0.20")),
+        )
+        engine._risk_manager.state.peak_equity = Decimal("12000")
+        engine._risk_manager._current_equity = Decimal("10000")  # 16.7%
+
+        result = engine._risk_manager.check_max_drawdown()
+        assert result is False
+
+
+class TestPaperDailyLossWarning:
+    """Tests for M5 in paper engine: daily loss warning."""
+
+    def test_warning_triggered_at_threshold(self):
+        engine = PaperTradingEngine(
+            run_id=uuid4(),
+            strategy=SimpleStrategy(),
+            symbol="BTC/USDT",
+            timeframe="1m",
+            initial_capital=Decimal("10000"),
+            risk_config=RiskConfig(
+                daily_loss_limit=Decimal("0.05"),
+                daily_loss_warning_threshold=Decimal("0.8"),
+            ),
+        )
+        engine._risk_manager.state.daily_pnl = Decimal("-410")  # 82% of limit
+
+        warned = engine._risk_manager.check_daily_loss_warning()
+        assert warned is True
+        assert engine._risk_manager.state.daily_loss_warned is True

@@ -557,6 +557,33 @@ class PaperTradingEngine:
                         await self._persist_on_early_stop()
                         return
 
+                    # 5d. Max drawdown auto-stop (M3)
+                    if self._risk_manager.check_max_drawdown():
+                        peak = self._risk_manager.state.peak_equity
+                        current = self._context.equity
+                        drawdown_pct = (
+                            (peak - current) / peak * 100 if peak > 0 else 0
+                        )
+                        msg = f"最大回撤达到 {drawdown_pct:.1f}%，自动停止"
+                        logger.warning(f"Engine {self._run_id}: {msg}")
+                        self._context.log(msg, level="error", category="risk")
+                        self._error_message = msg
+                        self._stop_impl()
+                        await self._persist_on_early_stop()
+                        return
+
+                    # 5e. Daily loss warning (M5)
+                    if self._risk_manager.check_daily_loss_warning():
+                        daily_pnl = self._risk_manager.state.daily_pnl
+                        limit = self._risk_manager.config.daily_loss_limit
+                        threshold = self._risk_manager.config.daily_loss_warning_threshold
+                        pct = threshold * 100
+                        self._context.log(
+                            f"日亏损预警：已达限额 {pct:.0f}%",
+                            level="warning",
+                            category="risk",
+                        )
+
                 # 6. Persist snapshot: try synchronous callback first, fall back to batch
                 if self._context.equity_curve:
                     latest_snapshot = self._context.equity_curve[-1]
