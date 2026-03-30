@@ -691,11 +691,12 @@ class LiveTradingEngine:
 
         self._stopped_at = datetime.now(UTC)
 
-        # Self-stop path (circuit breaker, risk limit, strategy error):
+        # Self-stop path (circuit breaker, risk limit, etc.):
         # Persist final state and notify service layer to update DB.
-        # Only fires when error_message is set — user-initiated stops go through
-        # service.stop() which handles persistence and DB update itself.
-        if self._error_message:
+        # Uses the `error` parameter (not _error_message) to distinguish self-stop
+        # from user-initiated stop. _error_message can also be set by strategy.on_stop()
+        # failure, which is NOT a self-stop and should not trigger DB update.
+        if error:
             # Persist final result state
             if self._on_result:
                 try:
@@ -720,8 +721,8 @@ class LiveTradingEngine:
             logger.debug(f"Error closing adapter for {self._run_id}: {e}")
 
         # Notify service layer to update DB status. Only for self-stops
-        # (error_message set) — service.stop() handles its own DB update.
-        if self._on_stop and self._error_message:
+        # (explicit error param) — service.stop() handles its own DB update.
+        if self._on_stop and error:
             try:
                 await self._on_stop()
             except Exception as e:
