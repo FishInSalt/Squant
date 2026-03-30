@@ -1006,8 +1006,8 @@ class LiveTradingService:
             from squant.engine.live.manager import get_live_session_manager
             from squant.infra.database import get_session_context
             from squant.infra.repository import BaseRepository
-            from squant.models.strategy import StrategyRun
             from squant.models.enums import RunStatus
+            from squant.models.strategy import StrategyRun
 
             try:
                 session_manager = get_live_session_manager()
