@@ -92,10 +92,7 @@ class RiskManager:
         with self._lock:
             if self.state.peak_equity <= 0:
                 return False
-            drawdown = (
-                (self.state.peak_equity - self._current_equity)
-                / self.state.peak_equity
-            )
+            drawdown = (self.state.peak_equity - self._current_equity) / self.state.peak_equity
             if drawdown >= self.config.max_drawdown:
                 logger.warning(
                     f"Max drawdown breached: {drawdown:.2%} >= {self.config.max_drawdown:.2%} "
@@ -354,9 +351,7 @@ class RiskManager:
         now = time.time()
         cutoff = now - 60.0
         # Clean expired timestamps
-        self.state.order_timestamps = [
-            ts for ts in self.state.order_timestamps if ts > cutoff
-        ]
+        self.state.order_timestamps = [ts for ts in self.state.order_timestamps if ts > cutoff]
         if len(self.state.order_timestamps) >= self.config.max_orders_per_minute:
             return RiskCheckResult.reject(
                 rule_type=RiskRuleType.FREQUENCY_LIMIT,
@@ -772,4 +767,10 @@ class RiskManager:
             "max_position_size_pct": float(self.config.max_position_size),
             "max_order_size_pct": float(self.config.max_order_size),
             "peak_equity": str(self.state.peak_equity),
+            "max_drawdown_pct": float(self.config.max_drawdown),
+            "current_drawdown": (
+                float((self.state.peak_equity - self._current_equity) / self.state.peak_equity)
+                if self.state.peak_equity > 0
+                else 0.0
+            ),
         }
