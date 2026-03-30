@@ -1147,6 +1147,12 @@ class LiveTradingEngine:
                 details={"symbol": self._symbol},
             )
 
+            self._context.log(
+                "熔断触发：连续亏损达到阈值，停止交易",
+                level="error",
+                category="risk",
+            )
+
             await self.stop(error="Circuit breaker triggered due to consecutive losses")
 
             # Trigger global circuit breaker to stop all sessions (Issue 033 fix)
