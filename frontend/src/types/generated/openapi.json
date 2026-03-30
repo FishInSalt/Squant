@@ -10657,6 +10657,46 @@
             "title": "Balance Check Interval",
             "description": "Seconds between balance sync checks (default 300s)",
             "default": 300.0
+          },
+          "max_orders_per_minute": {
+            "type": "integer",
+            "maximum": 100.0,
+            "exclusiveMinimum": 0.0,
+            "title": "Max Orders Per Minute",
+            "description": "Maximum order submissions per minute",
+            "default": 20
+          },
+          "max_drawdown": {
+            "anyOf": [
+              {
+                "type": "number",
+                "maximum": 1.0,
+                "exclusiveMinimum": 0.0
+              },
+              {
+                "type": "string",
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
+              }
+            ],
+            "title": "Max Drawdown",
+            "description": "Maximum drawdown from peak equity",
+            "default": "0.20"
+          },
+          "daily_loss_warning_threshold": {
+            "anyOf": [
+              {
+                "type": "number",
+                "maximum": 1.0,
+                "exclusiveMinimum": 0.0
+              },
+              {
+                "type": "string",
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
+              }
+            ],
+            "title": "Daily Loss Warning Threshold",
+            "description": "Daily loss warning threshold as fraction of limit",
+            "default": "0.8"
           }
         },
         "type": "object",
@@ -10834,6 +10874,42 @@
           "daily_loss_limit": {
             "type": "number",
             "title": "Daily Loss Limit"
+          },
+          "total_pnl": {
+            "type": "number",
+            "title": "Total Pnl",
+            "default": 0.0
+          },
+          "total_loss_limit": {
+            "type": "number",
+            "title": "Total Loss Limit",
+            "default": 0.0
+          },
+          "peak_equity": {
+            "type": "number",
+            "title": "Peak Equity",
+            "default": 0.0
+          },
+          "current_drawdown": {
+            "type": "number",
+            "title": "Current Drawdown",
+            "default": 0.0
+          },
+          "max_drawdown": {
+            "type": "number",
+            "title": "Max Drawdown",
+            "default": 0.0
+          },
+          "circuit_breaker_until": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Circuit Breaker Until"
           }
         },
         "type": "object",

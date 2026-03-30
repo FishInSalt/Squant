@@ -88,6 +88,9 @@ async def start_live_trading(
         min_order_value=request.risk_config.min_order_value,
         order_poll_interval=request.risk_config.order_poll_interval,
         balance_check_interval=request.risk_config.balance_check_interval,
+        max_orders_per_minute=request.risk_config.max_orders_per_minute,
+        max_drawdown=request.risk_config.max_drawdown,
+        daily_loss_warning_threshold=request.risk_config.daily_loss_warning_threshold,
     )
 
     try:

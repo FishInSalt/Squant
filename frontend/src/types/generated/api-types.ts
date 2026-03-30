@@ -5415,6 +5415,24 @@ export interface components {
              * @default 300
              */
             balance_check_interval: number;
+            /**
+             * Max Orders Per Minute
+             * @description Maximum order submissions per minute
+             * @default 20
+             */
+            max_orders_per_minute: number;
+            /**
+             * Max Drawdown
+             * @description Maximum drawdown from peak equity
+             * @default 0.20
+             */
+            max_drawdown: number | string;
+            /**
+             * Daily Loss Warning Threshold
+             * @description Daily loss warning threshold as fraction of limit
+             * @default 0.8
+             */
+            daily_loss_warning_threshold: number | string;
         };
         /**
          * RiskRuleListItem
@@ -5502,6 +5520,33 @@ export interface components {
             daily_trade_limit: number;
             /** Daily Loss Limit */
             daily_loss_limit: number;
+            /**
+             * Total Pnl
+             * @default 0
+             */
+            total_pnl: number;
+            /**
+             * Total Loss Limit
+             * @default 0
+             */
+            total_loss_limit: number;
+            /**
+             * Peak Equity
+             * @default 0
+             */
+            peak_equity: number;
+            /**
+             * Current Drawdown
+             * @default 0
+             */
+            current_drawdown: number;
+            /**
+             * Max Drawdown
+             * @default 0
+             */
+            max_drawdown: number;
+            /** Circuit Breaker Until */
+            circuit_breaker_until?: string | null;
         };
         /**
          * RiskTriggerListItem

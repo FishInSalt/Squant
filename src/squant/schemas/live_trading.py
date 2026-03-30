@@ -69,6 +69,24 @@ class RiskConfigRequest(BaseModel):
         le=3600,
         description="Seconds between balance sync checks (default 300s)",
     )
+    max_orders_per_minute: int = Field(
+        default=20,
+        gt=0,
+        le=100,
+        description="Maximum order submissions per minute",
+    )
+    max_drawdown: Decimal = Field(
+        default=Decimal("0.20"),
+        gt=Decimal("0"),
+        le=Decimal("1"),
+        description="Maximum drawdown from peak equity",
+    )
+    daily_loss_warning_threshold: Decimal = Field(
+        default=Decimal("0.8"),
+        gt=Decimal("0"),
+        le=Decimal("1"),
+        description="Daily loss warning threshold as fraction of limit",
+    )
 
 
 class StartLiveTradingRequest(BaseModel):
@@ -187,6 +205,12 @@ class RiskStateResponse(BaseModel):
     max_order_size: NumberDecimal
     daily_trade_limit: int
     daily_loss_limit: NumberDecimal
+    total_pnl: NumberDecimal = Field(default=Decimal("0"))
+    total_loss_limit: NumberDecimal = Field(default=Decimal("0"))
+    peak_equity: NumberDecimal = Field(default=Decimal("0"))
+    current_drawdown: NumberDecimal = Field(default=Decimal("0"))
+    max_drawdown: NumberDecimal = Field(default=Decimal("0"))
+    circuit_breaker_until: str | None = Field(default=None)
 
 
 class LiveTradingStatusResponse(BaseModel):

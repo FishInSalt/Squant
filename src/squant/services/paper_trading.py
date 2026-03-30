@@ -356,6 +356,9 @@ class PaperTradingService:
                     max_price_deviation=risk_config.price_deviation_limit,
                     circuit_breaker_loss_count=risk_config.circuit_breaker_threshold,
                     min_order_value=risk_config.min_order_value,
+                    max_orders_per_minute=risk_config.max_orders_per_minute,
+                    max_drawdown=risk_config.max_drawdown,
+                    daily_loss_warning_threshold=risk_config.daily_loss_warning_threshold,
                 )
 
             # Create engine with synchronous persistence callbacks
