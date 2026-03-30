@@ -1974,3 +1974,60 @@ class TestDailyLossWarning:
         manager.state.daily_loss_warned = True
         manager.state.reset_daily_stats(Decimal("10000"))
         assert manager.state.daily_loss_warned is False
+
+
+class TestMaxDrawdown:
+    """Tests for M3: max drawdown auto-stop."""
+
+    def test_no_drawdown_returns_false(self):
+        config = RiskConfig(max_drawdown=Decimal("0.20"))
+        manager = RiskManager(config=config, initial_equity=Decimal("10000"))
+        assert manager.check_max_drawdown() is False
+
+    def test_drawdown_below_limit_returns_false(self):
+        config = RiskConfig(max_drawdown=Decimal("0.20"))
+        manager = RiskManager(config=config, initial_equity=Decimal("10000"))
+        manager.state.peak_equity = Decimal("12000")
+        manager._current_equity = Decimal("10000")  # 16.7% drawdown
+        assert manager.check_max_drawdown() is False
+
+    def test_drawdown_at_limit_returns_true(self):
+        config = RiskConfig(max_drawdown=Decimal("0.20"))
+        manager = RiskManager(config=config, initial_equity=Decimal("10000"))
+        manager.state.peak_equity = Decimal("12000")
+        manager._current_equity = Decimal("9600")  # 20% drawdown
+        assert manager.check_max_drawdown() is True
+
+    def test_peak_equity_initialized_to_initial_equity(self):
+        manager = RiskManager(
+            config=RiskConfig(), initial_equity=Decimal("10000")
+        )
+        assert manager.state.peak_equity == Decimal("10000")
+
+    def test_update_equity_updates_peak(self):
+        manager = RiskManager(
+            config=RiskConfig(), initial_equity=Decimal("10000")
+        )
+        manager.update_equity(Decimal("12000"))
+        assert manager.state.peak_equity == Decimal("12000")
+        manager.update_equity(Decimal("11000"))  # dip
+        assert manager.state.peak_equity == Decimal("12000")  # still 12000
+
+
+class TestPeakEquityPersistence:
+    """Tests for peak_equity in get_state_summary and restore_state."""
+
+    def test_peak_equity_in_state_summary(self):
+        manager = RiskManager(
+            config=RiskConfig(), initial_equity=Decimal("10000")
+        )
+        manager.update_equity(Decimal("15000"))
+        summary = manager.get_state_summary()
+        assert summary["peak_equity"] == "15000"
+
+    def test_peak_equity_restored(self):
+        manager = RiskManager(
+            config=RiskConfig(), initial_equity=Decimal("10000")
+        )
+        manager.restore_state({"peak_equity": "15000"})
+        assert manager.state.peak_equity == Decimal("15000")

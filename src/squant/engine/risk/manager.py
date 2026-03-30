@@ -62,6 +62,7 @@ class RiskManager:
 
         # Initialize daily stats
         self.state.reset_daily_stats(initial_equity)
+        self.state.peak_equity = initial_equity
 
         logger.info(
             f"RiskManager initialized with equity={initial_equity}, "
@@ -79,6 +80,29 @@ class RiskManager:
         """
         with self._lock:
             self._current_equity = equity
+            if equity > self.state.peak_equity:
+                self.state.peak_equity = equity
+
+    def check_max_drawdown(self) -> bool:
+        """Check if drawdown from peak equity exceeds limit.
+
+        Returns True if max drawdown is breached (engine should stop).
+        Called every bar after equity update.
+        """
+        with self._lock:
+            if self.state.peak_equity <= 0:
+                return False
+            drawdown = (
+                (self.state.peak_equity - self._current_equity)
+                / self.state.peak_equity
+            )
+            if drawdown >= self.config.max_drawdown:
+                logger.warning(
+                    f"Max drawdown breached: {drawdown:.2%} >= {self.config.max_drawdown:.2%} "
+                    f"(peak={self.state.peak_equity}, current={self._current_equity})"
+                )
+                return True
+            return False
 
     def check_total_loss_limit(self) -> bool:
         """Check if total loss limit has been breached (IMP-005).
@@ -672,6 +696,9 @@ class RiskManager:
                     state_dict["circuit_breaker_until"]
                 )
 
+            if "peak_equity" in state_dict:
+                self.state.peak_equity = Decimal(str(state_dict["peak_equity"]))
+
             # Equity (use 'in' check — get() is falsy when equity is 0)
             if "current_equity" in state_dict and state_dict["current_equity"] is not None:
                 self._current_equity = Decimal(str(state_dict["current_equity"]))
@@ -744,4 +771,5 @@ class RiskManager:
             "current_position_value": float(self.state.current_position_value),
             "max_position_size_pct": float(self.config.max_position_size),
             "max_order_size_pct": float(self.config.max_order_size),
+            "peak_equity": str(self.state.peak_equity),
         }
