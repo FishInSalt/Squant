@@ -6,7 +6,6 @@ Drives strategy execution with actual order placement via exchange adapter.
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 from collections import OrderedDict
 from collections.abc import Awaitable, Callable
@@ -477,71 +476,6 @@ class LiveTradingEngine:
     def risk_manager(self) -> RiskManager:
         """Get the risk manager."""
         return self._risk_manager
-
-    async def _trigger_global_circuit_breaker(self) -> None:
-        """Trigger global circuit breaker to stop all trading sessions.
-
-        Called when this session's local circuit breaker triggers due to
-        consecutive losses. This ensures all sessions stop for safety,
-        implementing the global risk synchronization (Issue 033 fix).
-
-        Also persists the circuit breaker state to Redis so it survives
-        restarts and prevents new sessions from starting (LIVE-RM-002).
-        """
-        from squant.engine.live.manager import get_live_session_manager
-        from squant.engine.paper.manager import get_session_manager
-
-        # Use cached snapshot; fall back to config threshold if snapshot was never set
-        # (can happen if engine restarts mid-cycle and _check_trade_completion never ran)
-        losses = (
-            self._circuit_breaker_losses
-            if self._circuit_breaker_losses is not None
-            else self._risk_manager.config.circuit_breaker_loss_count
-        )
-        reason = f"Auto-triggered by session {self._run_id}: {losses} consecutive losses"
-
-        logger.critical(
-            f"GLOBAL CIRCUIT BREAKER TRIGGERED: {reason} | Stopping all trading sessions for safety"
-        )
-
-        # Persist circuit breaker state to Redis (LIVE-RM-002)
-        # This prevents new sessions from starting after restart.
-        try:
-            from squant.infra.redis import get_redis_client
-            from squant.services.circuit_breaker import (
-                CIRCUIT_BREAKER_STATE_KEY,
-                CircuitBreakerState,
-            )
-
-            redis = get_redis_client()
-            now = datetime.now(UTC)
-            cooldown_minutes = self._risk_manager.config.circuit_breaker_cooldown_minutes
-            cooldown_until = datetime.fromtimestamp(now.timestamp() + cooldown_minutes * 60, tz=UTC)
-            state = CircuitBreakerState(
-                is_active=True,
-                triggered_at=now,
-                trigger_type="auto",
-                trigger_reason=reason,
-                cooldown_until=cooldown_until,
-                trigger_session_id=str(self._run_id),
-            )
-            await redis.set(CIRCUIT_BREAKER_STATE_KEY, json.dumps(state.to_dict()))
-        except Exception:
-            logger.warning("Failed to persist circuit breaker state to Redis", exc_info=True)
-
-        # Stop all live sessions (except this one which is already stopped)
-        live_manager = get_live_session_manager()
-        try:
-            await live_manager.stop_all(reason=f"Circuit breaker: {reason}")
-        except Exception as e:
-            logger.exception(f"Error stopping live sessions: {e}")
-
-        # Stop all paper sessions
-        paper_manager = get_session_manager()
-        try:
-            await paper_manager.stop_all(reason=f"Circuit breaker: {reason}")
-        except Exception as e:
-            logger.exception(f"Error stopping paper sessions: {e}")
 
     # Maximum pending order events to prevent unbounded growth on persist failure (M-8)
     _MAX_PENDING_ORDER_EVENTS: int = 1000
@@ -1160,14 +1094,10 @@ class LiveTradingEngine:
                 details={"symbol": self._symbol, "consecutive_losses": losses},
             )
 
-            await self.stop(
-                error=f"Circuit breaker: {losses} consecutive losses"
-            )
-
-            # Trigger global circuit breaker to stop all sessions (Issue 033 fix)
-            # This ensures that when one session triggers circuit breaker due to
-            # consecutive losses, all sessions are stopped for safety
-            await self._trigger_global_circuit_breaker()
+            await self.stop(error=f"Circuit breaker: {losses} consecutive losses")
+            # Local circuit breaker only stops this session.
+            # Global circuit breaker is available via manual API trigger
+            # (CircuitBreakerService) for multi-strategy risk management.
             return
 
         # Only process closed candles
@@ -2616,16 +2546,33 @@ class LiveTradingEngine:
                     )
                     self._context.log(msg, level="warning", category="order")
 
+                # Detect exchange unavailable and notify user
+                is_unavailable = "unavailable" in err_msg or "maintenance" in err_msg
+                if is_unavailable:
+                    unavail_msg = (
+                        f"交易所临时不可用：{order.symbol} {order.side.value} "
+                        f"{order.amount} 下单被拒绝，请关注交易所状态"
+                    )
+                    _fire_notification(
+                        self._run_id,
+                        level="warning",
+                        event_type="exchange_unavailable",
+                        title="交易所不可用",
+                        message=unavail_msg,
+                    )
+                    self._context.log(unavail_msg, level="warning", category="order")
+
                 logger.exception(f"Failed to submit order {order.id}: {e}")
-                self._context.log(
-                    f"下单失败: {e}",
-                    level="error",
-                    category="order",
-                )
+                if not is_insufficient and not is_unavailable:
+                    self._context.log(
+                        f"下单失败: {e}",
+                        level="error",
+                        category="order",
+                    )
                 # Mark as rejected
                 if is_insufficient:
                     order.reject_reason = "insufficient_funds"
-                elif "unavailable" in err_msg or "maintenance" in err_msg:
+                elif is_unavailable:
                     order.reject_reason = "exchange_unavailable"
                 else:
                     order.reject_reason = f"exchange_error: {e}"
@@ -3002,16 +2949,12 @@ class LiveTradingEngine:
                             case EngineEventType.WS_FILL:
                                 self._process_trade_execution(ev.data)
                                 await self._flush_order_events()
-                                push_events.append(
-                                    self._build_state_update_event("fill", ev.data)
-                                )
+                                push_events.append(self._build_state_update_event("fill", ev.data))
                             case EngineEventType.WS_ORDER:
                                 self._process_single_ws_update(ev.data)
                                 await self._flush_order_events()
                                 push_events.append(
-                                    self._build_state_update_event(
-                                        "order_update", ev.data
-                                    )
+                                    self._build_state_update_event("order_update", ev.data)
                                 )
                             case EngineEventType.BAR_CLOSE:
                                 await self._handle_bar_close(ev.data)

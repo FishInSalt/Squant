@@ -1005,7 +1005,15 @@ function applyStateSnapshot(state: Record<string, unknown>) {
     status.value.positions = parsed
   }
 
-  status.value.pending_orders = (state.pending_orders as PendingOrderInfo[]) || []
+  // Pending orders: parse string → number for amount/price
+  const rawOrders = (state.pending_orders as Array<Record<string, unknown>>) || []
+  status.value.pending_orders = rawOrders.map((o) => ({
+    ...o,
+    amount: typeof o.amount === 'string' ? parseFloat(o.amount) : (o.amount as number),
+    price: o.price != null
+      ? (typeof o.price === 'string' ? parseFloat(o.price as string) : (o.price as number))
+      : undefined,
+  })) as PendingOrderInfo[]
 
   // Open trade
   if (isPaper.value) {

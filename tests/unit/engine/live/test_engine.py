@@ -1663,52 +1663,34 @@ class TestCircuitBreakerIntegration:
         assert engine._risk_manager.state.circuit_breaker_triggered is False
 
     @pytest.mark.asyncio
-    async def test_circuit_breaker_triggers_global_stop(
+    async def test_circuit_breaker_stops_only_current_session(
         self, engine_with_circuit_breaker, mock_adapter
     ):
-        """Test that circuit breaker triggers global stop of all sessions (Issue 033)."""
+        """Test that local circuit breaker only stops the current session, not all."""
         engine = engine_with_circuit_breaker
         await engine.start()
 
-        # Mock the session managers - patch at the import source
-        with (
-            patch("squant.engine.live.manager.get_live_session_manager") as mock_get_live,
-            patch("squant.engine.paper.manager.get_session_manager") as mock_get_paper,
-        ):
-            mock_live_manager = MagicMock()
-            mock_live_manager.stop_all = AsyncMock()
-            mock_get_live.return_value = mock_live_manager
+        # Set circuit breaker flag
+        engine._circuit_breaker_triggered = True
 
-            mock_paper_manager = MagicMock()
-            mock_paper_manager.stop_all = AsyncMock()
-            mock_get_paper.return_value = mock_paper_manager
+        # Create a candle
+        candle = WSCandle(
+            symbol="BTC/USDT",
+            timeframe="1m",
+            timestamp=datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC),
+            open=Decimal("45000"),
+            high=Decimal("46000"),
+            low=Decimal("44000"),
+            close=Decimal("45500"),
+            volume=Decimal("100"),
+            is_closed=True,
+        )
 
-            # Set circuit breaker flag
-            engine._circuit_breaker_triggered = True
+        # Process candle - should stop this session only
+        await engine.process_candle(candle)
 
-            # Create a candle
-            candle = WSCandle(
-                symbol="BTC/USDT",
-                timeframe="1m",
-                timestamp=datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC),
-                open=Decimal("45000"),
-                high=Decimal("46000"),
-                low=Decimal("44000"),
-                close=Decimal("45500"),
-                volume=Decimal("100"),
-                is_closed=True,
-            )
-
-            # Process candle - should trigger global circuit breaker
-            await engine.process_candle(candle)
-
-            # Both managers should have stop_all called
-            mock_live_manager.stop_all.assert_called_once()
-            mock_paper_manager.stop_all.assert_called_once()
-
-            # Verify reason contains the run_id
-            live_call_args = mock_live_manager.stop_all.call_args
-            assert str(engine.run_id) in live_call_args.kwargs.get("reason", "")
+        # Engine should be stopped
+        assert engine.is_running is False
 
 
 class TestStaleOrderCleanup:
@@ -4102,210 +4084,6 @@ class TestDeadManSwitch:
 
         # Flag should be reset to False in the finally block
         assert engine._dms_enabled is False
-
-
-class TestTriggerGlobalCircuitBreaker:
-    """Tests for _trigger_global_circuit_breaker() (LIVE-RM-002, Issue 033)."""
-
-    @pytest.fixture
-    def engine_with_cb(self, run_id, strategy, risk_config, mock_adapter):
-        """Create engine with circuit breaker config for global CB testing."""
-        with patch("squant.config.get_settings") as mock_settings:
-            settings = MagicMock()
-            settings.paper_max_equity_curve_size = 10000
-            settings.paper_max_completed_orders = 1000
-            settings.paper_max_fills = 1000
-            settings.paper_max_trades = 1000
-            settings.paper_max_logs = 1000
-            settings.strategy.max_bar_history = 1000
-            mock_settings.return_value = settings
-
-            return LiveTradingEngine(
-                run_id=run_id,
-                strategy=strategy,
-                symbol="BTC/USDT",
-                timeframe="1m",
-                adapter=mock_adapter,
-                risk_config=risk_config,
-                initial_equity=Decimal("10000"),
-                params={"threshold": Decimal("50000")},
-            )
-
-    @pytest.mark.asyncio
-    async def test_global_cb_writes_redis_state(self, engine_with_cb):
-        """Test _trigger_global_circuit_breaker persists state to Redis."""
-        engine = engine_with_cb
-        engine._risk_manager.state.consecutive_losses = 5
-
-        mock_redis = AsyncMock()
-        mock_redis.set = AsyncMock()
-
-        mock_live_manager = MagicMock()
-        mock_live_manager.stop_all = AsyncMock()
-        mock_paper_manager = MagicMock()
-        mock_paper_manager.stop_all = AsyncMock()
-
-        with (
-            patch("squant.infra.redis.get_redis_client", return_value=mock_redis),
-            patch(
-                "squant.engine.live.manager.get_live_session_manager",
-                return_value=mock_live_manager,
-            ),
-            patch(
-                "squant.engine.paper.manager.get_session_manager",
-                return_value=mock_paper_manager,
-            ),
-        ):
-            await engine._trigger_global_circuit_breaker()
-
-        # Redis should have been called with circuit breaker state
-        mock_redis.set.assert_called_once()
-        call_args = mock_redis.set.call_args
-        key = call_args[0][0]
-        assert key == "squant:circuit_breaker:state"
-        # Verify the value is valid JSON with expected fields
-        import json
-
-        state_data = json.loads(call_args[0][1])
-        assert state_data["is_active"] is True
-        assert state_data["trigger_type"] == "auto"
-        assert "consecutive losses" in state_data["trigger_reason"]
-
-    @pytest.mark.asyncio
-    async def test_global_cb_stops_all_sessions(self, engine_with_cb):
-        """Test _trigger_global_circuit_breaker calls stop_all on both managers."""
-        engine = engine_with_cb
-        engine._risk_manager.state.consecutive_losses = 5
-
-        mock_redis = AsyncMock()
-        mock_redis.set = AsyncMock()
-
-        mock_live_manager = MagicMock()
-        mock_live_manager.stop_all = AsyncMock()
-        mock_paper_manager = MagicMock()
-        mock_paper_manager.stop_all = AsyncMock()
-
-        with (
-            patch("squant.infra.redis.get_redis_client", return_value=mock_redis),
-            patch(
-                "squant.engine.live.manager.get_live_session_manager",
-                return_value=mock_live_manager,
-            ),
-            patch(
-                "squant.engine.paper.manager.get_session_manager",
-                return_value=mock_paper_manager,
-            ),
-        ):
-            await engine._trigger_global_circuit_breaker()
-
-        mock_live_manager.stop_all.assert_called_once()
-        mock_paper_manager.stop_all.assert_called_once()
-        # Verify reason is passed
-        live_reason = mock_live_manager.stop_all.call_args.kwargs.get("reason", "")
-        assert "Circuit breaker" in live_reason
-
-    @pytest.mark.asyncio
-    async def test_global_cb_redis_failure_degrades(self, engine_with_cb):
-        """Test _trigger_global_circuit_breaker continues if Redis write fails."""
-        engine = engine_with_cb
-        engine._risk_manager.state.consecutive_losses = 5
-
-        mock_redis = AsyncMock()
-        mock_redis.set = AsyncMock(side_effect=Exception("Redis down"))
-
-        mock_live_manager = MagicMock()
-        mock_live_manager.stop_all = AsyncMock()
-        mock_paper_manager = MagicMock()
-        mock_paper_manager.stop_all = AsyncMock()
-
-        with (
-            patch("squant.infra.redis.get_redis_client", return_value=mock_redis),
-            patch(
-                "squant.engine.live.manager.get_live_session_manager",
-                return_value=mock_live_manager,
-            ),
-            patch(
-                "squant.engine.paper.manager.get_session_manager",
-                return_value=mock_paper_manager,
-            ),
-        ):
-            # Should not raise despite Redis failure
-            await engine._trigger_global_circuit_breaker()
-
-        # Session managers should still be called despite Redis failure
-        mock_live_manager.stop_all.assert_called_once()
-        mock_paper_manager.stop_all.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_global_cb_stop_all_failure_does_not_block(self, engine_with_cb):
-        """Test stop_all failure on one manager does not prevent the other."""
-        engine = engine_with_cb
-        engine._risk_manager.state.consecutive_losses = 5
-
-        mock_redis = AsyncMock()
-        mock_redis.set = AsyncMock()
-
-        mock_live_manager = MagicMock()
-        mock_live_manager.stop_all = AsyncMock(side_effect=Exception("Live manager error"))
-        mock_paper_manager = MagicMock()
-        mock_paper_manager.stop_all = AsyncMock()
-
-        with (
-            patch("squant.infra.redis.get_redis_client", return_value=mock_redis),
-            patch(
-                "squant.engine.live.manager.get_live_session_manager",
-                return_value=mock_live_manager,
-            ),
-            patch(
-                "squant.engine.paper.manager.get_session_manager",
-                return_value=mock_paper_manager,
-            ),
-        ):
-            # Should not raise even though live manager stop_all fails
-            await engine._trigger_global_circuit_breaker()
-
-        # Paper manager should still be called
-        mock_paper_manager.stop_all.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_global_cb_fallback_when_losses_not_captured(self, engine_with_cb):
-        """Test reason uses config threshold when _circuit_breaker_losses is None.
-
-        When the engine restarts mid-cycle (e.g. hot reload), _circuit_breaker_losses
-        may never have been set by _check_trade_completion. The reason message should
-        fall back to the config's circuit_breaker_loss_count instead of showing 0.
-        """
-        engine = engine_with_cb
-        # Simulate: _circuit_breaker_losses was never set (default None)
-        assert engine._circuit_breaker_losses is None
-
-        mock_redis = AsyncMock()
-        mock_redis.set = AsyncMock()
-
-        mock_live_manager = MagicMock()
-        mock_live_manager.stop_all = AsyncMock()
-        mock_paper_manager = MagicMock()
-        mock_paper_manager.stop_all = AsyncMock()
-
-        with (
-            patch("squant.infra.redis.get_redis_client", return_value=mock_redis),
-            patch(
-                "squant.engine.live.manager.get_live_session_manager",
-                return_value=mock_live_manager,
-            ),
-            patch(
-                "squant.engine.paper.manager.get_session_manager",
-                return_value=mock_paper_manager,
-            ),
-        ):
-            await engine._trigger_global_circuit_breaker()
-
-        import json
-
-        state_data = json.loads(mock_redis.set.call_args[0][1])
-        # Should use config threshold (5) instead of 0
-        assert "5 consecutive losses" in state_data["trigger_reason"]
-        assert "0 consecutive losses" not in state_data["trigger_reason"]
 
 
 class TestTotalLossLimitAutoStop:
