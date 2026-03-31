@@ -123,6 +123,12 @@ const mockLiveStatus: LiveTradingStatus = {
     max_order_size: 0.5,
     daily_trade_limit: 50,
     daily_loss_limit: 1000,
+    total_pnl: 200,
+    total_loss_limit: 0.2,
+    peak_equity: 10500,
+    current_drawdown: 0.01,
+    max_drawdown: 0.1,
+    circuit_breaker_until: null,
   },
 }
 
