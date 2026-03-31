@@ -1120,8 +1120,21 @@ class PaperTradingEngine:
         Called after _stop_impl() for risk auto-stop or resource limit exceeded,
         which would otherwise skip the normal persistence steps (6 and 8).
         Best-effort: failures are logged but do not propagate.
+
+        Order matters: on_stop (DB status update) runs FIRST so that the
+        engine_stopped WS event (fire-and-forget from _stop_impl) arrives
+        after DB is already STOPPED. Otherwise the frontend's loadSession()
+        would read stale RUNNING status from DB.
         """
-        # Step 6: persist latest equity snapshot
+        # Step 1: notify service layer to update DB status (must be first —
+        # the engine_stopped WS task fires during these awaits)
+        if self._on_stop:
+            try:
+                await self._on_stop()
+            except Exception as e:
+                logger.warning(f"on_stop callback failed for {self._run_id}: {e}")
+
+        # Step 2: persist latest equity snapshot
         if self._context.equity_curve:
             latest_snapshot = self._context.equity_curve[-1]
             persisted = False
@@ -1134,20 +1147,13 @@ class PaperTradingEngine:
             if not persisted:
                 self._append_pending_snapshot(latest_snapshot)
 
-        # Step 8: persist result state for crash recovery
+        # Step 3: persist result state for crash recovery
         if self._on_result:
             try:
                 result_data = self.build_result_for_persistence()
                 await self._on_result(str(self._run_id), result_data)
             except Exception as e:
                 logger.warning(f"Result persist on early stop failed for {self._run_id}: {e}")
-
-        # Step 9: notify service layer to update DB status
-        if self._on_stop:
-            try:
-                await self._on_stop()
-            except Exception as e:
-                logger.warning(f"on_stop callback failed for {self._run_id}: {e}")
 
     def _candle_to_bar(self, candle: WSCandle) -> Bar:
         """Convert WSCandle to Bar.
