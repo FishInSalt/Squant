@@ -1043,6 +1043,16 @@ class LiveTradingEngine:
                 # Flush order events before stopping to persist emergency close orders
                 await self._flush_order_events()
 
+                # Push state_update so frontend receives emergency close orders/fills
+                if self._on_event:
+                    try:
+                        event = self._build_state_update_event(
+                            "emergency_close", {"action": "positions_closed"}
+                        )
+                        await self._on_event(event)
+                    except Exception as e:
+                        logger.debug(f"Emergency close state push failed: {e}")
+
                 # Stop the engine — does NOT acquire _processing_lock (R3-002)
                 # so this is safe to call while holding the lock.
                 await self.stop(error="Emergency close executed", cancel_orders=False)
@@ -2968,22 +2978,33 @@ class LiveTradingEngine:
                                 )
                             case EngineEventType.BAR_CLOSE:
                                 await self._handle_bar_close(ev.data)
+                                # Build bar_close event AFTER _handle_bar_close so it
+                                # captures ALL logs written during bar processing
+                                # (order submissions, fills from REST polling, risk
+                                # warnings). Previously this was inside _handle_bar_close
+                                # and its _build_state_snapshot() consumed the log delta
+                                # before WS_FILL/WS_ORDER in the same batch could capture
+                                # their fill logs.
+                                if self._context._current_bar:
+                                    push_events.append(self._build_bar_close_event(
+                                        self._context._current_bar
+                                    ))
                     except Exception as e:
                         logger.exception(f"Event loop error for {self._run_id}: {e}")
                         if ev.type == EngineEventType.BAR_CLOSE:
                             await self.stop(error=f"Bar processing error: {e}")
                             return
 
-            # Fire-and-forget push OUTSIDE the lock
+            # Fire-and-forget push OUTSIDE the lock.
+            # Push ALL events: bar_close contains equity_point, state_update
+            # contains fill notifications — frontend needs both.
             if push_events and self._on_event:
-                # Push only the LAST state_update — it contains the most current
-                # state snapshot. Earlier ones in the batch are superseded.
-                last_event = push_events[-1]
                 try:
                     loop = asyncio.get_running_loop()
-                    task = loop.create_task(self._on_event(last_event))
-                    self._background_tasks.add(task)
-                    task.add_done_callback(self._background_tasks.discard)
+                    for evt in push_events:
+                        task = loop.create_task(self._on_event(evt))
+                        self._background_tasks.add(task)
+                        task.add_done_callback(self._background_tasks.discard)
                 except Exception as e:
                     logger.debug(f"State update push failed for {self._run_id}: {e}")
 
@@ -3258,16 +3279,10 @@ class LiveTradingEngine:
         # Final flush for any remaining events (e.g., from strategy callbacks)
         await self._flush_order_events()
 
-        # Emit bar close event via WebSocket
-        if self._on_event:
-            try:
-                event = self._build_bar_close_event(bar)
-                loop = asyncio.get_running_loop()
-                task = loop.create_task(self._on_event(event))
-                self._background_tasks.add(task)
-                task.add_done_callback(self._background_tasks.discard)
-            except Exception as e:
-                logger.debug(f"Event emit failed for {self._run_id}: {e}")
+        # NOTE: bar_close event push moved to _event_loop() to unify all
+        # pushes through push_events. This ensures _build_state_snapshot()
+        # is called once AFTER all processing, capturing all logs including
+        # fills that arrive during _process_order_requests() await.
 
         # Refresh Dead Man's Switch heartbeat (F-2)
         await self._refresh_dead_man_switch()
