@@ -2335,6 +2335,11 @@ class LiveTradingEngine:
         # Skip all order processing if circuit breaker was triggered
         if self._circuit_breaker_triggered:
             logger.warning("Skipping order processing: circuit breaker triggered")
+            self._context.log(
+                "Order processing skipped: circuit breaker active",
+                level="warning",
+                category="risk",
+            )
             return
 
         # F-7: Per-bar order submission cap to prevent exchange rate limit bans.
@@ -2372,6 +2377,11 @@ class LiveTradingEngine:
 
             if not risk_result.passed:
                 logger.warning(f"Order rejected by risk manager: {risk_result.reason}")
+                self._context.log(
+                    f"Order rejected (risk): {risk_result.reason}",
+                    level="warning",
+                    category="risk",
+                )
                 # Mark as rejected in context
                 order.status = OrderStatus.REJECTED
                 self._context._completed_orders.append(order)

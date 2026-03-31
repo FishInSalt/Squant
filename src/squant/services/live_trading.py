@@ -1024,7 +1024,7 @@ class LiveTradingService:
 
                 # Update DB directly (service.stop() won't run for self-stops)
                 async with get_session_context() as db_session:
-                    repo = BaseRepository[StrategyRun](db_session, StrategyRun)
+                    repo = BaseRepository[StrategyRun](StrategyRun, db_session)
                     await repo.update(
                         run_id,
                         status=RunStatus.STOPPED,
