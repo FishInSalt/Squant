@@ -353,7 +353,7 @@ class PaperTradingEngine:
         Args:
             error: Optional error message if stopping due to error.
         """
-        if error:
+        if error and not self._error_message:
             self._error_message = error
 
         # Always acquire the lock so callers are guaranteed that

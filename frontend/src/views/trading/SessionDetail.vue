@@ -633,7 +633,7 @@
                   :percentage="drawdownPercent"
                   :color="riskProgressColor(drawdownPercent)"
                   :stroke-width="14"
-                  :format="() => `${((riskState!.current_drawdown ?? 0) * 100).toFixed(1)}% / ${((riskState!.max_drawdown ?? 0) * 100).toFixed(1)}%`"
+                  :format="() => `${((riskState!.current_drawdown ?? 0) * 100).toFixed(3)}% / ${((riskState!.max_drawdown ?? 0) * 100).toFixed(3)}%`"
                 />
               </div>
               <!-- Row 2: 日交易次数进度 (半行) + 日盈亏 + 累计盈亏 -->

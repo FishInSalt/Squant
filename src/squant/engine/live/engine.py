@@ -594,7 +594,7 @@ class LiveTradingEngine:
         # Set flag early to prevent further candle processing
         self._is_running = False
 
-        if error:
+        if error and not self._error_message:
             self._error_message = error
 
         # Shut down event loop
