@@ -40,6 +40,28 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# Mapping from legacy risk state keys to current unified keys.
+_RISK_STATE_KEY_RENAMES = {
+    "daily_loss_limit_pct": "daily_loss_limit",
+    "total_loss_limit_pct": "total_loss_limit",
+    "max_position_size_pct": "max_position_size",
+    "max_order_size_pct": "max_order_size",
+    "circuit_breaker_triggered": "circuit_breaker_active",
+    "max_drawdown_pct": "max_drawdown",
+}
+
+
+def _normalize_risk_state_keys(risk_state: dict | None) -> dict | None:
+    """Rename legacy risk state keys to unified names."""
+    if not risk_state:
+        return risk_state
+    result = {}
+    for key, value in risk_state.items():
+        new_key = _RISK_STATE_KEY_RENAMES.get(key, key)
+        if new_key not in result:
+            result[new_key] = value
+    return result
+
 
 class LiveTradingError(Exception):
     """Base error for live trading operations."""
@@ -1306,7 +1328,9 @@ class LiveTradingService:
                     "trades_count": run.result.get("trades_count", 0),
                     "trades": run.result.get("trades", []),
                     "open_trade": run.result.get("open_trade"),
-                    "risk_state": run.result.get("risk_state"),
+                    "risk_state": _normalize_risk_state_keys(
+                        run.result.get("risk_state")
+                    ),
                 }
             )
         else:

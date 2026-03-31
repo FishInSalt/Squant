@@ -617,15 +617,7 @@
           <el-tab-pane v-if="isLive || isPaper" name="risk">
             <template #label>风控</template>
             <div v-if="riskState" class="risk-grid">
-              <div class="risk-item">
-                <span class="label">日盈亏</span>
-                <PriceCell
-                  :value="riskState.daily_pnl"
-                  :change="riskState.daily_pnl"
-                  show-sign
-                  class="value"
-                />
-              </div>
+              <!-- Row 1: 日亏损进度 + 当前回撤进度 -->
               <div class="risk-item wide">
                 <span class="label">日亏损限额</span>
                 <el-progress
@@ -633,15 +625,6 @@
                   :color="riskProgressColor(dailyLossPercent)"
                   :stroke-width="14"
                   :format="() => `${formatNumber(Math.abs(riskState!.daily_pnl), 2)} / ${formatNumber(dailyLossLimitAbs, 2)}`"
-                />
-              </div>
-              <div class="risk-item wide">
-                <span class="label">日交易次数</span>
-                <el-progress
-                  :percentage="dailyTradePercent"
-                  :color="riskProgressColor(dailyTradePercent)"
-                  :stroke-width="14"
-                  :format="() => `${riskState!.daily_trade_count} / ${riskState!.daily_trade_limit}`"
                 />
               </div>
               <div class="risk-item wide">
@@ -653,15 +636,37 @@
                   :format="() => `${((riskState!.current_drawdown ?? 0) * 100).toFixed(1)}% / ${((riskState!.max_drawdown ?? 0) * 100).toFixed(0)}%`"
                 />
               </div>
+              <!-- Row 2: 日交易次数进度 (半行) + 日盈亏 + 累计盈亏 -->
+              <div class="risk-item wide">
+                <span class="label">日交易次数</span>
+                <el-progress
+                  :percentage="dailyTradePercent"
+                  :color="riskProgressColor(dailyTradePercent)"
+                  :stroke-width="14"
+                  :format="() => `${riskState!.daily_trade_count} / ${riskState!.daily_trade_limit}`"
+                />
+              </div>
+              <div class="risk-item">
+                <span class="label">日盈亏</span>
+                <PriceCell
+                  :value="riskState.daily_pnl"
+                  :change="riskState.daily_pnl"
+                  :decimals="2"
+                  show-sign
+                  class="value"
+                />
+              </div>
               <div class="risk-item">
                 <span class="label">累计盈亏</span>
                 <PriceCell
                   :value="riskState.total_pnl"
                   :change="riskState.total_pnl"
+                  :decimals="2"
                   show-sign
                   class="value"
                 />
               </div>
+              <!-- Row 3: 连续亏损 + 熔断状态 + 最大持仓 + 最大下单 -->
               <div class="risk-item">
                 <span class="label">连续亏损</span>
                 <span class="value">{{ riskState.consecutive_losses }}</span>
@@ -674,11 +679,11 @@
               </div>
               <div class="risk-item">
                 <span class="label">最大持仓比例</span>
-                <span class="value">{{ (riskState.max_position_size * 100).toFixed(0) }}%</span>
+                <span class="value">{{ ((riskState.max_position_size ?? 0) * 100).toFixed(0) }}%</span>
               </div>
               <div class="risk-item">
                 <span class="label">最大下单比例</span>
-                <span class="value">{{ (riskState.max_order_size * 100).toFixed(0) }}%</span>
+                <span class="value">{{ ((riskState.max_order_size ?? 0) * 100).toFixed(0) }}%</span>
               </div>
             </div>
             <el-empty v-else description="暂无风控数据" :image-size="80" />
