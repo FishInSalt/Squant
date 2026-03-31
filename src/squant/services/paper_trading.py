@@ -22,6 +22,7 @@ from squant.engine.backtest.types import EquitySnapshot
 from squant.engine.paper.engine import PaperTradingEngine
 from squant.engine.paper.manager import get_session_manager
 from squant.engine.resource_limits import resource_limiter
+from squant.engine.risk import normalize_risk_state_keys as _normalize_risk_state_keys
 from squant.engine.sandbox import compile_strategy
 from squant.infra.repository import BaseRepository
 from squant.infra.trading_logger import close_trading_logger, create_trading_logger
@@ -31,8 +32,6 @@ from squant.models.strategy import StrategyRun
 from squant.websocket.manager import get_stream_manager
 
 logger = logging.getLogger(__name__)
-
-from squant.engine.risk import normalize_risk_state_keys as _normalize_risk_state_keys
 
 
 class PaperTradingError(Exception):

@@ -25,6 +25,7 @@ from squant.engine.backtest.types import EquitySnapshot
 from squant.engine.live.engine import LiveTradingEngine
 from squant.engine.live.manager import get_live_session_manager
 from squant.engine.risk import RiskConfig
+from squant.engine.risk import normalize_risk_state_keys as _normalize_risk_state_keys
 from squant.engine.sandbox import compile_strategy
 from squant.infra.exchange.ccxt import CCXTRestAdapter, ExchangeCredentials
 from squant.infra.repository import BaseRepository
@@ -39,8 +40,6 @@ if TYPE_CHECKING:
     from squant.schemas.live_trading import AccountBalanceResponse
 
 logger = logging.getLogger(__name__)
-
-from squant.engine.risk import normalize_risk_state_keys as _normalize_risk_state_keys
 
 
 class LiveTradingError(Exception):
