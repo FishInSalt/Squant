@@ -1208,6 +1208,8 @@ class TestStateSummary:
         risk_manager.state.daily_pnl = Decimal("-100")
         risk_manager.state.total_pnl = Decimal("-500")
         risk_manager.state.consecutive_losses = 2
+        # daily_pnl in summary uses equity difference (current - daily_start)
+        risk_manager.update_equity(Decimal("9900"))
 
         summary = risk_manager.get_state_summary()
 
@@ -1217,7 +1219,7 @@ class TestStateSummary:
         assert summary["total_pnl"] == -500.0
         assert summary["total_loss_limit"] == 0.2  # 20% default
         assert summary["total_loss_limit_triggered"] is False
-        assert summary["current_equity"] == 10000.0
+        assert summary["current_equity"] == 9900.0
         assert summary["consecutive_losses"] == 2
         assert summary["circuit_breaker_active"] is False
 

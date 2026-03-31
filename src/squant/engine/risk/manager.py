@@ -737,7 +737,11 @@ class RiskManager:
 
             if same_day:
                 self.state.daily_trade_count = state_dict.get("daily_trade_count", 0)
-                self.state.daily_pnl = Decimal(str(state_dict.get("daily_pnl", 0)))
+                # Prefer daily_pnl_realized (the trade accumulator) for restore;
+                # fall back to daily_pnl for backward compat with old snapshots.
+                self.state.daily_pnl = Decimal(
+                    str(state_dict.get("daily_pnl_realized", state_dict.get("daily_pnl", 0)))
+                )
                 self.state.daily_start_equity = Decimal(
                     str(state_dict.get("daily_start_equity", self._current_equity))
                 )
@@ -779,6 +783,7 @@ class RiskManager:
             "daily_trade_count": self.state.daily_trade_count,
             "daily_trade_limit": self.config.daily_trade_limit,
             "daily_pnl": daily_pnl_equity,
+            "daily_pnl_realized": float(self.state.daily_pnl),
             "daily_loss_limit": float(self.config.daily_loss_limit),
             "unrealized_pnl": float(self.state.unrealized_pnl),
             "daily_start_unrealized_pnl": float(self.state.daily_start_unrealized_pnl),
