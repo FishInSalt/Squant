@@ -1047,7 +1047,7 @@ class LiveTradingService:
                     repo = BaseRepository[StrategyRun](db_session, StrategyRun)
                     await repo.update(
                         run_id,
-                        status=RunStatus.ERROR if error_message else RunStatus.STOPPED,
+                        status=RunStatus.STOPPED,
                         result=result_data,
                         stopped_at=datetime.now(UTC),
                         error_message=error_message,

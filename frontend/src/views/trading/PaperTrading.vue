@@ -88,8 +88,8 @@
               <el-form-item label="初始资金" prop="initial_capital">
                 <el-input-number
                   v-model="form.initial_capital"
-                  :min="100"
-                  :step="1000"
+                  :min="10"
+                  :step="10"
                   style="width: 100%"
                 />
               </el-form-item>
