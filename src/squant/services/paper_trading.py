@@ -398,6 +398,7 @@ class PaperTradingService:
                 on_result=self._create_result_callback(),
                 risk_config=engine_risk_config,
                 on_event=self._create_event_callback(UUID(run.id)),
+                on_stop=self._create_stop_callback(UUID(run.id)),
             )
 
             # Register with session manager
@@ -611,6 +612,44 @@ class PaperTradingService:
                 await repo.update(run_id, result=result)
 
         return _persist_result
+
+    @staticmethod
+    def _create_stop_callback(run_id: UUID) -> Any:
+        """Create callback for engine self-stop (risk control, resource limit).
+
+        Updates the StrategyRun DB record to STOPPED status. Without this,
+        the DB stays RUNNING while the engine is dead.
+        """
+
+        async def _on_engine_stop() -> None:
+            from squant.infra.database import get_session_context
+
+            try:
+                session_manager = get_session_manager()
+                engine = session_manager.get(run_id)
+
+                result_data = None
+                error_message = None
+                if engine:
+                    result_data = engine.build_result_for_persistence()
+                    error_message = engine.error_message
+
+                async with get_session_context() as db_session:
+                    repo = StrategyRunRepository(db_session)
+                    await repo.update(
+                        run_id,
+                        status=RunStatus.STOPPED,
+                        result=result_data,
+                        stopped_at=datetime.now(UTC),
+                        error_message=error_message,
+                    )
+
+                await session_manager.unregister(run_id)
+                logger.info(f"Paper engine self-stop: updated DB for {run_id}")
+            except Exception as e:
+                logger.error(f"Paper engine self-stop callback failed for {run_id}: {e}")
+
+        return _on_engine_stop
 
     @staticmethod
     def _create_event_callback(run_id: UUID) -> Any:
@@ -997,6 +1036,7 @@ class PaperTradingService:
             on_result=self._create_result_callback(),
             risk_config=engine_risk_config,
             on_event=self._create_event_callback(UUID(run.id)),
+            on_stop=self._create_stop_callback(UUID(run.id)),
         )
 
         # Restore trading state from result JSONB

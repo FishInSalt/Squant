@@ -31,6 +31,8 @@ SnapshotPersistCallback = Callable[[str, EquitySnapshot], Awaitable[None]]
 ResultPersistCallback = Callable[[str, dict[str, Any]], Awaitable[None]]
 # Callback type for WebSocket event emission
 EventCallback = Callable[[dict[str, Any]], Awaitable[None]]
+# Callback type for engine self-stop (risk control, resource limit)
+SelfStopCallback = Callable[[], Awaitable[None]]
 
 logger = logging.getLogger(__name__)
 
@@ -109,6 +111,7 @@ class PaperTradingEngine:
         risk_config: RiskConfig | None = None,
         max_volume_participation: Decimal | None = None,
         on_event: EventCallback | None = None,
+        on_stop: SelfStopCallback | None = None,
     ):
         """Initialize paper trading engine.
 
@@ -133,6 +136,8 @@ class PaperTradingEngine:
                 filled in a single order (e.g., 0.1 = 10%). None disables the check.
             on_event: Optional callback for WebSocket event emission.
                 Called after each bar to push incremental status updates.
+            on_stop: Optional callback when engine stops itself (risk control,
+                resource limit). Called to notify service layer to update DB status.
         """
         self._run_id = run_id
         self._strategy = strategy
@@ -202,6 +207,7 @@ class PaperTradingEngine:
         # Synchronous persistence callbacks
         self._on_snapshot = on_snapshot
         self._on_result = on_result
+        self._on_stop = on_stop
 
         # Pending equity snapshots for batch persistence (fallback when callback fails)
         self._pending_snapshots: list[EquitySnapshot] = []
@@ -1135,6 +1141,13 @@ class PaperTradingEngine:
                 await self._on_result(str(self._run_id), result_data)
             except Exception as e:
                 logger.warning(f"Result persist on early stop failed for {self._run_id}: {e}")
+
+        # Step 9: notify service layer to update DB status
+        if self._on_stop:
+            try:
+                await self._on_stop()
+            except Exception as e:
+                logger.warning(f"on_stop callback failed for {self._run_id}: {e}")
 
     def _candle_to_bar(self, candle: WSCandle) -> Bar:
         """Convert WSCandle to Bar.
