@@ -117,7 +117,7 @@ class TestRiskConfigRequest:
             )
 
     def test_circuit_breaker_threshold_range(self):
-        """Test circuit_breaker_threshold range (1-10)."""
+        """Test circuit_breaker_threshold range (1-100)."""
         # < 1 should fail
         with pytest.raises(ValidationError):
             RiskConfigRequest(
@@ -128,14 +128,14 @@ class TestRiskConfigRequest:
                 circuit_breaker_threshold=0,
             )
 
-        # > 10 should fail
+        # > 100 should fail
         with pytest.raises(ValidationError):
             RiskConfigRequest(
                 max_position_size=Decimal("0.5"),
                 max_order_size=Decimal("0.1"),
                 daily_trade_limit=100,
                 daily_loss_limit=Decimal("0.05"),
-                circuit_breaker_threshold=11,
+                circuit_breaker_threshold=101,
             )
 
     def test_boundary_values(self):

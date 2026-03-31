@@ -594,7 +594,7 @@ class LiveTradingEngine:
         # Set flag early to prevent further candle processing
         self._is_running = False
 
-        if error:
+        if error and not self._error_message:
             self._error_message = error
 
         # Shut down event loop
@@ -1042,6 +1042,16 @@ class LiveTradingEngine:
 
                 # Flush order events before stopping to persist emergency close orders
                 await self._flush_order_events()
+
+                # Push state_update so frontend receives emergency close orders/fills
+                if self._on_event:
+                    try:
+                        event = self._build_state_update_event(
+                            "emergency_close", {"action": "positions_closed"}
+                        )
+                        await self._on_event(event)
+                    except Exception as e:
+                        logger.debug(f"Emergency close state push failed: {e}")
 
                 # Stop the engine — does NOT acquire _processing_lock (R3-002)
                 # so this is safe to call while holding the lock.
@@ -2335,6 +2345,11 @@ class LiveTradingEngine:
         # Skip all order processing if circuit breaker was triggered
         if self._circuit_breaker_triggered:
             logger.warning("Skipping order processing: circuit breaker triggered")
+            self._context.log(
+                "Order processing skipped: circuit breaker active",
+                level="warning",
+                category="risk",
+            )
             return
 
         # F-7: Per-bar order submission cap to prevent exchange rate limit bans.
@@ -2372,6 +2387,11 @@ class LiveTradingEngine:
 
             if not risk_result.passed:
                 logger.warning(f"Order rejected by risk manager: {risk_result.reason}")
+                self._context.log(
+                    f"Order rejected (risk): {risk_result.reason}",
+                    level="warning",
+                    category="risk",
+                )
                 # Mark as rejected in context
                 order.status = OrderStatus.REJECTED
                 self._context._completed_orders.append(order)
@@ -2958,22 +2978,33 @@ class LiveTradingEngine:
                                 )
                             case EngineEventType.BAR_CLOSE:
                                 await self._handle_bar_close(ev.data)
+                                # Build bar_close event AFTER _handle_bar_close so it
+                                # captures ALL logs written during bar processing
+                                # (order submissions, fills from REST polling, risk
+                                # warnings). Previously this was inside _handle_bar_close
+                                # and its _build_state_snapshot() consumed the log delta
+                                # before WS_FILL/WS_ORDER in the same batch could capture
+                                # their fill logs.
+                                if self._context._current_bar:
+                                    push_events.append(self._build_bar_close_event(
+                                        self._context._current_bar
+                                    ))
                     except Exception as e:
                         logger.exception(f"Event loop error for {self._run_id}: {e}")
                         if ev.type == EngineEventType.BAR_CLOSE:
                             await self.stop(error=f"Bar processing error: {e}")
                             return
 
-            # Fire-and-forget push OUTSIDE the lock
+            # Fire-and-forget push OUTSIDE the lock.
+            # Push ALL events: bar_close contains equity_point, state_update
+            # contains fill notifications — frontend needs both.
             if push_events and self._on_event:
-                # Push only the LAST state_update — it contains the most current
-                # state snapshot. Earlier ones in the batch are superseded.
-                last_event = push_events[-1]
                 try:
                     loop = asyncio.get_running_loop()
-                    task = loop.create_task(self._on_event(last_event))
-                    self._background_tasks.add(task)
-                    task.add_done_callback(self._background_tasks.discard)
+                    for evt in push_events:
+                        task = loop.create_task(self._on_event(evt))
+                        self._background_tasks.add(task)
+                        task.add_done_callback(self._background_tasks.discard)
                 except Exception as e:
                     logger.debug(f"State update push failed for {self._run_id}: {e}")
 
@@ -3090,6 +3121,68 @@ class LiveTradingEngine:
             await self.stop(error=msg)
             return
 
+        # Max drawdown auto-stop (M3)
+        if self._risk_manager.check_max_drawdown():
+            peak = self._risk_manager.state.peak_equity
+            current = self._context.equity
+            drawdown_pct = (
+                (peak - current) / peak * 100 if peak > 0 else 0
+            )
+            msg = f"最大回撤达到 {drawdown_pct:.1f}%，自动停止"
+            logger.warning(f"Live engine {self._run_id}: {msg}")
+            self._context.log(msg, level="error", category="risk")
+            _fire_notification(
+                self._run_id,
+                level="critical",
+                event_type="max_drawdown_stop",
+                title="最大回撤触发",
+                message=f"实盘会话 {self._symbol} {msg}",
+                details={
+                    "symbol": self._symbol,
+                    "peak_equity": str(peak),
+                    "current_equity": str(current),
+                    "drawdown_pct": f"{drawdown_pct:.1f}",
+                },
+            )
+            await self.stop(error=msg)
+            return
+
+        # Daily loss warning (M5)
+        if self._risk_manager.check_daily_loss_warning():
+            daily_pnl = self._risk_manager.state.daily_pnl
+            limit = self._risk_manager.config.daily_loss_limit
+            threshold = self._risk_manager.config.daily_loss_warning_threshold
+            pct = threshold * 100
+            self._context.log(
+                f"日亏损预警：已达限额 {pct:.0f}%",
+                level="warning",
+                category="risk",
+            )
+            _fire_notification(
+                self._run_id,
+                level="warning",
+                event_type="daily_loss_warning",
+                title="日亏损预警",
+                message=f"日亏损已达限额的 {pct:.0f}%",
+                details={"daily_pnl": str(daily_pnl), "limit": str(limit)},
+            )
+
+        # Daily loss limit breach notification (one-time per day)
+        if self._risk_manager.check_daily_loss_limit_breached():
+            self._context.log(
+                f"日亏损已达限额 {self._risk_manager.config.daily_loss_limit:.0%}，"
+                f"新买入将被拒绝",
+                level="warning",
+                category="risk",
+            )
+            _fire_notification(
+                self._run_id,
+                level="critical",
+                event_type="daily_loss_limit_breached",
+                title="日亏损限额触发",
+                message=f"日亏损已达限额 {self._risk_manager.config.daily_loss_limit:.0%}，新买入将被拒绝",
+            )
+
         # Record equity snapshot BEFORE strategy execution to capture
         # the portfolio state at bar close (C-DEFER-8)
         self._context._record_equity_snapshot(bar.time)
@@ -3186,16 +3279,10 @@ class LiveTradingEngine:
         # Final flush for any remaining events (e.g., from strategy callbacks)
         await self._flush_order_events()
 
-        # Emit bar close event via WebSocket
-        if self._on_event:
-            try:
-                event = self._build_bar_close_event(bar)
-                loop = asyncio.get_running_loop()
-                task = loop.create_task(self._on_event(event))
-                self._background_tasks.add(task)
-                task.add_done_callback(self._background_tasks.discard)
-            except Exception as e:
-                logger.debug(f"Event emit failed for {self._run_id}: {e}")
+        # NOTE: bar_close event push moved to _event_loop() to unify all
+        # pushes through push_events. This ensures _build_state_snapshot()
+        # is called once AFTER all processing, capturing all logs including
+        # fills that arrive during _process_order_requests() await.
 
         # Refresh Dead Man's Switch heartbeat (F-2)
         await self._refresh_dead_man_switch()

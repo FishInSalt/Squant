@@ -24,6 +24,7 @@ class RiskRuleType(str, Enum):
     TOTAL_LOSS_LIMIT = "total_loss_limit"  # RSK-004 (cumulative)
     PRICE_DEVIATION_LIMIT = "price_deviation_limit"  # RSK-005
     CIRCUIT_BREAKER = "circuit_breaker"  # RSK-006
+    FREQUENCY_LIMIT = "frequency_limit"  # RSK-007
 
 
 class RiskAction(str, Enum):
@@ -124,6 +125,29 @@ class RiskConfig(BaseModel):
     circuit_breaker_cooldown_minutes: int = Field(
         default=30,
         description="Cooldown period in minutes after circuit breaker triggers",
+    )
+
+    # Frequency limit (RSK-007)
+    max_orders_per_minute: int = Field(
+        default=20,
+        ge=1,
+        description="Maximum order submissions per minute (strategy-level protection)",
+    )
+
+    # Max drawdown auto-stop
+    max_drawdown: Decimal = Field(
+        default=Decimal("0.20"),
+        gt=Decimal("0"),
+        le=Decimal("1"),
+        description="Maximum drawdown from peak equity (0.20 = 20%)",
+    )
+
+    # Daily loss warning
+    daily_loss_warning_threshold: Decimal = Field(
+        default=Decimal("0.8"),
+        gt=Decimal("0"),
+        le=Decimal("1"),
+        description="Daily loss warning threshold as fraction of daily_loss_limit (0.8 = 80%)",
     )
 
     # General settings
@@ -262,6 +286,17 @@ class RiskState(BaseModel):
     unrealized_pnl: Decimal = Decimal("0")
     daily_start_unrealized_pnl: Decimal = Decimal("0")
 
+    # Peak equity tracking (max drawdown)
+    peak_equity: Decimal = Decimal("0")
+
+    # Frequency limit sliding window (not persisted)
+    order_timestamps: list[float] = Field(default_factory=list)
+
+    # Daily loss warning dedup
+    daily_loss_warned: bool = False
+    # Daily loss limit breach notification dedup (per-bar monitoring)
+    daily_loss_limit_notified: bool = False
+
     def reset_daily_stats(self, equity: Decimal) -> None:
         """Reset daily statistics.
 
@@ -278,6 +313,8 @@ class RiskState(BaseModel):
         self.daily_start_equity = equity
         self.daily_start_unrealized_pnl = self.unrealized_pnl
         self.daily_reset_time = datetime.now(UTC)
+        self.daily_loss_warned = False
+        self.daily_loss_limit_notified = False
 
     def record_trade(self, pnl: Decimal) -> None:
         """Record a completed trade (position fully closed).

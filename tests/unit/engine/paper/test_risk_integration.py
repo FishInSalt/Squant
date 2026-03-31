@@ -152,7 +152,7 @@ class TestRiskManagerIntegration:
         assert "risk_state" in snapshot
         assert snapshot["risk_state"] is not None
         assert "daily_trade_count" in snapshot["risk_state"]
-        assert "circuit_breaker_triggered" in snapshot["risk_state"]
+        assert "circuit_breaker_active" in snapshot["risk_state"]
 
     async def test_no_risk_state_without_config(self):
         """get_state_snapshot() has risk_state=None without risk config."""

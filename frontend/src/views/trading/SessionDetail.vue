@@ -614,27 +614,29 @@
             </div>
           </el-tab-pane>
 
-          <el-tab-pane v-if="isLive" name="risk">
+          <el-tab-pane v-if="isLive || isPaper" name="risk">
             <template #label>风控</template>
             <div v-if="riskState" class="risk-grid">
-              <div class="risk-item">
-                <span class="label">日盈亏</span>
-                <PriceCell
-                  :value="riskState.daily_pnl"
-                  :change="riskState.daily_pnl"
-                  show-sign
-                  class="value"
-                />
-              </div>
+              <!-- Row 1: 日亏损进度 + 当前回撤进度 -->
               <div class="risk-item wide">
                 <span class="label">日亏损限额</span>
                 <el-progress
                   :percentage="dailyLossPercent"
                   :color="riskProgressColor(dailyLossPercent)"
                   :stroke-width="14"
-                  :format="() => `${formatNumber(Math.abs(riskState!.daily_pnl), 2)} / ${formatNumber(dailyLossLimitAbs, 2)}`"
+                  :format="() => `${formatNumber(dailyLossAmount, 2)} / ${formatNumber(dailyLossLimitAbs, 2)}`"
                 />
               </div>
+              <div class="risk-item wide">
+                <span class="label">当前回撤</span>
+                <el-progress
+                  :percentage="drawdownPercent"
+                  :color="riskProgressColor(drawdownPercent)"
+                  :stroke-width="14"
+                  :format="() => `${((riskState!.current_drawdown ?? 0) * 100).toFixed(3)}% / ${((riskState!.max_drawdown ?? 0) * 100).toFixed(3)}%`"
+                />
+              </div>
+              <!-- Row 2: 日交易次数进度 (半行) + 日盈亏 + 累计盈亏 -->
               <div class="risk-item wide">
                 <span class="label">日交易次数</span>
                 <el-progress
@@ -645,22 +647,48 @@
                 />
               </div>
               <div class="risk-item">
+                <span class="label">日盈亏</span>
+                <PriceCell
+                  :value="riskState.daily_pnl"
+                  :change="riskState.daily_pnl"
+                  :decimals="2"
+                  show-sign
+                  class="value"
+                />
+              </div>
+              <div class="risk-item">
+                <span class="label">累计盈亏</span>
+                <PriceCell
+                  :value="riskState.total_pnl"
+                  :change="riskState.total_pnl"
+                  :decimals="2"
+                  show-sign
+                  class="value"
+                />
+              </div>
+              <!-- Row 3: 峰值权益 + 连续亏损 + 熔断状态 + 最大持仓 -->
+              <div class="risk-item">
+                <span class="label">峰值权益</span>
+                <span class="value">{{ formatNumber(riskState.peak_equity ?? 0, 2) }}</span>
+              </div>
+              <div class="risk-item">
                 <span class="label">连续亏损</span>
                 <span class="value">{{ riskState.consecutive_losses }}</span>
               </div>
               <div class="risk-item">
                 <span class="label">熔断状态</span>
                 <el-tag :type="riskState.circuit_breaker_active ? 'danger' : 'success'" size="small">
-                  {{ riskState.circuit_breaker_active ? '已触发' : '正常' }}
+                  {{ riskState.circuit_breaker_active ? (riskState.circuit_breaker_until ? '冷却中' : '已触发') : '正常' }}
                 </el-tag>
               </div>
               <div class="risk-item">
                 <span class="label">最大持仓比例</span>
-                <span class="value">{{ (riskState.max_position_size * 100).toFixed(0) }}%</span>
+                <span class="value">{{ ((riskState.max_position_size ?? 0) * 100).toFixed(0) }}%</span>
               </div>
+              <!-- Row 4: 最大下单比例 -->
               <div class="risk-item">
                 <span class="label">最大下单比例</span>
-                <span class="value">{{ (riskState.max_order_size * 100).toFixed(0) }}%</span>
+                <span class="value">{{ ((riskState.max_order_size ?? 0) * 100).toFixed(0) }}%</span>
               </div>
             </div>
             <el-empty v-else description="暂无风控数据" :image-size="80" />
@@ -941,18 +969,25 @@ async function loadAllLiveOrders() {
 }
 
 const riskState = computed<RiskState | null>(() => {
-  if (!status.value || !isLive.value) return null
-  return (status.value as LiveTradingStatus).risk_state || null
+  if (!status.value) return null
+  // Both Paper and Live now use the same key names from get_state_summary()
+  const raw = (status.value as Record<string, unknown>).risk_state as RiskState | undefined
+  return raw || null
 })
 
 const dailyLossLimitAbs = computed(() =>
   (riskState.value?.daily_loss_limit ?? 0) * (status.value?.initial_capital ?? 0))
 
+const dailyLossAmount = computed(() =>
+  Math.max(0, -(riskState.value?.daily_pnl ?? 0)))
 const dailyLossPercent = computed(() =>
-  dailyLossLimitAbs.value ? Math.min(100, (Math.abs(riskState.value!.daily_pnl) / dailyLossLimitAbs.value) * 100) : 0)
+  dailyLossLimitAbs.value ? Math.min(100, (dailyLossAmount.value / dailyLossLimitAbs.value) * 100) : 0)
 
 const dailyTradePercent = computed(() =>
   riskState.value?.daily_trade_limit ? Math.min(100, (riskState.value.daily_trade_count / riskState.value.daily_trade_limit) * 100) : 0)
+
+const drawdownPercent = computed(() =>
+  riskState.value?.max_drawdown ? Math.min(100, ((riskState.value.current_drawdown ?? 0) / riskState.value.max_drawdown) * 100) : 0)
 
 function riskProgressColor(pct: number): string {
   if (pct >= 90) return '#F56C6C'
@@ -1017,7 +1052,7 @@ function applyStateSnapshot(state: Record<string, unknown>) {
 
   // Open trade
   if (isPaper.value) {
-    ;(status.value as PaperTradingStatus).open_trade = state.open_trade as OpenTrade | undefined
+    (status.value as PaperTradingStatus).open_trade = state.open_trade as OpenTrade | undefined
   } else if (isLive.value) {
     const ot = state.open_trade as OpenTrade | undefined
     liveOpenTrade.value = ot
@@ -1027,7 +1062,7 @@ function applyStateSnapshot(state: Record<string, unknown>) {
 
   // Risk state
   if (state.risk_state) {
-    ;(status.value as LiveTradingStatus).risk_state = state.risk_state as RiskState
+    (status.value as LiveTradingStatus).risk_state = state.risk_state as RiskState
   }
 }
 
@@ -1047,10 +1082,21 @@ function appendIncrementalData(data: Record<string, unknown>) {
   }
 
   // Trades
-  const newTrades = data.new_trades as Trade[] | undefined
+  const newTrades = data.new_trades as Record<string, unknown>[] | undefined
   if (Array.isArray(newTrades) && newTrades.length && isPaper.value) {
     const ps = status.value as PaperTradingStatus
-    if (ps.trades) ps.trades.push(...newTrades)
+    if (ps.trades) {
+      const parsed = newTrades.map((t) => ({
+        ...t,
+        pnl: typeof t.pnl === 'string' ? parseFloat(t.pnl) : t.pnl,
+        pnl_pct: typeof t.pnl_pct === 'string' ? parseFloat(t.pnl_pct) : t.pnl_pct,
+        amount: typeof t.amount === 'string' ? parseFloat(t.amount) : t.amount,
+        entry_price: typeof t.entry_price === 'string' ? parseFloat(t.entry_price) : t.entry_price,
+        exit_price: typeof t.exit_price === 'string' ? parseFloat(t.exit_price) : t.exit_price,
+        fees: typeof t.fees === 'string' ? parseFloat(t.fees) : t.fees,
+      })) as Trade[]
+      ps.trades.push(...parsed)
+    }
   }
 
   // Logs

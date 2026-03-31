@@ -40,6 +40,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+from squant.engine.risk import normalize_risk_state_keys as _normalize_risk_state_keys
+
 
 class LiveTradingError(Exception):
     """Base error for live trading operations."""
@@ -1022,10 +1024,10 @@ class LiveTradingService:
 
                 # Update DB directly (service.stop() won't run for self-stops)
                 async with get_session_context() as db_session:
-                    repo = BaseRepository[StrategyRun](db_session, StrategyRun)
+                    repo = BaseRepository[StrategyRun](StrategyRun, db_session)
                     await repo.update(
                         run_id,
-                        status=RunStatus.ERROR if error_message else RunStatus.STOPPED,
+                        status=RunStatus.STOPPED,
                         result=result_data,
                         stopped_at=datetime.now(UTC),
                         error_message=error_message,
@@ -1306,7 +1308,9 @@ class LiveTradingService:
                     "trades_count": run.result.get("trades_count", 0),
                     "trades": run.result.get("trades", []),
                     "open_trade": run.result.get("open_trade"),
-                    "risk_state": run.result.get("risk_state"),
+                    "risk_state": _normalize_risk_state_keys(
+                        run.result.get("risk_state")
+                    ),
                 }
             )
         else:

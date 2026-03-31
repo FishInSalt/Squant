@@ -10,6 +10,7 @@ import pytest
 from squant.engine.backtest.strategy_base import Strategy
 from squant.engine.backtest.types import Bar
 from squant.engine.paper.engine import PaperTradingEngine
+from squant.engine.risk.models import RiskConfig
 from squant.infra.exchange.ws_types import WSCandle
 
 
@@ -1883,3 +1884,112 @@ class TestUnclosedCandleHighLowMatching:
         )
         assert len(engine.context.pending_orders) == 0
         assert not engine.context.has_position("BTC/USDT")
+
+
+class TestPaperCircuitBreaker:
+    """Tests for paper engine circuit breaker (LCB3)."""
+
+    @pytest.mark.asyncio
+    async def test_circuit_breaker_flag_initialized(self):
+        """Paper engine should have _circuit_breaker_triggered flag."""
+        engine = PaperTradingEngine(
+            run_id=uuid4(),
+            strategy=SimpleStrategy(),
+            symbol="BTC/USDT",
+            timeframe="1m",
+            initial_capital=Decimal("10000"),
+            risk_config=RiskConfig(circuit_breaker_loss_count=3),
+        )
+        assert engine._circuit_breaker_triggered is False
+
+    @pytest.mark.asyncio
+    async def test_circuit_breaker_stops_paper_session(self):
+        """Paper engine should stop when circuit breaker triggers."""
+        engine = PaperTradingEngine(
+            run_id=uuid4(),
+            strategy=SimpleStrategy(),
+            symbol="BTC/USDT",
+            timeframe="1m",
+            initial_capital=Decimal("10000"),
+            risk_config=RiskConfig(circuit_breaker_loss_count=3),
+        )
+        await engine.start()
+        assert engine.is_running is True
+
+        # Simulate circuit breaker triggered
+        engine._risk_manager.state.circuit_breaker_triggered = True
+        engine._circuit_breaker_triggered = True
+
+        # Send a candle — engine should stop
+        candle = WSCandle(
+            symbol="BTC/USDT",
+            timeframe="1m",
+            timestamp=datetime.now(UTC),
+            open=Decimal("50000"),
+            high=Decimal("50100"),
+            low=Decimal("49900"),
+            close=Decimal("50000"),
+            volume=Decimal("100"),
+            is_closed=True,
+        )
+        await engine.process_candle(candle)
+
+        assert engine.is_running is False
+
+
+class TestPaperMaxDrawdown:
+    """Tests for M3 in paper engine: max drawdown detection."""
+
+    def test_drawdown_detected_when_breached(self):
+        """RiskManager should detect drawdown breach through paper engine."""
+        engine = PaperTradingEngine(
+            run_id=uuid4(),
+            strategy=SimpleStrategy(),
+            symbol="BTC/USDT",
+            timeframe="1m",
+            initial_capital=Decimal("10000"),
+            risk_config=RiskConfig(max_drawdown=Decimal("0.20")),
+        )
+        engine._risk_manager.state.peak_equity = Decimal("15000")
+        engine._risk_manager._current_equity = Decimal("10000")
+
+        result = engine._risk_manager.check_max_drawdown()
+        assert result is True
+
+    def test_drawdown_not_detected_within_limit(self):
+        """RiskManager should not trigger when drawdown is within limit."""
+        engine = PaperTradingEngine(
+            run_id=uuid4(),
+            strategy=SimpleStrategy(),
+            symbol="BTC/USDT",
+            timeframe="1m",
+            initial_capital=Decimal("10000"),
+            risk_config=RiskConfig(max_drawdown=Decimal("0.20")),
+        )
+        engine._risk_manager.state.peak_equity = Decimal("12000")
+        engine._risk_manager._current_equity = Decimal("10000")  # 16.7%
+
+        result = engine._risk_manager.check_max_drawdown()
+        assert result is False
+
+
+class TestPaperDailyLossWarning:
+    """Tests for M5 in paper engine: daily loss warning."""
+
+    def test_warning_triggered_at_threshold(self):
+        engine = PaperTradingEngine(
+            run_id=uuid4(),
+            strategy=SimpleStrategy(),
+            symbol="BTC/USDT",
+            timeframe="1m",
+            initial_capital=Decimal("10000"),
+            risk_config=RiskConfig(
+                daily_loss_limit=Decimal("0.05"),
+                daily_loss_warning_threshold=Decimal("0.8"),
+            ),
+        )
+        engine._risk_manager._current_equity = Decimal("9590")  # 4.1% drop = 82% of 5% limit
+
+        warned = engine._risk_manager.check_daily_loss_warning()
+        assert warned is True
+        assert engine._risk_manager.state.daily_loss_warned is True

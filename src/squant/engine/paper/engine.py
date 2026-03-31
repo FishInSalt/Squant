@@ -31,6 +31,8 @@ SnapshotPersistCallback = Callable[[str, EquitySnapshot], Awaitable[None]]
 ResultPersistCallback = Callable[[str, dict[str, Any]], Awaitable[None]]
 # Callback type for WebSocket event emission
 EventCallback = Callable[[dict[str, Any]], Awaitable[None]]
+# Callback type for engine self-stop (risk control, resource limit)
+SelfStopCallback = Callable[[], Awaitable[None]]
 
 logger = logging.getLogger(__name__)
 
@@ -109,6 +111,7 @@ class PaperTradingEngine:
         risk_config: RiskConfig | None = None,
         max_volume_participation: Decimal | None = None,
         on_event: EventCallback | None = None,
+        on_stop: SelfStopCallback | None = None,
     ):
         """Initialize paper trading engine.
 
@@ -133,6 +136,8 @@ class PaperTradingEngine:
                 filled in a single order (e.g., 0.1 = 10%). None disables the check.
             on_event: Optional callback for WebSocket event emission.
                 Called after each bar to push incremental status updates.
+            on_stop: Optional callback when engine stops itself (risk control,
+                resource limit). Called to notify service layer to update DB status.
         """
         self._run_id = run_id
         self._strategy = strategy
@@ -180,6 +185,7 @@ class PaperTradingEngine:
 
         # Engine state
         self._is_running = False
+        self._circuit_breaker_triggered: bool = False
         self._warming_up = False  # True during strategy warmup (IMP-009)
         self._started_at: datetime | None = None
         self._stopped_at: datetime | None = None
@@ -201,6 +207,7 @@ class PaperTradingEngine:
         # Synchronous persistence callbacks
         self._on_snapshot = on_snapshot
         self._on_result = on_result
+        self._on_stop = on_stop
 
         # Pending equity snapshots for batch persistence (fallback when callback fails)
         self._pending_snapshots: list[EquitySnapshot] = []
@@ -352,7 +359,7 @@ class PaperTradingEngine:
         Args:
             error: Optional error message if stopping due to error.
         """
-        if error:
+        if error and not self._error_message:
             self._error_message = error
 
         # Always acquire the lock so callers are guaranteed that
@@ -457,6 +464,21 @@ class PaperTradingEngine:
                 # Update last activity timestamp
                 self._last_active_at = datetime.now(UTC)
 
+                # Check circuit breaker (LCB3 — mirrors live engine pattern).
+                # Intentionally checked before is_closed gate: CB is an emergency
+                # state that should stop the engine ASAP, not wait for bar close.
+                # Max drawdown / total loss checks run after is_closed because they
+                # depend on per-bar equity updates.
+                if self._risk_manager and self._circuit_breaker_triggered:
+                    losses = self._risk_manager.state.consecutive_losses
+                    reason = f"连续亏损 {losses} 次，触发熔断"
+                    logger.warning(f"Circuit breaker active for paper session {self._run_id}: {reason}")
+                    self._context.log(f"熔断触发：{reason}，停止交易", level="error", category="risk")
+                    self._error_message = reason
+                    self._stop_impl()
+                    await self._persist_on_early_stop()
+                    return
+
                 current_price = candle.close
                 timestamp = candle.timestamp
 
@@ -544,6 +566,38 @@ class PaperTradingEngine:
                         # would otherwise be skipped by the early return.
                         await self._persist_on_early_stop()
                         return
+
+                    # 5d. Max drawdown auto-stop (M3)
+                    if self._risk_manager.check_max_drawdown():
+                        peak = self._risk_manager.state.peak_equity
+                        current = self._context.equity
+                        drawdown_pct = (
+                            (peak - current) / peak * 100 if peak > 0 else 0
+                        )
+                        msg = f"最大回撤达到 {drawdown_pct:.1f}%，自动停止"
+                        logger.warning(f"Engine {self._run_id}: {msg}")
+                        self._context.log(msg, level="error", category="risk")
+                        self._error_message = msg
+                        self._stop_impl()
+                        await self._persist_on_early_stop()
+                        return
+
+                    # 5e. Daily loss warning (M5)
+                    if self._risk_manager.check_daily_loss_warning():
+                        pct = self._risk_manager.config.daily_loss_warning_threshold * 100
+                        self._context.log(
+                            f"日亏损预警：已达限额 {pct:.0f}%",
+                            level="warning",
+                            category="risk",
+                        )
+
+                    if self._risk_manager.check_daily_loss_limit_breached():
+                        self._context.log(
+                            f"日亏损已达限额 {self._risk_manager.config.daily_loss_limit:.0%}，"
+                            f"新买入将被拒绝",
+                            level="warning",
+                            category="risk",
+                        )
 
                 # 6. Persist snapshot: try synchronous callback first, fall back to batch
                 if self._context.equity_curve:
@@ -955,6 +1009,8 @@ class PaperTradingEngine:
             self._cached_realized_pnl += completed_trade.pnl
             if self._risk_manager:
                 self._risk_manager.record_trade_result(completed_trade.pnl)
+                if self._risk_manager.state.circuit_breaker_triggered:
+                    self._circuit_breaker_triggered = True
 
         # NOTE: state_update push moved to process_candle() after _move_completed_orders()
         # so the pushed state reflects the final order list (filled orders already moved out).
@@ -1072,8 +1128,21 @@ class PaperTradingEngine:
         Called after _stop_impl() for risk auto-stop or resource limit exceeded,
         which would otherwise skip the normal persistence steps (6 and 8).
         Best-effort: failures are logged but do not propagate.
+
+        Order matters: on_stop (DB status update) runs FIRST so that the
+        engine_stopped WS event (fire-and-forget from _stop_impl) arrives
+        after DB is already STOPPED. Otherwise the frontend's loadSession()
+        would read stale RUNNING status from DB.
         """
-        # Step 6: persist latest equity snapshot
+        # Step 1: notify service layer to update DB status (must be first —
+        # the engine_stopped WS task fires during these awaits)
+        if self._on_stop:
+            try:
+                await self._on_stop()
+            except Exception as e:
+                logger.warning(f"on_stop callback failed for {self._run_id}: {e}")
+
+        # Step 2: persist latest equity snapshot
         if self._context.equity_curve:
             latest_snapshot = self._context.equity_curve[-1]
             persisted = False
@@ -1086,7 +1155,7 @@ class PaperTradingEngine:
             if not persisted:
                 self._append_pending_snapshot(latest_snapshot)
 
-        # Step 8: persist result state for crash recovery
+        # Step 3: persist result state for crash recovery
         if self._on_result:
             try:
                 result_data = self.build_result_for_persistence()

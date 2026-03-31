@@ -32,6 +32,8 @@ from squant.websocket.manager import get_stream_manager
 
 logger = logging.getLogger(__name__)
 
+from squant.engine.risk import normalize_risk_state_keys as _normalize_risk_state_keys
+
 
 class PaperTradingError(Exception):
     """Base error for paper trading operations."""
@@ -356,6 +358,9 @@ class PaperTradingService:
                     max_price_deviation=risk_config.price_deviation_limit,
                     circuit_breaker_loss_count=risk_config.circuit_breaker_threshold,
                     min_order_value=risk_config.min_order_value,
+                    max_orders_per_minute=risk_config.max_orders_per_minute,
+                    max_drawdown=risk_config.max_drawdown,
+                    daily_loss_warning_threshold=risk_config.daily_loss_warning_threshold,
                 )
 
             # Create engine with synchronous persistence callbacks
@@ -372,6 +377,7 @@ class PaperTradingService:
                 on_result=self._create_result_callback(),
                 risk_config=engine_risk_config,
                 on_event=self._create_event_callback(UUID(run.id)),
+                on_stop=self._create_stop_callback(UUID(run.id)),
             )
 
             # Register with session manager
@@ -587,6 +593,44 @@ class PaperTradingService:
         return _persist_result
 
     @staticmethod
+    def _create_stop_callback(run_id: UUID) -> Any:
+        """Create callback for engine self-stop (risk control, resource limit).
+
+        Updates the StrategyRun DB record to STOPPED status. Without this,
+        the DB stays RUNNING while the engine is dead.
+        """
+
+        async def _on_engine_stop() -> None:
+            from squant.infra.database import get_session_context
+
+            try:
+                session_manager = get_session_manager()
+                engine = session_manager.get(run_id)
+
+                result_data = None
+                error_message = None
+                if engine:
+                    result_data = engine.build_result_for_persistence()
+                    error_message = engine.error_message
+
+                async with get_session_context() as db_session:
+                    repo = StrategyRunRepository(db_session)
+                    await repo.update(
+                        run_id,
+                        status=RunStatus.STOPPED,
+                        result=result_data,
+                        stopped_at=datetime.now(UTC),
+                        error_message=error_message,
+                    )
+
+                await session_manager.unregister(run_id)
+                logger.info(f"Paper engine self-stop: updated DB for {run_id}")
+            except Exception as e:
+                logger.error(f"Paper engine self-stop callback failed for {run_id}: {e}")
+
+        return _on_engine_stop
+
+    @staticmethod
     def _create_event_callback(run_id: UUID) -> Any:
         """Create callback that publishes engine events to Redis for WebSocket push."""
 
@@ -756,7 +800,9 @@ class PaperTradingService:
                     "trades": run.result.get("trades", []),
                     "fills": run.result.get("fills", []),
                     "open_trade": run.result.get("open_trade"),
-                    "risk_state": run.result.get("risk_state"),
+                    "risk_state": _normalize_risk_state_keys(
+                        run.result.get("risk_state")
+                    ),
                 }
             )
         else:
@@ -969,6 +1015,7 @@ class PaperTradingService:
             on_result=self._create_result_callback(),
             risk_config=engine_risk_config,
             on_event=self._create_event_callback(UUID(run.id)),
+            on_stop=self._create_stop_callback(UUID(run.id)),
         )
 
         # Restore trading state from result JSONB

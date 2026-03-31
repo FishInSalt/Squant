@@ -88,6 +88,9 @@ async def start_live_trading(
         min_order_value=request.risk_config.min_order_value,
         order_poll_interval=request.risk_config.order_poll_interval,
         balance_check_interval=request.risk_config.balance_check_interval,
+        max_orders_per_minute=request.risk_config.max_orders_per_minute,
+        max_drawdown=request.risk_config.max_drawdown,
+        daily_loss_warning_threshold=request.risk_config.daily_loss_warning_threshold,
     )
 
     try:
@@ -323,6 +326,12 @@ async def get_live_trading_status(
                 max_order_size=Decimal(str(rs.get("max_order_size", 0))),
                 daily_trade_limit=rs.get("daily_trade_limit", 0),
                 daily_loss_limit=Decimal(str(rs.get("daily_loss_limit", 0))),
+                total_pnl=Decimal(str(rs.get("total_pnl", 0))),
+                total_loss_limit=Decimal(str(rs.get("total_loss_limit", 0))),
+                peak_equity=Decimal(str(rs.get("peak_equity", 0))),
+                current_drawdown=Decimal(str(rs.get("current_drawdown", 0))),
+                max_drawdown=Decimal(str(rs.get("max_drawdown", 0))),
+                circuit_breaker_until=rs.get("circuit_breaker_until"),
             )
 
         response = LiveTradingStatusResponse(

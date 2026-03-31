@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import logging
 import threading
+import time
 from datetime import UTC, datetime
 from decimal import Decimal
 from typing import TYPE_CHECKING
@@ -61,6 +62,7 @@ class RiskManager:
 
         # Initialize daily stats
         self.state.reset_daily_stats(initial_equity)
+        self.state.peak_equity = initial_equity
 
         logger.info(
             f"RiskManager initialized with equity={initial_equity}, "
@@ -78,6 +80,26 @@ class RiskManager:
         """
         with self._lock:
             self._current_equity = equity
+            if equity > self.state.peak_equity:
+                self.state.peak_equity = equity
+
+    def check_max_drawdown(self) -> bool:
+        """Check if drawdown from peak equity exceeds limit.
+
+        Returns True if max drawdown is breached (engine should stop).
+        Called every bar after equity update.
+        """
+        with self._lock:
+            if self.state.peak_equity <= 0:
+                return False
+            drawdown = (self.state.peak_equity - self._current_equity) / self.state.peak_equity
+            if drawdown >= self.config.max_drawdown:
+                logger.warning(
+                    f"Max drawdown breached: {drawdown:.2%} >= {self.config.max_drawdown:.2%} "
+                    f"(peak={self.state.peak_equity}, current={self._current_equity})"
+                )
+                return True
+            return False
 
     def check_total_loss_limit(self) -> bool:
         """Check if total loss limit has been breached (IMP-005).
@@ -187,6 +209,48 @@ class RiskManager:
                 logger.info("New trading day detected, resetting daily risk stats")
                 self.state.reset_daily_stats(self._current_equity)
 
+    def check_daily_loss_warning(self) -> bool:
+        """Check if daily loss has reached warning threshold.
+
+        Returns True if warning should be fired (first time only per day).
+        Uses equity difference (includes fees, realized, and unrealized).
+        """
+        with self._lock:
+            if self.state.daily_loss_warned:
+                return False
+            if self.state.daily_start_equity <= 0:
+                return False
+
+            daily_loss = self.state.daily_start_equity - self._current_equity
+            daily_loss_ratio = daily_loss / self.state.daily_start_equity
+            threshold = self.config.daily_loss_limit * self.config.daily_loss_warning_threshold
+
+            if daily_loss_ratio >= threshold:
+                self.state.daily_loss_warned = True
+                return True
+            return False
+
+    def check_daily_loss_limit_breached(self) -> bool:
+        """Check if daily loss has reached the limit (per-bar monitoring).
+
+        Returns True the first time per day when the daily loss limit is
+        breached, so the engine can log it. Does NOT stop the session —
+        the limit only blocks new buy orders via validate_order().
+        """
+        with self._lock:
+            if self.state.daily_loss_limit_notified:
+                return False
+            if self.state.daily_start_equity <= 0:
+                return False
+
+            daily_loss = self.state.daily_start_equity - self._current_equity
+            daily_loss_ratio = daily_loss / self.state.daily_start_equity
+
+            if daily_loss_ratio >= self.config.daily_loss_limit:
+                self.state.daily_loss_limit_notified = True
+                return True
+            return False
+
     def validate_order(
         self,
         order: OrderRequest,
@@ -233,15 +297,21 @@ class RiskManager:
         if not result.passed:
             return result
 
+        # Frequency limit (RSK-007)
+        result = self._check_frequency_limit()
+        if not result.passed:
+            return result
+
         # Check daily trade limit (RSK-003)
         result = self._check_daily_trade_limit()
         if not result.passed:
             return result
 
-        # Check daily loss limit (RSK-003)
-        result = self._check_daily_loss_limit()
-        if not result.passed:
-            return result
+        # Check daily loss limit (RSK-003b) — sell orders exempt (allow stop-loss)
+        if order.side != OrderSide.SELL:
+            result = self._check_daily_loss_limit()
+            if not result.passed:
+                return result
 
         # Check total/cumulative loss limit (RSK-004)
         result = self._check_total_loss_limit()
@@ -296,6 +366,32 @@ class RiskManager:
 
         return RiskCheckResult.ok()
 
+    def _check_frequency_limit(self) -> RiskCheckResult:
+        """Check order frequency limit (RSK-007).
+
+        Counts ALL order submission attempts (including those later rejected by
+        other rules like position size or daily loss). This is intentional: the
+        frequency limit is a strategy-level protection against buggy strategies
+        that spam order requests, regardless of whether those orders pass other checks.
+        """
+        now = time.time()
+        cutoff = now - 60.0
+        # Clean expired timestamps
+        self.state.order_timestamps = [ts for ts in self.state.order_timestamps if ts > cutoff]
+        if len(self.state.order_timestamps) >= self.config.max_orders_per_minute:
+            return RiskCheckResult.reject(
+                rule_type=RiskRuleType.FREQUENCY_LIMIT,
+                reason=(
+                    f"Order frequency exceeded: "
+                    f"{len(self.state.order_timestamps)}/{self.config.max_orders_per_minute} per minute"
+                ),
+                current_count=len(self.state.order_timestamps),
+                limit=self.config.max_orders_per_minute,
+            )
+        # Record this order attempt (before subsequent checks — see docstring)
+        self.state.order_timestamps.append(now)
+        return RiskCheckResult.ok()
+
     def _check_daily_trade_limit(self) -> RiskCheckResult:
         """Check daily trade count limit.
 
@@ -313,22 +409,22 @@ class RiskManager:
         return RiskCheckResult.ok()
 
     def _check_daily_loss_limit(self) -> RiskCheckResult:
-        """Check daily loss limit including unrealized PnL.
+        """Check daily loss limit using equity difference.
 
-        Effective daily PnL = realized daily PnL + change in unrealized PnL
-        since day start. This prevents strategies from holding large underwater
-        positions without triggering the daily loss limit.
+        daily_loss = daily_start_equity - current_equity
+
+        This naturally includes realized PnL, unrealized PnL changes, AND
+        trading fees (which the old PnL-decomposition formula missed for
+        open positions).
 
         Returns:
             RiskCheckResult for daily loss limit check.
         """
-        # Compute effective daily PnL: realized + unrealized change since day start
-        unrealized_change = self.state.unrealized_pnl - self.state.daily_start_unrealized_pnl
-        effective_daily_pnl = self.state.daily_pnl + unrealized_change
+        daily_loss = self.state.daily_start_equity - self._current_equity
 
         # Check relative limit
         if self.state.daily_start_equity > 0:
-            loss_pct = -effective_daily_pnl / self.state.daily_start_equity
+            loss_pct = daily_loss / self.state.daily_start_equity
             if loss_pct >= self.config.daily_loss_limit:
                 return RiskCheckResult.reject(
                     rule_type=RiskRuleType.DAILY_LOSS_LIMIT,
@@ -336,28 +432,27 @@ class RiskManager:
                     f"(limit: {self.config.daily_loss_limit:.2%})",
                     current_loss_pct=float(loss_pct),
                     limit_pct=float(self.config.daily_loss_limit),
-                    daily_pnl=float(self.state.daily_pnl),
-                    unrealized_change=float(unrealized_change),
-                    effective_daily_pnl=float(effective_daily_pnl),
+                    daily_loss=float(daily_loss),
+                    daily_start_equity=float(self.state.daily_start_equity),
+                    current_equity=float(self._current_equity),
                 )
-        elif effective_daily_pnl < 0:
-            # daily_start_equity is 0 but we have losses — block trading (RSK-1)
+        elif daily_loss > 0:
+            # daily_start_equity is 0 but we have losses — block trading
             return RiskCheckResult.reject(
                 rule_type=RiskRuleType.DAILY_LOSS_LIMIT,
                 reason="Daily loss detected but daily_start_equity is 0 "
                 "(cannot calculate loss percentage)",
-                daily_pnl=float(self.state.daily_pnl),
-                unrealized_change=float(unrealized_change),
+                daily_loss=float(daily_loss),
             )
 
         # Check absolute limit if configured
         if self.config.daily_loss_limit_absolute is not None:
-            if -effective_daily_pnl >= self.config.daily_loss_limit_absolute:
+            if daily_loss >= self.config.daily_loss_limit_absolute:
                 return RiskCheckResult.reject(
                     rule_type=RiskRuleType.DAILY_LOSS_LIMIT,
-                    reason=f"Daily loss limit reached: {-effective_daily_pnl} "
+                    reason=f"Daily loss limit reached: {daily_loss} "
                     f"(limit: {self.config.daily_loss_limit_absolute})",
-                    current_loss=float(-effective_daily_pnl),
+                    current_loss=float(daily_loss),
                     limit=float(self.config.daily_loss_limit_absolute),
                 )
 
@@ -614,12 +709,16 @@ class RiskManager:
             )
             self.state.consecutive_losses = state_dict.get("consecutive_losses", 0)
             self.state.circuit_breaker_triggered = state_dict.get(
-                "circuit_breaker_triggered", False
+                "circuit_breaker_active",
+                state_dict.get("circuit_breaker_triggered", False),
             )
             if state_dict.get("circuit_breaker_until"):
                 self.state.circuit_breaker_until = datetime.fromisoformat(
                     state_dict["circuit_breaker_until"]
                 )
+
+            if "peak_equity" in state_dict:
+                self.state.peak_equity = Decimal(str(state_dict["peak_equity"]))
 
             # Equity (use 'in' check — get() is falsy when equity is 0)
             if "current_equity" in state_dict and state_dict["current_equity"] is not None:
@@ -638,7 +737,11 @@ class RiskManager:
 
             if same_day:
                 self.state.daily_trade_count = state_dict.get("daily_trade_count", 0)
-                self.state.daily_pnl = Decimal(str(state_dict.get("daily_pnl", 0)))
+                # Prefer daily_pnl_realized (the trade accumulator) for restore;
+                # fall back to daily_pnl for backward compat with old snapshots.
+                self.state.daily_pnl = Decimal(
+                    str(state_dict.get("daily_pnl_realized", state_dict.get("daily_pnl", 0)))
+                )
                 self.state.daily_start_equity = Decimal(
                     str(state_dict.get("daily_start_equity", self._current_equity))
                 )
@@ -666,12 +769,22 @@ class RiskManager:
             return self._get_state_summary_unlocked()
 
     def _get_state_summary_unlocked(self) -> dict:
-        """Internal state summary (caller must hold self._lock)."""
+        """Internal state summary (caller must hold self._lock).
+
+        Key names are aligned with RiskStateResponse schema so that Paper
+        and Live engines produce the same field names for the frontend.
+        """
+        # daily_pnl for display uses equity difference (same formula as
+        # _check_daily_loss_limit and check_daily_loss_warning), so it
+        # includes unrealized PnL and fees — not just realized trades.
+        daily_pnl_equity = float(self._current_equity - self.state.daily_start_equity) \
+            if self.state.daily_start_equity > 0 else float(self.state.daily_pnl)
         return {
             "daily_trade_count": self.state.daily_trade_count,
             "daily_trade_limit": self.config.daily_trade_limit,
-            "daily_pnl": float(self.state.daily_pnl),
-            "daily_loss_limit_pct": float(self.config.daily_loss_limit),
+            "daily_pnl": daily_pnl_equity,
+            "daily_pnl_realized": float(self.state.daily_pnl),
+            "daily_loss_limit": float(self.config.daily_loss_limit),
             "unrealized_pnl": float(self.state.unrealized_pnl),
             "daily_start_unrealized_pnl": float(self.state.daily_start_unrealized_pnl),
             "daily_start_equity": float(self.state.daily_start_equity),
@@ -679,18 +792,31 @@ class RiskManager:
                 self.state.daily_reset_time.isoformat() if self.state.daily_reset_time else None
             ),
             "total_pnl": float(self.state.total_pnl),
-            "total_loss_limit_pct": float(self.config.total_loss_limit),
+            "total_loss_limit": float(self.config.total_loss_limit),
             "total_loss_limit_triggered": self.state.total_loss_limit_triggered,
             "current_equity": float(self._current_equity),
             "initial_equity": float(self._initial_equity),
             "consecutive_losses": self.state.consecutive_losses,
-            "circuit_breaker_triggered": self.state.circuit_breaker_triggered,
+            "circuit_breaker_active": self.state.circuit_breaker_triggered,
             "circuit_breaker_until": (
                 self.state.circuit_breaker_until.isoformat()
                 if self.state.circuit_breaker_until
                 else None
             ),
             "current_position_value": float(self.state.current_position_value),
-            "max_position_size_pct": float(self.config.max_position_size),
-            "max_order_size_pct": float(self.config.max_order_size),
+            "max_position_size": float(self.config.max_position_size),
+            "max_order_size": float(self.config.max_order_size),
+            "peak_equity": float(self.state.peak_equity),
+            "max_drawdown": float(self.config.max_drawdown),
+            "current_drawdown": (
+                max(
+                    0.0,
+                    float(
+                        (self.state.peak_equity - self._current_equity)
+                        / self.state.peak_equity
+                    ),
+                )
+                if self.state.peak_equity > 0
+                else 0.0
+            ),
         }

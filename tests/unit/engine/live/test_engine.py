@@ -4449,3 +4449,49 @@ class TestGetPendingOrderEvents:
 
         # Engine buffer was cleared — adding to returned list doesn't re-populate
         assert len(engine._pending_order_events) == 0
+
+
+class TestMaxDrawdownAutoStop:
+    """Tests for M3: max drawdown triggers session stop in live engine."""
+
+    def test_check_max_drawdown_detects_breach(self, engine):
+        """RiskManager should detect drawdown breach."""
+        engine._risk_manager.state.peak_equity = Decimal("15000")
+        engine._risk_manager._current_equity = Decimal("10000")  # 33% drawdown
+        engine._risk_manager.config.max_drawdown = Decimal("0.20")
+
+        result = engine._risk_manager.check_max_drawdown()
+        assert result is True
+
+    def test_check_max_drawdown_no_breach(self, engine):
+        """RiskManager should not detect drawdown when within limit."""
+        engine._risk_manager.state.peak_equity = Decimal("12000")
+        engine._risk_manager._current_equity = Decimal("10000")  # 16.7%
+        engine._risk_manager.config.max_drawdown = Decimal("0.20")
+
+        result = engine._risk_manager.check_max_drawdown()
+        assert result is False
+
+
+class TestDailyLossWarningLive:
+    """Tests for M5: daily loss warning in live engine."""
+
+    def test_daily_loss_warning_triggers(self, engine):
+        """RiskManager should detect when daily loss reaches warning threshold."""
+        engine._risk_manager.config.daily_loss_limit = Decimal("0.05")
+        engine._risk_manager.config.daily_loss_warning_threshold = Decimal("0.8")
+        # 4.1% equity drop = 82% of 5% limit → triggers warning
+        engine._risk_manager._current_equity = Decimal("9590")
+
+        warned = engine._risk_manager.check_daily_loss_warning()
+        assert warned is True
+        assert engine._risk_manager.state.daily_loss_warned is True
+
+    def test_daily_loss_warning_fires_only_once(self, engine):
+        """Warning should fire only once per day."""
+        engine._risk_manager.config.daily_loss_limit = Decimal("0.05")
+        engine._risk_manager.config.daily_loss_warning_threshold = Decimal("0.8")
+        engine._risk_manager._current_equity = Decimal("9590")
+
+        assert engine._risk_manager.check_daily_loss_warning() is True
+        assert engine._risk_manager.check_daily_loss_warning() is False
