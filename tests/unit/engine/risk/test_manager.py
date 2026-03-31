@@ -437,8 +437,8 @@ class TestDailyLossLimitValidation:
         )
         current_price = Decimal("50000")
 
-        # Simulate some losses (3% loss)
-        risk_manager.state.daily_pnl = Decimal("-300")
+        # Simulate 3% equity drop (below 5% limit)
+        risk_manager._current_equity = Decimal("9700")
 
         result = risk_manager.validate_order(order, current_price)
 
@@ -455,7 +455,7 @@ class TestDailyLossLimitValidation:
         current_price = Decimal("50000")
 
         # Hit the loss limit (5% of $10000 = $500)
-        risk_manager.state.daily_pnl = Decimal("-500")
+        risk_manager._current_equity = Decimal("9500")
 
         result = risk_manager.validate_order(order, current_price)
 
@@ -476,8 +476,8 @@ class TestDailyLossLimitValidation:
         )
         current_price = Decimal("50000")
 
-        # Loss exactly at 5% limit: -$500 / $10000 = -5%
-        risk_manager.state.daily_pnl = Decimal("-500")
+        # Loss exactly at 5% limit: $500 / $10000 = 5%
+        risk_manager._current_equity = Decimal("9500")
 
         result = risk_manager.validate_order(order, current_price)
 
@@ -498,8 +498,8 @@ class TestDailyLossLimitValidation:
         )
         current_price = Decimal("50000")
 
-        # Loss just below 5% limit: -$499.99 / $10000 = -4.9999%
-        risk_manager.state.daily_pnl = Decimal("-499.99")
+        # Loss just below 5% limit: $499.99 / $10000 = 4.9999%
+        risk_manager._current_equity = Decimal("9500.01")
 
         result = risk_manager.validate_order(order, current_price)
 
@@ -1432,14 +1432,14 @@ class TestAbsoluteDailyLossLimit:
             max_position_size=Decimal("1.0"),
             max_order_size=Decimal("1.0"),
             min_order_value=Decimal("1"),
-            daily_loss_limit=Decimal("1.0"),  # 100% - won't trigger
+            daily_loss_limit=Decimal("1.0"),  # 100% - won't trigger relative
             daily_loss_limit_absolute=Decimal("500"),
             daily_trade_limit=1000,
         )
         rm = RiskManager(config=config, initial_equity=Decimal("10000"))
 
-        # Record $500 in losses
-        rm.record_trade_result(Decimal("-500"))
+        # Simulate $500 equity drop
+        rm._current_equity = Decimal("9500")
 
         order = OrderRequest(
             symbol="BTC/USDT",
@@ -1611,8 +1611,8 @@ class TestPositionSizeMarketPrice:
         assert result.passed is True
 
 
-class TestDailyLossWithUnrealized:
-    """Tests that daily loss limit includes unrealized PnL changes."""
+class TestDailyLossEquityBased:
+    """Tests that daily loss limit uses equity difference (includes fees)."""
 
     def _make_manager(self, daily_loss_limit=Decimal("0.05")):
         """Helper: create RiskManager with specified daily loss limit."""
@@ -1633,68 +1633,58 @@ class TestDailyLossWithUnrealized:
             price=price,
         )
 
-    def test_unrealized_loss_triggers_daily_limit(self):
-        """Unrealized loss alone should trigger the daily loss limit.
-
-        No realized trades, but unrealized PnL drops by 6% of equity -> reject.
-        """
+    def test_equity_drop_triggers_daily_limit(self):
+        """Equity drop of 6% should trigger the 5% daily loss limit."""
         rm = self._make_manager()
-        # Simulate unrealized PnL dropping by $600 (6% of $10k equity)
-        rm.update_unrealized_pnl(Decimal("-600"))
+        rm._current_equity = Decimal("9400")  # 6% drop
 
         order = self._make_order()
         result = rm.validate_order(order, Decimal("50000"))
         assert result.passed is False
         assert result.rule_type == RiskRuleType.DAILY_LOSS_LIMIT
 
-    def test_combined_realized_and_unrealized_triggers_limit(self):
-        """Realized + unrealized loss combined should trigger the limit.
+    def test_fees_only_trigger_daily_limit(self):
+        """Pure fee loss (no price change) should trigger daily limit.
 
-        Realized daily loss = 2%, unrealized change = 4% -> total 6% > 5% limit.
+        This was the bug in the old PnL-decomposition formula.
         """
-        rm = self._make_manager()
-        # Record realized loss of $200 (2% of equity)
-        rm.record_trade_result(Decimal("-200"))
-        # Unrealized PnL drops by $400 (4% of equity)
-        rm.update_unrealized_pnl(Decimal("-400"))
+        rm = self._make_manager(daily_loss_limit=Decimal("0.005"))  # 0.5%
+        # Simulate $60 equity drop from fees alone (0.6% > 0.5%)
+        rm._current_equity = Decimal("9940")
 
         order = self._make_order()
         result = rm.validate_order(order, Decimal("50000"))
         assert result.passed is False
         assert result.rule_type == RiskRuleType.DAILY_LOSS_LIMIT
 
-    def test_unrealized_below_threshold_passes(self):
-        """Unrealized loss below threshold should pass."""
+    def test_equity_drop_below_threshold_passes(self):
+        """Equity drop below threshold should pass."""
         rm = self._make_manager()
-        # Unrealized PnL drops by $300 (3% of $10k equity) -> under 5% limit
-        rm.update_unrealized_pnl(Decimal("-300"))
+        rm._current_equity = Decimal("9700")  # 3% drop, under 5% limit
 
         order = self._make_order()
         result = rm.validate_order(order, Decimal("50000"))
         assert result.passed is True
 
-    def test_daily_reset_captures_unrealized_baseline(self):
-        """After daily reset, only the change in unrealized PnL counts.
-
-        Position was already -$500 at day start. If unrealized stays at -$500,
-        the change is $0 and should not trigger the limit.
-        """
+    def test_daily_reset_uses_new_baseline(self):
+        """After daily reset, loss is measured from new day's start equity."""
         rm = self._make_manager()
-        # Position already underwater at -$500 before day reset
-        rm.update_unrealized_pnl(Decimal("-500"))
-        # Simulate daily reset (new trading day)
-        rm.check_daily_reset()
-        # Force reset by manipulating reset time
+        # Equity dropped to 9000 yesterday
+        rm._current_equity = Decimal("9000")
+
+        # Simulate daily reset — new baseline is 9000
         rm.state.daily_reset_time = None
         rm.check_daily_reset()
+        # daily_start_equity is now 9000
 
-        # Unrealized PnL stays at -$500 -> change = 0
+        # Equity at 8600 — that's $400 / $9000 = 4.4% < 5% → passes
+        rm._current_equity = Decimal("8600")
         order = self._make_order()
         result = rm.validate_order(order, Decimal("50000"))
         assert result.passed is True
 
-        # Unrealized PnL worsens to -$1100 -> change = -$600 (6%) -> reject
-        rm.update_unrealized_pnl(Decimal("-1100"))
+        # Equity at 8500 — that's $500 / $9000 = 5.6% > 5% → reject
+        rm._current_equity = Decimal("8500")
         result = rm.validate_order(order, Decimal("50000"))
         assert result.passed is False
         assert result.rule_type == RiskRuleType.DAILY_LOSS_LIMIT
@@ -1909,7 +1899,8 @@ class TestDailyLossSellExemption:
     def test_buy_order_rejected_when_daily_loss_exceeded(self):
         config = RiskConfig(daily_loss_limit=Decimal("0.05"))
         manager = RiskManager(config=config, initial_equity=Decimal("10000"))
-        manager.state.daily_pnl = Decimal("-600")  # 6% loss > 5% limit
+        # Simulate 6% equity drop (fees + unrealized + realized all included)
+        manager._current_equity = Decimal("9400")
         order = OrderRequest(
             symbol="BTC/USDT", side=OrderSide.BUY, type=OrderType.MARKET,
             amount=Decimal("0.001"),
@@ -1921,7 +1912,7 @@ class TestDailyLossSellExemption:
     def test_sell_order_passes_when_daily_loss_exceeded(self):
         config = RiskConfig(daily_loss_limit=Decimal("0.05"))
         manager = RiskManager(config=config, initial_equity=Decimal("10000"))
-        manager.state.daily_pnl = Decimal("-600")  # 6% loss > 5% limit
+        manager._current_equity = Decimal("9400")  # 6% loss
         order = OrderRequest(
             symbol="BTC/USDT", side=OrderSide.SELL, type=OrderType.MARKET,
             amount=Decimal("0.001"),
@@ -1931,7 +1922,7 @@ class TestDailyLossSellExemption:
 
 
 class TestDailyLossWarning:
-    """Tests for M5: daily loss 80% warning."""
+    """Tests for M5: daily loss 80% warning (equity-based)."""
 
     def test_warning_triggered_at_threshold(self):
         config = RiskConfig(
@@ -1939,8 +1930,8 @@ class TestDailyLossWarning:
             daily_loss_warning_threshold=Decimal("0.8"),
         )
         manager = RiskManager(config=config, initial_equity=Decimal("10000"))
-        # Set 4.1% loss (82% of 5% limit)
-        manager.state.daily_pnl = Decimal("-410")
+        # 4.1% equity drop = 82% of 5% limit → triggers warning
+        manager._current_equity = Decimal("9590")
         warned = manager.check_daily_loss_warning()
         assert warned is True
         assert manager.state.daily_loss_warned is True
@@ -1951,7 +1942,8 @@ class TestDailyLossWarning:
             daily_loss_warning_threshold=Decimal("0.8"),
         )
         manager = RiskManager(config=config, initial_equity=Decimal("10000"))
-        manager.state.daily_pnl = Decimal("-300")  # 60% of limit
+        # 3% equity drop = 60% of 5% limit → no warning
+        manager._current_equity = Decimal("9700")
         warned = manager.check_daily_loss_warning()
         assert warned is False
 
@@ -1961,7 +1953,7 @@ class TestDailyLossWarning:
             daily_loss_warning_threshold=Decimal("0.8"),
         )
         manager = RiskManager(config=config, initial_equity=Decimal("10000"))
-        manager.state.daily_pnl = Decimal("-410")
+        manager._current_equity = Decimal("9590")
         assert manager.check_daily_loss_warning() is True
         assert manager.check_daily_loss_warning() is False  # second call
 
@@ -1982,7 +1974,7 @@ class TestDailyLossWarning:
         )
         manager = RiskManager(config=config, initial_equity=Decimal("10000"))
         manager.state.daily_start_equity = Decimal("0")
-        manager.state.daily_pnl = Decimal("-500")
+        manager._current_equity = Decimal("9500")
         warned = manager.check_daily_loss_warning()
         assert warned is False
 

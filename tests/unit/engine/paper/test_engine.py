@@ -1988,7 +1988,7 @@ class TestPaperDailyLossWarning:
                 daily_loss_warning_threshold=Decimal("0.8"),
             ),
         )
-        engine._risk_manager.state.daily_pnl = Decimal("-410")  # 82% of limit
+        engine._risk_manager._current_equity = Decimal("9590")  # 4.1% drop = 82% of 5% limit
 
         warned = engine._risk_manager.check_daily_loss_warning()
         assert warned is True

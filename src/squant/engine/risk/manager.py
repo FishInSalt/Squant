@@ -213,6 +213,7 @@ class RiskManager:
         """Check if daily loss has reached warning threshold.
 
         Returns True if warning should be fired (first time only per day).
+        Uses equity difference (includes fees, realized, and unrealized).
         """
         with self._lock:
             if self.state.daily_loss_warned:
@@ -220,10 +221,8 @@ class RiskManager:
             if self.state.daily_start_equity <= 0:
                 return False
 
-            effective_daily_pnl = self.state.daily_pnl + (
-                self.state.unrealized_pnl - self.state.daily_start_unrealized_pnl
-            )
-            daily_loss_ratio = -effective_daily_pnl / self.state.daily_start_equity
+            daily_loss = self.state.daily_start_equity - self._current_equity
+            daily_loss_ratio = daily_loss / self.state.daily_start_equity
             threshold = self.config.daily_loss_limit * self.config.daily_loss_warning_threshold
 
             if daily_loss_ratio >= threshold:
@@ -389,22 +388,22 @@ class RiskManager:
         return RiskCheckResult.ok()
 
     def _check_daily_loss_limit(self) -> RiskCheckResult:
-        """Check daily loss limit including unrealized PnL.
+        """Check daily loss limit using equity difference.
 
-        Effective daily PnL = realized daily PnL + change in unrealized PnL
-        since day start. This prevents strategies from holding large underwater
-        positions without triggering the daily loss limit.
+        daily_loss = daily_start_equity - current_equity
+
+        This naturally includes realized PnL, unrealized PnL changes, AND
+        trading fees (which the old PnL-decomposition formula missed for
+        open positions).
 
         Returns:
             RiskCheckResult for daily loss limit check.
         """
-        # Compute effective daily PnL: realized + unrealized change since day start
-        unrealized_change = self.state.unrealized_pnl - self.state.daily_start_unrealized_pnl
-        effective_daily_pnl = self.state.daily_pnl + unrealized_change
+        daily_loss = self.state.daily_start_equity - self._current_equity
 
         # Check relative limit
         if self.state.daily_start_equity > 0:
-            loss_pct = -effective_daily_pnl / self.state.daily_start_equity
+            loss_pct = daily_loss / self.state.daily_start_equity
             if loss_pct >= self.config.daily_loss_limit:
                 return RiskCheckResult.reject(
                     rule_type=RiskRuleType.DAILY_LOSS_LIMIT,
@@ -412,28 +411,27 @@ class RiskManager:
                     f"(limit: {self.config.daily_loss_limit:.2%})",
                     current_loss_pct=float(loss_pct),
                     limit_pct=float(self.config.daily_loss_limit),
-                    daily_pnl=float(self.state.daily_pnl),
-                    unrealized_change=float(unrealized_change),
-                    effective_daily_pnl=float(effective_daily_pnl),
+                    daily_loss=float(daily_loss),
+                    daily_start_equity=float(self.state.daily_start_equity),
+                    current_equity=float(self._current_equity),
                 )
-        elif effective_daily_pnl < 0:
-            # daily_start_equity is 0 but we have losses — block trading (RSK-1)
+        elif daily_loss > 0:
+            # daily_start_equity is 0 but we have losses — block trading
             return RiskCheckResult.reject(
                 rule_type=RiskRuleType.DAILY_LOSS_LIMIT,
                 reason="Daily loss detected but daily_start_equity is 0 "
                 "(cannot calculate loss percentage)",
-                daily_pnl=float(self.state.daily_pnl),
-                unrealized_change=float(unrealized_change),
+                daily_loss=float(daily_loss),
             )
 
         # Check absolute limit if configured
         if self.config.daily_loss_limit_absolute is not None:
-            if -effective_daily_pnl >= self.config.daily_loss_limit_absolute:
+            if daily_loss >= self.config.daily_loss_limit_absolute:
                 return RiskCheckResult.reject(
                     rule_type=RiskRuleType.DAILY_LOSS_LIMIT,
-                    reason=f"Daily loss limit reached: {-effective_daily_pnl} "
+                    reason=f"Daily loss limit reached: {daily_loss} "
                     f"(limit: {self.config.daily_loss_limit_absolute})",
-                    current_loss=float(-effective_daily_pnl),
+                    current_loss=float(daily_loss),
                     limit=float(self.config.daily_loss_limit_absolute),
                 )
 
