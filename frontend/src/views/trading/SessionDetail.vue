@@ -666,7 +666,11 @@
                   class="value"
                 />
               </div>
-              <!-- Row 3: 连续亏损 + 熔断状态 + 最大持仓 + 最大下单 -->
+              <!-- Row 3: 峰值权益 + 连续亏损 + 熔断状态 + 最大持仓 -->
+              <div class="risk-item">
+                <span class="label">峰值权益</span>
+                <span class="value">{{ formatNumber(riskState.peak_equity ?? 0, 2) }}</span>
+              </div>
               <div class="risk-item">
                 <span class="label">连续亏损</span>
                 <span class="value">{{ riskState.consecutive_losses }}</span>
@@ -681,6 +685,7 @@
                 <span class="label">最大持仓比例</span>
                 <span class="value">{{ ((riskState.max_position_size ?? 0) * 100).toFixed(0) }}%</span>
               </div>
+              <!-- Row 4: 最大下单比例 -->
               <div class="risk-item">
                 <span class="label">最大下单比例</span>
                 <span class="value">{{ ((riskState.max_order_size ?? 0) * 100).toFixed(0) }}%</span>
@@ -1075,10 +1080,21 @@ function appendIncrementalData(data: Record<string, unknown>) {
   }
 
   // Trades
-  const newTrades = data.new_trades as Trade[] | undefined
+  const newTrades = data.new_trades as Record<string, unknown>[] | undefined
   if (Array.isArray(newTrades) && newTrades.length && isPaper.value) {
     const ps = status.value as PaperTradingStatus
-    if (ps.trades) ps.trades.push(...newTrades)
+    if (ps.trades) {
+      const parsed = newTrades.map((t) => ({
+        ...t,
+        pnl: typeof t.pnl === 'string' ? parseFloat(t.pnl) : t.pnl,
+        pnl_pct: typeof t.pnl_pct === 'string' ? parseFloat(t.pnl_pct) : t.pnl_pct,
+        amount: typeof t.amount === 'string' ? parseFloat(t.amount) : t.amount,
+        entry_price: typeof t.entry_price === 'string' ? parseFloat(t.entry_price) : t.entry_price,
+        exit_price: typeof t.exit_price === 'string' ? parseFloat(t.exit_price) : t.exit_price,
+        fees: typeof t.fees === 'string' ? parseFloat(t.fees) : t.fees,
+      })) as Trade[]
+      ps.trades.push(...parsed)
+    }
   }
 
   // Logs
