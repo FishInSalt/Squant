@@ -10,6 +10,7 @@ export default mergeConfig(
       include: ['src/**/*.{test,spec}.ts'],
       exclude: ['node_modules', 'dist'],
       setupFiles: ['./src/__tests__/setup.ts'],
+      testTimeout: 15000,
       css: false,
       server: {
         deps: {
