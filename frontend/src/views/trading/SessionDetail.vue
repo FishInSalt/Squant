@@ -624,7 +624,7 @@
                   :percentage="dailyLossPercent"
                   :color="riskProgressColor(dailyLossPercent)"
                   :stroke-width="14"
-                  :format="() => `${formatNumber(Math.abs(riskState!.daily_pnl), 2)} / ${formatNumber(dailyLossLimitAbs, 2)}`"
+                  :format="() => `${formatNumber(dailyLossAmount, 2)} / ${formatNumber(dailyLossLimitAbs, 2)}`"
                 />
               </div>
               <div class="risk-item wide">
@@ -978,8 +978,10 @@ const riskState = computed<RiskState | null>(() => {
 const dailyLossLimitAbs = computed(() =>
   (riskState.value?.daily_loss_limit ?? 0) * (status.value?.initial_capital ?? 0))
 
+const dailyLossAmount = computed(() =>
+  Math.max(0, -(riskState.value?.daily_pnl ?? 0)))
 const dailyLossPercent = computed(() =>
-  dailyLossLimitAbs.value ? Math.min(100, (Math.abs(riskState.value!.daily_pnl) / dailyLossLimitAbs.value) * 100) : 0)
+  dailyLossLimitAbs.value ? Math.min(100, (dailyLossAmount.value / dailyLossLimitAbs.value) * 100) : 0)
 
 const dailyTradePercent = computed(() =>
   riskState.value?.daily_trade_limit ? Math.min(100, (riskState.value.daily_trade_count / riskState.value.daily_trade_limit) * 100) : 0)

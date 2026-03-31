@@ -749,10 +749,15 @@ class RiskManager:
         Key names are aligned with RiskStateResponse schema so that Paper
         and Live engines produce the same field names for the frontend.
         """
+        # daily_pnl for display uses equity difference (same formula as
+        # _check_daily_loss_limit and check_daily_loss_warning), so it
+        # includes unrealized PnL and fees — not just realized trades.
+        daily_pnl_equity = float(self._current_equity - self.state.daily_start_equity) \
+            if self.state.daily_start_equity > 0 else float(self.state.daily_pnl)
         return {
             "daily_trade_count": self.state.daily_trade_count,
             "daily_trade_limit": self.config.daily_trade_limit,
-            "daily_pnl": float(self.state.daily_pnl),
+            "daily_pnl": daily_pnl_equity,
             "daily_loss_limit": float(self.config.daily_loss_limit),
             "unrealized_pnl": float(self.state.unrealized_pnl),
             "daily_start_unrealized_pnl": float(self.state.daily_start_unrealized_pnl),
