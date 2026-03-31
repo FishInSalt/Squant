@@ -591,6 +591,14 @@ class PaperTradingEngine:
                             category="risk",
                         )
 
+                    if self._risk_manager.check_daily_loss_limit_breached():
+                        self._context.log(
+                            f"日亏损已达限额 {self._risk_manager.config.daily_loss_limit:.0%}，"
+                            f"新买入将被拒绝",
+                            level="warning",
+                            category="risk",
+                        )
+
                 # 6. Persist snapshot: try synchronous callback first, fall back to batch
                 if self._context.equity_curve:
                     latest_snapshot = self._context.equity_curve[-1]

@@ -230,6 +230,27 @@ class RiskManager:
                 return True
             return False
 
+    def check_daily_loss_limit_breached(self) -> bool:
+        """Check if daily loss has reached the limit (per-bar monitoring).
+
+        Returns True the first time per day when the daily loss limit is
+        breached, so the engine can log it. Does NOT stop the session —
+        the limit only blocks new buy orders via validate_order().
+        """
+        with self._lock:
+            if self.state.daily_loss_limit_notified:
+                return False
+            if self.state.daily_start_equity <= 0:
+                return False
+
+            daily_loss = self.state.daily_start_equity - self._current_equity
+            daily_loss_ratio = daily_loss / self.state.daily_start_equity
+
+            if daily_loss_ratio >= self.config.daily_loss_limit:
+                self.state.daily_loss_limit_notified = True
+                return True
+            return False
+
     def validate_order(
         self,
         order: OrderRequest,

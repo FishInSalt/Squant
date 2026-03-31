@@ -294,6 +294,8 @@ class RiskState(BaseModel):
 
     # Daily loss warning dedup
     daily_loss_warned: bool = False
+    # Daily loss limit breach notification dedup (per-bar monitoring)
+    daily_loss_limit_notified: bool = False
 
     def reset_daily_stats(self, equity: Decimal) -> None:
         """Reset daily statistics.
@@ -312,6 +314,7 @@ class RiskState(BaseModel):
         self.daily_start_unrealized_pnl = self.unrealized_pnl
         self.daily_reset_time = datetime.now(UTC)
         self.daily_loss_warned = False
+        self.daily_loss_limit_notified = False
 
     def record_trade(self, pnl: Decimal) -> None:
         """Record a completed trade (position fully closed).

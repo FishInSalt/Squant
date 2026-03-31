@@ -3146,6 +3146,22 @@ class LiveTradingEngine:
                 details={"daily_pnl": str(daily_pnl), "limit": str(limit)},
             )
 
+        # Daily loss limit breach notification (one-time per day)
+        if self._risk_manager.check_daily_loss_limit_breached():
+            self._context.log(
+                f"日亏损已达限额 {self._risk_manager.config.daily_loss_limit:.0%}，"
+                f"新买入将被拒绝",
+                level="warning",
+                category="risk",
+            )
+            _fire_notification(
+                self._run_id,
+                level="critical",
+                event_type="daily_loss_limit_breached",
+                title="日亏损限额触发",
+                message=f"日亏损已达限额 {self._risk_manager.config.daily_loss_limit:.0%}，新买入将被拒绝",
+            )
+
         # Record equity snapshot BEFORE strategy execution to capture
         # the portfolio state at bar close (C-DEFER-8)
         self._context._record_equity_snapshot(bar.time)
