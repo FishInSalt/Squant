@@ -250,6 +250,7 @@ export interface PaperTradingStatus {
   trades: Trade[]
   fills: Fill[]
   open_trade?: OpenTrade
+  risk_state?: RiskState
 }
 
 // 实盘订单信息（匹配后端 LiveOrderInfo）
