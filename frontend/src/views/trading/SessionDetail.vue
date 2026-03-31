@@ -614,7 +614,7 @@
             </div>
           </el-tab-pane>
 
-          <el-tab-pane v-if="isLive" name="risk">
+          <el-tab-pane v-if="isLive || isPaper" name="risk">
             <template #label>风控</template>
             <div v-if="riskState" class="risk-grid">
               <div class="risk-item">
@@ -959,8 +959,10 @@ async function loadAllLiveOrders() {
 }
 
 const riskState = computed<RiskState | null>(() => {
-  if (!status.value || !isLive.value) return null
-  return (status.value as LiveTradingStatus).risk_state || null
+  if (!status.value) return null
+  // Both Paper and Live now use the same key names from get_state_summary()
+  const raw = (status.value as Record<string, unknown>).risk_state as RiskState | undefined
+  return raw || null
 })
 
 const dailyLossLimitAbs = computed(() =>

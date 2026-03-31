@@ -48,7 +48,7 @@ class RiskConfigRequest(BaseModel):
     circuit_breaker_threshold: int = Field(
         default=3,
         ge=1,
-        le=10,
+        le=100,
         description="Consecutive losses to trigger circuit breaker",
     )
     min_order_value: Decimal = Field(

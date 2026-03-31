@@ -1215,11 +1215,11 @@ class TestStateSummary:
         assert summary["daily_trade_limit"] == 100
         assert summary["daily_pnl"] == -100.0
         assert summary["total_pnl"] == -500.0
-        assert summary["total_loss_limit_pct"] == 0.2  # 20% default
+        assert summary["total_loss_limit"] == 0.2  # 20% default
         assert summary["total_loss_limit_triggered"] is False
         assert summary["current_equity"] == 10000.0
         assert summary["consecutive_losses"] == 2
-        assert summary["circuit_breaker_triggered"] is False
+        assert summary["circuit_breaker_active"] is False
 
 
 class TestRiskCheckResult:
@@ -1738,7 +1738,7 @@ class TestRiskManagerRestore:
         rm = self._make_manager()
         state_dict = rm.get_state_summary()
 
-        state_dict["circuit_breaker_triggered"] = True
+        state_dict["circuit_breaker_active"] = True
         state_dict["circuit_breaker_until"] = "2099-12-31T23:59:59+00:00"
 
         rm2 = self._make_manager()

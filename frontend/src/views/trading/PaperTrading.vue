@@ -129,10 +129,10 @@
                     </template>
                     <el-input-number
                       v-model="riskConfig.max_position_size"
-                      :min="0.01"
+                      :min="0.001"
                       :max="1"
                       :step="0.1"
-                      :precision="2"
+                      :precision="3"
                       style="width: 100%"
                     />
                   </el-form-item>
@@ -147,10 +147,10 @@
                     </template>
                     <el-input-number
                       v-model="riskConfig.max_order_size"
-                      :min="0.01"
+                      :min="0.001"
                       :max="1"
                       :step="0.1"
-                      :precision="2"
+                      :precision="3"
                       style="width: 100%"
                     />
                   </el-form-item>
@@ -183,10 +183,10 @@
                     </template>
                     <el-input-number
                       v-model="riskConfig.daily_loss_limit"
-                      :min="0.01"
+                      :min="0.001"
                       :max="1"
                       :step="0.01"
-                      :precision="2"
+                      :precision="3"
                       style="width: 100%"
                     />
                   </el-form-item>
@@ -204,7 +204,7 @@
                     <el-input-number
                       v-model="riskConfig.price_deviation_limit"
                       :min="0.001"
-                      :max="0.5"
+                      :max="1"
                       :step="0.01"
                       :precision="3"
                       style="width: 100%"
@@ -222,7 +222,7 @@
                     <el-input-number
                       v-model="riskConfig.circuit_breaker_threshold"
                       :min="1"
-                      :max="20"
+                      :max="100"
                       style="width: 100%"
                     />
                   </el-form-item>
@@ -239,9 +239,64 @@
                     </template>
                     <el-input-number
                       v-model="riskConfig.min_order_value"
-                      :min="1"
+                      :min="0.01"
                       :max="100000"
                       :step="5"
+                      :precision="2"
+                      style="width: 100%"
+                    />
+                  </el-form-item>
+                </el-col>
+                <el-col :span="12">
+                  <el-form-item>
+                    <template #label>
+                      <span>每分钟最大下单数</span>
+                      <el-tooltip content="策略每分钟最多提交的订单数量，防止策略 bug 疯狂下单" placement="top">
+                        <el-icon class="form-tip-icon"><QuestionFilled /></el-icon>
+                      </el-tooltip>
+                    </template>
+                    <el-input-number
+                      v-model="riskConfig.max_orders_per_minute"
+                      :min="1"
+                      :max="100"
+                      style="width: 100%"
+                    />
+                  </el-form-item>
+                </el-col>
+              </el-row>
+              <el-row :gutter="16">
+                <el-col :span="12">
+                  <el-form-item>
+                    <template #label>
+                      <span>最大回撤比例</span>
+                      <el-tooltip content="权益从峰值回撤超过该比例时自动停止会话，如 0.2 表示 20%" placement="top">
+                        <el-icon class="form-tip-icon"><QuestionFilled /></el-icon>
+                      </el-tooltip>
+                    </template>
+                    <el-input-number
+                      v-model="riskConfig.max_drawdown"
+                      :min="0.001"
+                      :max="1"
+                      :step="0.05"
+                      :precision="3"
+                      style="width: 100%"
+                    />
+                  </el-form-item>
+                </el-col>
+                <el-col :span="12">
+                  <el-form-item>
+                    <template #label>
+                      <span>日亏预警阈值</span>
+                      <el-tooltip content="日亏损达到限额的该比例时发送预警通知，如 0.8 表示达到 80% 时预警" placement="top">
+                        <el-icon class="form-tip-icon"><QuestionFilled /></el-icon>
+                      </el-tooltip>
+                    </template>
+                    <el-input-number
+                      v-model="riskConfig.daily_loss_warning_threshold"
+                      :min="0.01"
+                      :max="1"
+                      :step="0.1"
+                      :precision="2"
                       style="width: 100%"
                     />
                   </el-form-item>
@@ -411,6 +466,9 @@ const riskConfig = reactive({
   price_deviation_limit: 0.02,
   circuit_breaker_threshold: 3,
   min_order_value: 10,
+  max_orders_per_minute: 20,
+  max_drawdown: 0.2,
+  daily_loss_warning_threshold: 0.8,
 })
 
 const rules: FormRules = {

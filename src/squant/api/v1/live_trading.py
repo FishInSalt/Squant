@@ -321,24 +321,16 @@ async def get_live_trading_status(
                 daily_pnl=Decimal(str(rs.get("daily_pnl", 0))),
                 daily_trade_count=rs.get("daily_trade_count", 0),
                 consecutive_losses=rs.get("consecutive_losses", 0),
-                circuit_breaker_active=rs.get(
-                    "circuit_breaker_triggered", rs.get("circuit_breaker_active", False)
-                ),
-                max_position_size=Decimal(
-                    str(rs.get("max_position_size_pct", rs.get("max_position_size", 0)))
-                ),
-                max_order_size=Decimal(
-                    str(rs.get("max_order_size_pct", rs.get("max_order_size", 0)))
-                ),
+                circuit_breaker_active=rs.get("circuit_breaker_active", False),
+                max_position_size=Decimal(str(rs.get("max_position_size", 0))),
+                max_order_size=Decimal(str(rs.get("max_order_size", 0))),
                 daily_trade_limit=rs.get("daily_trade_limit", 0),
-                daily_loss_limit=Decimal(
-                    str(rs.get("daily_loss_limit_pct", rs.get("daily_loss_limit", 0)))
-                ),
+                daily_loss_limit=Decimal(str(rs.get("daily_loss_limit", 0))),
                 total_pnl=Decimal(str(rs.get("total_pnl", 0))),
-                total_loss_limit=Decimal(str(rs.get("total_loss_limit_pct", 0))),
+                total_loss_limit=Decimal(str(rs.get("total_loss_limit", 0))),
                 peak_equity=Decimal(str(rs.get("peak_equity", 0))),
                 current_drawdown=Decimal(str(rs.get("current_drawdown", 0))),
-                max_drawdown=Decimal(str(rs.get("max_drawdown_pct", 0))),
+                max_drawdown=Decimal(str(rs.get("max_drawdown", 0))),
                 circuit_breaker_until=rs.get("circuit_breaker_until"),
             )
 

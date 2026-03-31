@@ -690,7 +690,8 @@ class RiskManager:
             )
             self.state.consecutive_losses = state_dict.get("consecutive_losses", 0)
             self.state.circuit_breaker_triggered = state_dict.get(
-                "circuit_breaker_triggered", False
+                "circuit_breaker_active",
+                state_dict.get("circuit_breaker_triggered", False),
             )
             if state_dict.get("circuit_breaker_until"):
                 self.state.circuit_breaker_until = datetime.fromisoformat(
@@ -745,12 +746,16 @@ class RiskManager:
             return self._get_state_summary_unlocked()
 
     def _get_state_summary_unlocked(self) -> dict:
-        """Internal state summary (caller must hold self._lock)."""
+        """Internal state summary (caller must hold self._lock).
+
+        Key names are aligned with RiskStateResponse schema so that Paper
+        and Live engines produce the same field names for the frontend.
+        """
         return {
             "daily_trade_count": self.state.daily_trade_count,
             "daily_trade_limit": self.config.daily_trade_limit,
             "daily_pnl": float(self.state.daily_pnl),
-            "daily_loss_limit_pct": float(self.config.daily_loss_limit),
+            "daily_loss_limit": float(self.config.daily_loss_limit),
             "unrealized_pnl": float(self.state.unrealized_pnl),
             "daily_start_unrealized_pnl": float(self.state.daily_start_unrealized_pnl),
             "daily_start_equity": float(self.state.daily_start_equity),
@@ -758,22 +763,22 @@ class RiskManager:
                 self.state.daily_reset_time.isoformat() if self.state.daily_reset_time else None
             ),
             "total_pnl": float(self.state.total_pnl),
-            "total_loss_limit_pct": float(self.config.total_loss_limit),
+            "total_loss_limit": float(self.config.total_loss_limit),
             "total_loss_limit_triggered": self.state.total_loss_limit_triggered,
             "current_equity": float(self._current_equity),
             "initial_equity": float(self._initial_equity),
             "consecutive_losses": self.state.consecutive_losses,
-            "circuit_breaker_triggered": self.state.circuit_breaker_triggered,
+            "circuit_breaker_active": self.state.circuit_breaker_triggered,
             "circuit_breaker_until": (
                 self.state.circuit_breaker_until.isoformat()
                 if self.state.circuit_breaker_until
                 else None
             ),
             "current_position_value": float(self.state.current_position_value),
-            "max_position_size_pct": float(self.config.max_position_size),
-            "max_order_size_pct": float(self.config.max_order_size),
+            "max_position_size": float(self.config.max_position_size),
+            "max_order_size": float(self.config.max_order_size),
             "peak_equity": float(self.state.peak_equity),
-            "max_drawdown_pct": float(self.config.max_drawdown),
+            "max_drawdown": float(self.config.max_drawdown),
             "current_drawdown": (
                 max(
                     0.0,
