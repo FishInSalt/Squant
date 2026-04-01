@@ -394,6 +394,9 @@ class PaperTradingService:
             # Create per-session file logger after successful start
             # (avoids creating empty log directories for failed sessions)
             engine._context._file_logger = create_trading_logger(str(run.id))
+            # Flush pre-start logs (e.g., on_init) to file
+            for entry in engine._context._logs:
+                engine._context._file_logger.info(entry)
 
             logger.info(f"Started paper trading session {run.id} for strategy {strategy_id}")
 

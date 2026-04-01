@@ -505,6 +505,9 @@ class LiveTradingService:
 
             # Create per-session file logger after successful start
             engine._context._file_logger = create_trading_logger(str(run.id))
+            # Flush pre-start logs (e.g., on_init) to file
+            for entry in engine._context._logs:
+                engine._context._file_logger.info(entry)
 
             logger.info(f"Started live trading session {run.id} for strategy {strategy_id}")
 
