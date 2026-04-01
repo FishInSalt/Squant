@@ -38,6 +38,7 @@ class TestProcessTradeExecution:
         engine._risk_manager.state.circuit_breaker_triggered = False
         engine._current_price = Decimal("96500")
         engine._has_recent_fill = False
+        engine._counted_order_ids = set()
         engine._circuit_breaker_triggered = False
 
         live_order = LiveOrder(
@@ -423,6 +424,7 @@ class TestReconciliationQueue:
         engine._risk_manager.state.circuit_breaker_triggered = False
         engine._current_price = Decimal("96500")
         engine._has_recent_fill = False
+        engine._counted_order_ids = set()
         engine._circuit_breaker_triggered = False
         return engine
 
@@ -567,6 +569,7 @@ class TestRecordFillNewParams:
         engine._context = MagicMock()
         engine._risk_manager = MagicMock()
         engine._has_recent_fill = False
+        engine._counted_order_ids = set()
         engine._pending_order_events = []
         return engine
 
@@ -656,6 +659,7 @@ class TestReconcileOrderFills:
         engine._risk_manager.config.reconcile_batch_size = 20
         engine._current_price = Decimal("96500")
         engine._has_recent_fill = False
+        engine._counted_order_ids = set()
         engine._circuit_breaker_triggered = False
 
         live_order = LiveOrder(
@@ -899,6 +903,7 @@ class TestReconcilePendingOrders:
         engine._risk_manager.config.reconcile_batch_size = 20
         engine._current_price = Decimal("96500")
         engine._has_recent_fill = False
+        engine._counted_order_ids = set()
         engine._circuit_breaker_triggered = False
         return engine
 
