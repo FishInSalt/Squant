@@ -503,6 +503,17 @@ class LiveTradingService:
             # Start engine
             await engine.start()
 
+            # Warmup: replay historical bars to initialize strategy indicators
+            from squant.config import get_settings as _get_settings_warmup
+
+            warmup_bars = _get_settings_warmup().live.warmup_bars
+            if warmup_bars > 0:
+                engine._warming_up = True
+                try:
+                    await self._warmup_strategy(engine, run, warmup_bars)
+                finally:
+                    engine._warming_up = False
+
             # Create per-session file logger after successful start
             engine._context._file_logger = create_trading_logger(str(run.id))
             # Flush pre-start logs (e.g., on_init) to file
