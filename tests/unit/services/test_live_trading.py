@@ -2364,6 +2364,7 @@ class TestResumeFailureUpdatesDB:
             # Settings
             mock_live_settings = MagicMock()
             mock_live_settings.max_sessions = 10
+            mock_live_settings.warmup_bars = 0
             mock_settings_obj = MagicMock()
             mock_settings_obj.live = mock_live_settings
             mock_settings.return_value = mock_settings_obj
@@ -2837,6 +2838,7 @@ class TestStartSuccessPath:
         # Mock settings
         mock_settings = MagicMock()
         mock_settings.live.max_sessions = 10
+        mock_settings.live.warmup_bars = 0
 
         with (
             patch.object(
@@ -3749,6 +3751,7 @@ class TestResumeSuccessPath:
         """Test resume() raises SessionNotResumableError when strategy deleted."""
         mock_settings = MagicMock()
         mock_settings.live.max_sessions = 10
+        mock_settings.live.warmup_bars = 0
 
         mock_session_manager = MagicMock()
         mock_session_manager.session_count = 0
@@ -3779,6 +3782,7 @@ class TestResumeSuccessPath:
         """Test resume() raises ExchangeConnectionError when connect fails."""
         mock_settings = MagicMock()
         mock_settings.live.max_sessions = 10
+        mock_settings.live.warmup_bars = 0
 
         mock_session_manager = MagicMock()
         mock_session_manager.session_count = 0
@@ -3826,6 +3830,7 @@ class TestResumeSuccessPath:
 
         mock_settings = MagicMock()
         mock_settings.live.max_sessions = 10
+        mock_settings.live.warmup_bars = 0
 
         mock_session_manager = MagicMock()
         mock_session_manager.session_count = 0

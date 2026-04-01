@@ -1297,6 +1297,7 @@ class TestResumeSession:
 
         mock_settings = MagicMock()
         mock_settings.paper.max_sessions = 10
+        mock_settings.paper.warmup_bars = 0
 
         mock_manager = MagicMock()
         mock_manager.session_count = 0
