@@ -364,6 +364,10 @@ class LiveTradingEngine:
         # Dedup set for processed trade IDs (LRU eviction when cap exceeded)
         self._processed_trade_ids: OrderedDict[str, bool] = OrderedDict()
 
+        # Track which orders have been counted for daily trade limit
+        # (count per order, not per fill)
+        self._counted_order_ids: set[str] = set()
+
         # Orders needing fill reconciliation (WS reconnect, fill mismatch)
         self._orders_needing_reconciliation: set[str] = set()
 
@@ -1678,18 +1682,18 @@ class LiveTradingEngine:
             )
             if self._balance_consecutive_failures >= self._sync_failure_threshold:
                 msg = (
-                    f"Exchange connection lost: {self._balance_consecutive_failures} "
-                    f"consecutive balance sync failures"
+                    f"交易所连接中断：连续{self._balance_consecutive_failures}次余额同步失败，"
+                    f"会话已暂停"
                 )
                 logger.error(f"Engine {self._run_id} stopping: {msg}")
+                self._context.log(msg, level="error", category="risk")
 
-                # Notification: balance sync failure (LIVE-011)
                 _fire_notification(
                     self._run_id,
                     level="critical",
                     event_type="balance_sync_failure",
-                    title="余额同步失败",
-                    message=f"实盘会话 {self._symbol} 连续{self._balance_consecutive_failures}次余额同步失败",
+                    title="交易所连接中断",
+                    message=f"实盘会话 {self._symbol} 连续{self._balance_consecutive_failures}次余额同步失败，会话已暂停",
                     details={
                         "symbol": self._symbol,
                         "failures": self._balance_consecutive_failures,
@@ -1968,18 +1972,18 @@ class LiveTradingEngine:
                 self._order_last_poll[exchange_oid] = now
                 if self._order_sync_consecutive_failures >= self._sync_failure_threshold:
                     msg = (
-                        f"Exchange connection lost: {self._order_sync_consecutive_failures} "
-                        f"consecutive order sync failures"
+                        f"交易所连接中断：连续{self._order_sync_consecutive_failures}次订单同步失败，"
+                        f"会话已暂停"
                     )
                     logger.error(f"Engine {self._run_id} stopping: {msg}")
+                    self._context.log(msg, level="error", category="risk")
 
-                    # Notification: order sync failure (LIVE-011)
                     _fire_notification(
                         self._run_id,
                         level="critical",
                         event_type="order_sync_failure",
-                        title="订单同步失败",
-                        message=f"实盘会话 {self._symbol} 连续{self._order_sync_consecutive_failures}次订单同步失败",
+                        title="交易所连接中断",
+                        message=f"实盘会话 {self._symbol} 连续{self._order_sync_consecutive_failures}次订单同步失败，会话已暂停",
                         details={
                             "symbol": self._symbol,
                             "failures": self._order_sync_consecutive_failures,
@@ -2266,8 +2270,12 @@ class LiveTradingEngine:
             category="fill",
         )
 
-        # Record fill for daily trade count limit (LIVE-RM-001)
-        self._risk_manager.record_order_fill()
+        # Record order for daily trade count (LIVE-RM-001)
+        # Count per ORDER, not per fill — a single order split into multiple
+        # fills by the exchange should count as 1 trade for the user.
+        if live_order.internal_id not in self._counted_order_ids:
+            self._counted_order_ids.add(live_order.internal_id)
+            self._risk_manager.record_order_fill()
 
         # Trigger balance check on next bar to validate post-fill state (R5-F5)
         self._has_recent_fill = True

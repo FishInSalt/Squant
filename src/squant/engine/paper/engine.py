@@ -180,6 +180,9 @@ class PaperTradingEngine:
                 initial_equity=initial_capital,
             )
 
+        # Track which orders have been counted for daily trade limit
+        self._counted_order_ids: set[str] = set()
+
         # Inject context into strategy
         self._strategy.ctx = self._context
 
@@ -998,8 +1001,9 @@ class PaperTradingEngine:
             self._context.cancel_order(fill.order_id)
             return
 
-        # Record every successful fill for daily trade count (not just round-trip closes)
-        if self._risk_manager:
+        # Record order for daily trade count (count per order, not per fill)
+        if self._risk_manager and fill.order_id not in self._counted_order_ids:
+            self._counted_order_ids.add(fill.order_id)
             self._risk_manager.record_order_fill()
 
         # Check if a trade was completed (closed) by this fill

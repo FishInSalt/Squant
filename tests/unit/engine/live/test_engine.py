@@ -2526,7 +2526,7 @@ class TestSyncConsecutiveFailures:
         assert engine.is_running is True
 
         # 5th call should raise RuntimeError (ISSUE-202 fix)
-        with pytest.raises(RuntimeError, match="Exchange connection lost"):
+        with pytest.raises(RuntimeError, match="交易所连接中断"):
             await engine._sync_balance()
 
     @pytest.mark.asyncio
@@ -2563,7 +2563,7 @@ class TestSyncConsecutiveFailures:
         # Engine should be properly stopped via stop() called by event loop
         assert engine.is_running is False
         assert engine.stopped_at is not None
-        assert "Exchange connection lost" in (engine.error_message or "")
+        assert "交易所连接中断" in (engine.error_message or "")
 
     @pytest.mark.asyncio
     async def test_balance_sync_success_resets_failure_counter(self, engine, mock_adapter):
@@ -2615,7 +2615,7 @@ class TestSyncConsecutiveFailures:
         assert engine._order_sync_consecutive_failures == 4
 
         # 5th call should raise RuntimeError (ISSUE-202 fix)
-        with pytest.raises(RuntimeError, match="Exchange connection lost"):
+        with pytest.raises(RuntimeError, match="交易所连接中断"):
             await engine._sync_pending_orders()
 
 
