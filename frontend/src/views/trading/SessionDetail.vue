@@ -155,7 +155,7 @@
         <TradingKLineChart
           :symbol="session.symbol"
           :timeframe="session.timeframe"
-          :trades="isPaper ? paperTrades : undefined"
+          :trades="paperTrades"
           :fills="isPaper ? paperFills : liveFills"
           :open-trade="isPaper ? paperOpenTrade : liveOpenTrade"
           :realtime="isRunning && !!status?.is_running"
@@ -336,7 +336,7 @@
             </el-table>
           </el-tab-pane>
 
-          <el-tab-pane v-if="isPaper" name="trades">
+          <el-tab-pane name="trades">
             <template #label>
               交易记录
               <el-badge v-if="paperTrades.length" :value="paperTrades.length" class="tab-badge" />
@@ -787,7 +787,6 @@ const totalReturnPct = computed(() => {
 })
 
 const winRate = computed<number | null>(() => {
-  if (!isPaper.value) return null
   const trades = paperTrades.value.filter(t => t.exit_time != null)
   if (trades.length === 0) return null
   return (trades.filter(t => t.pnl > 0).length / trades.length) * 100
@@ -861,8 +860,14 @@ const pendingCount = computed(() => {
 })
 
 const paperTrades = computed<Trade[]>(() => {
-  if (!status.value || !isPaper.value) return []
-  return (status.value as PaperTradingStatus).trades || []
+  if (!status.value) return []
+  if (isPaper.value) {
+    return (status.value as PaperTradingStatus).trades || []
+  }
+  if (isLive.value) {
+    return (status.value as LiveTradingStatus).trades || []
+  }
+  return []
 })
 
 const paperFills = computed<Fill[]>(() => {
@@ -871,8 +876,14 @@ const paperFills = computed<Fill[]>(() => {
 })
 
 const paperOpenTrade = computed(() => {
-  if (!status.value || !isPaper.value) return null
-  return (status.value as PaperTradingStatus).open_trade ?? null
+  if (!status.value) return null
+  if (isPaper.value) {
+    return (status.value as PaperTradingStatus).open_trade ?? null
+  }
+  if (isLive.value) {
+    return (status.value as LiveTradingStatus).open_trade ?? null
+  }
+  return null
 })
 
 const tradingLogs = ref<string[]>([])
@@ -1055,6 +1066,7 @@ function applyStateSnapshot(state: Record<string, unknown>) {
     (status.value as PaperTradingStatus).open_trade = state.open_trade as OpenTrade | undefined
   } else if (isLive.value) {
     const ot = state.open_trade as OpenTrade | undefined
+    ;(status.value as LiveTradingStatus).open_trade = ot ?? null
     liveOpenTrade.value = ot
       ? { entry_time: ot.entry_time, entry_price: ot.entry_price, amount: ot.amount }
       : null
@@ -1083,19 +1095,22 @@ function appendIncrementalData(data: Record<string, unknown>) {
 
   // Trades
   const newTrades = data.new_trades as Record<string, unknown>[] | undefined
-  if (Array.isArray(newTrades) && newTrades.length && isPaper.value) {
-    const ps = status.value as PaperTradingStatus
-    if (ps.trades) {
-      const parsed = newTrades.map((t) => ({
-        ...t,
-        pnl: typeof t.pnl === 'string' ? parseFloat(t.pnl) : t.pnl,
-        pnl_pct: typeof t.pnl_pct === 'string' ? parseFloat(t.pnl_pct) : t.pnl_pct,
-        amount: typeof t.amount === 'string' ? parseFloat(t.amount) : t.amount,
-        entry_price: typeof t.entry_price === 'string' ? parseFloat(t.entry_price) : t.entry_price,
-        exit_price: typeof t.exit_price === 'string' ? parseFloat(t.exit_price) : t.exit_price,
-        fees: typeof t.fees === 'string' ? parseFloat(t.fees) : t.fees,
-      })) as Trade[]
-      ps.trades.push(...parsed)
+  if (Array.isArray(newTrades) && newTrades.length) {
+    const parsed = newTrades.map((t) => ({
+      ...t,
+      pnl: typeof t.pnl === 'string' ? parseFloat(t.pnl) : t.pnl,
+      pnl_pct: typeof t.pnl_pct === 'string' ? parseFloat(t.pnl_pct) : t.pnl_pct,
+      amount: typeof t.amount === 'string' ? parseFloat(t.amount) : t.amount,
+      entry_price: typeof t.entry_price === 'string' ? parseFloat(t.entry_price) : t.entry_price,
+      exit_price: typeof t.exit_price === 'string' ? parseFloat(t.exit_price) : t.exit_price,
+      fees: typeof t.fees === 'string' ? parseFloat(t.fees) : t.fees,
+    })) as Trade[]
+    if (isPaper.value) {
+      const ps = status.value as PaperTradingStatus
+      if (ps.trades) ps.trades.push(...parsed)
+    } else if (isLive.value) {
+      const ls = status.value as LiveTradingStatus
+      if (ls.trades) ls.trades.push(...parsed)
     }
   }
 
