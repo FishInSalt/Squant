@@ -531,6 +531,28 @@ class TestGetLiveTradingStatus:
                 "daily_trade_limit": 50,
                 "daily_loss_limit": "0.05",
             },
+            "trades": [
+                {
+                    "symbol": "BTC/USDT",
+                    "side": "buy",
+                    "entry_time": "2024-01-15T10:00:00",
+                    "entry_price": "50000",
+                    "exit_time": "2024-01-15T12:00:00",
+                    "exit_price": "52000",
+                    "amount": "0.1",
+                    "pnl": "200",
+                    "pnl_pct": "4.0",
+                    "fees": "5",
+                }
+            ],
+            "open_trade": {
+                "symbol": "BTC/USDT",
+                "side": "buy",
+                "entry_time": "2024-01-16T10:00:00",
+                "entry_price": "51000",
+                "amount": "0.05",
+                "fees": "2.5",
+            },
         }
 
         with patch("squant.api.v1.live_trading.LiveTradingService") as mock_service_class:
@@ -546,6 +568,13 @@ class TestGetLiveTradingStatus:
             assert data["data"]["unrealized_pnl"] == 500.0
             assert data["data"]["realized_pnl"] == 200.0
             assert data["data"]["risk_state"]["circuit_breaker_active"] is False
+            assert len(data["data"]["trades"]) == 1
+            assert data["data"]["trades"][0]["symbol"] == "BTC/USDT"
+            assert float(data["data"]["trades"][0]["entry_price"]) == 50000
+            assert float(data["data"]["trades"][0]["pnl"]) == 200
+            assert data["data"]["open_trade"] is not None
+            assert data["data"]["open_trade"]["symbol"] == "BTC/USDT"
+            assert float(data["data"]["open_trade"]["entry_price"]) == 51000
 
     @pytest.mark.asyncio
     async def test_get_status_not_found(self, client: AsyncClient) -> None:
