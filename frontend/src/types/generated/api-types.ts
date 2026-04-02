@@ -4576,6 +4576,9 @@ export interface components {
             completed_orders_count: number;
             /** Trades Count */
             trades_count: number;
+            /** Trades */
+            trades?: components["schemas"]["TradeRecordResponse"][];
+            open_trade?: components["schemas"]["OpenTradeInfo"] | null;
             risk_state: components["schemas"]["RiskStateResponse"] | null;
         };
         /**
