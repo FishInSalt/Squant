@@ -8889,6 +8889,23 @@
             "type": "integer",
             "title": "Trades Count"
           },
+          "trades": {
+            "items": {
+              "$ref": "#/components/schemas/TradeRecordResponse"
+            },
+            "type": "array",
+            "title": "Trades"
+          },
+          "open_trade": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/OpenTradeInfo"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "risk_state": {
             "anyOf": [
               {

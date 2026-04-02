@@ -1343,6 +1343,8 @@ class LiveTradingService:
                     "live_orders": [],
                     "completed_orders_count": 0,
                     "trades_count": 0,
+                    "trades": [],
+                    "open_trade": None,
                     "risk_state": None,
                 }
             )

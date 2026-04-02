@@ -114,6 +114,21 @@ const mockLiveStatus: LiveTradingStatus = {
   live_orders: [],
   completed_orders_count: 2,
   trades_count: 1,
+  trades: [
+    {
+      symbol: 'BTC/USDT',
+      side: 'buy' as const,
+      entry_time: '2024-01-15T10:00:00Z',
+      entry_price: 50000,
+      exit_time: '2024-01-15T12:00:00Z',
+      exit_price: 52000,
+      amount: 0.05,
+      pnl: 100,
+      pnl_pct: 4.0,
+      fees: 5,
+    },
+  ],
+  open_trade: null,
   risk_state: {
     daily_pnl: 100,
     daily_trade_count: 3,
@@ -396,21 +411,20 @@ describe('SessionDetail', () => {
       expect(tabLabels.some(el => el.text().includes('风控'))).toBe(true)
     })
 
-    it('does not show trades or fills tabs for live, but shows logs tab', async () => {
+    it('shows trades tab for live (but not fills tab), and shows logs tab', async () => {
       const wrapper = mountLive()
       await flushPromises()
       const tabLabels = wrapper.findAll('.el-tabs__item')
-      expect(tabLabels.some(el => el.text().includes('交易记录'))).toBe(false)
+      expect(tabLabels.some(el => el.text().includes('交易记录'))).toBe(true)
       expect(tabLabels.some(el => el.text().includes('成交明细'))).toBe(false)
       expect(tabLabels.some(el => el.text().includes('日志'))).toBe(true)
     })
 
-    it('win rate is hidden for live session', async () => {
+    it('shows win rate for live session with trades', async () => {
       const wrapper = mountLive()
       await flushPromises()
-      // Win rate should show '-' since it's live
       expect(wrapper.text()).toContain('胜率')
-      // The value should be '-' (null → '-')
+      expect(wrapper.text()).toContain('100.0%')
     })
   })
 })

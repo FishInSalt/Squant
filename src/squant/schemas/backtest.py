@@ -173,6 +173,17 @@ class FillRecordResponse(BaseModel):
     timestamp: datetime
 
 
+class OpenTradeInfo(BaseModel):
+    """Currently open trade (position entry info for chart markers)."""
+
+    symbol: str
+    side: str
+    entry_time: str
+    entry_price: NumberDecimal
+    amount: NumberDecimal
+    fees: NumberDecimal
+
+
 class BacktestMetrics(BaseModel):
     """Strongly-typed backtest performance metrics (BT-004).
 
