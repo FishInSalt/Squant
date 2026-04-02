@@ -155,9 +155,9 @@
         <TradingKLineChart
           :symbol="session.symbol"
           :timeframe="session.timeframe"
-          :trades="paperTrades"
+          :trades="sessionTrades"
           :fills="isPaper ? paperFills : liveFills"
-          :open-trade="isPaper ? paperOpenTrade : liveOpenTrade"
+          :open-trade="isPaper ? sessionOpenTrade : liveOpenTrade"
           :realtime="isRunning && !!status?.is_running"
           height="500px"
         />
@@ -339,9 +339,9 @@
           <el-tab-pane name="trades">
             <template #label>
               交易记录
-              <el-badge v-if="paperTrades.length" :value="paperTrades.length" class="tab-badge" />
+              <el-badge v-if="sessionTrades.length" :value="sessionTrades.length" class="tab-badge" />
             </template>
-            <el-table :data="paperTrades" stripe empty-text="暂无交易记录" max-height="400">
+            <el-table :data="sessionTrades" stripe empty-text="暂无交易记录" max-height="400">
               <el-table-column prop="symbol" label="币对" min-width="120" />
               <el-table-column prop="side" label="方向" min-width="70">
                 <template #default="{ row }">
@@ -787,7 +787,7 @@ const totalReturnPct = computed(() => {
 })
 
 const winRate = computed<number | null>(() => {
-  const trades = paperTrades.value.filter(t => t.exit_time != null)
+  const trades = sessionTrades.value.filter(t => t.exit_time != null)
   if (trades.length === 0) return null
   return (trades.filter(t => t.pnl > 0).length / trades.length) * 100
 })
@@ -859,7 +859,7 @@ const pendingCount = computed(() => {
   return isPaper.value ? paperPendingOrders.value.length : liveOrders.value.length
 })
 
-const paperTrades = computed<Trade[]>(() => {
+const sessionTrades = computed<Trade[]>(() => {
   if (!status.value) return []
   if (isPaper.value) {
     return (status.value as PaperTradingStatus).trades || []
@@ -875,7 +875,7 @@ const paperFills = computed<Fill[]>(() => {
   return (status.value as PaperTradingStatus).fills || []
 })
 
-const paperOpenTrade = computed(() => {
+const sessionOpenTrade = computed(() => {
   if (!status.value) return null
   if (isPaper.value) {
     return (status.value as PaperTradingStatus).open_trade ?? null
