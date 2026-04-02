@@ -310,8 +310,8 @@ export interface LiveTradingStatus {
   live_orders: LiveOrderInfo[]
   completed_orders_count: number
   trades_count: number
-  trades?: Trade[]
-  open_trade?: OpenTrade | null
+  trades: Trade[]
+  open_trade: OpenTrade | null
   risk_state?: RiskState
 }
 
