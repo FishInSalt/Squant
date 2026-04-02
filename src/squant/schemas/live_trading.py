@@ -8,6 +8,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field, field_validator
 
+from squant.schemas.backtest import OpenTradeInfo, TradeRecordResponse
 from squant.schemas.types import NumberDecimal
 
 VALID_TIMEFRAMES = frozenset(
@@ -237,6 +238,8 @@ class LiveTradingStatusResponse(BaseModel):
     live_orders: list[LiveOrderInfo]
     completed_orders_count: int
     trades_count: int
+    trades: list[TradeRecordResponse] = Field(default_factory=list)
+    open_trade: OpenTradeInfo | None = None
     risk_state: RiskStateResponse | None
 
 

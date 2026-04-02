@@ -7,7 +7,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field, ValidationError, model_validator
 
-from squant.schemas.backtest import FillRecordResponse, TradeRecordResponse
+from squant.schemas.backtest import FillRecordResponse, OpenTradeInfo, TradeRecordResponse
 from squant.schemas.live_trading import RiskConfigRequest
 from squant.schemas.types import NumberDecimal
 
@@ -125,17 +125,6 @@ class PendingOrderInfo(BaseModel):
     price: NumberDecimal | None
     status: str
     created_at: datetime | None
-
-
-class OpenTradeInfo(BaseModel):
-    """Currently open trade (position entry info for chart markers)."""
-
-    symbol: str
-    side: str
-    entry_time: str
-    entry_price: NumberDecimal
-    amount: NumberDecimal
-    fees: NumberDecimal
 
 
 class PaperTradingStatusResponse(BaseModel):
