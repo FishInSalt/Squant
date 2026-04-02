@@ -14,7 +14,7 @@ from squant.engine.risk import RiskConfig
 from squant.infra.database import get_session
 from squant.infra.trading_logger import DEFAULT_LOG_BASE
 from squant.models.enums import RunStatus
-from squant.schemas.backtest import EquityCurvePoint
+from squant.schemas.backtest import EquityCurvePoint, OpenTradeInfo, TradeRecordResponse
 from squant.schemas.live_trading import (
     AccountBalanceResponse,
     EmergencyCloseResponse,
@@ -334,6 +334,38 @@ async def get_live_trading_status(
                 circuit_breaker_until=rs.get("circuit_breaker_until"),
             )
 
+        # Parse trades
+        trades = [
+            TradeRecordResponse(
+                symbol=t["symbol"],
+                side=t["side"],
+                entry_time=t["entry_time"],
+                entry_price=Decimal(t["entry_price"]),
+                exit_time=t.get("exit_time"),
+                exit_price=Decimal(t["exit_price"]) if t.get("exit_price") else None,
+                amount=Decimal(t["amount"]),
+                pnl=Decimal(t["pnl"]),
+                pnl_pct=Decimal(t["pnl_pct"]),
+                fees=Decimal(t["fees"]),
+            )
+            for t in status.get("trades", [])
+        ]
+
+        # Parse open trade
+        open_trade_data = status.get("open_trade")
+        open_trade = (
+            OpenTradeInfo(
+                symbol=open_trade_data["symbol"],
+                side=open_trade_data["side"],
+                entry_time=open_trade_data["entry_time"],
+                entry_price=Decimal(open_trade_data["entry_price"]),
+                amount=Decimal(open_trade_data["amount"]),
+                fees=Decimal(open_trade_data["fees"]),
+            )
+            if open_trade_data
+            else None
+        )
+
         response = LiveTradingStatusResponse(
             run_id=UUID(status["run_id"]),
             symbol=status["symbol"],
@@ -356,6 +388,8 @@ async def get_live_trading_status(
             live_orders=live_orders,
             completed_orders_count=status.get("completed_orders_count", 0),
             trades_count=status.get("trades_count", 0),
+            trades=trades,
+            open_trade=open_trade,
             risk_state=risk_state,
         )
 
